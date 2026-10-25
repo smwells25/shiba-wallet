@@ -41,6 +41,7 @@ import {
 } from '../wallet/aa';
 import { RequestAmountCard } from '../components/PaymentRequestViews';
 import { familyForSlot } from '../wallet/payment-request';
+import { usePrimaryNameLine } from './HandleViews';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Receive'>;
 
@@ -70,6 +71,9 @@ export function ReceiveScreen({ route, navigation }: Props) {
   const [copied, setCopied] = useState(false);
   const [smartCopied, setSmartCopied] = useState(false);
   const { evmChain } = usePrefs();
+  // The ENS primary name of the EVM address (phase 23 item 6; mainnet and
+  // Ethereum Sepolia only), re-read whenever this screen gains focus.
+  const evmNameLine = usePrimaryNameLine(route.params.chainId === EVM_CHAIN_ID ? (account?.address ?? null) : null, evmChain.caip2);
   // EIP-7702 status (phase 8 item 1): "Account 1 · upgraded (Kernel v3.3)"
   // on the EVM slot, so the user knows which code runs at this address.
   const delegation = useAccountDelegation(evmOwnAddress);
@@ -221,6 +225,7 @@ export function ReceiveScreen({ route, navigation }: Props) {
           {account.address}
         </Text>
       </View>
+      {evmNameLine ? <Text style={[styles.path, { color: theme.textMuted }]}>{evmNameLine}</Text> : null}
       {noKey ? null : (
         <Text style={[styles.path, { color: theme.textMuted }]}>
           {account.path === IMPORTED_KEY_PATH

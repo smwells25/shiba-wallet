@@ -99,7 +99,9 @@ export type FeatureId =
   // Phase 21 item 2, Stage 2: the duress PIN and its second wallet (feature 53).
   | 'duress-pin'
   // Phase 23 item 5: cold signing for a watched owner's smart account (feature 11).
-  | 'cold-aa';
+  | 'cold-aa'
+  // Phase 23 item 6: a wallet handle (an ENS name) registered on Ethereum Sepolia.
+  | 'wallet-handle';
 
 export interface FeatureReadiness {
   id: FeatureId;
@@ -524,6 +526,27 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
       'reads yet. The off-line signature fixes the network fees, so a fee rise before submission means a new request ' +
       'and a new signature. This wallet offers it only on test networks.',
     evidence: ['C1', 'C2', 'C3', 'W9', 'T-89'],
+    enforced: true,
+  },
+  // Phase 23 item 6 (feature 75, docs/WALLET_HANDLES.md): a wallet handle, an
+  // ENS .eth name registered from the app on Ethereum Sepolia's ENSv2 test
+  // deployment (wallet/handle.ts; the screen refuses every other network
+  // too). Appended at the end of the table, like the rows above. Evidence:
+  // W1 / W2 (the device conditions every send shares: the registration goes
+  // through the regular send and smart-account paths), W9 (the switchboard
+  // that enforces this row), W13 (the preview of each call comes from a
+  // single provider) and C1 (the Kernel account a smart owner sends from).
+  // A handle-specific threat-model row is the CTO's to add at the refresh.
+  {
+    id: 'wallet-handle',
+    title: 'Wallet handles (ENS names)',
+    status: 'testnet-only',
+    reason:
+      'A wallet handle is an ENS name registered on Ethereum Sepolia’s ENSv2 test contracts, which ENS has redeployed ' +
+      'before and which single keys can change there, so a name may not survive. ENSv2 has not launched on Ethereum ' +
+      'mainnet, where names still go through contracts this wallet does not use. This wallet registers handles only ' +
+      'on Ethereum Sepolia, paid in test USDC.',
+    evidence: ['C1', 'W1', 'W2', 'W9', 'W13'],
     enforced: true,
   },
 ];
