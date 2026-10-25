@@ -11485,7 +11485,7 @@ passphrase" and this phase's new English in Spanish; the misplaced
 phase 21 refresh entry in this file; the inbox entries for reminders,
 price alerts and sent views.
 
-## Phase 23 plan (PROPOSED 2026-10-20, awaiting the Chairperson's approval): the audit pack, the release-candidate build, iOS in the simulator, USDC bridging, cold signing for smart accounts, a wallet handle
+## Phase 23 plan (proposed 2026-10-20, APPROVED by the Chairperson 2026-10-25): the audit pack, the release-candidate build, iOS in the simulator, cross-chain options compared with USDC bridging live, cold signing for smart accounts, a wallet handle, the Tropic Square evaluation
 
 The CTO's proposal, written before any code, following the phase 22
 status's open items and the Chairperson's standing directions (engage
@@ -11545,6 +11545,19 @@ outside input unless marked INPUT. Nothing in wave 1 is hard to undo.
    paying the source fee in USDC where Circle's paymaster exists; the
    stranded-transfer retry for Stargate exercised live by sending to a
    deployed Kernel account on purpose.
+   DELIVERABLE ADDED BY THE CHAIRPERSON (2026-10-25): a compare-and-
+   contrast of the cross-chain interoperability options for THIS wallet
+   (docs/CROSS_CHAIN_OPTIONS.md) — LayerZero V2 (OFT and Stargate)
+   against Circle CCTP V2 first, then Across, the native rollup bridges
+   and the aggregators — on the axes the wallet cares about (trust and
+   who can halt or redirect funds, what a CallPolicy can pin, keyless
+   access, fees and time as measured in the live legs, smart-account
+   recipients, mainnet readiness, licences and audits), each claim tied
+   to the live legs of phases 21 and 23 or a read-only on-chain fact,
+   ending in a recommendation on which providers the in-app choice
+   should offer and in what order; LayerZero is evaluated as a full
+   alternative to CCTP, not only as the first adapter that happened to
+   be built.
 5. Cold signing for smart accounts (feature 11, the second half): a
    SmartAccountClient change so a UserOperation is built, estimated and
    fee-checked on the on-line phone, exported as QR parts for the
@@ -11575,6 +11588,37 @@ outside input unless marked INPUT. Nothing in wave 1 is hard to undo.
    over the smart-account confirm, Settings, Sessions, Swap, Staking,
    Bridge and Multisig screens.
 9. Leadership refresh and the mainnet-readiness memo at the end.
+10. THE TROPIC SQUARE EVALUATION (added by the Chairperson 2026-10-25):
+   whether and how a TROPIC01 secure element — the Chairperson holds two,
+   one on a Raspberry Pi (believed a 3B+) with Tropic Square's Raspberry
+   Pi development board, previously driven successfully including the
+   PIN-authentication ("MAC-and-destroy") feature, one kept as a spare —
+   can complement the software-only mobile wallet as a hardware second
+   factor or hardware-wallet-like signer for users who want more
+   protection than a phone alone gives. The prototype need not be
+   production-ready, but the design must be one a production-grade
+   product could grow from. Stage 1 is research from primary sources
+   only (Tropic Square's published datasheet and application notes,
+   the libtropic repository, the development board's documentation):
+   the chip's verified capabilities (which curves and signature schemes
+   it offers — whether secp256k1 exists on it decides whether it can
+   sign an Ethereum transaction directly or only through a P-256 path
+   such as the Kernel WebAuthn / P-256 validators the wallet already
+   knows; key slots, the secure channel and pairing keys, the
+   PIN-authentication engine, monotonic counters, user memory, the
+   TRNG), what the Raspberry Pi host can expose to a phone (QR through
+   the wallet's cold-signing format, a local network service, Bluetooth,
+   USB), and the candidate roles (an air-gapped signer, a co-signer of a
+   multisig, a second factor that releases a wrapping key, a hardware-
+   bound approval for high-value sends), each with its honest security
+   statement; Stage 2 the design the Chairperson picks; Stage 3 a demo
+   against the real board. RULES FOR EVERY SHIBA ON THIS ITEM, restated
+   by the Chairperson: no hallucination, ask when something is not
+   known, never assume — every chip fact cites its document and page or
+   the exact source file and line; nothing about the Chairperson's own
+   hardware set-up is assumed, it is asked. Open questions for the
+   Chairperson are listed in docs/TROPIC_SQUARE.md section 1 as they
+   arise; additional subagents are approved for this item.
 
 Waves: 1 — (A) item 1's verification script and docs, (B) item 4's
 script leg, (C) item 5's client change (engine), (D) item 6's engine
@@ -11588,3 +11632,15 @@ C1 scope (item 1); the app scheme (item 2); the section 8.5 answers
 (item 7); a native Spanish reviewer (item 0); the disclosure decision
 stays on hold; the fiat off-ramp provider and sandbox credentials
 (feature 66 stays Designed until they exist).
+
+Approval and wave 1 start (2026-10-25): the Chairperson approved phase
+23 as proposed, added the cross-chain comparison to item 4 and item 10
+(the Tropic Square evaluation). Wave 1 dispatched the same day: (A) the
+audit pack's verification script, (B) the CCTP live leg by script, (C)
+the smart-account cold-signing client change, (D) the ENS registration
+engine half, and (E) item 10's Stage 1 research from primary sources, in
+parallel on disjoint files; the item-10 clarification questions were put
+to the Chairperson at once.
+
+## Phase 23 progress
+
