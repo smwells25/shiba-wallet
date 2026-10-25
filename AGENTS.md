@@ -12321,3 +12321,113 @@ to the Chairperson at once.
       sent; MAINNET_READINESS §2 and AUDIT_SCOPE §§4 / 5.6 say "never
       sent"; BRIDGE_PROVIDERS §6 says "not yet seen on a device" and §10
       still lists the emulator pass as next.
+- [x] Item 5, app half — COLD SIGNING FOR A WATCHED OWNER'S SMART ACCOUNT
+      (commit de2a42c; 14 files incl. the new app/src/wallet/cold-aa.ts
+      and app/scripts/check-cold-aa.mjs (102 checks, 10 in-suite mutants +
+      a source mutant); check-readiness 215 (was 208), check-pending's
+      origin pin 12 → 13, check-i18n's two readiness ids; offline runner
+      ALL GREEN in the CTO's isolated worktree on HEAD 800f214 with
+      --skip-bundle: engine 1,098, app 10,015 across 64 suites, lint 0/0,
+      tsc clean; checkout 0 / apply 0 / 14 files; the staged patch id
+      equals the verified worktree's (computed with the two new files
+      added on both sides); the secret scan clean; the agent's patch was
+      built from FILTERED copies of readiness.ts and check-readiness.mjs
+      because the handle agent's hunks shared the tree; not seen on a
+      device, nothing live). THE ACCOUNT: the watched owner's Kernel v3.3
+      at CREATE2 index 0 (predictKernelAddress(owner, {index: 0n}) — a
+      watch-only id is refused by smartAccountSaltFor, and index 0 is the
+      imported-key rule of ADR D9; the engine's request binds
+      accountIndex only when deploying and its parser checks the sender
+      against the prediction); createColdOwnerAaClient(config, {nodeUrl,
+      chainId, ownerAddress, …}) in aa.ts builds the ordinary Kernel
+      client with addressOnlyOwner, the pinned implementation and
+      validator, and NEVER a paymaster (a saved paymaster is ignored and
+      the form says so — CTO ACCEPTED the agent's reading of "refuse any
+      paymaster" as "never attach one"). REFUSALS before any request
+      (coldOwnerAaRefusal, in order): the readiness gate (cold-aa, then
+      kernel-smart-account), an EIP-7702 owner, an attached recovered
+      account, incomplete settings, a SimpleAccount configuration,
+      non-pinned Kernel addresses; assertColdAaBundle / assertColdAaQuote
+      refuse 7702, multisig, passkey, sponsored, token-fee, recovered and
+      other-index shapes and a wrong sender; BEYOND THE BRIEF (accepted):
+      for a DEPLOYED account readKernelOwner must still show the ECDSA
+      root with the watched owner before any bundler request, failing
+      closed on a read failure. THE QUOTE (quoteColdAa) is the Send
+      screen's own prepareAaSend / prepareAaErc20Send with Max through
+      maxAaSend / maxAaErc20Send and the fromMax trim; the Review
+      (ColdAaConfirm) carries the smart-account confirm's rows (type tag,
+      recipient, amount, owner, sender and balance, "Will deploy with this
+      send" / "Already deployed", the worst-case arithmetic, AaDepositNote,
+      the total, BalanceChangePreview, RiskWarnings, SpendingPolicyNotice,
+      the "Bundler gas estimate passed…" line pinned byte-identical to
+      SendScreen's). THE REQUEST (prepareColdAaRequest): endpoint pinning →
+      the spending gate → checkAaQuoteBeforeApproval →
+      claimQuoteForSubmission (one request per quote) →
+      prepareUserOperationForExternalSigner(owner, calls, fees, {scheme:
+      KERNEL_V3_3_ECDSA_ROOT_SCHEME, beforeSign: signedFeeGuard}) → local
+      checks (no paymaster, nonce key 0, the same sender, the deployment
+      state the review showed) → buildColdUserOpRequest with the signed
+      worst case in the summary; a deploying request is 2,511 bytes = 3
+      "SW-CU:" parts ("Smart-account signing request — part i of 3"), the
+      screen shows "Expires at HH:MM UTC. After that the signature is
+      refused and a new request must be prepared." and the decoded worst
+      case; the request lives in memory only (30 minutes). SIGNATURE AND
+      SUBMISSION: verifyColdAaSignature refuses a pasted part, then the
+      expiry, then the engine's verifyColdUserOpSignature ("Signature
+      checked: made by the owner …"); submitColdAa →
+      submitColdUserOpRequest(client, request, text, {nowSeconds,
+      beforeSign: assertQuoteFeesMeetBundlerFloor then signedFeeGuard});
+      on acceptance forgetSmartAccountAddress and notifyAaOperationSent
+      ({kind: 'cold-aa'}) — the pending card reads "Smart-account
+      operation 0x… from an off-line signer."; the spend recorded after
+      acceptance as the passkey path does; the success view mirrors
+      Send's AA success view (userOpHash, the 120 s receipt wait, the
+      transaction, the explorer button, the note field); the pending card
+      never offers Speed up or Cancel for a user operation. ERRORS: the
+      engine's ColdUserOpRefusedError / ExternalSignatureError sentences
+      shown as they are; a fee floor that moved after signing gets the
+      Send title "The network fee rose. Please review again." with the
+      closing sentence replaced by "…The off-line signature covers the old
+      fees and cannot be reused…" (the Send wording "Nothing was signed"
+      would be false) and returns to the form; a bad scan keeps the
+      request; an expired request or a used nonce returns to the form.
+      ZERO SIGNING: the screen and views never call signWith or
+      requireLocalAuth and touch no vault (source pins); the whole flow
+      beside the real createKeyVault over a counting backend holding the
+      owner's own phrase records 0 reads and 0 writes; cold-aa.ts's import
+      graph reaches no storage.ts, WalletContext or biometric.ts. SHARED
+      HUNKS (additive): aa.ts ('cold-aa' in AaOperationKind, the factory
+      and refusals, the assertFeatureAllowed('cold-aa') gate where
+      check-readiness's scan finds it), readiness.ts (row "Off-line
+      signing for a smart account", testnet-only, enforced, evidence C1 C2
+      C3 W9 T-89), pending-transactions.ts ('cold-aa' in USEROP_ORIGINS —
+      without it a stored cold record would turn the pending registry
+      read-only, pinned by mutant M9 — and the retry / origin phrases),
+      the two i18n ids in en.ts / es.ts with the fixture's "new" list and
+      check-i18n's rule; navigation.ts, watch-only.ts and store-keys.ts
+      untouched (the ColdSign route was already allowed; nothing stored).
+      MUTANTS caught: the "SW-CS:" prefix, no quote claim, no floor check
+      at submit, no root check, no local expiry check, no deployment-state
+      check, no cold-aa gate, the factory attaching the saved paymaster,
+      no 'cold-aa' origin, no signedFeeGuard at submit, a module calling
+      signWith. OPEN (CTO decisions): the Activity sentence for a cold
+      smart-account operation is not specially decoded (follow-up);
+      cold-signer.mjs reads JSON text, not "SW-CU:" parts (the emulator
+      pass copies the request text; a parts reader is a follow-up);
+      coldAaNetworkName is exported but unused (leave); the AA review and
+      request views show no WatchOnlyNotice because check-watch-only pins
+      exactly three uses on the screen and the form above still shows it
+      (leave). EMULATOR CHECKLIST (6 steps; Ethereum Sepolia; watch dev
+      index 8 = 0x8E1dEaF5d88e60DBdabcC79d8EFA570f40fb0cDF whose Kernel
+      0x96e96e31…00C9 is ALREADY DEPLOYED by the script leg — expect
+      "Deployed." / "Already deployed", accountIndex null, the root check
+      passing; FUND THE ACCOUNT, NOT THE OWNER, first (the script leg
+      swept it to ~2.7e12 wei of deposit); the "Will deploy" line needs a
+      watched address whose index-0 Kernel is undeployed — none of the dev
+      indices is known to be in that state, a CTO choice; the refusals:
+      another index's signature, another request's signature, the request
+      pasted as a signature, a new request against an old signature,
+      mainnet, Base Sepolia with a saved paymaster) in the builder's
+      report. UNVERIFIED: QR legibility and multi-part scanning, layout,
+      dark mode, TalkBack, ZeroDev accepting the app-built prepare path
+      (the script leg proved the engine path), the expiry live, iOS.
