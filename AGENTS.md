@@ -11643,4 +11643,104 @@ parallel on disjoint files; the item-10 clarification questions were put
 to the Chairperson at once.
 
 ## Phase 23 progress
+- [x] Item 10, Stage 1 — docs/TROPIC_SQUARE.md, THE TROPIC01 SECURE ELEMENT
+      RESEARCHED FROM PRIMARY SOURCES (commit eb10e76; about 8,000 words;
+      secret scan clean; nothing run against any hardware, the
+      Chairperson's network never probed; every source fetched
+      2026-10-25 — Tropic Square's datasheet A.11, User API 1.4.0, the
+      application notes 002 / 003 / 005 / 006 / 007 / 008, the security
+      advisory SA_2026012900 and the evaluation reports, tropicsquare.com,
+      and shallow clones at pinned commits of libtropic 4.2.0 (9085ea53),
+      ts-tr01-app (7c4c2eac), ts-spect-fw (3b4681ca), the Raspberry Pi
+      shield repositories; the CTO re-grepped the extracted datasheet
+      text — secp256k1 0 hits, P-256 14, Ed25519 12 — and the firmware
+      API header, whose curve ids are only P256 = 1 and ED25519 = 2
+      (tropic01_l3_api.h 388–389, 415–416, 442–443)). THE DECISIVE FACT:
+      TROPIC01 SIGNS ON P-256 (ECDSA) AND Ed25519 ONLY, with X25519 for
+      its own secure channel; there is no secp256k1, so the chip cannot
+      produce an Ethereum transaction signature, a Kernel ECDSA owner
+      signature or a WeightedECDSAValidator approval (DS p.1, §7.7,
+      §8.1.3; API Tables 28–30). ECDSA takes a 32-byte hash and returns
+      r ‖ s (DS §7.7.4); libtropic ≥ 4.0.0 passes the hash as given
+      (3.2.1 hashed on the host); the nonce is a Keccak-based MAC over the
+      session, not RFC 6979, and NO low-s normalisation was found in the
+      SPECT routine (ecdsa_sign.s 139–169) — the host must normalise.
+      WHAT IT OFFERS: a Noise_KK1_25519_AESGCM_SHA256 secure channel with
+      4 pairing-key slots — slot 0's factory PRIVATE key is published in
+      libtropic (AN005 §2.1); a slot is written once and invalidation is
+      permanent, all four invalidated = an unusable chip (DS §7.5.3);
+      32 ECC key slots (generated on-chip or imported; only the public
+      part readable); the PIN engine the Chairperson calls MAC-and-Destroy
+      — one chip command with up to 128 slots, the host builds the scheme
+      that releases a 32-byte key after a correct PIN, every wrong PIN
+      burns a slot INSIDE the chip so the try limit holds even on a
+      compromised host, a "wiping PIN" variant destroys the key (AN002
+      §3.3–3.7) — and Tropic Square's own tropic01_util seals a BIP-32
+      secp256k1 master key derived from a recovery phrase exactly this way
+      (pin_set.py 12–48; its firmware uses XOR as the cipher with a
+      "replace in production" comment); 16 decrement-only 32-bit
+      counters; 512 user-data slots of 475 bytes; a TRNG; EdDSA-signed
+      firmware (custom firmware only on chips made with a customer's
+      vendor key, AN007); an X.509 identity chain but NO per-key origin
+      attestation found; ECDSA sign ~199 ms, handshake ~163 ms, one PIN
+      call ~28 ms (DS §9.3). ASSURANCE: RTL and firmware public (Clear
+      BSD, no patent grant; the bootloader closed); six evaluation
+      reports — KU Leuven injected faults without tripping a sensor and a
+      laser attack beat the secure-boot signature check; SA_2026012900
+      (reported by Ledger Donjon, CVSS 5.7): laser fault injection
+      bypasses firmware verification on all production part numbers
+      (equipment above €30,000, weeks of expert work); no formal
+      certification found. HOST: libtropic is C (Rust and Go SDKs exist;
+      no JavaScript and no Python binding); the Pi port uses Linux SPI
+      and GPIO (CS GPIO25, IRQ GPIO5, 5 MHz) and lists only the Pi 4 and
+      Pi 5 as tested — a 3B+ is NOT listed; lt-util has no PIN command;
+      a software model of the chip serves the same API over TCP on Linux
+      (macOS "TBA") — the zero-risk rehearsal ground. P-256 AND THE
+      WALLET: the pinned WebAuthnValidator v0.0.3 verifies P-256 over
+      sha256(authenticatorData ‖ sha256(clientDataJSON)) without checking
+      origin, rpIdHash or counter (kernel-webauthn.ts 75–94), so a Pi
+      could build the envelope, have the chip sign the digest, normalise s
+      and DER-encode — reasoned, NOT simulated; the "user present /
+      verified" flags would be bytes the Pi writes; one such key per
+      account; an EXTRA owner, not a second factor; the validator is
+      unaudited. CANDIDATE ROLES, ranked: (1) an air-gapped signer on the
+      Pi whose secp256k1 key is SEALED by MAC-and-Destroy — answers the
+      wallet's existing cold-signing QR format for a watch-only account
+      and can sign multisig co-signer approvals, so a 2-of-N with the
+      phone is a real on-chain second factor with NO phone change (limits:
+      the key is in the Pi's memory while signing; the Pi's screen is the
+      only place to check what is signed); (2) a P-256 owner through the
+      WebAuthn validator (the key never leaves the chip, but it is a
+      second independent way to spend; needs an engine adapter and item
+      5's QR route; would test the validator live for the first time);
+      (3) a second factor for the app lock or high-value sends (ends
+      offline PIN guessing from a file copy, T-09, but every unlock needs
+      the Pi and the send gate is app-enforced only); (4) a multisig
+      co-signer ON the chip — impossible (secp256k1); (5) a hardware-bound
+      records backup — little value and against phrase-only recovery.
+      DEMO SAFETY (§5): rehearse on the software model first; on the real
+      board only read-only and reversible operations in slots the
+      Chairperson names; NEVER without an explicit yes per step: write or
+      invalidate pairing keys, write I-Config / R-Config (one erratum:
+      "R-Config write triggers permanent Alarm Mode"), update firmware,
+      run libtropic's functional tests (Tropic Square warns they "can
+      destroy your chip"), touch the spare chip. OPEN QUESTIONS for the
+      Chairperson (§1.1, fourteen) — the Pi model and OS, the shield
+      revision and its CS2 jumper, the chip's part number and firmware
+      versions, which libtropic version and which program ran the PIN
+      test, the pairing-key slots in use and where any private key is
+      kept, whether any config object was written, which slots hold
+      something to keep, the earlier PIN run's slots and host-side files,
+      the spare chip's state, the Pi's screen / camera / network, lab
+      instrument or product seed, the goal, mainnet or test — and for
+      Tropic Square's documents (§1.2): a secp256k1 roadmap, high-s
+      signatures, key-origin attestation, relaying the secure channel over
+      a network and chip-side timeouts, Pi 3B+ support, which revisions
+      the reports cover, the errata texts, power loss mid-PIN, the model
+      on macOS. SMALL INCONSISTENCIES in Tropic Square's documentation
+      noted (475 vs 476 bytes per user-data slot; lt-util says 444; a
+      path in linux.md; a part number missing from the part-number page;
+      firmware 2.1.0 on the page vs 2.2.0 update files in libtropic 4.2.0).
+      NEXT: the Chairperson's answers to §1.1 and the role decision; Stage
+      2 designs the chosen role; the software model is the first target.
 
