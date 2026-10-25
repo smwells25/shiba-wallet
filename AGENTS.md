@@ -11743,4 +11743,209 @@ to the Chairperson at once.
       firmware 2.1.0 on the page vs 2.2.0 update files in libtropic 4.2.0).
       NEXT: the Chairperson's answers to §1.1 and the role decision; Stage
       2 designs the chosen role; the software model is the first target.
+- [x] Item 1 — THE AUDIT PACK: scripts/audit/verify-pins.mjs (commit f5d739a;
+      new scripts/audit/verify-pins.mjs, docs/AUDIT_SCOPE.md section 5.7
+      and the bounty section 8.1–8.10 structured with named placeholders
+      only, docs/RELEASE.md section 11 "Reproducible builds", an
+      `npm run audit:pins` script, the Sourcify "full match" comments in
+      kernel-recovery.ts / kernel-permissions.ts and MAINNET_READINESS §2
+      corrected by the CTO; verified in the isolated worktree — the
+      script's --offline mode lists 177 (network, address) pairs from 94
+      pins with no request under the offline guard, check-readiness 208,
+      check-screen-protection 87, check-devmode 444, lint 0/0, the scan
+      clean; no commit, stage or checkout by the agent; nothing read from
+      .dev-wallet — every chain read keyless and read-only (eth_chainId,
+      eth_blockNumber, eth_getCode, eth_call, eth_getStorageAt; the script
+      refuses any other method)). The script imports the engine's dist and
+      the app's tables through type stripping, cites file:line per
+      address, reads code length and keccak, compares only against hashes
+      pinned IN CODE, resolves ERC-1967 implementations, re-reads the
+      documented view facts and runs the engine's own verify functions,
+      asks Sourcify v2 read-only, and exits 1 on missing code, a hash
+      mismatch, a failed fact or unexpected code; flags --network,
+      --offline, --json, --no-sourcify; not in suites.mjs (the runner
+      classifies only app/scripts). LIVE RESULT 2026-10-25 14:20 UTC, exit
+      0, 177 pairs: verified 125, verified by identity (byte-identical to
+      a verified copy elsewhere) 16, present but unverified 25, MISSING 0,
+      UNREADABLE 0, stated non-contracts confirmed 11 — Ethereum MAINNET
+      (read-only) 21 verified + 2 by identity + 1 unverified; EVERY
+      code-pinned hash matched (the 16 MULTISIG_VERIFIED_NETWORKS hashes,
+      WebAuthn v0.0.3 on all five Kernel networks incl. mainnet, the
+      SpendingLimit hook, Pimlico on four chains); all 78 addresses in
+      AUDIT_SCOPE §5 equal the code's. WHERE THE CHAIN DISAGREES WITH A
+      DOCUMENT: (1) Sourcify's current answer for the weighted validator
+      and the five permission modules on chain 1 is "match" (its name for
+      the former partial match; verifiedAt 2026-01-26 / 2024-08-08) where
+      the engine comments said "full match" — corrected; TimestampPolicy
+      is "match" on Base / Arbitrum / OP Sepolia though the comment says
+      unverified everywhere; (2) MAINNET_READINESS §2 said the mainnet
+      Kernel deployment was unverified while AA_STACK.md recorded the
+      2026-10-01 read — today's read agrees with AA_STACK: verifyKernelDeployment
+      passes on mainnet, the meta factory staked 0.1 ETH / 86,400 s, every
+      module byte-identical to the test networks except the implementation
+      and weighted validator (35 / 34 bytes near the cached chain-id word;
+      the domain separator not recomputed) — corrected; (3) the Base /
+      Arbitrum Sepolia module-by-module comparison AUDIT_SCOPE called "not
+      recorded" is now made: byte-identical; (4) Circle's documented
+      MAINNET paymaster 0x6C97…71C9 read on Base and Arbitrum One: a
+      144-byte proxy, entryPoint() v0.7, not paused, staked 0.25 ETH /
+      86,400 s, feeSpread 0, Sourcify exact_match for proxy and
+      implementation, token() 0x8335…2913 on Base and 0xaf88…5831 on
+      Arbitrum One (not checked against Circle's address page); (5)
+      Pimlico mainnet: hash = pin, exact_match, deposit 3.148 ETH,
+      UNSTAKED; Sepolia unstaked 132.89 ETH; Base Sepolia staked 5 ETH;
+      Arbitrum Sepolia staked 0.5 ETH / 1,209,600 s (new); (6) the
+      Stargate planner 0xf39F…2266 (Hardhat account 0) now carries an
+      EIP-7702 delegation to 0xFf0B…a013 on Sepolia; (7) the OP Sepolia
+      default op-sepolia-testnet.api.pocket.network was ~128,000 blocks
+      (~3 days) behind (the F-66 freshness probe skips such a default at
+      run time; no change); (8) BUILDS: the two "-qc" APKs were built from
+      b414989 + the native-scrypt patch, NOT 8b4ed84's parent b0f3b7d, so
+      they lack four later commits' screen changes (recorded in RELEASE.md
+      11.1; file names kept); all five kept APKs carry APK Signature Scheme
+      v2 only with the one signer CN=Android Debug, certificate SHA-256
+      fac61745…3b9c = the debug.keystore inside expo's template.tgz
+      (expo 57.0.27, alias androiddebugkey, password "android"), and the
+      template signs the RELEASE build type with it too — NO RELEASE
+      SIGNING KEY EXISTS. THE 25 UNVERIFIED ROWS (nothing binds them to
+      source on Sourcify): RecoveryAction on all five Kernel networks
+      (keccak 0xfcfe9c1a… agrees with the source comment), the Sepolia
+      SimpleAccount implementation, the three Uniswap pools (incl. the DCA
+      pool), the v4 PoolManager label, EURC on Sepolia and Base Sepolia,
+      the LayerZero executors / DVNs / ULN libraries, the OP-stack
+      GasPriceOracle predeploys, RocketStorage and the Lido Hoodi queue.
+      DECISIONS (CTO): "verified by identity" stays a separate column
+      (named as such in the tables); no live CI entry (needs the network);
+      submitting RecoveryAction and the pools to Sourcify is an action
+      outside the project — a question for the auditor; the "-qc" names
+      stay, documented. UNVERIFIED: that Sourcify's match / exact_match
+      map exactly onto the old partial / full; non-ERC-1967 proxies (Lido's
+      Aragon stETH proxy) are not resolved; the exact mainnet byte
+      differences; Circle's mainnet token() addresses against Circle's
+      page; proxy owners beyond the facts listed; byte-for-byte APK
+      reproducibility (the build worktrees are gone). INCIDENT: the daily
+      temp cleaner deleted the .git links and tracked files of wt-app and
+      wt-verify at 00:19 on 2026-10-25 (created on the 19th; the CTO's
+      touch came at 10:25, too late) — both recreated with
+      .local/helpers/mkwt.sh (APFS clones); Metro, which was serving from
+      the gutted wt-app, was stopped and must be restarted before the next
+      pass. RULE: touch the scratchpad at the START of every day's work.
+- [x] Item 5, engine and script — COLD SIGNING FOR A SMART ACCOUNT, PROVEN
+      LIVE ON SEPOLIA (commit da6e295; packages/chains-evm/src/smart-account.ts
+      additive, new cold-userop.ts, index.ts exports, new
+      test/cold-userop.test.ts (+17; chains-evm 768 → 785), cold-signer.mjs
+      gains sign-userop / selftest-userop, new scripts/testnet/
+      cold-userop-smoke.mjs; offline runner ALL GREEN in the CTO's isolated
+      worktree on HEAD f5d739a with --skip-bundle: engine 1,067, app 9,906
+      across 63 suites, lint 0/0, tsc clean; the ENS agent's shared
+      index.ts hunk filtered out of the patch; 17 of 17 hand mutants
+      caught; every receipt re-read by the CTO on publicnode and drpc; the
+      dev EOA spent 2,362,822,557,909,868 wei net (cap 0.006); no app file
+      edited). DESIGN: sendCalls is now buildUnsignedOperation (the old
+      code moved unchanged) + sign + send; prepareUserOperationForExternalSigner
+      (ownerAddress, calls, fees, {scheme, beforeSign}) runs exactly what
+      sendCalls runs up to the owner's signature — the same requests in
+      the same order, the checked estimate, the deposit top-up headroom,
+      paymaster data, the final zero-gas check, beforeSign — with an
+      addressOnlyOwner whose sign() throws, and returns {ownerAddress,
+      scheme, entryPoint, chainId, nonceKey, userOp with the stub
+      signature, userOpHash, signingDigest}; a 7702 spec is refused before
+      any request (D6). submitPreparedUserOperation(prepared, signature,
+      {beforeSign}): LOCAL first — chain id and EntryPoint equal the
+      client's, no 7702 tuple, the operation rebuilt field by field from
+      the record, the userOpHash and digest recomputed and compared,
+      recoverExternalSigner (yParity 0/1, 32-byte r and s, LOW S) must
+      yield the owner; CHAIN READS — the spec still derives the same
+      sender, the EntryPoint nonce is still the signed one ("another
+      operation used it first… prepare a new request"), the deployment
+      state still matches the factory field; the caller's beforeSign on
+      the rebuilt op; then eth_sendUserOperation; the spec signs 0 times
+      on the submit path (pinned). SIGNED FEES CANNOT BE REPRICED (gasFees
+      is in the userOpHash; a tampered fee is refused locally and the
+      signed op with maxFeePerGas + 1 wei fails AA24 in simulation), so a
+      floor move after signing is a refusal and a fresh request. SCHEME
+      kernel-v3.3-ecdsa-root/eip191-userop-hash: digest =
+      toEthSignedMessageHash(userOpHash), signature r‖s‖(27+yParity) —
+      from Kernel v3.3 at cd697c7e: ECDSAValidator.validateUserOp accepts
+      the raw hash OR its EIP-191 form (ECDSAValidator.sol 49–66), the
+      root nonce key selects the root validator (Kernel.sol 243–247), the
+      signature passes through unchanged (ValidationManager.sol 300–322);
+      CORRECTION to the record: the engine's ECDSA signing is at
+      kernel-account.ts 443–445, not "around 511"; a raw-hash signature is
+      accepted on-chain (dry run) but REFUSED by the engine (not what the
+      request asked for). PAYLOADS v1 with exact key sets:
+      shiba-wallet/cold-sign-userop-request {type, version, requestId,
+      chainId, entryPoint, sender, owner, scheme, nonceKey, accountIndex,
+      userOp (13 fields), summary, userOpHash, signingDigest, createdAt,
+      expiresAt} and -signature {type, version, requestId, signer,
+      userOpHash, signingDigest, yParity, r, s}; parseColdUserOpRequest
+      refuses any 7702 / authorization key at any depth FIRST, unexpected
+      keys, other versions or schemes, non-canonical numbers / hex /
+      addresses, values above uint128, a priority fee above the max fee, a
+      nonce outside its key, an unpaired factory or paymaster,
+      non-canonical Kernel execute calldata (decodeKernelExecuteCalls
+      re-encodes and compares), a deploying request whose factory data is
+      not the Kernel v3.3 ECDSA-root deployment for the owner at
+      accountIndex or whose sender is not predictKernelAddress, a lifetime
+      outside 1 s–24 h (default 30 min — the builder's judgement, CTO
+      accepted), a hash or digest mismatch; verifyColdUserOpSignature
+      checks in order payload kind, exact keys, request id, recomputed
+      hash and digest, shape and low s, the stated signer, the recovered
+      signer; submitColdUserOpRequest checks expiry first. DRY RUN (public
+      test phrase, the real Sepolia contracts): deployment simulated at
+      978,993 gas; another key's signature AA24; maxFee + 1 wei AA24; the
+      engine refused a foreign signature and an expired request with 0
+      bundler calls. LIVE (owner dev index 8 0x8E1d…0cDF, the on-line half
+      holding ADDRESSES ONLY; Kernel 0x96e96e31123aBb64597edA1074fa907EdE7A00C9
+      = the CREATE2 prediction = the factory's getAddress; every signature
+      made in a separate process; files 0600 under the git-ignored
+      .local/cold-userop and removed with rm -P; the ZeroDev id never
+      printed): funding 0.005 ETH (fund.mjs; tx 0xf9a73432…f745, block
+      11991438, 204,600 gas); OP 1 deployment + 0.0001 ETH to the dev EOA
+      — userOp 0x360787b4…ad22, bundle tx
+      0x61d17e02c0c1b6460236b93d2be3d424fdf4067092cb2045c1455fb6d3a9b210,
+      block 11991440, status 0x1, gasUsed 1,003,381, signed vGL 1,189,232 /
+      cGL 26,011 / pVG 152,619 at 2,310,000,006 / 2,309,999,964 wei
+      (ZeroDev's standard 1.155 gwei × 2), worst case 3,159,761,228,207,172,
+      actualGasUsed 1,014,213, actualGasCost 2,342,832,008,701,527,
+      RootValidatorUpdated / OwnerRegistered(0x8e1d…) / ModuleInstalled /
+      AccountDeployed (meta factory) / Deposited / the EIP-7708 transfer /
+      UserOperationEvent nonce 0 success; afterwards code 61 B,
+      rootValidator 0x01‖845a…cE57, the ECDSA owner 0x8e1d…; OP 2 the
+      full balance swept — userOp 0x8aee18b4…cbe6, tx
+      0x628d1e783fa314477c6ce6d8ae3dca67ce03f3f2067bf136c9242db17a18468d,
+      block 11991441, 1,740,238,771,792,828 wei to the dev EOA, nonce 1
+      success; OP 3 EntryPoint.withdrawTo(dev EOA, deposit − 2 × prefund)
+      — userOp 0x5910b219…8467, tx
+      0x399a91d3410971a5a97449bafed3ff1ee1a0db6c687fa29c56cde3e2d2d7f6d9,
+      block 11991447, 796,970,099,107,904 wei withdrawn, nonce 2 success;
+      the dev EOA 43,132,807,435,832,795 → 40,769,984,877,922,927 wei,
+      reconciled to the wei (op 1 2,342,832,008,701,527 + op 2
+      15,442,038,468,885 + op 3 1,795,954,967,340 + the funding fee
+      31,428,810,600 + 2,721,126,961,516 wei of dust left in the deposit);
+      ZeroDev's standard tier fell from 1.155 gwei to 30.6 Mwei one block
+      later and 3.47 Mwei within a minute against a ~14-wei base fee — op
+      1 paid the full headroom price (the F-71 economics). DECISIONS (CTO)
+      on the builder's open questions: the 30-minute / 24-hour lifetimes
+      stand; NO paymaster or token fee for cold operations in the app half
+      (Circle's permit needs an owner signature an address-only owner
+      cannot give; ERC-7677 untested); recovered (owner-rotated) accounts
+      are REFUSED in the app half until a spec returning the recorded
+      address exists; only the Kernel ECDSA-root lane (nonce key 0) —
+      session-key, passkey and multisig accounts refused, 7702 by design;
+      low s stays required (stricter than Kernel; whether hardware signers
+      return high s is unknown); the app's QR parts need their own prefix
+      (a deploying request ~2.3 KB = 2–3 parts; never "SW-CS:"). APP HALF
+      (wave 2, wiring): a cold-owner Kernel account = a watched owner
+      address plus its counterfactual Kernel through the existing Kernel
+      client with addressOnlyOwner; quote as today → prepareUserOperationForExternalSigner
+      with beforeSign = signedFeeGuard → buildColdUserOpRequest
+      (accountIndex when deploying) → qr-parts with a new prefix →
+      submitColdUserOpRequest(client, request, scanned, {nowSeconds,
+      beforeSign: assertQuoteFeesMeetBundlerFloor + signedFeeGuard}) →
+      notifyAaOperationSent with a new kind; the ColdUserOpRefusedError /
+      ExternalSignatureError sentences shown as they are; a readiness row
+      (test networks only). UNVERIFIED: ERC-7677 paymaster data on the
+      prepare path; owner-rotated accounts; a hardware signer's s values;
+      the app half on a device.
 
