@@ -73,7 +73,9 @@ import { ENTRYPOINT_V07, getUserOpHash } from './userop.js';
  *
  * Deployment binding (read-only checks, Sepolia and Ethereum mainnet):
  *  - WeightedECDSAValidator 0xeD89244160CfE273800B58b1B534031699dFeEEE:
- *    Sourcify full match (creation + runtime) on chain 1 and runtime match on
+ *    Sourcify "match" (creation and runtime; Sourcify's current name for what
+ *    was called a partial match, re-read 2026-10-25 by scripts/audit/verify-pins.mjs)
+ *    on chain 1 and runtime match on
  *    chain 11155111; the verified source file is byte-identical to [K]
  *    src/validator/WeightedECDSAValidator.sol at v3.3 (solc 0.8.24, runs 200,
  *    paris). eip712Domain() returns ("WeightedECDSAValidator", "0.0.3") on

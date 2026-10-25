@@ -19,6 +19,7 @@
     "typecheck": "node scripts/ci/run.mjs --only typecheck",
     "bundle": "node scripts/ci/run.mjs --only bundle",
     "secret-scan": "node scripts/githooks/secret-scan.mjs --tree HEAD",
+    "audit:pins": "node scripts/audit/verify-pins.mjs",
     "hooks:install": "git config core.hooksPath scripts/githooks"
   }
 }

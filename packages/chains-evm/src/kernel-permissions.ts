@@ -53,7 +53,9 @@ import { ENTRYPOINT_V07 } from './userop.js';
  *      deployed policies on its default branch (commit 332deed6, 2026-04-21,
  *      is a rewrite), so each deployed contract was tied to source as follows:
  *        - ECDSASigner, CallPolicy v0.0.4, GasPolicy, RateLimitPolicy,
- *          SudoPolicy: Sourcify "full match" (creation and runtime) on chain 1,
+ *          SudoPolicy: Sourcify "match" (creation and runtime; Sourcify's
+ *          current name for the former partial match, re-read 2026-10-25 by
+ *          scripts/audit/verify-pins.mjs) on chain 1,
  *          sources read from sourcify.dev/server/v2/contract/1/{address}.
  *        - TimestampPolicy: not verified on Sourcify or Etherscan; its runtime
  *          bytecode was reproduced byte for byte by compiling
