@@ -928,3 +928,55 @@ export type {
 
 // Bridge provider adapters (phase 21 item 1; docs/BRIDGE_PROVIDERS.md).
 export * from './bridge/index.js';
+
+// Cold signing for a smart account (phase 23 item 5): the two-phase path on
+// SmartAccountClient and the request / signature payloads.
+export {
+  EXTERNAL_PREPARED_ALTERED,
+  EXTERNAL_SIGNER_7702_REFUSAL,
+  ExternalSignatureError,
+  addressOnlyOwner,
+  recoverExternalSigner,
+} from './smart-account.js';
+export type {
+  ExternalSignature,
+  ExternalSigningScheme,
+  PreparedExternalUserOperation,
+} from './smart-account.js';
+export {
+  COLD_USEROP_7702_REFUSAL,
+  COLD_USEROP_DEFAULT_TTL_SECONDS,
+  COLD_USEROP_EXPIRED,
+  COLD_USEROP_HASH_MISMATCH,
+  COLD_USEROP_IS_THE_REQUEST,
+  COLD_USEROP_MAX_TTL_SECONDS,
+  COLD_USEROP_NOT_A_REQUEST,
+  COLD_USEROP_NOT_A_SIGNATURE,
+  COLD_USEROP_OTHER_REQUEST,
+  COLD_USEROP_REQUEST_TYPE,
+  COLD_USEROP_SIGNATURE_TYPE,
+  COLD_USEROP_VERSION,
+  ColdUserOpRefusedError,
+  KERNEL_ECDSA_ROOT_SCHEME_ID,
+  KERNEL_V3_3_ECDSA_ROOT_SCHEME,
+  buildColdUserOpRequest,
+  buildColdUserOpSignature,
+  coldUserOpDetails,
+  coldUserOpFromFields,
+  coldUserOpUnreadable,
+  coldUserOpWrongSigner,
+  decodeKernelExecuteCalls,
+  newColdUserOpRequestId,
+  parseColdUserOpRequest,
+  preparedFromColdUserOpRequest,
+  serializeColdUserOpRequest,
+  submitColdUserOpRequest,
+  verifyColdUserOpSignature,
+} from './cold-userop.js';
+export type {
+  ColdUserOpDetails,
+  ColdUserOpFields,
+  ColdUserOpRequest,
+  ColdUserOpSignaturePayload,
+  ColdUserOpVerified,
+} from './cold-userop.js';

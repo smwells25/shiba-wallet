@@ -1,6 +1,7 @@
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
-import type { DerivedAccount } from '@shiba-wallet/core';
+import { toChecksumAddress, type DerivedAccount } from '@shiba-wallet/core';
 import { getUserOpHash, type UserOperation } from './userop.js';
 import type { SignedEip7702Authorization } from './eip7702.js';
 import {
@@ -323,6 +324,38 @@ export class SmartAccountClient {
     options: { beforeSign?: (op: UserOperation) => void | Promise<void> } = {},
   ): Promise<{ userOpHash: string; userOp: UserOperation }> {
     const spec = this.config.spec;
+    let op = await this.buildUnsignedOperation(owner, calls, fees, options.beforeSign);
+
+    const hash = getUserOpHash(op, this.config.entryPoint, this.config.chainId);
+    // Awaited: a spec may sign asynchronously (for example behind a passkey
+    // prompt). The context is the exact operation the hash covers.
+    const signature = await spec.signUserOpHash(owner, hash, {
+      userOp: op,
+      entryPoint: this.config.entryPoint,
+      chainId: this.config.chainId,
+    });
+    op = { ...op, signature };
+
+    const userOpHash = await this.bundlerClient.sendUserOperation(op);
+    return { userOpHash, userOp: op };
+  }
+
+  /**
+   * Everything sendCalls does before the owner signs, in the same order
+   * and with the same requests (moved here unchanged in phase 23 so the
+   * external-signer path below runs exactly the same pipeline): sender and
+   * deployment, nonce, the paymaster stub, the checked bundler estimate
+   * and padding, the deposit top-up headroom, the final paymaster data,
+   * the final impossible-limit check and `beforeSign`. Returns the
+   * operation with the estimation stub still in its signature field.
+   */
+  private async buildUnsignedOperation(
+    owner: DerivedAccount,
+    calls: Call[],
+    fees: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
+    beforeSign: ((op: UserOperation) => void | Promise<void>) | undefined,
+  ): Promise<UserOperation> {
+    const spec = this.config.spec;
     // EIP-7702 senders are EOAs: no factory ever; the delegation (if not yet
     // in place) travels as the op's eip7702Auth tuple instead.
     const eip7702Auth = spec.getEip7702Authorization
@@ -427,20 +460,158 @@ export class SmartAccountClient {
       );
     }
 
-    if (options.beforeSign) await options.beforeSign(op);
+    if (beforeSign) await beforeSign(op);
+    return op;
+  }
 
-    const hash = getUserOpHash(op, this.config.entryPoint, this.config.chainId);
-    // Awaited: a spec may sign asynchronously (for example behind a passkey
-    // prompt). The context is the exact operation the hash covers.
-    const signature = await spec.signUserOpHash(owner, hash, {
-      userOp: op,
+  /**
+   * The first half of cold signing for a smart account (phase 23 item 5):
+   * builds the operation for `ownerAddress` exactly as sendCalls would up to
+   * the moment the owner signs — the same requests in the same order
+   * (buildUnsignedOperation: deployment check, nonce, paymaster stub, the
+   * checked bundler estimate and padding, the deposit top-up headroom, the
+   * final paymaster data, the final impossible-limit check and
+   * `options.beforeSign`) — and returns it with its userOpHash and the
+   * digest the off-line owner key must sign under `options.scheme`. No key
+   * is held or read here: the owner is an address only (addressOnlyOwner),
+   * whose sign() throws, so a spec that tried to sign during preparation
+   * fails loudly instead of signing.
+   *
+   * Refused before any request (EXTERNAL_SIGNER_7702_REFUSAL, decision D6):
+   * an EIP-7702 spec, whose operations may carry an authorization tuple the
+   * wallet never asks an off-line signer for.
+   *
+   * The returned fees are FINAL: the owner's signature covers them through
+   * the userOpHash (gasFees is one of the hashed fields, see ./userop.ts), so
+   * no later step can reprice the operation without a new signature.
+   */
+  async prepareUserOperationForExternalSigner(
+    ownerAddress: string,
+    calls: Call[],
+    fees: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
+    options: { scheme: ExternalSigningScheme; beforeSign?: (op: UserOperation) => void | Promise<void> },
+  ): Promise<PreparedExternalUserOperation> {
+    const spec = this.config.spec;
+    if (spec.getEip7702Authorization) throw new Error(EXTERNAL_SIGNER_7702_REFUSAL);
+    const owner = addressOnlyOwner(ownerAddress, this.config.chainId);
+    const op = await this.buildUnsignedOperation(owner, calls, fees, options.beforeSign);
+    if (op.eip7702Auth) throw new Error(EXTERNAL_SIGNER_7702_REFUSAL);
+    const userOpHash = getUserOpHash(op, this.config.entryPoint, this.config.chainId);
+    const signingDigest = options.scheme.digest(userOpHash);
+    if (signingDigest.length !== 32) throw new Error('An external signing scheme must produce a 32-byte digest');
+    return {
+      ownerAddress: owner.address,
+      scheme: options.scheme,
       entryPoint: this.config.entryPoint,
       chainId: this.config.chainId,
-    });
-    op = { ...op, signature };
+      nonceKey: spec.getNonceKey ? spec.getNonceKey(owner) : 0n,
+      userOp: op,
+      userOpHash,
+      signingDigest,
+    };
+  }
 
-    const userOpHash = await this.bundlerClient.sendUserOperation(op);
-    return { userOpHash, userOp: op };
+  /**
+   * The second half: submits a prepared operation with a signature made
+   * elsewhere. In this order, and nothing is sent unless every step passes:
+   *
+   *  1. Local checks, before ANY request: the prepared operation is for this
+   *     client's EntryPoint and chain and carries no EIP-7702 tuple (D6);
+   *     its userOpHash and signing digest are RECOMPUTED from its fields
+   *     (the stored ones must agree, else it was altered); the signature is
+   *     well formed with a low s (recoverExternalSigner) and recovers to the
+   *     prepared owner over the recomputed digest. A signature over any
+   *     other operation — another nonce, other calls, other fees — recovers
+   *     to some other address and is refused here.
+   *  2. Read-only checks against the chain: the spec still derives the same
+   *     sender for the owner, the EntryPoint nonce is still the signed one
+   *     (an operation sent meanwhile consumed it), and the account's
+   *     deployment state still matches the operation (a deploying operation
+   *     for an account that now exists would fail with AA10).
+   *  3. `options.beforeSign` runs on the rebuilt operation (with the spec's
+   *     estimation stub in its signature field, exactly what it saw when the
+   *     operation was prepared), so the caller can apply its fee rules —
+   *     for the app, the bundler-floor check. THE SIGNED FEES CANNOT BE
+   *     REPRICED: if the bundler's floor moved above them, the only honest
+   *     outcome is that this hook throws and the caller prepares a fresh
+   *     request for a fresh signature.
+   *  4. The signature is encoded with the scheme and the operation goes to
+   *     eth_sendUserOperation.
+   *
+   * The spec never signs on this path (spec.signUserOpHash is not called)
+   * and no key is read: the signature is the only secret-derived input.
+   */
+  async submitPreparedUserOperation(
+    prepared: PreparedExternalUserOperation,
+    signature: ExternalSignature,
+    options: { beforeSign?: (op: UserOperation) => void | Promise<void> } = {},
+  ): Promise<{ userOpHash: string; userOp: UserOperation }> {
+    const spec = this.config.spec;
+    if (spec.getEip7702Authorization || prepared.userOp.eip7702Auth) throw new Error(EXTERNAL_SIGNER_7702_REFUSAL);
+    if (prepared.chainId !== this.config.chainId) {
+      throw new ExternalSignatureError(
+        `This operation was prepared for chain ${prepared.chainId}, not ${this.config.chainId}. Nothing was sent.`,
+      );
+    }
+    if (prepared.entryPoint.toLowerCase() !== this.config.entryPoint.toLowerCase()) {
+      throw new ExternalSignatureError(
+        `This operation was prepared for EntryPoint ${prepared.entryPoint}, not ${this.config.entryPoint}. Nothing was sent.`,
+      );
+    }
+    const owner = addressOnlyOwner(prepared.ownerAddress, this.config.chainId);
+    // Rebuilt field by field from the prepared record (never a caller's
+    // operation object), with the estimation stub as at preparation.
+    const op = rebuildPreparedOperation(prepared.userOp, spec.stubSignature());
+    const hash = getUserOpHash(op, this.config.entryPoint, this.config.chainId);
+    if (!equalBytes(hash, prepared.userOpHash)) {
+      throw new ExternalSignatureError(EXTERNAL_PREPARED_ALTERED);
+    }
+    const digest = prepared.scheme.digest(hash);
+    if (!equalBytes(digest, prepared.signingDigest)) {
+      throw new ExternalSignatureError(EXTERNAL_PREPARED_ALTERED);
+    }
+    let recovered: string;
+    try {
+      recovered = recoverExternalSigner(digest, signature);
+    } catch (e) {
+      throw new ExternalSignatureError(
+        `The signature could not be read (${e instanceof Error ? e.message : String(e)}). Nothing was sent.`,
+      );
+    }
+    if (recovered.toLowerCase() !== owner.address.toLowerCase()) {
+      throw new ExternalSignatureError(
+        `The signature recovers to ${recovered}, not to the owner ${owner.address}, over this operation. Nothing was sent.`,
+      );
+    }
+
+    // Read-only checks against the chain.
+    const sender = await spec.getAddress(owner);
+    if (sender.toLowerCase() !== op.sender.toLowerCase()) {
+      throw new ExternalSignatureError(
+        `The owner's smart account is ${sender}, but the operation is from ${op.sender}. Nothing was sent.`,
+      );
+    }
+    const nonce = await this.getNonce(owner);
+    if (nonce !== op.nonce) {
+      throw new ExternalSignatureError(
+        `The account's EntryPoint nonce is now ${nonce}, but this operation was signed for nonce ${op.nonce}: ` +
+          'another operation used it first. Nothing was sent; prepare a new request.',
+      );
+    }
+    const deployed = await this.isDeployed(owner);
+    if (deployed === Boolean(op.factory)) {
+      throw new ExternalSignatureError(
+        deployed
+          ? 'The account was deployed after this operation was prepared, and the operation would deploy it again. Nothing was sent; prepare a new request.'
+          : 'This operation expects a deployed account, but the account has no code. Nothing was sent.',
+      );
+    }
+
+    if (options.beforeSign) await options.beforeSign(op);
+
+    const signed: UserOperation = { ...op, signature: prepared.scheme.encodeSignature(signature) };
+    const userOpHash = await this.bundlerClient.sendUserOperation(signed);
+    return { userOpHash, userOp: signed };
   }
 
   async waitForReceipt(
@@ -475,6 +646,149 @@ function paymasterFields(result: {
       ? { paymasterPostOpGasLimit: result.paymasterPostOpGasLimit }
       : {}),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Cold signing for a smart account (phase 23 item 5)
+// ---------------------------------------------------------------------------
+
+/** A recoverable secp256k1 signature made by an off-line key. */
+export interface ExternalSignature {
+  /** The recovery bit, 0 or 1. */
+  yParity: 0 | 1;
+  /** 32 bytes, big-endian. */
+  r: Uint8Array;
+  /** 32 bytes, big-endian, at most secp256k1n / 2. */
+  s: Uint8Array;
+}
+
+/**
+ * How an account's validation expects the owner to sign a userOpHash, in
+ * two pure functions an off-line signer and the on-line half can both run:
+ * the 32-byte digest the key signs, and the UserOperation.signature bytes
+ * built from the resulting (yParity, r, s). A scheme must reproduce the
+ * spec's own signUserOpHash byte for byte (the Kernel v3.3 ECDSA-root
+ * scheme in ./cold-userop.ts is pinned against createKernelAccountSpec in
+ * test/cold-userop.test.ts).
+ */
+export interface ExternalSigningScheme {
+  /** Stable identifier, written into cold-signing requests. */
+  id: string;
+  digest(userOpHash: Uint8Array): Uint8Array;
+  encodeSignature(signature: ExternalSignature): Uint8Array;
+}
+
+/** What prepareUserOperationForExternalSigner returns and submitPreparedUserOperation takes. */
+export interface PreparedExternalUserOperation {
+  /** EIP-55. */
+  ownerAddress: string;
+  scheme: ExternalSigningScheme;
+  entryPoint: string;
+  chainId: bigint;
+  /** The uint192 nonce key the operation's nonce was read for (0 = Kernel root). */
+  nonceKey: bigint;
+  /** The operation exactly as it will be submitted, with the estimation stub as its signature. */
+  userOp: UserOperation;
+  /** EntryPoint v0.7 getUserOpHash of userOp. */
+  userOpHash: Uint8Array;
+  /** scheme.digest(userOpHash): what the off-line owner key signs. */
+  signingDigest: Uint8Array;
+}
+
+/** Thrown for every refusal of submitPreparedUserOperation; the message is a plain sentence. */
+export class ExternalSignatureError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ExternalSignatureError';
+  }
+}
+
+export const EXTERNAL_SIGNER_7702_REFUSAL =
+  'Operations for an EIP-7702 account are never prepared for an off-line signer: such an operation may carry an ' +
+  'authorization that changes what the address runs, and the wallet never asks an off-line signer for one. ' +
+  'Nothing was prepared or sent.';
+
+export const EXTERNAL_PREPARED_ALTERED =
+  'The stored operation does not match its own userOpHash or signing digest, so it was altered after it was ' +
+  'prepared. Nothing was sent.';
+
+const SECP256K1_N = secp256k1.Point.Fn.ORDER;
+const SECP256K1_HALF_N = SECP256K1_N >> 1n;
+
+/**
+ * The address whose key made `signature` over the 32-byte `digest`
+ * (EIP-55). Refuses a yParity other than 0 / 1, r or s that are not 32
+ * bytes, r outside 1..n-1, and s that is zero or above n/2 (only low-s
+ * signatures are accepted, as every RFC 6979 signer here produces; the
+ * Kernel validator would also accept the high-s twin through solady's
+ * ECDSA.recover, but the wallet does not need malleable forms).
+ */
+export function recoverExternalSigner(digest: Uint8Array, signature: ExternalSignature): string {
+  if (!(digest instanceof Uint8Array) || digest.length !== 32) throw new Error('the digest must be 32 bytes');
+  if (signature.yParity !== 0 && signature.yParity !== 1) throw new Error('yParity must be 0 or 1');
+  if (!(signature.r instanceof Uint8Array) || signature.r.length !== 32) throw new Error('r must be 32 bytes');
+  if (!(signature.s instanceof Uint8Array) || signature.s.length !== 32) throw new Error('s must be 32 bytes');
+  const r = BigInt(bytesToHexStrict(signature.r));
+  const s = BigInt(bytesToHexStrict(signature.s));
+  if (r === 0n || r >= SECP256K1_N) throw new Error('r is outside the secp256k1 range');
+  if (s === 0n || s > SECP256K1_HALF_N) throw new Error('s is zero or above secp256k1n/2');
+  const recovered = new Uint8Array(65);
+  recovered[0] = signature.yParity;
+  recovered.set(signature.r, 1);
+  recovered.set(signature.s, 33);
+  const point = secp256k1.Signature.fromBytes(recovered, 'recovered').recoverPublicKey(digest);
+  return toChecksumAddress(keccak_256(point.toBytes(false).subarray(1)).slice(12));
+}
+
+/**
+ * A DerivedAccount that is an ADDRESS ONLY: what the on-line half of cold
+ * signing holds for the owner. Specs need the owner for getAddress /
+ * getFactoryArgs / getNonceKey, which read only `address`; sign() throws,
+ * so nothing on the external-signer path can sign by accident.
+ */
+export function addressOnlyOwner(address: string, chainId: bigint): DerivedAccount {
+  if (typeof address !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(address)) {
+    throw new Error('The owner must be a 0x-prefixed 20-byte address');
+  }
+  return {
+    chainId: `eip155:${chainId}`,
+    path: '',
+    publicKey: new Uint8Array(0),
+    address: toChecksumAddress(hexToBytesStrict(address.toLowerCase())),
+    sign(): Uint8Array {
+      throw new Error('This owner key is not on this device: the operation must be signed by the off-line signer');
+    },
+  };
+}
+
+/** A field-by-field copy of `op` with `signature`; optional fields kept only when present. */
+function rebuildPreparedOperation(op: UserOperation, signature: Uint8Array): UserOperation {
+  return {
+    sender: op.sender,
+    nonce: op.nonce,
+    ...(op.factory !== undefined ? { factory: op.factory } : {}),
+    ...(op.factoryData !== undefined ? { factoryData: op.factoryData.slice() } : {}),
+    callData: op.callData.slice(),
+    callGasLimit: op.callGasLimit,
+    verificationGasLimit: op.verificationGasLimit,
+    preVerificationGas: op.preVerificationGas,
+    maxFeePerGas: op.maxFeePerGas,
+    maxPriorityFeePerGas: op.maxPriorityFeePerGas,
+    ...(op.paymaster !== undefined ? { paymaster: op.paymaster } : {}),
+    ...(op.paymasterVerificationGasLimit !== undefined
+      ? { paymasterVerificationGasLimit: op.paymasterVerificationGasLimit }
+      : {}),
+    ...(op.paymasterPostOpGasLimit !== undefined ? { paymasterPostOpGasLimit: op.paymasterPostOpGasLimit } : {}),
+    ...(op.paymasterData !== undefined ? { paymasterData: op.paymasterData.slice() } : {}),
+    signature,
+  };
+}
+
+function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (!(a instanceof Uint8Array) || !(b instanceof Uint8Array) || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i]! ^ b[i]!;
+  return diff === 0;
 }
 
 /**
