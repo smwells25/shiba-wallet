@@ -20,6 +20,8 @@ import { requireLocalAuth } from '../wallet/biometric';
 import { AsyncStorage } from '../wallet/store-keys';
 import { parseUnits } from '../wallet/balances';
 import { multisigRouteRefusal, watchOnlyRouteRefusal } from '../wallet/watch-only';
+import { waitForAllowance } from '../wallet/swap';
+import { evmProfileByCaip2 } from '../config/evm-chain';
 import {
   EVM_CHAIN_ID,
   QUOTE_ENDPOINT_CHANGED_TITLE,
@@ -50,6 +52,7 @@ import {
 import { PREVIEW_AA_NOTE } from '../wallet/simulation';
 import {
   BRIDGE_AMOUNT_PLACEHOLDER,
+  BRIDGE_ASSETS,
   BRIDGE_INTRO,
   BRIDGE_RECORDS_NOTE,
   BRIDGE_RECORDS_READ_ONLY_MESSAGE,
@@ -57,7 +60,21 @@ import {
   BRIDGE_USEROP_REVERTED,
   BridgeRefusal,
   broadcastStamped,
+  bridgeAmountHint,
+  bridgeApprovePromptTitle,
+  bridgeAssetDecimals,
+  bridgeAssetLabel,
   bridgeConfirmModel,
+  bridgeMintBlocker,
+  bridgeMintCall,
+  bridgeMintPromptTitle,
+  bridgeNeedsApproval,
+  defaultBridgeAsset,
+  prepareBridgeApprove,
+  prepareBridgeMint,
+  trackedPatch,
+  usdcRecipientNote,
+  usdcSmartRecipientUnavailable,
   bridgeChoiceNote,
   bridgeFormInputsShown,
   bridgeProviderChoiceHint,
@@ -85,6 +102,7 @@ import {
   upgradedAccountRecipientNote,
   trackBridgeTransfer,
   updateBridgeTransfer,
+  type BridgeAssetChoice,
   type BridgeOffer,
   type BridgePlan,
   type BridgeReaders,
@@ -134,7 +152,8 @@ async function checkBridgeRecord(
   busy(record.id, true);
   try {
     const status = await trackBridgeTransfer(record, readers);
-    updateBridgeTransfer(record.id, { status, checkedAt: Date.now(), checkError: null });
+    // The status, and a CCTP transfer's checked attested message, so a restart can offer the mint again.
+    updateBridgeTransfer(record.id, trackedPatch(record, status, Date.now()));
   } catch (e) {
     const text = sanitizeEndpointMessage(errorText(e));
     updateBridgeTransfer(record.id, { checkedAt: Date.now(), checkError: text === '' ? 'No details were given.' : text });
@@ -168,17 +187,17 @@ function useBridgeAaBundle(
   }, [active, url, aaConfig, accountIndex, ownerAddress, chainIdDecimal]);
 }
 
-/** What the screen offers on `caip2`, or the sentence why not (pure; no request). */
-function offerOrError(caip2: string, refused: boolean): { offer: BridgeOffer | null; error: string | null } {
+/** What the screen offers on `caip2` for one asset, or the sentence why not (pure; no request). */
+function offerOrError(caip2: string, asset: BridgeAssetChoice, refused: boolean): { offer: BridgeOffer | null; error: string | null } {
   if (refused) return { offer: null, error: null };
   try {
-    return { offer: bridgeOfferFor(caip2), error: null };
+    return { offer: bridgeOfferFor(caip2, asset), error: null };
   } catch (e) {
     return { offer: null, error: errorText(e) };
   }
 }
 
-type Phase = 'form' | 'preparing' | 'confirm' | 'sending' | 'aa-confirm' | 'aa-sending' | 'success';
+type Phase = 'form' | 'preparing' | 'approve' | 'approving' | 'confirm' | 'sending' | 'aa-confirm' | 'aa-sending' | 'success';
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -197,9 +216,10 @@ function describeBridgeError(e: unknown, symbol: string): string {
 
 /**
  * Bridging (feature 35, phase 21 item 1; docs/BRIDGE_PROVIDERS.md): test
- * ETH from the active test network to another one, through a provider the
- * USER chooses from every provider the wallet knows, each shown with its
- * own trust statement, fee and measured time. TEST NETWORKS ONLY (readiness
+ * ETH (LayerZero) or USDC (Circle CCTP, phase 23 item 4) from the active
+ * test network to another one, through a provider the USER chooses from
+ * every provider the wallet knows for that asset, each shown with its own
+ * trust statement, fee and measured time. TEST NETWORKS ONLY (readiness
  * row 'bridge', enforced here before any request and again in
  * wallet/bridge.ts). Watch-only and multi-signature accounts are refused by
  * name (the route gate, and again here).
@@ -211,9 +231,13 @@ function describeBridgeError(e: unknown, symbol: string): string {
  * for the regular account, prepareAaCalls / sendAa for the smart account,
  * with the balance-change preview, the risk card, the spending limits and
  * the pre-flight (eth_call or the bundler's estimate) before the device
- * check. The recipient is always the regular account (see wallet/bridge.ts
- * for why). Transfers are followed every 15 seconds while this screen is
- * open, from the chains' own events.
+ * check. Test ETH always goes to the regular account; USDC to the regular
+ * account or, when chosen, the smart account (see wallet/bridge.ts for
+ * why). The regular account's USDC transfer is two transactions (the exact
+ * approval, then the burn), each with its own prompt; the smart account's
+ * is one operation. Transfers are followed every 15 seconds while this
+ * screen is open, from the chains' own events; an attested CCTP transfer
+ * offers its mint on the receiving network.
  */
 export function BridgeScreen({ navigation }: Props) {
   const theme = useTheme();
@@ -229,6 +253,11 @@ export function BridgeScreen({ navigation }: Props) {
   const [endpoint, setEndpoint] = useState<NetworkEndpoint | null | undefined>(undefined);
   const [phase, setPhase] = useState<Phase>('form');
   const [destination, setDestination] = useState<number | null>(null);
+  // The asset (the user's input, like the destination chip); the provider is never chosen for the user.
+  const [assetPick, setAssetPick] = useState<BridgeAssetChoice | null>(null);
+  const [recipientPick, setRecipientPick] = useState<'regular' | 'smart-account'>('regular');
+  const [notice, setNotice] = useState<string | null>(null);
+  const [approveTxid, setApproveTxid] = useState<string | null>(null);
   const [providerId, setProviderId] = useState<string | null>(null);
   const [amountText, setAmountText] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
@@ -307,7 +336,10 @@ export function BridgeScreen({ navigation }: Props) {
   }, [caip2]);
 
   // The offer is pure (no request): the readiness gate and the pinned tables.
-  const { offer, error: offerError } = offerOrError(caip2, gate !== null || keyless !== null);
+  const refused = gate !== null || keyless !== null;
+  const asset: BridgeAssetChoice = assetPick ?? (refused ? 'native' : defaultBridgeAsset(caip2));
+  const assetName = bridgeAssetLabel(asset, symbol);
+  const { offer, error: offerError } = offerOrError(caip2, asset, refused);
   const sendableDestinations = offer ? offer.destinations.filter((d) => d.sendable) : [];
   const chosenDestination = destination ?? sendableDestinations[0]?.chainId ?? offer?.destinations[0]?.chainId ?? null;
   const rows = offer && chosenDestination !== null ? bridgeProviderRows(offer, chosenDestination) : [];
@@ -329,10 +361,16 @@ export function BridgeScreen({ navigation }: Props) {
     (aaType === 'kernel-v3.3' || aaType === 'kernel-7702') &&
     url !== null;
   const aaActive = aaOffered && aaEnabled;
+  // USDC may go to the smart account (CCTP's ERC-20 mint has no 2,300-gas limit) when its address there is
+  // known to be the same: a Kernel v3.3 account and a receiving network whose Kernel stack the wallet verified.
+  const destinationProfile = chosenDestination !== null ? evmProfileByCaip2(`eip155:${chosenDestination}`) : undefined;
+  const smartRecipientPossible = asset === 'usdc' && aaOffered && aaType === 'kernel-v3.3';
+  const smartRecipientOffered = smartRecipientPossible && destinationProfile?.kernelV33Verified === true;
+  const recipientKind: 'regular' | 'smart-account' = smartRecipientOffered && recipientPick === 'smart-account' ? 'smart-account' : 'regular';
   // Primitive inputs only (the account objects are rebuilt on every render).
   const ownerAddress = account?.address ?? null;
   const accountIndex = activeAccount?.index ?? null;
-  const aa = useBridgeAaBundle(aaActive, url, aaConfig, accountIndex, ownerAddress, evmChain.chainIdDecimal);
+  const aa = useBridgeAaBundle(aaActive || recipientKind === 'smart-account', url, aaConfig, accountIndex, ownerAddress, evmChain.chainIdDecimal);
 
   /** The readers for the adapters: the given endpoint for the active network, the built-in defaults elsewhere. */
   const readersFor = (sourceUrl: string | null): BridgeReaders => bridgeReadersFor(evmChain.chainIdDecimal, sourceUrl);
@@ -416,6 +454,8 @@ export function BridgeScreen({ navigation }: Props) {
 
   const backToForm = (message: string) => {
     setFormError(message === '' ? null : message);
+    setNotice(null);
+    setApproveTxid(null);
     setPlan(null);
     setEoaQuote(null);
     setAaQuote(null);
@@ -424,7 +464,7 @@ export function BridgeScreen({ navigation }: Props) {
 
   const parseAmount = (): bigint | null => {
     try {
-      const amount = parseUnits(amountText, 18);
+      const amount = parseUnits(amountText, bridgeAssetDecimals(asset));
       if (amount <= 0n) throw new Error('Enter an amount greater than zero.');
       return amount;
     } catch (e) {
@@ -437,16 +477,21 @@ export function BridgeScreen({ navigation }: Props) {
   const quotePlan = async (amount: bigint, provider: string, sourceUrl: string): Promise<BridgePlan> => {
     if (chosenDestination === null) throw new BridgeRefusal('Choose the network to send to.');
     const bundle = aa.bundle;
-    if (aaActive && bundle) {
-      const sender = await resolveAaSender(bundle, account.address);
+    // The smart account's address (the sender, or the USDC recipient when chosen).
+    const smartAddress = bundle && (aaActive || recipientKind === 'smart-account') ? await resolveAaSender(bundle, account.address) : null;
+    if (recipientKind === 'smart-account' && smartAddress === null) throw new BridgeRefusal('The smart account could not be read just now; go back and try again.');
+    // Test ETH always goes to the regular account; USDC to the regular account or the chosen smart account.
+    const recipient = recipientKind === 'smart-account' && smartAddress !== null ? smartAddress : account.address;
+    if (aaActive && bundle && smartAddress !== null) {
       return quoteBridge({
         caip2,
         destinationChainId: chosenDestination,
         providerId: provider,
         amount,
-        sender,
+        sender: smartAddress,
         senderKind: 'smart-account',
-        recipient: account.address,
+        recipient,
+        recipientKind,
         nativeSymbol: symbol,
         readers: readersFor(sourceUrl),
       });
@@ -458,13 +503,14 @@ export function BridgeScreen({ navigation }: Props) {
       amount,
       sender: account.address,
       senderKind: 'regular',
-      recipient: account.address,
+      recipient,
+      recipientKind,
       nativeSymbol: symbol,
       readers: readersFor(sourceUrl),
     });
   };
 
-  const rowQuoteKey = `${chosenDestination ?? ''}|${amountText.trim()}|${aaActive ? 'aa' : 'eoa'}|${caip2}`;
+  const rowQuoteKey = `${chosenDestination ?? ''}|${amountText.trim()}|${aaActive ? 'aa' : 'eoa'}|${caip2}|${asset}|${recipientKind}`;
   const onGetQuotes = async () => {
     setFormError(null);
     const amount = parseAmount();
@@ -520,17 +566,65 @@ export function BridgeScreen({ navigation }: Props) {
       const start = await currentEndpoint();
       const outcome = await callWithFailover(start, async (ep) => {
         const p = await quotePlan(amount, chosenProvider, ep.url);
-        const q = await prepareBridgeSend(ep.url, account.address, p);
-        return { p, q };
+        // USDC through CCTP: step 1 is the exact approval, unless an unused approval of at least the amount is
+        // already in place; the burn's pre-flight can pass only after it.
+        if (p.approval && (await bridgeNeedsApproval(evmHttpTransport(ep.url), p))) {
+          return { p, q: await prepareBridgeApprove(ep.url, account.address, p), step: 'approve' as const };
+        }
+        return { p, q: await prepareBridgeSend(ep.url, account.address, p), step: 'main' as const };
       });
       if (outcome.switched) setEndpoint(outcome.endpoint);
       preparedFrom.current = account.address;
       setQuotedUrl(outcome.endpoint.url);
       setPlan(outcome.value.p);
       setEoaQuote(outcome.value.q);
-      setPhase('confirm');
+      setPhase(outcome.value.step === 'approve' ? 'approve' : 'confirm');
     } catch (e) {
       backToForm(describeBridgeError(e, symbol));
+    }
+  };
+
+  /** The regular account's USDC step 1 of 2: the exact approval, then the burn quoted once it is confirmed. */
+  const onApprove = async () => {
+    if (!quotedUrl || !eoaQuote || !plan?.approval) return;
+    const approval = plan.approval;
+    const approveUrl = quotedUrl;
+    const changed = await pinnedEndpointProblem(approveUrl);
+    if (changed) {
+      Alert.alert(QUOTE_ENDPOINT_CHANGED_TITLE, changed);
+      backToForm('Please review again.');
+      return;
+    }
+    if (!eoaQuote.simulation.ok) {
+      Alert.alert('Not sent', `The pre-flight simulation failed: ${eoaQuote.simulation.reason}. Nothing was sent.`);
+      return;
+    }
+    // As on the Staking screen, the approval itself moves nothing; the spending limits are checked on the burn.
+    const auth = await requireLocalAuth(bridgeApprovePromptTitle(plan));
+    if (!auth.ok) {
+      Alert.alert('Not approved', auth.message);
+      return;
+    }
+    setPhase('approving');
+    try {
+      const sent = await signWith(EVM_CHAIN_ID, preparedFrom.current ?? '', (signer) => sendEvm(approveUrl, signer, eoaQuote, evmChain.explorerTxBase));
+      setApproveTxid(sent.txid);
+      const confirmed = await waitForAllowance(approveUrl, approval.token, account.address, approval.spender, approval.amount);
+      if (!confirmed) {
+        backToForm(
+          `The approval was broadcast (transaction ${sent.txid}) but has not taken effect yet. Nothing further was sent. ` +
+            'Wait for it to confirm, then review again: the approval will already be in place.',
+        );
+        return;
+      }
+      const burn = await prepareBridgeSend(approveUrl, account.address, plan);
+      setEoaQuote(burn);
+      setNotice('Approval confirmed. The burn was quoted after the approval; these are its final numbers.');
+      setPhase('confirm');
+    } catch (e) {
+      const { title, detail } = describeSendError(e, symbol, symbol);
+      Alert.alert(title, detail);
+      setPhase('approve');
     }
   };
 
@@ -647,6 +741,18 @@ export function BridgeScreen({ navigation }: Props) {
           {bridgeRecordTrackable(r) ? (
             <Button title="Check now" variant="secondary" onPress={() => void checkTransfer(r)} disabled={checking[r.id] === true} />
           ) : null}
+          {bridgeMintCall(r) && !r.retryTxHash ? (
+            <MintPanel
+              record={r}
+              activeCaip2={caip2}
+              fromAddress={account.address}
+              symbol={symbol}
+              explorerTxBase={evmChain.explorerTxBase}
+              signWith={signWith}
+              currentEndpoint={currentEndpoint}
+              balanceUrl={url}
+            />
+          ) : null}
           {bridgeRetryCall(r) ? (
             <RetryPanel
               record={r}
@@ -674,6 +780,7 @@ export function BridgeScreen({ navigation }: Props) {
           </Text>
         </View>
         {result?.explorerUrl ? <Button title="View on block explorer" variant="secondary" onPress={() => void Linking.openURL(result.explorerUrl!)} /> : null}
+        {approveTxid ? <Text style={[styles.hint, { color: theme.textMuted }]}>Approval transaction: {approveTxid}</Text> : null}
         {aaResult?.receiptState === 'pending' ? sendingView('Bundling… waiting for the UserOperation receipt.') : null}
         {aaResult?.receiptState === 'timeout' ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
@@ -710,6 +817,8 @@ export function BridgeScreen({ navigation }: Props) {
               setAaQuote(null);
               setAmountText('');
               setRowQuotes(null);
+              setNotice(null);
+              setApproveTxid(null);
               setPhase('form');
             })
           }
@@ -729,6 +838,14 @@ export function BridgeScreen({ navigation }: Props) {
         <Text style={[styles.notice, { color: theme.text }]}>{model.youSend}</Text>
         <Text style={[styles.notice, { color: theme.text }]}>{model.arrives}</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>{model.minimum}</Text>
+        {model.callLines.length > 0 ? (
+          <>
+            <Text accessibilityRole="header" style={[styles.label, { color: theme.textMuted }]}>What is signed on {p.sourceLabel}</Text>
+            {model.callLines.map((line) => (
+              <Text key={line} style={[styles.hint, { color: theme.text }]}>{line}</Text>
+            ))}
+          </>
+        ) : null}
         {model.recipientLines.map((line, i) => (i === 0 ? <Text key={line} style={[styles.hint, { color: theme.text }]}>{line}</Text> : <WarningBox key={line}>{line}</WarningBox>))}
         {model.feeLines.map((f) => (
           <View key={f.label}>
@@ -736,7 +853,7 @@ export function BridgeScreen({ navigation }: Props) {
             <Text style={[styles.hint, { color: theme.textMuted }]}>{f.note}</Text>
           </View>
         ))}
-        <Row label="Leaving your account for the bridge (amount + fee)" value={model.total} theme={theme} />
+        <Row label={`Leaving your account for the bridge (amount + ${p.asset === 'usdc' ? 'Circle fee' : 'fee'})`} value={model.total} theme={theme} />
         {model.timeLines.map((line) => (
           <Text key={line} style={[styles.hint, { color: theme.textMuted }]}>{line}</Text>
         ))}
@@ -755,10 +872,53 @@ export function BridgeScreen({ navigation }: Props) {
     );
   };
 
+  // ------------------------------------------- approve (USDC, the regular account, step 1 of 2)
+  if ((phase === 'approve' || phase === 'approving') && plan?.approval && eoaQuote) {
+    return (
+      <ScrollView key="bridge-approve" style={screenStyle(theme)} contentContainerStyle={styles.content}>
+        <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
+        <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>Step 1 of 2 — Approve exactly the amount</Text>
+        <Row label="From account" value={activeAccount?.name ?? '—'} sub={account.address} spoken={`From account: ${activeAccount?.name ?? 'unknown'}, ${spokenShortAddress(account.address)}`} theme={theme} />
+        <ImportedKeyNotice show={activeAccount?.imported === true} />
+        {confirmBody(plan)}
+        <Row label={`Max network fee for the approval (paid in ${symbol})`} value={`${exact18(eoaQuote.fee)} ${symbol}`} theme={theme} />
+        {(() => {
+          const sourceFees = bridgeSourceFeeLines(eoaQuote, symbol);
+          return (
+            <>
+              <Text style={[styles.hint, { color: theme.textMuted }]}>{sourceFees.worstCase}</Text>
+              {sourceFees.rows.map((r) => (
+                <Row key={r.label} label={r.label} value={r.value} theme={theme} />
+              ))}
+              {sourceFees.note ? <Text style={[styles.hint, { color: theme.textMuted }]}>{sourceFees.note}</Text> : null}
+            </>
+          );
+        })()}
+        <BalanceChangePreview url={quotedUrl} request={{ from: account.address, to: eoaQuote.to, value: 0n, ...(eoaQuote.data ? { data: eoaQuote.data } : {}) }} />
+        <RiskWarnings url={quotedUrl} wallet={account.address} to={eoaQuote.to} data={eoaQuote.data} />
+        {eoaQuote.simulation.ok ? (
+          <Text style={[styles.simulationOk, { color: theme.success }]}>Pre-flight simulation passed (eth_call).</Text>
+        ) : (
+          <WarningBox>Pre-flight simulation failed: {eoaQuote.simulation.reason}. Nothing will be sent.</WarningBox>
+        )}
+        {phase === 'approving' ? (
+          sendingView('Approving, then waiting for the approval to take effect…')
+        ) : (
+          <>
+            <Button title={bridgeApprovePromptTitle(plan)} onPress={() => void onApprove()} disabled={!eoaQuote.simulation.ok} />
+            <Button title="Back" variant="secondary" onPress={() => backToForm('')} />
+          </>
+        )}
+      </ScrollView>
+    );
+  }
+
   if ((phase === 'confirm' || phase === 'sending') && plan && eoaQuote) {
     return (
       <ScrollView key="bridge-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
+        {notice ? <Text style={[styles.hint, { color: theme.success }]}>{notice}</Text> : null}
+        {approveTxid ? <Text style={[styles.hint, { color: theme.textMuted }]}>Approval transaction: {approveTxid}</Text> : null}
         <Row label="From account" value={activeAccount?.name ?? '—'} sub={account.address} spoken={`From account: ${activeAccount?.name ?? 'unknown'}, ${spokenShortAddress(account.address)}`} theme={theme} />
         <ImportedKeyNotice show={activeAccount?.imported === true} />
         {confirmBody(plan)}
@@ -815,7 +975,12 @@ export function BridgeScreen({ navigation }: Props) {
           theme={theme}
         />
         <AaDepositNote fee={aaQuote.fee} deposit={aaQuote.deposit} sponsored={aaQuote.sponsored} symbol={symbol} />
-        <BalanceChangePreview url={url} request={{ from: aaQuote.sender, to: first.to, value: first.value, data: first.data }} note={PREVIEW_AA_NOTE} />
+        <BalanceChangePreview
+          url={url}
+          request={{ from: aaQuote.sender, to: first.to, value: first.value, data: first.data }}
+          batch={aaQuote.calls.length > 1 ? aaQuote.calls.map((c) => ({ from: aaQuote.sender, to: c.to, value: c.value, data: c.data })) : undefined}
+          note={PREVIEW_AA_NOTE}
+        />
         <RiskWarnings url={url} wallet={aaQuote.sender} to={plan.call.to} data={plan.call.data} />
         <SpendingPolicyNotice owner={account.address} quote={aaQuote} from={account.address} />
         <Text style={[styles.simulationOk, { color: theme.success }]}>Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).</Text>
@@ -833,11 +998,30 @@ export function BridgeScreen({ navigation }: Props) {
 
   // --------------------------------------------------------------- form
   const currentRowQuotes = rowQuotes && rowQuotes.key === rowQuoteKey ? rowQuotes.byProvider : {};
-  const amountField = fieldLabel('amount', `Amount (${symbol})`);
+  const amountField = fieldLabel('amount', `Amount (${assetName})`);
   return (
     <ScrollView key="bridge-form" style={screenStyle(theme)} contentContainerStyle={styles.content}>
       <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
       <Text style={[styles.hint, { color: theme.text }]}>{BRIDGE_INTRO}</Text>
+      <Text accessibilityRole="header" style={[styles.label, { color: theme.textMuted }]}>Asset to bridge</Text>
+      <View style={styles.choiceRow}>
+        {BRIDGE_ASSETS.map((a) => (
+          <Button
+            key={a}
+            title={asset === a ? `✓ ${bridgeAssetLabel(a, symbol)}` : bridgeAssetLabel(a, symbol)}
+            variant={asset === a ? 'primary' : 'secondary'}
+            selected={asset === a}
+            style={styles.choiceButton}
+            onPress={() => {
+              setAssetPick(a);
+              setDestination(null);
+              setProviderId(null);
+              setRecipientPick('regular');
+              setFormError(null);
+            }}
+          />
+        ))}
+      </View>
       {offer.unavailable ? <WarningBox>{offer.unavailable}</WarningBox> : null}
       <ImportedKeyNotice show={activeAccount?.imported === true} />
 
@@ -870,7 +1054,36 @@ export function BridgeScreen({ navigation }: Props) {
               />
             ))}
           </View>
-          {destinationLabel ? (
+          {destinationLabel && asset === 'usdc' ? (
+            <>
+              {smartRecipientOffered ? (
+                <>
+                  <Text accessibilityRole="header" style={[styles.label, { color: theme.textMuted }]}>Receive the USDC at</Text>
+                  <View style={styles.choiceRow}>
+                    {(['regular', 'smart-account'] as const).map((k) => (
+                      <Button
+                        key={k}
+                        title={`${recipientKind === k ? '✓ ' : ''}${k === 'regular' ? 'Your regular account' : 'Your smart account'}`}
+                        variant={recipientKind === k ? 'primary' : 'secondary'}
+                        selected={recipientKind === k}
+                        style={styles.choiceButton}
+                        onPress={() => {
+                          setRecipientPick(k);
+                          setFormError(null);
+                        }}
+                      />
+                    ))}
+                  </View>
+                </>
+              ) : null}
+              {smartRecipientPossible && !smartRecipientOffered ? (
+                <Text style={[styles.hint, { color: theme.textMuted }]}>{usdcSmartRecipientUnavailable(destinationLabel)}</Text>
+              ) : null}
+              <Text style={[styles.hint, { color: theme.text }]}>
+                {usdcRecipientNote(recipientKind, recipientKind === 'regular' ? account.address : null, destinationLabel)}
+              </Text>
+            </>
+          ) : destinationLabel ? (
             aaActive && aaType === 'kernel-v3.3' ? (
               <WarningBox>{smartAccountRecipientNote(account.address, destinationLabel)}</WarningBox>
             ) : aaActive ? (
@@ -900,9 +1113,13 @@ export function BridgeScreen({ navigation }: Props) {
             placeholder={BRIDGE_AMOUNT_PLACEHOLDER}
             placeholderTextColor={theme.textMuted}
           />
-          <Text style={[styles.hint, { color: theme.textMuted }]}>
-            Stargate moves {symbol} in steps of 0.000001; an amount with more decimal places is refused, not rounded.
-          </Text>
+          {asset === 'native' ? (
+            <Text style={[styles.hint, { color: theme.textMuted }]}>
+              Stargate moves {symbol} in steps of 0.000001; an amount with more decimal places is refused, not rounded.
+            </Text>
+          ) : (
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{bridgeAmountHint('usdc')}</Text>
+          )}
         </>
       ) : null}
 
@@ -1038,6 +1255,112 @@ function RetryPanel({
         </>
       ) : (
         <Button title="Prepare the delivery transaction" variant="secondary" onPress={() => void prepare()} disabled={busy} />
+      )}
+      {error ? <WarningBox>{error}</WarningBox> : null}
+    </View>
+  );
+}
+
+/**
+ * The mint for a CCTP transfer Circle has attested: receiveMessage(message,
+ * attestation) on the RECEIVING network's MessageTransmitterV2, value 0,
+ * sent from the regular account while that network is the active one and
+ * the account holds its coin there; quoted through prepareEvmSend (with its
+ * pre-flight, which refuses a message already minted) and confirmed with the
+ * device check like every other send. Anyone else with gas there may send
+ * it instead: the USDC goes only to the recipient written into the burn.
+ */
+function MintPanel({
+  record,
+  activeCaip2,
+  fromAddress,
+  symbol,
+  explorerTxBase,
+  signWith,
+  currentEndpoint,
+  balanceUrl,
+}: {
+  record: BridgeTransferRecord;
+  activeCaip2: string;
+  fromAddress: string;
+  symbol: string;
+  explorerTxBase: string;
+  signWith: ReturnType<typeof useWallet>['signWith'];
+  currentEndpoint: () => Promise<UsableEndpoint>;
+  /** The active network's endpoint, for reading the regular account's balance there (null while unknown). */
+  balanceUrl: string | null;
+}) {
+  const theme = useTheme();
+  const [quote, setQuote] = useState<{ q: EvmSendQuote; url: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [balance, setBalance] = useState<bigint | null>(null);
+  const onDestination = activeCaip2 === record.destinationCaip2;
+  useEffect(() => {
+    if (!onDestination || balanceUrl === null) return;
+    let cancelled = false;
+    evmHttpTransport(balanceUrl)('eth_getBalance', [fromAddress, 'latest'])
+      .then(
+        (b) => {
+          if (!cancelled && typeof b === 'string' && /^0x[0-9a-fA-F]+$/.test(b)) setBalance(BigInt(b));
+        },
+        () => undefined,
+      );
+    return () => {
+      cancelled = true;
+    };
+  }, [onDestination, fromAddress, balanceUrl]);
+  const blocker = bridgeMintBlocker(activeCaip2, record, balance, symbol);
+  if (blocker) return <Text style={[styles.hint, { color: theme.textMuted }]}>{blocker}</Text>;
+  const prepare = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const ep = await currentEndpoint();
+      const q = await prepareBridgeMint(ep.url, fromAddress, record);
+      setQuote({ q, url: ep.url });
+    } catch (e) {
+      setError(describeBridgeError(e, symbol));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const send = async () => {
+    if (!quote) return;
+    if (!quote.q.simulation.ok) {
+      setError(`The pre-flight simulation failed: ${quote.q.simulation.reason}. Nothing was sent.`);
+      return;
+    }
+    const auth = await requireLocalAuth(bridgeMintPromptTitle(record));
+    if (!auth.ok) {
+      setError(auth.message);
+      return;
+    }
+    setBusy(true);
+    try {
+      const sent = await signWith(EVM_CHAIN_ID, fromAddress, (signer) => sendEvm(quote.url, signer, quote.q, explorerTxBase || null));
+      updateBridgeTransfer(record.id, { retryTxHash: sent.txid });
+    } catch (e) {
+      const { title, detail } = describeSendError(e, symbol, symbol);
+      setError(`${title} ${detail}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <View style={styles.content}>
+      {quote ? (
+        <>
+          <Row label={`Max network fee for the mint (paid in ${symbol})`} value={`${exact18(quote.q.fee)} ${symbol}`} theme={theme} />
+          {quote.q.simulation.ok ? (
+            <Text style={[styles.simulationOk, { color: theme.success }]}>Pre-flight simulation passed (eth_call).</Text>
+          ) : (
+            <WarningBox>Pre-flight simulation failed: {quote.q.simulation.reason}. Nothing will be sent.</WarningBox>
+          )}
+          <Button title={bridgeMintPromptTitle(record)} onPress={() => void send()} disabled={busy || !quote.q.simulation.ok} />
+        </>
+      ) : (
+        <Button title={`Mint on ${record.destinationLabel}`} variant="secondary" onPress={() => void prepare()} disabled={busy} />
       )}
       {error ? <WarningBox>{error}</WarningBox> : null}
     </View>

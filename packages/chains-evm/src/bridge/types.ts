@@ -204,6 +204,29 @@ export interface BridgeTransfer {
   sourceTxHash: string;
   amountIn: bigint;
   recipient: string;
+  /**
+   * CCTP only: the attested message and attestation the app stored from an
+   * earlier check (so a restart can continue without asking Circle's API
+   * again). The provider re-checks them against the burn in the source
+   * receipt before using them; MessageTransmitterV2 verifies the signatures
+   * on-chain at the mint.
+   */
+  attested?: { message: string; attestation: string };
+}
+
+/** CCTP: the attested message, as the provider checked it against the burn. */
+export interface BridgeAttestation {
+  /** The attested message (hex), exactly as MessageTransmitterV2.receiveMessage takes it. */
+  message: string;
+  /** The attesters' signatures (hex, 65 bytes each). */
+  attestation: string;
+  /** The message's 32-byte nonce, assigned by Circle (hex, lower case). */
+  nonce: string;
+  /**
+   * The block after which the destination refuses the message unless it is
+   * re-attested (BurnMessageV2 expirationBlock); 0 means no expiry.
+   */
+  expirationBlock: bigint;
 }
 
 export type BridgeTransferState =
@@ -226,6 +249,8 @@ export interface BridgeTransferStatus {
    * supporting evidence only.
    */
   onChain?: BridgeOnChainDelivery;
+  /** CCTP: the attested message once Circle has signed it (present with state 'awaiting-destination-action' or 'delivered'). */
+  attestation?: BridgeAttestation;
 }
 
 /** One event log as a node returns it in a receipt or from eth_getLogs (hex strings). */
@@ -268,6 +293,8 @@ export type BridgeOnChainState =
   | 'delivered'
   /** The message arrived but the funds could not be handed over; a permissionless retry call delivers them. */
   | 'cached-needs-retry'
+  /** CCTP: Circle attested the burn and the receiving chain shows no mint yet; anyone may submit it. */
+  | 'attested'
   /** The source transaction sent the message and the receiving chain shows nothing for it yet. */
   | 'in-flight'
   /** The source transaction reverted: nothing was sent. */
@@ -277,7 +304,7 @@ export type BridgeOnChainState =
 
 export interface BridgeOnChainDelivery {
   status: BridgeOnChainState;
-  /** The provider's message id (LayerZero: the GUID carried by OFTSent and PacketSent), or null when not read. */
+  /** The provider's message id (LayerZero: the GUID carried by OFTSent and PacketSent; CCTP: the message nonce Circle assigns), or null when not read. */
   guid: string | null;
   /** The transaction on the receiving chain that emitted the delivery (or caching) event. */
   destinationTx: string | null;
@@ -285,6 +312,8 @@ export interface BridgeOnChainDelivery {
   amountReceived: bigint | null;
   /** The off-chain status (for LayerZero, Scan's), kept as supporting evidence; null when not asked or not found. */
   apiStatus: string | null;
+  /** The block that holds the sending transaction's message, read from its receipt (CCTP), when known. */
+  sourceBlock?: bigint | null;
 }
 
 /** The adapter every bridge provider implements. */

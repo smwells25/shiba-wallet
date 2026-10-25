@@ -196,9 +196,10 @@ for (const id of ['eoa-send', 'tokens', 'nft', 'swap', 'walletconnect', 'dogecoi
   const f = featureReadiness('bridge');
   check('bridge is testnet-only, enforced, cites C1 and W9',
     f.status === 'testnet-only' && f.enforced === true && ['C1', 'W9'].every((i) => f.evidence.includes(i)), JSON.stringify(f));
-  check('bridge reason: a single verifier (LayerZero Labs), the public pause key, Circle’s two attesters, not yet sent',
+  check('bridge reason: a single verifier (LayerZero Labs), the public pause key, Circle’s two attesters and its roles, two CCTP transfers sent by script (phase 23 item 4)',
     /single verifier operated by LayerZero Labs/.test(f.reason) && /paused by a key whose private part is public/.test(f.reason) &&
-      /Circle’s\s+own two attesters/.test(f.reason) && /has not yet sent one/.test(f.reason), f.reason);
+      /Circle’s\s+own\s+two attesters/.test(f.reason) && /pause them, refuse addresses and replace the contracts/.test(f.reason) &&
+      /has\s+sent two Circle CCTP Standard Transfers on the test networks, by script/.test(f.reason) && !/has not yet sent one/.test(f.reason), f.reason);
   check('bridge is refused on mainnet and allowed on every built-in test network',
     !isFeatureAllowed('bridge', MAINNET) && TEST_NETWORK_CHAINS.every((c) => isFeatureAllowed('bridge', c)));
 }

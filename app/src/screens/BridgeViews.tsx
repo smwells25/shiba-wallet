@@ -7,7 +7,8 @@ import {
   BRIDGE_FEE_BEFORE_QUOTE,
   bridgeStatusHeading,
   bridgeStatusSentence,
-  exactNative,
+  exactAsset,
+  routeAsset,
   providerRowSpokenLabel,
   type BridgeProviderRow,
   type BridgeTransferRecord,
@@ -211,12 +212,14 @@ export function TransferStatusCard({
   theme: Theme;
   children?: React.ReactNode;
 }) {
-  const heading = bridgeStatusHeading(record.status, record.destinationLabel);
+  const heading = bridgeStatusHeading(record.status, record.destinationLabel, record.providerId);
+  const asset = routeAsset(record.route);
+  const assetName = asset === 'usdc' ? 'USDC' : symbol;
   const failed = record.status?.state === 'failed';
   return (
     <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
       <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>
-        {exactNative(record.amountIn)} {symbol} · {record.sourceLabel} → {record.destinationLabel}
+        {exactAsset(record.amountIn, asset)} {assetName} · {record.sourceLabel} → {record.destinationLabel}
       </Text>
       <Text style={[styles.body, { color: theme.textMuted }]}>
         Through {record.providerLabel}, to {record.recipient}, sent {new Date(record.sentAt).toISOString().slice(11, 19)} UTC
@@ -244,7 +247,9 @@ export function TransferStatusCard({
       ) : null}
       {record.retryTxHash ? (
         <>
-          <Text style={[styles.label, { color: theme.textMuted }]}>Delivery transaction sent from this wallet</Text>
+          <Text style={[styles.label, { color: theme.textMuted }]}>
+            {asset === 'usdc' ? 'Mint transaction sent from this wallet' : 'Delivery transaction sent from this wallet'}
+          </Text>
           <Text selectable style={[styles.monoText, { color: theme.text }]}>
             {record.retryTxHash}
           </Text>
