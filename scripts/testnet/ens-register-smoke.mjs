@@ -52,7 +52,15 @@
  * adds smart.<label>.eth → ENS_SUBNAME_TARGET. The run record (including the
  * secret until register is mined) is scripts/testnet/runs/ens-register-run.json,
  * which is git-ignored; ENS_RESUME=1 continues a run whose prepare step was
- * mined but whose register step was not.
+ * mined but whose register step was not, or — when the record says
+ * "registered" — skips the dry run and the availability quote (the name is
+ * now taken, by the sender), checks the deployment again, proves on-chain
+ * that the name is registered to the sender with the recorded resolver, and
+ * continues with the primary name (if not yet sent), verification and the
+ * sub-name. register is sent only once the LATEST BLOCK on both endpoints is
+ * at least one slot (12 s) past the commitment's notBefore; a pending-nonce
+ * mismatch is read again up to four times 5 s apart (PublicNode's backends
+ * disagree for a few seconds after a transaction is mined).
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { AbiCoder, Interface, getAddress, dnsEncode, namehash as ethersNamehash, keccak256, id as ethersId } from 'ethers';
@@ -72,6 +80,10 @@ const IMPL_SLOT = '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d3
 const MAX_FEE_USDC = BigInt(process.env.ENS_MAX_FEE_USDC ?? 1_000_000);
 const DURATION = BigInt(process.env.ENS_DURATION_SECONDS ?? 2_419_200);
 const MAX_GAS_WEI = 2n * 10n ** 16n; // 0.02 ETH for every transaction of the run together
+/** Seconds beyond the commitment's notBefore that the LATEST BLOCK on both endpoints must reach (one Sepolia slot). */
+const READY_MARGIN_SECONDS = 12n;
+const PENDING_REREADS = 4;
+const PENDING_REREAD_MS = 5_000;
 const RUN_FILE = new URL('./runs/ens-register-run.json', import.meta.url);
 const coder = AbiCoder.defaultAbiCoder();
 
@@ -314,9 +326,19 @@ async function sendCall(signer, call, label) {
   const data = E.toHex(call.data);
   const [sim] = await simulate([{ calls: [{ from: sender, to: call.to, data, value: call.value }] }]);
   if (!sim[0].ok) throw new Error(`${label}: the pre-flight simulation reverted (${revertKind(sim[0])}). Nothing was sent.`);
-  const latest = BigInt(await node('eth_getTransactionCount', [sender, 'latest']));
-  const pending = BigInt(await node('eth_getTransactionCount', [sender, 'pending']));
-  if (latest !== pending) throw new Error(`${label}: the sender has ${pending - latest} pending transaction(s). Nothing was sent.`);
+  // PublicNode balances several backends that can disagree about the pending nonce for a
+  // few seconds right after a transaction is mined (seen 2026-10-25 straight after setName);
+  // the counts are read again a few times before the run stops.
+  let latest = 0n;
+  let pending = 0n;
+  for (let attempt = 0; ; attempt++) {
+    latest = BigInt(await node('eth_getTransactionCount', [sender, 'latest']));
+    pending = BigInt(await node('eth_getTransactionCount', [sender, 'pending']));
+    if (latest === pending) break;
+    if (attempt >= PENDING_REREADS) throw new Error(`${label}: the sender has ${pending - latest} pending transaction(s) after ${PENDING_REREADS} re-reads ${PENDING_REREAD_MS / 1000} s apart. Nothing was sent.`);
+    console.log(`  ${label}: the endpoint reports ${pending - latest} pending transaction(s); reading again in ${PENDING_REREAD_MS / 1000} s`);
+    await sleep(PENDING_REREAD_MS);
+  }
   const estimate = BigInt(await node('eth_estimateGas', [{ from: sender, to: call.to, data, value: hex(call.value) }]));
   const gasLimit = (estimate * 120n) / 100n;
   const fees = await new E.NodeClient(node).suggestFees();
@@ -359,23 +381,40 @@ async function live(signer, label, target) {
   } else {
     console.log(`\n=== LIVE resume for ${run.name} (status ${run.status})`);
   }
-  // Rebuild the plan from the record: the same secret, resolver and fee.
   const resolverState = { address: run.resolver, salt: E.ensOwnedResolverSalt(sender), deployed: true };
+  if (run.status === 'registered') {
+    await afterRegistration(signer, run, resolverState, target);
+    return;
+  }
+  // Rebuild the plan from the record: the same secret, resolver and fee.
   const quote = await E.quoteEnsRegistration(node, { label, owner: sender, duration: run.duration });
   if (quote.total !== run.fee) throw new Error(`The fee changed from ${run.fee} to ${quote.total}; the approval no longer matches. Nothing was sent.`);
   plan = E.planEnsRegistration({ quote, resolver: resolverState, secret: E.toBytes(run.secret), setReverse: true });
   if (lower(plan.commitment) !== lower(run.commitment)) throw new Error('The rebuilt commitment differs from the recorded one. Nothing was sent.');
   console.log('\n=== waiting for the commitment age');
+  // register() checks block.timestamp >= commit time + MIN_COMMITMENT_AGE in the block that
+  // includes it. On 2026-10-25 the first live run saw the engine's check pass with the latest
+  // block's timestamp exactly equal to notBefore, and the pre-flight eth_simulateV1 against
+  // "latest" (PublicNode balances several backends) still reverted CommitmentTooNew. So the run
+  // waits until the latest block on BOTH endpoints is at least one slot past notBefore.
   for (;;) {
+    let w;
     try {
-      const w = await E.checkEnsRegisterReady(node, plan);
-      console.log(`  ready: committed at ${w.notBefore - 60n}, now ${w.now}, valid until ${w.expiresAt}`);
-      break;
+      w = await E.checkEnsRegisterReady(node, plan);
     } catch (e) {
       if (e?.reason !== 'commitment' || !/too new|not on-chain/.test(e.message)) throw e;
       console.log(`  ${e.message}; waiting 15 s`);
       await sleep(15_000);
+      continue;
     }
+    const heads = await Promise.all([node, node2].map((n) => n('eth_getBlockByNumber', ['latest', false]).then((b) => BigInt(b.timestamp))));
+    const need = w.notBefore + READY_MARGIN_SECONDS;
+    if (heads.every((t) => t >= need)) {
+      console.log(`  ready: committed at ${w.notBefore - 60n}; latest block times ${heads.join(' / ')} ≥ ${need} (notBefore + ${READY_MARGIN_SECONDS} s); valid until ${w.expiresAt}`);
+      break;
+    }
+    console.log(`  latest block times ${heads.join(' / ')} not yet ≥ ${need} (notBefore + ${READY_MARGIN_SECONDS} s); waiting 6 s`);
+    await sleep(6_000);
   }
   console.log('\n=== LIVE register');
   run.txs.register = await sendCall(signer, plan.register.calls[0], 'register');
@@ -384,6 +423,35 @@ async function live(signer, label, target) {
   saveRun(run);
   run.txs.setName = await sendCall(signer, plan.register.calls[1], 'setName');
   saveRun(run);
+  await afterRegistration(signer, run, resolverState, target);
+}
+
+/**
+ * Everything after register(): the primary name if it was not sent yet, verification on two
+ * endpoints, and the optional sub-name. Reached directly by ENS_RESUME=1 when the record says
+ * "registered" — then no availability quote is made (the name is taken, by the sender), and the
+ * registry must show the name REGISTERED to the sender with the recorded resolver.
+ */
+async function afterRegistration(signer, run, resolverState, target) {
+  const sender = getAddress(signer.address);
+  const label = run.label;
+  const plan = { name: run.name };
+  const owned = await E.readEnsNameState(node, label);
+  if (owned.status !== 2 || lower(owned.latestOwner) !== lower(sender)) {
+    throw new Error(`${run.name} is not registered to the sender (status ${owned.status}, owner ${owned.latestOwner}). Nothing was sent.`);
+  }
+  const onchainResolver = (await view(node, D.ethRegistry, 'getResolver', [label]))[0];
+  if (lower(onchainResolver) !== lower(resolverState.address)) {
+    throw new Error(`${run.name} points at resolver ${onchainResolver}, not the recorded ${resolverState.address}. Nothing was sent.`);
+  }
+  await E.readEnsOwnedResolver(node, sender); // re-proves the resolver (factory proxy, owner holds ROLE_SET_ADDRESS)
+  if (!run.txs.setName) {
+    const current = await E.readEnsPrimaryName(node, sender, 11155111n);
+    if (!(current.status === 'ok' && current.name === run.name)) {
+      run.txs.setName = await sendCall(signer, { to: D.v1ReverseRegistrar, value: 0n, data: E.encodeEnsV1ReverseSetName(run.name) }, 'setName');
+      saveRun(run);
+    }
+  }
   console.log('\n=== verification on two endpoints');
   for (const [n, host] of [[node, new URL(RPC).host], [node2, new URL(RPC2).host]]) {
     const fwd = await n('eth_call', [{ to: UR_PROXY, data: I.encodeFunctionData('resolve', [dnsEncode(plan.name, 255), I.encodeFunctionData('addr', [ethersNamehash(plan.name)])]) }, 'latest']);
@@ -406,13 +474,28 @@ async function live(signer, label, target) {
       userRegistryDeployed: (await node('eth_getCode', [userReg, 'latest'])) !== '0x',
       targetReverse: false,
     });
-    run.txs.subname = [];
-    for (let i = 0; i < sub.step.calls.length; i++) {
-      run.txs.subname.push(await sendCall(signer, sub.step.calls[i], `subname ${i + 1}/${sub.step.calls.length}`));
-      saveRun(run);
+    const resolveSub = async (n) => {
+      const data = I.encodeFunctionData('resolve', [dnsEncode(sub.name, 255), I.encodeFunctionData('addr', [ethersNamehash(sub.name)])]);
+      try {
+        return decodeResolveAddr(await n('eth_call', [{ to: UR_PROXY, data }, 'latest'])).address;
+      } catch {
+        return null; // no record yet (the Universal Resolver reverts or answers the zero address)
+      }
+    };
+    const before = await resolveSub(node);
+    if (before && lower(before) === lower(target)) {
+      console.log(`  ${sub.name} already resolves to ${target}; nothing to send`);
+    } else {
+      run.txs.subname = [];
+      for (let i = 0; i < sub.step.calls.length; i++) {
+        run.txs.subname.push(await sendCall(signer, sub.step.calls[i], `subname ${i + 1}/${sub.step.calls.length}`));
+        saveRun(run);
+      }
     }
-    const fwd = await node('eth_call', [{ to: UR_PROXY, data: I.encodeFunctionData('resolve', [dnsEncode(sub.name, 255), I.encodeFunctionData('addr', [ethersNamehash(sub.name)])]) }, 'latest']);
-    ok(lower(decodeResolveAddr(fwd).address) === lower(target), `${sub.name} → ${target}`);
+    for (const [n, host] of [[node, new URL(RPC).host], [node2, new URL(RPC2).host]]) {
+      const got = await resolveSub(n);
+      ok(got !== null && lower(got) === lower(target), `${host}: ${sub.name} → ${got}`);
+    }
   }
   run.finishedAt = new Date().toISOString();
   saveRun(run);
@@ -452,7 +535,13 @@ const target = getAddress(process.env.ENS_SUBNAME_TARGET ?? DEV_KERNEL);
 console.log(`ENS handle smoke: sender ${sender}; label ${label}.eth; ${DURATION} s; mode ${LIVE ? 'LIVE' : 'dry run'}; ethers id check ${ethersId('OwnedResolver').slice(0, 10)}`);
 
 try {
-  await dryRun(sender, label, target);
+  const registeredResume = LIVE && process.env.ENS_RESUME === '1' && loadRun()?.status === 'registered';
+  if (registeredResume) {
+    console.log('\nResuming a run whose name is already registered: the deployment is checked again; the dry run (whose quote refuses a taken name) is skipped.');
+    await checkDeployment();
+  } else {
+    await dryRun(sender, label, target);
+  }
   if (failures > 0) {
     console.log(`\n${failures} check(s) failed in the dry run. Nothing live was attempted.`);
     process.exit(1);
