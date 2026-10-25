@@ -97,7 +97,9 @@ export type FeatureId =
   // Phase 21 item 1: bridging between test networks (feature 35).
   | 'bridge'
   // Phase 21 item 2, Stage 2: the duress PIN and its second wallet (feature 53).
-  | 'duress-pin';
+  | 'duress-pin'
+  // Phase 23 item 5: cold signing for a watched owner's smart account (feature 11).
+  | 'cold-aa';
 
 export interface FeatureReadiness {
   id: FeatureId;
@@ -500,6 +502,26 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
     reason: DURESS_READINESS_REASON,
     evidence: ['T-78', 'F-77'],
     enforced: false,
+  },
+  // Phase 23 item 5 (feature 11, the smart-account half): a watched owner's
+  // Kernel v3.3 account sends with its owner key on an off-line signer
+  // (wallet/cold-aa.ts; gate in wallet/aa.ts createColdOwnerAaClient).
+  // Appended at the end of the table, like the rows above. Evidence: C1–C3
+  // (the unaudited Kernel account the operation runs on), W9 (the
+  // switchboard that enforces this row) and T-89 (the cold-signing threat:
+  // a false summary on a compromised on-line phone, the wallet's own request
+  // format). A smart-account-specific threat-model row is the CTO's to add.
+  {
+    id: 'cold-aa',
+    title: 'Off-line signing for a smart account',
+    status: 'testnet-only',
+    reason:
+      'Sending from a watched address’s smart account with an off-line signer runs on the Kernel v3.3 account, ' +
+      'which has no published audit, and the signing request is this wallet’s own format, which no hardware signer ' +
+      'reads yet. The off-line signature fixes the network fees, so a fee rise before submission means a new request ' +
+      'and a new signature. This wallet offers it only on test networks.',
+    evidence: ['C1', 'C2', 'C3', 'W9', 'T-89'],
+    enforced: true,
   },
 ];
 

@@ -2744,7 +2744,9 @@
   "settings.autoLock.hintWithPassphrase",
   "settings.autoLock.withPassphraseNote",
   "settings.screenProtection.withPassphrase",
-  "settings.notifications.offWithPassphrase"
+  "settings.notifications.offWithPassphrase",
+  "readiness.cold-aa.title",
+  "readiness.cold-aa.reason"
  ],
  "changed": {
   "activity.note.privacy": {

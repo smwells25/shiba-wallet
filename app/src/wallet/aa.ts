@@ -2294,6 +2294,121 @@ export function createMultisigAaClient(options: {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Cold signing for a smart account (phase 23 item 5, the app half)
+// ---------------------------------------------------------------------------
+
+/**
+ * The CREATE2 index of a WATCHED owner's smart account. A watch-only account
+ * has no key in this wallet, so its id is neither a derivation index nor an
+ * imported-key slot (account-ids.ts smartAccountSaltFor refuses it); the
+ * account the off-line owner key controls is the Kernel v3.3 account at
+ * index 0 — the same rule as an imported key's account (ADR D9) and the
+ * default every Kernel wallet computes from the owner alone, so the owner can
+ * recompute the address with nothing but the key, the factory and 0. The
+ * engine's request (cold-userop.ts buildColdUserOpRequest) binds this index
+ * when the operation deploys the account, and its strict parser checks the
+ * sender against predictKernelAddress(owner, { index }).
+ */
+export const COLD_AA_ACCOUNT_INDEX = 0;
+
+export const COLD_AA_SETTINGS_INCOMPLETE =
+  'Smart-account settings are incomplete for this network (Settings → Account Abstraction), so the smart account ' +
+  'is not offered here. Nothing was prepared.';
+export const COLD_AA_NOT_KERNEL_REFUSAL =
+  'Signing with an off-line signer from a smart account is offered only for a Kernel v3.3 account: the signing ' +
+  'request carries Kernel v3.3’s signing scheme. Nothing was prepared.';
+export const COLD_AA_7702_REFUSAL =
+  'This address is upgraded with EIP-7702 on this network. The wallet never prepares an operation for an off-line ' +
+  'signer that could carry an EIP-7702 authorization, so the smart account is not offered here. Nothing was prepared.';
+export const COLD_AA_RECOVERED_REFUSAL =
+  'A recovered smart account is attached to this address on this network. Signing with an off-line signer is ' +
+  'offered only for the address’s own Kernel v3.3 account, whose address follows from the owner alone, so the ' +
+  'smart account is not offered here. Nothing was prepared.';
+export const COLD_AA_UNPINNED_KERNEL_REFUSAL =
+  'The Kernel v3.3 addresses saved for this network are not the deployment this wallet’s off-line signing request ' +
+  'carries (the factory, meta factory, implementation and ECDSA validator it pins), so the smart account is not ' +
+  'offered here. Nothing was prepared.';
+
+const sameAddress = (a: string | null | undefined, b: string): boolean => typeof a === 'string' && a.toLowerCase() === b.toLowerCase();
+
+/**
+ * Why a WATCHED owner's smart account cannot be offered for cold signing on
+ * the network `config` belongs to, or null when it can. Pure: no request.
+ * In order: the readiness switchboard ('cold-aa' and 'kernel-smart-account',
+ * both test networks only), complete settings, a Kernel v3.3 configuration
+ * (SimpleAccount has no matching scheme), no EIP-7702 upgrade of the owner
+ * (decision D6), no recovered account attached (the CTO's decision: refused
+ * until a spec returning the recorded address exists), and the saved Kernel
+ * addresses equal to the engine's pinned KERNEL_V3_3 deployment (the
+ * engine's request parser accepts only that deployment's factory data). A
+ * configured paymaster is NOT a refusal: the cold-owner client never
+ * attaches one (createColdOwnerAaClient), so the account pays its own fee.
+ */
+export function coldOwnerAaRefusal(config: AaChainConfig, ownerAddress: string): string | null {
+  const chain = config.chain;
+  if (chain === null || !isFeatureAllowed('cold-aa', chain)) return new FeatureNotAllowedError('cold-aa').message;
+  if (!isFeatureAllowed('kernel-smart-account', chain)) return new FeatureNotAllowedError('kernel-smart-account').message;
+  if (isEip7702Owner(config, ownerAddress)) return COLD_AA_7702_REFUSAL;
+  if (recoveredAccountFor(config, ownerAddress) !== null) return COLD_AA_RECOVERED_REFUSAL;
+  if (!hasCompleteAaSettings(config, ownerAddress) || config.bundlerUrl === null || config.factory === null) {
+    return COLD_AA_SETTINGS_INCOMPLETE;
+  }
+  if (config.accountType !== 'kernel-v3.3') return COLD_AA_NOT_KERNEL_REFUSAL;
+  const pinned =
+    sameAddress(config.factory, KERNEL_V3_3.factory) &&
+    (config.kernelMetaFactory === null || sameAddress(config.kernelMetaFactory, KERNEL_V3_3.metaFactory)) &&
+    (config.factoryImplementation === null || sameAddress(config.factoryImplementation, KERNEL_V3_3.implementation)) &&
+    sameAddress(config.kernelValidator, KERNEL_V3_3.ecdsaValidator);
+  return pinned ? null : COLD_AA_UNPINNED_KERNEL_REFUSAL;
+}
+
+/**
+ * The client for a WATCHED owner's smart account, for cold signing (phase 23
+ * item 5): the chain's verified bundler, the engine's createKernelAccountSpec
+ * at CREATE2 index COLD_AA_ACCOUNT_INDEX with the pinned Kernel v3.3
+ * addresses, and NEVER a paymaster or a token fee (the CTO's decision: a
+ * Circle permit needs an owner signature an address-only owner cannot give,
+ * and ERC-7677 data on the prepare path is untested). Refuses before any
+ * request (coldOwnerAaRefusal, incl. the readiness gate). The owner is only
+ * ever an address on this path: the engine's
+ * prepareUserOperationForExternalSigner and submitPreparedUserOperation use
+ * an address-only owner whose sign() throws, so nothing here can sign.
+ */
+export function createColdOwnerAaClient(
+  config: AaChainConfig,
+  options: {
+    nodeUrl: string;
+    chainId: bigint;
+    ownerAddress: string;
+    transportFor?: TransportFactory;
+    /** Impossible-estimate retries; defaults to AA_ESTIMATE_RETRIES (check scripts pass a no-wait policy). */
+    estimateRetries?: { attempts: number; delayMs: number };
+  },
+): AaClientBundle {
+  assertFeatureAllowed('cold-aa', eip155Caip2(options.chainId));
+  if (config.chain !== eip155Caip2(options.chainId)) {
+    throw new Error(`These smart-account settings are for ${String(config.chain)}, not ${eip155Caip2(options.chainId)}. Nothing was prepared.`);
+  }
+  const refusal = coldOwnerAaRefusal(config, options.ownerAddress);
+  if (refusal) throw new Error(refusal);
+  return createAaClient({
+    nodeUrl: options.nodeUrl,
+    bundlerUrl: config.bundlerUrl!,
+    factory: KERNEL_V3_3.factory,
+    chainId: options.chainId,
+    accountIndex: COLD_AA_ACCOUNT_INDEX,
+    accountType: 'kernel-v3.3',
+    kernel: {
+      metaFactory: config.kernelMetaFactory,
+      implementation: KERNEL_V3_3.implementation,
+      ecdsaValidator: KERNEL_V3_3.ecdsaValidator,
+    },
+    ...(options.transportFor ? { transportFor: options.transportFor } : {}),
+    ...(options.estimateRetries ? { estimateRetries: options.estimateRetries } : {}),
+  });
+}
+
 /**
  * A DerivedAccount stand-in carrying only the owner's public address, for
  * quote-time work (counterfactual address, nonce, gas estimation with the
@@ -3883,6 +3998,8 @@ function notifyAaSent(event: AaSentEvent): void {
  *    WalletConnect or from the in-app browser;
  *  - 'multisig': a multi-signature account's operation this phone submitted;
  *  - 'bridge': a transfer sent from the Bridge screen (wallet/bridge.ts);
+ *  - 'cold-aa': a watched owner's smart-account operation signed by an
+ *    off-line signer (phase 23 item 5, wallet/cold-aa.ts);
  *  - 'other': every other sendAa caller (guardians, passkeys, owner change,
  *    inheritance), which passes no kind.
  */
@@ -3898,6 +4015,7 @@ export type AaOperationKind =
   | 'browser'
   | 'multisig'
   | 'bridge'
+  | 'cold-aa'
   | 'other';
 
 /** What the Send screen's "Send again" can pre-fill (public data only; see pending-transactions.ts). */

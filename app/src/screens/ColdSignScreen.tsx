@@ -57,7 +57,41 @@ import {
   replacementSpendingInput,
   shortHash,
 } from '../wallet/pending-transactions';
-import { evaluateBeforeSigning, recordAcceptedSpend } from '../wallet/spending-policy';
+import { evaluateBeforeSigning, recordAcceptedSpend, spendingInputForQuote } from '../wallet/spending-policy';
+import { coldUserOpDetails, serializeColdUserOpRequest, type ColdUserOpRequest } from '@shiba-wallet/chains-evm';
+import {
+  coldOwnerAaRefusal,
+  createColdOwnerAaClient,
+  getAaConfig,
+  maxAaErc20Send,
+  maxAaSend,
+  waitForAaReceipt,
+  type AaChainConfig,
+  type AaClientBundle,
+  type AaSendQuote,
+} from '../wallet/aa';
+import {
+  COLD_AA_CHECK_ON_SIGNER,
+  COLD_AA_FEES_FIXED_NOTE,
+  COLD_AA_FORMAT_NOTE,
+  COLD_AA_QR_CONTENTS,
+  COLD_AA_REQUEST_CAPTION,
+  COLD_AA_REVIEW_AGAIN_NOTE,
+  COLD_AA_SCAN_NOTE,
+  COLD_AA_SCAN_RATIONALE,
+  COLD_AA_SUBMIT_BUTTON,
+  COLD_AA_SWITCH_HINT,
+  COLD_AA_SWITCH_LABEL,
+  coldAaExpiryLine,
+  coldAaVerifiedLine,
+  describeColdAaError,
+  prepareColdAaRequest,
+  quoteColdAa,
+  readColdAaAccount,
+  submitColdAa,
+  verifyColdAaSignature,
+  type ColdAaAccount,
+} from '../wallet/cold-aa';
 import {
   COLD_SIGN_BROADCAST_BUTTON,
   COLD_SIGN_CHECK_ON_SIGNER,
@@ -84,11 +118,33 @@ import {
   type ColdSignRequest,
   type ColdSignVerified,
 } from '../wallet/cold-signing';
-import { ColdSignPayloadQr, ColdSignScanButton } from './ColdSignViews';
+import { COLD_AA_QR_KIND, ColdAaAccountCard, ColdAaConfirm, ColdSignPayloadQr, ColdSignScanButton } from './ColdSignViews';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ColdSign'>;
 
-type Phase = 'form' | 'quoting' | 'review' | 'show' | 'sending' | 'success';
+// The aa-* phases: the smart-account half (phase 23 item 5, wallet/cold-aa.ts).
+type Phase =
+  | 'form'
+  | 'quoting'
+  | 'review'
+  | 'show'
+  | 'sending'
+  | 'success'
+  | 'aa-review'
+  | 'aa-preparing'
+  | 'aa-show'
+  | 'aa-sending'
+  | 'aa-success';
+
+/** What the smart-account success view shows while the receipt is awaited (as the Send screen's). */
+interface ColdAaResult {
+  userOpHash: string;
+  receiptState: 'pending' | 'found' | 'timeout';
+  success: boolean | null;
+  txHash: string | null;
+}
+
+const nowSeconds = () => Math.floor(Date.now() / 1000);
 
 type ColdQuote = EvmSendQuote | Erc20SendQuote | EvmReplacementQuote;
 
@@ -186,6 +242,19 @@ export function ColdSignScreen({ route, navigation }: Props) {
   const [signatureText, setSignatureText] = useState('');
   const [signatureError, setSignatureError] = useState<string | null>(null);
   const [result, setResult] = useState<SendResult | null>(null);
+  // The smart-account half (phase 23 item 5): the watched owner's own Kernel
+  // v3.3 account, quoted and confirmed as on the Send screen, its operation
+  // signed off-line (wallet/cold-aa.ts). The bundle holds no key: its owner
+  // is an address on every path.
+  const [aaConfig, setAaConfig] = useState<AaChainConfig | null>(null);
+  const [smartAccount, setSmartAccount] = useState(false);
+  const [aaAccountState, setAaAccountState] = useState<{ key: string; account: ColdAaAccount | null; error: string | null } | null>(null);
+  const aaBundle = useRef<AaClientBundle | null>(null);
+  const lastAaMax = useRef<{ text: string; owner: string; chain: string } | null>(null);
+  const [aaQuote, setAaQuote] = useState<AaSendQuote | null>(null);
+  const [aaRequest, setAaRequest] = useState<ColdUserOpRequest | null>(null);
+  const [aaSignature, setAaSignature] = useState<string | null>(null);
+  const [aaResult, setAaResult] = useState<ColdAaResult | null>(null);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -213,6 +282,50 @@ export function ColdSignScreen({ route, navigation }: Props) {
       cancelled = true;
     };
   }, [evmChain.caip2]);
+
+  // The active network's smart-account settings (read only; the cold-owner
+  // client never uses a saved paymaster).
+  useEffect(() => {
+    let cancelled = false;
+    getAaConfig(evmChain.caip2).then(
+      (c) => {
+        if (!cancelled) setAaConfig(c);
+      },
+      () => {
+        if (!cancelled) setAaConfig(null);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [evmChain.caip2]);
+  const aaRefusal = aaConfig && from ? coldOwnerAaRefusal(aaConfig, from) : null;
+  const aaOffered = aaConfig !== null && from !== null && aaRefusal === null && !replace;
+  const aaActive = aaOffered && smartAccount;
+  // The smart account's address, deployment, balance and deposit, read while
+  // the switch is on (node only, no bundler request).
+  const aaAccountKey = aaActive && aaConfig && from ? `${evmChain.caip2}|${from}` : null;
+  useEffect(() => {
+    if (!aaAccountKey || !aaConfig || !from) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const outcome = await withEndpoint(EVM_CHAIN_ID, (ep) =>
+          readColdAaAccount(
+            createColdOwnerAaClient(aaConfig, { nodeUrl: ep.url, chainId: BigInt(evmChain.chainIdDecimal), ownerAddress: from }),
+            from,
+          ),
+        );
+        if (!cancelled) setAaAccountState({ key: aaAccountKey, account: outcome.value, error: null });
+      } catch (e) {
+        if (!cancelled) setAaAccountState({ key: aaAccountKey, account: null, error: e instanceof Error ? e.message : String(e) });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [aaAccountKey, aaConfig, from, evmChain.chainIdDecimal]);
+  const aaAccountView = aaAccountState && aaAccountState.key === aaAccountKey ? aaAccountState : null;
 
   const fail = (e: unknown, sym: string) => setError(describeColdError(e, sym, symbol));
 
@@ -260,6 +373,225 @@ export function ColdSignScreen({ route, navigation }: Props) {
   const decimals = token ? token.decimals : 18;
   const sendSymbol = token ? token.symbol : symbol;
   const fmt = (wei: bigint) => formatUnits(wei, 18, 18);
+
+  // ------------------------------------------- the smart-account half
+  const aaContext = () => ({
+    deployed: aaQuote?.deployed ?? null,
+    sender: aaQuote?.sender ?? null,
+    bundlerUrl: aaConfig?.bundlerUrl ?? null,
+  });
+  const aaBackToForm = () => {
+    setAaQuote(null);
+    setAaRequest(null);
+    setAaSignature(null);
+    aaBundle.current = null;
+    setPhase('form');
+  };
+  /** The cold-owner bundle on the given endpoint (refuses before any request: wallet/aa.ts createColdOwnerAaClient). */
+  const aaBundleFor = (nodeUrl: string): AaClientBundle => {
+    if (!aaConfig || !from) throw new Error('Smart-account settings are not loaded.');
+    return createColdOwnerAaClient(aaConfig, { nodeUrl, chainId: BigInt(evmChain.chainIdDecimal), ownerAddress: from });
+  };
+
+  // Review from the smart account: the Send screen's smart-account quote
+  // (prepareAaSend / prepareAaErc20Send via wallet/cold-aa.ts quoteColdAa).
+  const onAaReview = async () => {
+    setError(null);
+    if (!from) return;
+    const validation = validateRecipient(EVM_CHAIN_ID, recipient);
+    if (!validation.ok) {
+      setError({ title: 'Check the recipient', detail: validation.error });
+      return;
+    }
+    let amount: bigint;
+    try {
+      amount = parseUnits(amountText, decimals);
+      if (amount <= 0n) throw new Error('Enter an amount greater than zero.');
+    } catch (e) {
+      setError({ title: 'Check the amount', detail: e instanceof Error ? e.message : 'Invalid amount.' });
+      return;
+    }
+    setPhase('quoting');
+    try {
+      const outcome = await withEndpoint(EVM_CHAIN_ID, async (ep) => {
+        const bundle = aaBundleFor(ep.url);
+        const q = await quoteColdAa(
+          bundle,
+          from,
+          token
+            ? {
+                kind: 'erc20',
+                token: {
+                  contract: token.assetId.reference,
+                  recipient: validation.normalized,
+                  symbol: token.symbol,
+                  decimals: token.decimals,
+                  chainCaip2: token.assetId.chainId,
+                  amount,
+                },
+              }
+            : {
+                kind: 'native',
+                to: validation.normalized,
+                amount,
+                fromMax:
+                  lastAaMax.current !== null &&
+                  lastAaMax.current.text === amountText &&
+                  lastAaMax.current.owner === from &&
+                  lastAaMax.current.chain === evmChain.caip2,
+              },
+        );
+        return { bundle, q };
+      });
+      if (!mounted.current) return;
+      aaBundle.current = outcome.value.bundle;
+      setAaQuote(outcome.value.q);
+      setQuotedUrl(outcome.endpoint.url);
+      setPhase('aa-review');
+    } catch (e) {
+      if (!mounted.current) return;
+      const d = describeColdAaError(e, 'quote', { deployed: null, bundlerUrl: aaConfig?.bundlerUrl ?? null });
+      setError({ title: d.title, detail: d.detail });
+      setPhase('form');
+    }
+  };
+
+  // Max from the smart account, with the Send screen's smart-account rules
+  // (aa.ts maxAaSend: the balance less a zero-value transfer's worst-case
+  // fee; maxAaErc20Send: the whole token balance when the account's coin
+  // covers the fee). A native Max amount is lowered at Review if the fee rose.
+  const onAaMax = async () => {
+    setError(null);
+    lastAaMax.current = null;
+    if (!from) return;
+    setMaxBusy(true);
+    try {
+      const validation = validateRecipient(EVM_CHAIN_ID, recipient);
+      const to = validation.ok ? validation.normalized : from;
+      const max = (
+        await withEndpoint(EVM_CHAIN_ID, (ep) => {
+          const bundle = aaBundleFor(ep.url);
+          return token
+            ? maxAaErc20Send(bundle, from, {
+                contract: token.assetId.reference,
+                recipient: to,
+                symbol: token.symbol,
+                decimals: token.decimals,
+                chainCaip2: token.assetId.chainId,
+              })
+            : maxAaSend(bundle, from, to);
+        })
+      ).value;
+      if (max <= 0n) throw new Error(token ? `The smart account's ${token.symbol} balance is zero.` : 'The smart account balance is too small to cover the network fee.');
+      const text = formatUnits(max, decimals, decimals);
+      if (!mounted.current) return;
+      if (!token) lastAaMax.current = { text, owner: from, chain: evmChain.caip2 };
+      setAmountText(text);
+    } catch (e) {
+      if (!mounted.current) return;
+      const d = describeColdAaError(e, 'quote', { deployed: null, bundlerUrl: aaConfig?.bundlerUrl ?? null });
+      setError({ title: d.title, detail: d.detail });
+    } finally {
+      if (mounted.current) setMaxBusy(false);
+    }
+  };
+
+  /** Quote pinning, as on the Send screen: still the endpoint the wallet would use. */
+  const aaEndpointStillQuoted = async (): Promise<boolean> => {
+    if (!quotedUrl) return false;
+    let currentUrl: string | null = null;
+    try {
+      currentUrl = (await getEndpoint(EVM_CHAIN_ID))?.url ?? null;
+    } catch {
+      currentUrl = null;
+    }
+    const changed = quoteEndpointChange(quotedUrl, currentUrl);
+    if (!changed) return true;
+    Alert.alert(QUOTE_ENDPOINT_CHANGED_TITLE, changed);
+    aaBackToForm();
+    return false;
+  };
+
+  // "Show for the off-line signer": the spending limits first (before the
+  // request exists, as the Send screen checks before signing), then the
+  // engine prepares the operation exactly as it would before a signature,
+  // with the Send screen's signedFeeGuard, and builds the request
+  // (wallet/cold-aa.ts prepareColdAaRequest). The quote is used up here.
+  const onAaShow = async () => {
+    const bundle = aaBundle.current;
+    if (!aaQuote || !quotedUrl || !bundle || !from) return;
+    setError(null);
+    if (!(await aaEndpointStillQuoted())) return;
+    const allowed = await spendingGateForQuote({ chain: evmChain.caip2, owner: from, from, quote: aaQuote, url: quotedUrl });
+    if (!allowed) return;
+    setPhase('aa-preparing');
+    try {
+      const built = await prepareColdAaRequest({ bundle, owner: from, quote: aaQuote, nowSeconds: nowSeconds(), nativeSymbol: symbol });
+      if (!mounted.current) return;
+      setAaRequest(built);
+      setAaSignature(null);
+      setSignatureText('');
+      setSignatureError(null);
+      setPhase('aa-show');
+    } catch (e) {
+      if (!mounted.current) return;
+      const d = describeColdAaError(e, 'prepare', aaContext());
+      setError({ title: d.title, detail: d.detail });
+      // The quote was used (or found stale): Review quotes again.
+      aaBackToForm();
+    }
+  };
+
+  const onAaSignatureText = (text: string) => {
+    if (!aaRequest) return;
+    setSignatureError(null);
+    try {
+      verifyColdAaSignature(text, aaRequest, nowSeconds());
+      setAaSignature(text);
+    } catch (e) {
+      setAaSignature(null);
+      setSignatureError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  // Submission: the engine re-checks the signature against the STORED
+  // request, the expiry and the chain, then the bundler floor and
+  // signedFeeGuard (a floor that rose means a fresh request, never a
+  // reprice), and only then eth_sendUserOperation (wallet/cold-aa.ts
+  // submitColdAa, which records the operation with kind 'cold-aa').
+  const onAaSubmit = async () => {
+    const bundle = aaBundle.current;
+    if (!aaQuote || !aaRequest || !aaSignature || !bundle || !from) return;
+    setError(null);
+    if (!(await aaEndpointStillQuoted())) return;
+    setPhase('aa-sending');
+    try {
+      const { userOpHash } = await submitColdAa({ bundle, request: aaRequest, quote: aaQuote, signatureText: aaSignature, nowSeconds: nowSeconds() });
+      // Spending limits: recorded once the bundler accepted it (the
+      // passkey path's rule; this path bypasses sendAa's listeners).
+      void recordAcceptedSpend({
+        scope: { chain: evmChain.caip2, owner: from },
+        ...spendingInputForQuote(aaQuote, from),
+        ref: userOpHash,
+      });
+      if (!mounted.current) return;
+      setAaResult({ userOpHash, receiptState: 'pending', success: null, txHash: null });
+      setPhase('aa-success');
+      void waitForAaReceipt(bundle, userOpHash, { timeoutMs: 120_000, pollMs: 3_000 }).then(
+        ({ summary }) =>
+          setAaResult((prev) =>
+            prev && prev.userOpHash === userOpHash ? { ...prev, receiptState: 'found', success: summary.success, txHash: summary.txHash } : prev,
+          ),
+        () => setAaResult((prev) => (prev && prev.userOpHash === userOpHash ? { ...prev, receiptState: 'timeout' } : prev)),
+      );
+    } catch (e) {
+      if (!mounted.current) return;
+      const d = describeColdAaError(e, 'submit', aaContext());
+      setError({ title: d.title, detail: d.detail });
+      if (d.back) aaBackToForm();
+      else setPhase('aa-show');
+    }
+  };
 
   const onReview = async () => {
     setError(null);
@@ -317,6 +649,7 @@ export function ColdSignScreen({ route, navigation }: Props) {
   // the fee (send-erc20.ts maxErc20Send). The recipient, when valid, is used
   // for the estimate, as on the Send screen.
   const onMax = async () => {
+    if (aaActive) return onAaMax();
     setError(null);
     lastMax.current = null;
     setMaxBusy(true);
@@ -478,6 +811,174 @@ export function ColdSignScreen({ route, navigation }: Props) {
         <TransactionNoteField network={evmChain.caip2} txid={result.txid} userOpHash={null} />
         <PendingTransactionsSection from={from} onlyHash={result.txid} />
         <Button title="Done" onPress={() => dismissKeyboardThenClose(() => navigation.popToTop())} />
+      </ScrollView>
+    );
+  }
+
+  // ------------------------------------------- success (smart account)
+  // As the Send screen's smart-account success view: the userOpHash, the
+  // receipt wait, the bundle transaction and the note field.
+  if (phase === 'aa-success' && aaResult) {
+    return (
+      <ScrollView key="cold-aa-success" style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
+        <Text accessibilityRole="header" style={[styles.heading, { color: theme.success }]}>Sent to bundler ✓</Text>
+        <Text style={[styles.label, { color: theme.textMuted }]}>UserOperation hash</Text>
+        <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <Text selectable style={[styles.monoText, { color: theme.text }]}>{aaResult.userOpHash}</Text>
+        </View>
+        {aaResult.receiptState === 'pending' ? (
+          <View style={styles.center}>
+            <ActivityIndicator size="large" color={theme.accent} />
+            <Text style={[styles.hint, { color: theme.textMuted }]}>Bundling… waiting for the UserOperation receipt.</Text>
+          </View>
+        ) : null}
+        {aaResult.receiptState === 'timeout' ? (
+          <Text style={[styles.hint, { color: theme.textMuted }]}>
+            No receipt yet. The operation may still be included — keep the UserOperation hash above to look it up later.
+          </Text>
+        ) : null}
+        {aaResult.receiptState === 'found' ? (
+          <>
+            {aaResult.success === false ? (
+              <WarningBox>
+                The bundler reports the operation was included but reverted on-chain. The gas was still charged to the smart account.
+              </WarningBox>
+            ) : (
+              <Text style={[styles.body, { color: theme.success }]}>Included on-chain{aaResult.success === true ? ' — succeeded.' : '.'}</Text>
+            )}
+            {aaResult.txHash ? (
+              <>
+                <Text style={[styles.label, { color: theme.textMuted }]}>Transaction</Text>
+                <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
+                  <Text selectable style={[styles.monoText, { color: theme.text }]}>{aaResult.txHash}</Text>
+                </View>
+                {evmChain.explorerTxBase ? (
+                  <Button
+                    title="View on block explorer"
+                    variant="secondary"
+                    onPress={() => void Linking.openURL(`${evmChain.explorerTxBase}${aaResult.txHash}`)}
+                  />
+                ) : null}
+              </>
+            ) : (
+              <Text style={[styles.hint, { color: theme.textMuted }]}>
+                The bundler&apos;s receipt did not include a recognizable transaction hash; look the UserOperation hash up in
+                an ERC-4337 explorer you trust.
+              </Text>
+            )}
+          </>
+        ) : null}
+        <TransactionNoteField network={evmChain.caip2} txid={aaResult.txHash} userOpHash={aaResult.userOpHash} />
+        <Button title="Done" onPress={() => dismissKeyboardThenClose(() => navigation.popToTop())} />
+      </ScrollView>
+    );
+  }
+
+  // ------------------------------------ show / signature (smart account)
+  if ((phase === 'aa-show' || phase === 'aa-sending') && aaRequest && aaQuote) {
+    const payload = serializeColdUserOpRequest(aaRequest);
+    const details = coldUserOpDetails(aaRequest);
+    return (
+      <ScrollView key="cold-aa-show" style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <Text accessibilityRole="header" style={[styles.heading, { color: theme.text }]}>For the off-line signer</Text>
+        <Text style={[styles.body, { color: theme.text }]}>{aaRequest.summary}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{COLD_AA_QR_CONTENTS}</Text>
+        <WarningBox>{COLD_AA_CHECK_ON_SIGNER}</WarningBox>
+        <ColdSignPayloadQr payload={payload} caption={COLD_AA_REQUEST_CAPTION} kind={COLD_AA_QR_KIND} />
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{COLD_AA_FORMAT_NOTE}</Text>
+        <ShareActions text={payload} shareTitle="Smart-account signing request" />
+        <Row label="Worst-case network fee in the signed operation" value={`${fmt(details.worstCaseFee)} ${symbol}`} theme={theme} />
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{COLD_AA_FEES_FIXED_NOTE}</Text>
+        <Text style={[styles.body, { color: theme.text }]}>{coldAaExpiryLine(aaRequest)}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>
+          Request {aaRequest.requestId} · userOpHash {aaRequest.userOpHash} · digest to sign {aaRequest.signingDigest}
+        </Text>
+
+        <Text accessibilityRole="header" style={[styles.heading, { color: theme.text }]}>The signature</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{COLD_AA_SCAN_NOTE}</Text>
+        <ColdSignScanButton
+          title={COLD_SIGN_SCAN_BUTTON}
+          rationale={COLD_AA_SCAN_RATIONALE}
+          onComplete={onAaSignatureText}
+          onError={(message) => {
+            setAaSignature(null);
+            setSignatureError(message);
+          }}
+        />
+        <Text {...signatureField.label} style={[styles.label, { color: theme.textMuted }]}>{signatureField.text}</Text>
+        <TextInput
+          {...signatureField.input}
+          value={signatureText}
+          onChangeText={(t) => {
+            setSignatureText(t);
+            setSignatureError(null);
+          }}
+          placeholder="Paste the signature JSON"
+          placeholderTextColor={theme.textMuted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          multiline
+          style={[styles.input, styles.multiline, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
+        />
+        <Button
+          title={COLD_SIGN_CHECK_PASTED_BUTTON}
+          variant="secondary"
+          disabled={signatureText.trim() === ''}
+          onPress={() => onAaSignatureText(signatureText)}
+        />
+        {signatureError ? (
+          <Text accessibilityLiveRegion="polite" style={[styles.body, { color: theme.danger }]}>{signatureError}</Text>
+        ) : null}
+        {aaSignature ? (
+          <Text accessibilityLiveRegion="polite" style={[styles.body, { color: theme.success }]}>{coldAaVerifiedLine(aaRequest.owner)}</Text>
+        ) : null}
+        {error ? (
+          <View style={styles.stack}>
+            <Text style={[styles.body, { color: theme.danger }]}>{error.title}</Text>
+            <Text style={[styles.body, { color: theme.text }]}>{error.detail}</Text>
+          </View>
+        ) : null}
+        {phase === 'aa-sending' ? (
+          <ActivityIndicator color={theme.accent} accessibilityLabel="Submitting the signed operation to the bundler" />
+        ) : (
+          <>
+            <Button title={COLD_AA_SUBMIT_BUTTON} disabled={!aaSignature} onPress={() => void onAaSubmit()} />
+            {/* The quote was used for this request: going back means a new review. */}
+            <Button title="Back" variant="secondary" onPress={aaBackToForm} />
+          </>
+        )}
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{COLD_AA_REVIEW_AGAIN_NOTE}</Text>
+      </ScrollView>
+    );
+  }
+
+  // ------------------------------------------------- review (smart account)
+  if ((phase === 'aa-review' || phase === 'aa-preparing') && aaQuote) {
+    return (
+      <ScrollView key="cold-aa-review" style={screenStyle(theme)} contentContainerStyle={styles.content}>
+        <Text accessibilityRole="header" style={[styles.heading, { color: theme.text }]}>Review</Text>
+        <ColdAaConfirm
+          quote={aaQuote}
+          owner={from}
+          url={quotedUrl}
+          symbol={symbol}
+          networkLabel={`${evmChain.label} (chain id ${evmChain.chainIdDecimal})`}
+          bundlerUrl={aaConfig?.bundlerUrl ?? null}
+        />
+        {error ? (
+          <View style={styles.stack}>
+            <Text style={[styles.body, { color: theme.danger }]}>{error.title}</Text>
+            <Text style={[styles.body, { color: theme.text }]}>{error.detail}</Text>
+          </View>
+        ) : null}
+        {phase === 'aa-preparing' ? (
+          <ActivityIndicator color={theme.accent} accessibilityLabel="Preparing the request for the off-line signer" />
+        ) : (
+          <>
+            <Button title={COLD_SIGN_SHOW_BUTTON} onPress={() => void onAaShow()} />
+            <Button title="Back" variant="secondary" onPress={aaBackToForm} />
+          </>
+        )}
       </ScrollView>
     );
   }
@@ -686,6 +1187,33 @@ export function ColdSignScreen({ route, navigation }: Props) {
       </Text>
       {replace ? null : (
         <>
+          {aaOffered ? (
+            <>
+              <View style={styles.overrideRow}>
+                <Switch {...switchColors(theme)}
+                  accessibilityLabel={COLD_AA_SWITCH_LABEL}
+                  accessibilityHint={COLD_AA_SWITCH_HINT}
+                  value={smartAccount}
+                  onValueChange={(v) => {
+                    setSmartAccount(v);
+                    setError(null);
+                    lastAaMax.current = null;
+                  }}
+                />
+                <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.body, { color: theme.text, flex: 1 }]}>{COLD_AA_SWITCH_LABEL}</Text>
+              </View>
+              {aaActive ? (
+                <ColdAaAccountCard
+                  account={aaAccountView?.account ?? null}
+                  error={aaAccountView?.error ?? null}
+                  symbol={symbol}
+                  paymasterConfigured={aaConfig?.paymasterUrl != null}
+                />
+              ) : null}
+            </>
+          ) : aaConfig?.bundlerUrl && aaRefusal ? (
+            <Text style={[styles.hint, { color: theme.textMuted }]}>Smart account: {aaRefusal}</Text>
+          ) : null}
           <Text accessibilityRole="header" style={[styles.heading, { color: theme.text }]}>What to send</Text>
           {/* Choice chips (pass p22a finding 2): the chosen asset is drawn
               like every other chip row in the app (Settings → Developer's
@@ -771,7 +1299,7 @@ export function ColdSignScreen({ route, navigation }: Props) {
       {replace ? (
         <Button title="Back" variant="secondary" onPress={() => navigation.goBack()} />
       ) : (
-        <Button title="Review" onPress={() => void onReview()} />
+        <Button title="Review" onPress={() => void (aaActive ? onAaReview() : onReview())} />
       )}
     </ScrollView>
   );
