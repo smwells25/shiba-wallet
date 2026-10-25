@@ -112,6 +112,8 @@ const EXPECTED_IDS = [
   'bridge',
   // Phase 21 item 2, Stage 2: the duress PIN (advisory, every network).
   'duress-pin',
+  // Phase 23 item 5: off-line signing for a watched owner's smart account (gate in wallet/aa.ts).
+  'cold-aa',
 ];
 const ids = FEATURE_READINESS.map((f) => f.id);
 check('every expected feature id is present exactly once', EXPECTED_IDS.every((id) => ids.filter((x) => x === id).length === 1) && ids.length === EXPECTED_IDS.length, ids.join());
@@ -212,6 +214,20 @@ for (const id of ['eoa-send', 'tokens', 'nft', 'swap', 'walletconnect', 'dogecoi
     f.reason === DURESS_READINESS_REASON && /can tell that two wallets exist/.test(f.reason) && /links them on-chain/.test(f.reason), f.reason);
   check('duress-pin is allowed on mainnet and on a test network (advisory, no gate)', isFeatureAllowed('duress-pin', MAINNET) && isFeatureAllowed('duress-pin', SEPOLIA));
   check('duress-pin is the only mainnet-ok row', FEATURE_READINESS.filter((x) => x.status === 'mainnet-ok').map((x) => x.id).join() === 'duress-pin');
+}
+// Phase 23 item 5 (feature 11, the smart-account half): off-line signing for
+// a watched owner's smart account is testnet-only and enforced, cites the
+// unaudited Kernel account (C1–C3), the switchboard (W9) and the cold-signing
+// threat (T-89), and its reason names the fixed fees and the wallet's own format.
+{
+  const f = featureReadiness('cold-aa');
+  check('cold-aa is testnet-only, enforced, evidence C1 C2 C3 W9 T-89',
+    f.status === 'testnet-only' && f.enforced === true && f.evidence.join() === 'C1,C2,C3,W9,T-89', JSON.stringify(f));
+  check('cold-aa reason: no published audit, the wallet’s own format, the signature fixes the fees, test networks only',
+    /no published audit/.test(f.reason) && /this wallet’s own format/.test(f.reason) && /fixes the network fees/.test(f.reason) &&
+      /only on test networks/.test(f.reason), f.reason);
+  check('cold-aa is refused on mainnet and allowed on every built-in test network',
+    !isFeatureAllowed('cold-aa', MAINNET) && TEST_NETWORK_CHAINS.every((c) => isFeatureAllowed('cold-aa', c)));
 }
 check('dogecoin-send names W6 (the one real broadcast)', featureReadiness('dogecoin-send').evidence.includes('W6'));
 check('swap names W7 (a live 0x quote)', featureReadiness('swap').evidence.includes('W7'));

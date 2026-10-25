@@ -214,8 +214,11 @@ function fixtureProblems(table, fixture) {
   // Phase 22 polish: the passphrase forms of the app-lock notes are new too.
   const LOCK_KIND_NEW = ['inbox.passphraseNote', 'settings.autoLock.hintWithPassphrase', 'settings.autoLock.withPassphraseNote',
     'settings.screenProtection.withPassphrase', 'settings.notifications.offWithPassphrase'];
-  check('the new entries are exactly the Settings → Language ones and the five passphrase forms of the app-lock notes',
-    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id)) && LOCK_KIND_NEW.every((id) => FIXTURE.new.includes(id)));
+  // Phase 23 item 5: the readiness row of off-line signing for a smart account is new too.
+  const COLD_AA_NEW = ['readiness.cold-aa.title', 'readiness.cold-aa.reason'];
+  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes and the cold-aa readiness row',
+    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id)) &&
+      LOCK_KIND_NEW.every((id) => FIXTURE.new.includes(id)) && COLD_AA_NEW.every((id) => FIXTURE.new.includes(id)));
   check('the changed entries are exactly the transaction-notes line (reworded for the records backup) and the watch-only notice (reworded for the off-line signer), each with its reason',
     JSON.stringify(Object.keys(FIXTURE.changed ?? {})) === JSON.stringify(['activity.note.privacy', 'notice.watchOnly']) &&
       en['activity.note.privacy'] === 'Notes are kept on this phone and are not sent anywhere. They are deleted when the wallet is wiped. A records backup (Settings → Records backup) includes them, and your recovery phrase restores them from it. Hide amounts does not hide them.');

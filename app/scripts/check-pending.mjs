@@ -976,7 +976,7 @@ console.log('check-pending: every smart-account path is recorded (phase 20 item 
     const r = parseRegistry(JSON.stringify({ version: 1, records: [{ ...legacy, origin }] }));
     if (r.readOnly || r.records.length !== 1) check(`origin ${origin} parses`, false);
   }
-  check('every known origin parses (12, incl. phase 21\'s bridge)', USEROP_ORIGINS.length === 12 && USEROP_ORIGINS.includes('bridge'));
+  check('every known origin parses (13, incl. phase 21\'s bridge and phase 23\'s cold-aa)', USEROP_ORIGINS.length === 13 && USEROP_ORIGINS.includes('bridge') && USEROP_ORIGINS.includes('cold-aa'));
   check('an unknown origin makes the registry read-only', parseRegistry(JSON.stringify({ version: 1, records: [{ ...legacy, origin: 'teleport' }] })).readOnly);
   check('a non-string origin makes the registry read-only', parseRegistry(JSON.stringify({ version: 1, records: [{ ...legacy, origin: 7 }] })).readOnly);
   check('an extra unknown key still makes it read-only', parseRegistry(JSON.stringify({ version: 1, records: [{ ...legacy, origin: 'swap', bundlerUrl: 'https://x' }] })).readOnly);

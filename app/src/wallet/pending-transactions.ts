@@ -183,6 +183,7 @@ export const USEROP_ORIGINS: readonly AaOperationKind[] = [
   'browser',
   'multisig',
   'bridge',
+  'cold-aa',
   'other',
 ];
 
@@ -1507,6 +1508,8 @@ export const USEROP_RETRY_SENTENCES: Readonly<Record<AaOperationKind, string>> =
   multisig:
     'To try again, open Multisig and build the operation again; the co-signers approve the new request. Nothing is resent from here.',
   bridge: 'To try again, open Bridge and get a new quote; nothing is resent from here.',
+  'cold-aa':
+    'To try again, open Send with an off-line signer, review the send again and have the new request signed; nothing is resent from here.',
   other: 'To try again, go back to the screen you sent it from and review it again; nothing is resent from here.',
 };
 
@@ -1523,6 +1526,7 @@ export const USEROP_ORIGIN_PHRASES: Readonly<Record<AaOperationKind, string>> = 
   browser: 'requested by an app in the in-app browser',
   multisig: 'submitted for a multisig account',
   bridge: 'from Bridge',
+  'cold-aa': 'from an off-line signer',
   other: '',
 };
 
