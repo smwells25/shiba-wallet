@@ -1,5 +1,11 @@
 import {
+  CCTP_DEPOSIT_FOR_BURN_SELECTOR,
+  CCTP_FINALITY_STANDARD,
+  CCTP_RECEIVE_MESSAGE_SELECTOR,
   CCTP_V2_PROVIDER_ID,
+  CCTP_V2_TESTNET,
+  CCTP_V2_TESTNET_DOMAINS,
+  CCTP_V2_TESTNET_USDC,
   CCTP_V2_TRUST,
   LAYERZERO_OFT_PROVIDER_ID,
   LAYERZERO_OFT_TRUST,
@@ -13,10 +19,14 @@ import {
   createBridgeRegistry,
   createCctpV2Provider,
   createLayerZeroOftProvider,
+  decodeCctpBurnMessage,
+  encodeReceiveMessage,
   httpTransport as evmHttpTransport,
   layerZeroEidFor,
+  cctpTimeEstimate,
   oftTimeEstimate,
   toHex,
+  type BridgeAttestation,
   type BridgeEventLogReader,
   type BridgeLog,
   type BridgeProvider,
@@ -28,6 +38,7 @@ import {
   type BridgeTransferStatus,
   type BridgeTrustStatement,
   type Call,
+  type CctpAttestationFetcher,
   type JsonRpcTransport,
   type LayerZeroMessageStatusReader,
   type OftDeployment,
@@ -69,23 +80,40 @@ import { isEndpointFailure } from '../config/endpoint-probe.ts';
  *  - The user chooses the provider (the Chairperson's decision of
  *    2026-10-14). Every registered provider is listed with its own trust
  *    statement, in registration order; the wallet never picks one.
- *  - CCTP V2 is LISTED but NOT OFFERED for sending ("coming"): its live
- *    leg (docs/BRIDGING.md section 11) has not run, it moves Circle's USDC
- *    while this screen moves the network's own coin, and completing one
- *    needs a second transaction on the receiving network after Circle's
- *    attestation, which this slice does not build. No CCTP quote is made.
- *  - The recipient is always the active account's REGULAR address on the
- *    receiving network, also when the smart account sends: Stargate hands
- *    ETH over with a 2,300-gas transfer, which a deployed smart account
- *    cannot accept (docs/BRIDGING.md section 15.8), so the ETH would wait
- *    in the pool for a retryReceiveToken. When the regular address itself
- *    holds code on the receiving network, the confirm says so, and the
- *    tracking panel offers the retry call when the chain shows the cache.
+ *  - Two assets, each with its own provider (phase 23 item 4, the app
+ *    half): test ETH through LayerZero (Stargate's native pools, Ethereum,
+ *    Arbitrum and OP Sepolia) and USDC through Circle CCTP V2 (Standard
+ *    Transfers only, between the four CCTP test networks; proven live by
+ *    scripts/testnet/cctp-smoke.mjs on 2026-10-25, docs/BRIDGING.md section
+ *    17). The user picks the asset; the provider rows list the providers
+ *    that move it; the wallet never picks a provider.
+ *  - Test ETH: the recipient is always the active account's REGULAR
+ *    address on the receiving network, also when the smart account sends:
+ *    Stargate hands ETH over with a 2,300-gas transfer, which a deployed
+ *    smart account cannot accept (docs/BRIDGING.md section 15.8), so the
+ *    ETH would wait in the pool for a retryReceiveToken. When the regular
+ *    address itself holds code on the receiving network, the confirm says
+ *    so, and the tracking panel offers the retry call when the chain shows
+ *    the cache.
+ *  - USDC: the recipient is the regular account by default, and the smart
+ *    account may be chosen: CCTP mints USDC with an ordinary ERC-20 mint,
+ *    which needs no code at the recipient and has no 2,300-gas limit. The
+ *    regular account sends two transactions (the exact approval, then the
+ *    burn once the approval is confirmed), each with its own device prompt;
+ *    the smart account sends both as ONE self-paid operation (one prompt).
+ *    Circle's USDC-fee paymaster is not offered on this path. After
+ *    Circle's attestation the screen offers the mint (receiveMessage) from
+ *    the regular account when the receiving network is the active one;
+ *    anyone with gas there may send it instead.
  *  - Transfer records are STORED on the phone (shiba-wallet.bridge-
  *    transfers.v1, a per-wallet key of the storage seam, store-keys.ts), the
- *    newest 64, so tracking survives a restart: what was sent and, once
- *    known, the final status (delivered or failed). A status that is not
- *    final is not stored; the screen asks again. The store is parsed
+ *    newest 64, so tracking survives a restart: what was sent, a CCTP
+ *    transfer's attested message once Circle signed it (so the mint can be
+ *    offered again without asking Circle), and, once known, the final
+ *    status (delivered or failed). A status that is not final is not
+ *    stored; the screen asks again. The attested message is one more
+ *    record key; a record written before it (without the key) still loads,
+ *    and the document stays version 1 (see BRIDGE_STORE_VERSION). The store is parsed
  *    strictly: a damaged document is read-only (the valid records are
  *    shown, nothing is written, "Reset the transfer list" clears it), as
  *    for the pending-transaction registry. The source transaction itself is
@@ -123,13 +151,13 @@ export const LAYERZERO_APP_LABEL = 'LayerZero (Stargate)';
 // ---------------------------------------------------------------------------
 
 export const BRIDGE_INTRO =
-  'Bridging moves test ETH from this network to another test network. A bridge provider carries the transfer, and ' +
+  'Bridging moves test ETH or USDC from this network to another test network. A bridge provider carries the transfer, and ' +
   'you trust the provider’s contracts and verifiers while it is on its way, so each provider below says who that is. ' +
   'These are test networks: the coins have no value.';
 
 /** Under the provider list: the wallet does not choose. */
 export const BRIDGE_CHOICE_NOTE =
-  'You choose the provider. The wallet lists every provider it knows for this pair of networks and never picks one for you.';
+  'You choose the provider. The wallet lists every provider it knows for this asset and this pair of networks and never picks one for you.';
 
 /**
  * The note under the provider list for the network the form is on (the
@@ -146,10 +174,8 @@ export function bridgeChoiceNote(offer: Pick<BridgeOffer, 'unavailable' | 'sourc
   return `The wallet lists every provider it knows, each with the reason it cannot send from ${offer.sourceLabel}, and never picks one for you.`;
 }
 
-/** Why Circle CCTP is listed but cannot be chosen (see the module comment). */
-export const CCTP_COMING_NOTE =
-  'Coming later, not offered yet. Circle CCTP moves USDC, not test ETH, and this wallet has not yet sent a CCTP ' +
-  'transfer on the test networks, so it does not offer one. It is listed so you can compare who you would be trusting.';
+/** The label the CCTP adapter is registered under (the engine's own). */
+export const CCTP_APP_LABEL = 'Circle CCTP (USDC)';
 
 /** A provider that does not serve the chosen pair of networks. */
 export function noRouteNote(sourceLabel: string, destinationLabel: string): string {
@@ -211,6 +237,33 @@ export function bridgeRecipientNote(
     : smartAccountRecipientNote(recipient, destinationLabel);
 }
 
+/**
+ * The recipient sentence for USDC through CCTP (the regular account, or the
+ * smart account when the user chose it). Unlike Stargate's ETH, CCTP mints
+ * USDC with an ordinary ERC-20 mint (MintAndWithdraw, then the token's
+ * mint), which needs no code at the recipient and has no 2,300-gas limit,
+ * so a smart account, deployed there or not, can receive it.
+ */
+export function usdcRecipientNote(recipientKind: 'regular' | 'smart-account', recipient: string | null, destinationLabel: string): string {
+  if (recipientKind === 'regular') {
+    return `The USDC is minted to your regular account${recipient ? ` ${recipient}` : ''} on ${destinationLabel}, the same address as on this network.`;
+  }
+  return (
+    `The USDC is minted to your smart account${recipient ? ` ${recipient}` : ''} on ${destinationLabel}, the same address as on this network${recipient ? '' : ' (shown when you review)'}. ` +
+    'It does not need to be deployed there: CCTP mints USDC with an ordinary token mint, which needs no code at the ' +
+    'recipient, unlike Stargate’s 2,300-gas ETH transfer.'
+  );
+}
+
+/**
+ * The form's sentence when the smart account would receive USDC but cannot
+ * be offered as the recipient on that network (its Kernel factory is not
+ * verified there, so its address there is not known to be the same).
+ */
+export function usdcSmartRecipientUnavailable(destinationLabel: string): string {
+  return `Your smart account cannot be chosen as the recipient on ${destinationLabel}: the wallet has not verified the smart-account contracts there, so it cannot say the address is the same. Your regular account receives.`;
+}
+
 /** What the confirm says about the recipient's code on the receiving network. */
 export type RecipientCodeState = 'none' | 'code' | 'unknown';
 
@@ -233,6 +286,11 @@ export function pinnedPoolLine(pool: string, sourceLabel: string): string {
     'Stargate’s published test-network deployments and checked on-chain on 2026-10-15. The risk card below does not ' +
     'know Stargate’s pools by name.'
   );
+}
+
+/** The amount field's hint for USDC (6 decimals; the exact-amount rule, never rounded). */
+export function bridgeAmountHint(asset: 'usdc'): string {
+  return asset === 'usdc' ? 'USDC has 6 decimal places; an amount with more is refused, not rounded.' : '';
 }
 
 /** The "not a promise" framing every time figure carries. */
@@ -361,10 +419,15 @@ export interface BridgeReaders {
 /** Whether a provider can be chosen for sending in this build. */
 export type BridgeProviderStatus = 'offered' | 'coming';
 
-/** Providers the screen may send through. CCTP is listed but 'coming' (see the module comment). */
+/**
+ * Providers the screen may send through. Both are offered since phase 23
+ * item 4 (CCTP's Standard Transfers were proven live by script on
+ * 2026-10-25); a provider registered later starts as 'coming' until it has
+ * been proven the same way.
+ */
 export const BRIDGE_PROVIDER_STATUS: Readonly<Record<string, BridgeProviderStatus>> = Object.freeze({
   [LAYERZERO_OFT_PROVIDER_ID]: 'offered',
-  [CCTP_V2_PROVIDER_ID]: 'coming',
+  [CCTP_V2_PROVIDER_ID]: 'offered',
 });
 
 /**
@@ -393,8 +456,9 @@ const NO_READER = (): never => {
 
 /**
  * Builds the app's registry: LayerZero OFT over Stargate V2's native pools
- * (with the readers, when given) and Circle CCTP V2 (listing only; no
- * attestation reader because nothing is sent through it). With no readers
+ * and Circle CCTP V2, each with the readers when given (CCTP: Circle's
+ * sandbox attestation API, the source receipt and the receiving chain's
+ * logs, so its tracking follows the chains' own events). With no readers
  * the registry still lists every provider and route (both lists are pure).
  */
 export function createAppBridgeRegistry(
@@ -433,7 +497,16 @@ export function createAppBridgeRegistry(
         }
       : {}),
   });
-  return createBridgeRegistry([layerZero, createCctpV2Provider()]);
+  const cctp = createCctpV2Provider(
+    readers
+      ? {
+          fetchAttestation: circleIrisReader(readers.fetchImpl),
+          readSourceReceipt: sourceReceiptReader(readers),
+          readDestinationLogs: destinationLogReader(readers, options.destinationFromBlock ?? null, BRIDGE_LOG_TOO_OLD_CCTP),
+        }
+      : {},
+  );
+  return createBridgeRegistry([layerZero, cctp]);
 }
 
 /** The Stargate deployment the wallet pins on a chain, or undefined. */
@@ -459,11 +532,32 @@ function labelOfChain(chainId: number): string {
 // What is offered on the active network
 // ---------------------------------------------------------------------------
 
+/** What the Bridge screen moves: the network's own coin (test ETH) or Circle's USDC. */
+export type BridgeAssetChoice = 'native' | 'usdc';
+
+/** The asset chips, in this order. */
+export const BRIDGE_ASSETS: readonly BridgeAssetChoice[] = Object.freeze(['native', 'usdc']);
+
+/** The asset's name on the screen ("test ETH" for the native coin on a test network). */
+export function bridgeAssetLabel(asset: BridgeAssetChoice, nativeSymbol = 'test ETH'): string {
+  return asset === 'native' ? nativeSymbol : 'USDC';
+}
+
+/** The asset's decimals (18 for the coin, 6 for USDC). */
+export function bridgeAssetDecimals(asset: BridgeAssetChoice): number {
+  return asset === 'native' ? 18 : 6;
+}
+
+/** Which asset a route moves. */
+export function routeAsset(route: BridgeRoute): BridgeAssetChoice {
+  return route.sourceAsset.kind === 'native' ? 'native' : 'usdc';
+}
+
 export interface BridgeDestination {
   chainId: number;
   caip2: string;
   label: string;
-  /** True when at least one provider can be chosen for sending to it. */
+  /** True when at least one provider can be chosen for sending the asset to it. */
   sendable: boolean;
 }
 
@@ -489,30 +583,43 @@ export interface BridgeOffer {
   caip2: string;
   sourceChainId: number;
   sourceLabel: string;
+  /** The asset this offer is for. */
+  asset: BridgeAssetChoice;
   destinations: BridgeDestination[];
-  /** Every registered provider (in registration order), for the comparison list. */
+  /** Every registered provider that moves this asset (in registration order), for the comparison list. */
   providers: { id: string; label: string; trust: BridgeTrustStatement; status: BridgeProviderStatus }[];
   /** A plain sentence when nothing can be sent from this network, else null. */
   unavailable: string | null;
 }
 
+/** True when a provider moves the asset on any of its routes. */
+function providerMoves(provider: BridgeProvider, asset: BridgeAssetChoice): boolean {
+  return provider.supportedRoutes().some((r) => routeAsset(r) === asset);
+}
+
 /**
- * What the Bridge screen offers on `caip2` (pure: no request). Refused on
- * a network the readiness switchboard does not allow, before anything else.
- * Only the built-in test profiles take part: a network the user added has
- * no pinned bridge contracts.
+ * What the Bridge screen offers on `caip2` for one asset (pure: no
+ * request). Refused on a network the readiness switchboard does not allow,
+ * before anything else. Only the built-in test profiles take part: a
+ * network the user added has no pinned bridge contracts. Destinations and
+ * providers are those of the chosen asset only.
  */
-export function bridgeOfferFor(caip2: string): BridgeOffer {
+export function bridgeOfferFor(caip2: string, asset: BridgeAssetChoice = 'native'): BridgeOffer {
   assertFeatureAllowed(BRIDGE_FEATURE, caip2);
   const sourceChainId = chainIdOf(caip2);
   const sourceLabel = labelOfChain(sourceChainId);
   const registry = createAppBridgeRegistry();
-  const providers = registry.list().map((p) => ({ id: p.id, label: p.label, trust: p.trust, status: BRIDGE_PROVIDER_STATUS[p.id] ?? 'coming' }));
+  const providers = registry
+    .list()
+    .filter((p) => providerMoves(p, asset))
+    .map((p) => ({ id: p.id, label: p.label, trust: p.trust, status: BRIDGE_PROVIDER_STATUS[p.id] ?? 'coming' }));
+  const assetName = bridgeAssetLabel(asset, profileOfChain(sourceChainId)?.displaySymbol ?? 'test ETH');
   if (!isBuiltInEvmChain(caip2)) {
     return {
       caip2,
       sourceChainId,
       sourceLabel,
+      asset,
       destinations: [],
       providers,
       unavailable: `No bridge provider in this wallet serves ${sourceLabel}: bridging is offered only between the built-in test networks.`,
@@ -520,6 +627,7 @@ export function bridgeOfferFor(caip2: string): BridgeOffer {
   }
   const byChain = new Map<number, BridgeDestination>();
   for (const route of registry.routes({ sourceChainId })) {
+    if (routeAsset(route) !== asset) continue;
     const profile = profileOfChain(route.destinationChainId);
     if (!profile || !profile.testnet || !isBuiltInEvmChain(profile.caip2)) continue;
     const sendable = BRIDGE_PROVIDER_STATUS[route.providerId] === 'offered';
@@ -527,16 +635,43 @@ export function bridgeOfferFor(caip2: string): BridgeOffer {
     if (existing) existing.sendable = existing.sendable || sendable;
     else byChain.set(route.destinationChainId, { chainId: route.destinationChainId, caip2: profile.caip2, label: profile.label, sendable });
   }
+  // Destinations in the order the profiles list them, sendable ones first.
   const destinations = [...byChain.values()].sort((a, b) => Number(b.sendable) - Number(a.sendable));
   let unavailable: string | null = null;
-  if (destinations.length === 0) {
+  const anyRoute = registry.routes({ sourceChainId }).some((r) => isBuiltInEvmChain(`eip155:${r.destinationChainId}`));
+  if (!anyRoute) {
     unavailable = `No bridge provider in this wallet serves ${sourceLabel}.`;
-  } else if (!destinations.some((d) => d.sendable)) {
+  } else if (destinations.length === 0) {
     unavailable =
-      `No provider in this wallet can bridge test ETH from ${sourceLabel}: Stargate has no pool there. ` +
-      'Circle CCTP is listed below for comparison but is not offered yet.';
+      asset === 'native'
+        ? `No provider in this wallet can bridge ${assetName} from ${sourceLabel}: Stargate has no pool there.${bridgeAssetSendableFrom(caip2, 'usdc') ? ' Choose USDC above to bridge USDC with Circle CCTP.' : ''}`
+        : `No provider in this wallet can bridge USDC from ${sourceLabel}: Circle CCTP is not deployed there.`;
+  } else if (!destinations.some((d) => d.sendable)) {
+    unavailable = `No provider in this wallet can bridge ${assetName} from ${sourceLabel} yet.`;
   }
-  return { caip2, sourceChainId, sourceLabel, destinations, providers, unavailable };
+  return { caip2, sourceChainId, sourceLabel, asset, destinations, providers, unavailable };
+}
+
+/** Whether some offered provider can send the asset from `caip2` (pure). */
+export function bridgeAssetSendableFrom(caip2: string, asset: BridgeAssetChoice): boolean {
+  if (!isBuiltInEvmChain(caip2)) return false;
+  const sourceChainId = chainIdOf(caip2);
+  return createAppBridgeRegistry()
+    .routes({ sourceChainId })
+    .some((r) => routeAsset(r) === asset && BRIDGE_PROVIDER_STATUS[r.providerId] === 'offered' && isBuiltInEvmChain(`eip155:${r.destinationChainId}`));
+}
+
+/**
+ * The asset the form starts on: test ETH where some provider can send it
+ * from this network, else USDC where one can, else test ETH (whose
+ * sentence then says why nothing can be sent). The asset is the user's
+ * input like the destination chip; the PROVIDER is never chosen for the
+ * user.
+ */
+export function defaultBridgeAsset(caip2: string): BridgeAssetChoice {
+  if (bridgeAssetSendableFrom(caip2, 'native')) return 'native';
+  if (bridgeAssetSendableFrom(caip2, 'usdc')) return 'usdc';
+  return 'native';
 }
 
 /** The measured-time line for a route, or null when it was never measured. */
@@ -546,45 +681,59 @@ export function measuredTimeLine(time: BridgeTimeEstimate): string | null {
 }
 
 /**
- * The provider rows for one destination: every registered provider, the
- * offered ones selectable where they have a route, the others with the
- * sentence saying why not. Pure.
+ * The provider rows for one destination: every registered provider that
+ * moves the offer's asset, the offered ones selectable where they have a
+ * route, the others with the sentence saying why not. Pure.
  */
 export function bridgeProviderRows(offer: BridgeOffer, destinationChainId: number): BridgeProviderRow[] {
   const registry = createAppBridgeRegistry();
   const destinationLabel = labelOfChain(destinationChainId);
-  return registry.list().map((p) => {
-    const route = registry.routes({ sourceChainId: offer.sourceChainId, destinationChainId }).find((r) => r.providerId === p.id) ?? null;
-    const status = BRIDGE_PROVIDER_STATUS[p.id] ?? 'coming';
-    let measured: string | null = null;
-    let timeSource: string | null = null;
-    if (route && p.id === LAYERZERO_OFT_PROVIDER_ID) {
-      const pool = stargatePoolOn(offer.sourceChainId);
-      const pathway = pool?.pathways[destinationChainId];
-      if (pool && pathway) {
-        const time = oftTimeEstimate(pool, destinationChainId, pathway.confirmations);
+  const assetName = bridgeAssetLabel(offer.asset, profileOfChain(offer.sourceChainId)?.displaySymbol ?? 'test ETH');
+  return registry
+    .list()
+    .filter((p) => providerMoves(p, offer.asset))
+    .map((p) => {
+      const route =
+        registry
+          .routes({ sourceChainId: offer.sourceChainId, destinationChainId })
+          .find((r) => r.providerId === p.id && routeAsset(r) === offer.asset) ?? null;
+      const status = BRIDGE_PROVIDER_STATUS[p.id] ?? 'coming';
+      let measured: string | null = null;
+      let timeSource: string | null = null;
+      if (route && p.id === LAYERZERO_OFT_PROVIDER_ID) {
+        const pool = stargatePoolOn(offer.sourceChainId);
+        const pathway = pool?.pathways[destinationChainId];
+        if (pool && pathway) {
+          const time = oftTimeEstimate(pool, destinationChainId, pathway.confirmations);
+          measured = measuredTimeLine(time);
+          timeSource = time.source;
+        }
+      }
+      if (route && p.id === CCTP_V2_PROVIDER_ID) {
+        const time = cctpTimeEstimate(offer.sourceChainId, destinationChainId);
         measured = measuredTimeLine(time);
         timeSource = time.source;
       }
-    }
-    // Where the form hides the destination chips (no provider can send from
-    // this network), the reason names only the source network.
-    const noRoute = bridgeFormInputsShown(offer) ? noRouteNote(offer.sourceLabel, destinationLabel) : noSourceRouteNote(offer.sourceLabel);
-    const note = status === 'coming' ? CCTP_COMING_NOTE : route === null ? noRoute : null;
-    const asset = route ? (route.sourceAsset.kind === 'native' ? 'test ETH' : route.sourceAsset.symbol) : null;
-    return {
-      id: p.id,
-      label: p.label,
-      trust: p.trust,
-      selectable: status === 'offered' && route !== null,
-      asset,
-      note,
-      route,
-      measured,
-      timeSource,
-    };
-  });
+      // Where the form hides the destination chips (no provider can send from
+      // this network), the reason names only the source network.
+      const noRoute = bridgeFormInputsShown(offer) ? noRouteNote(offer.sourceLabel, destinationLabel) : noSourceRouteNote(offer.sourceLabel);
+      const note = status === 'coming' ? BRIDGE_PROVIDER_COMING_NOTE : route === null ? noRoute : null;
+      return {
+        id: p.id,
+        label: p.label,
+        trust: p.trust,
+        selectable: status === 'offered' && route !== null,
+        asset: assetName,
+        note,
+        route,
+        measured,
+        timeSource,
+      };
+    });
 }
+
+/** A provider registered but not yet offered for sending (none today; see BRIDGE_PROVIDER_STATUS). */
+export const BRIDGE_PROVIDER_COMING_NOTE = 'Listed for comparison; not offered for sending in this version.';
 
 // ---------------------------------------------------------------------------
 // Readers
@@ -636,6 +785,79 @@ export function layerZeroScanReader(fetchImpl?: typeof fetch): LayerZeroMessageS
   };
 }
 
+/**
+ * Circle's sandbox attestation API (the test networks' host; keyless:
+ * the API reference for GET /v2/messages/{sourceDomainId} declares
+ * `security: []`, https://developers.circle.com/api-reference/cctp/all/
+ * get-messages-v2.md, fetched 2026-10-25, sha256 aba0444f…a478, the same
+ * text docs/BRIDGING.md section 17 recorded). The mainnet host
+ * iris-api.circle.com is never used: bridging is test-networks-only.
+ */
+export const CIRCLE_IRIS_SANDBOX_API = 'https://iris-api-sandbox.circle.com';
+/** How long one Iris request may take (as in scripts/testnet/cctp-smoke.mjs). */
+export const IRIS_TIMEOUT_MS = 15_000;
+/** The largest Iris answer read (one message is under 2 KB). */
+export const IRIS_MAX_BYTES = 64 * 1024;
+
+/**
+ * The attestation reader over Circle's sandbox API: GET
+ * /v2/messages/{sourceDomain}?transactionHash={hash}. Read as the API
+ * reference documents it (MessagesV2Response: `messages`, an array of
+ * MessageV2 with `message` — "0x" until available — `attestation` —
+ * "PENDING" until available — and `status` "complete" or
+ * "pending_confirmations"; `sourceTxHash` the burn's hash): a 404 or no
+ * message yet is pending; exactly one message is required (a burn of this
+ * wallet emits one); "complete" with a hex message and a hex attestation is
+ * complete; anything else pending. Only https, a fixed host, a validated
+ * hash, a timeout and a size limit. The attestation is verified on-chain at
+ * the mint (and by the adapter against the burn), so the API can withhold
+ * one but cannot redirect funds.
+ */
+export function circleIrisReader(fetchImpl?: typeof fetch): CctpAttestationFetcher {
+  return async ({ sourceDomain, sourceTxHash }) => {
+    if (!/^0x[0-9a-fA-F]{64}$/.test(sourceTxHash)) throw new Error('The source transaction hash must be 32 bytes of hex.');
+    if (!Number.isInteger(sourceDomain) || sourceDomain < 0 || sourceDomain > 0xffffffff) throw new Error('The CCTP source domain is not a uint32.');
+    const fetchFn = fetchImpl ?? fetch;
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), IRIS_TIMEOUT_MS) : null;
+    try {
+      const response = await fetchFn(`${CIRCLE_IRIS_SANDBOX_API}/v2/messages/${sourceDomain}?transactionHash=${sourceTxHash.toLowerCase()}`, {
+        method: 'GET',
+        headers: { accept: 'application/json' },
+        ...(controller ? { signal: controller.signal } : {}),
+      });
+      if (response.status === 404) return { status: 'pending' };
+      if (!response.ok) throw new Error(`Circle’s attestation service answered HTTP ${response.status}`);
+      const declared = Number(response.headers?.get?.('content-length') ?? NaN);
+      if (Number.isFinite(declared) && declared > IRIS_MAX_BYTES) throw new Error('Circle’s attestation service sent an answer larger than expected.');
+      const body = (await response.json()) as { messages?: unknown; sourceTxHash?: unknown };
+      if (typeof body !== 'object' || body === null || !Array.isArray(body.messages)) {
+        throw new Error('Circle’s attestation service answered in an unexpected shape.');
+      }
+      if (typeof body.sourceTxHash === 'string' && body.sourceTxHash.toLowerCase() !== sourceTxHash.toLowerCase()) {
+        throw new Error('Circle’s attestation service answered for another transaction.');
+      }
+      if (body.messages.length === 0) return { status: 'pending' };
+      if (body.messages.length !== 1) {
+        throw new Error(`Circle’s attestation service returned ${body.messages.length} messages for one burn; the wallet does not pick one.`);
+      }
+      const m = body.messages[0] as { status?: unknown; message?: unknown; attestation?: unknown };
+      if (
+        m?.status === 'complete' &&
+        typeof m.message === 'string' &&
+        /^0x([0-9a-fA-F]{2})+$/.test(m.message) &&
+        typeof m.attestation === 'string' &&
+        /^0x([0-9a-fA-F]{2})+$/.test(m.attestation)
+      ) {
+        return { status: 'complete', message: m.message, attestation: m.attestation };
+      }
+      return { status: 'pending' };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+}
+
 /** The source receipt reader: eth_getTransactionReceipt on the source chain. */
 export function sourceReceiptReader(readers: BridgeReaders): BridgeReceiptLogReader {
   return async ({ chainId, txHash }) => {
@@ -665,13 +887,17 @@ export const BRIDGE_LOG_FALLBACK_BLOCKS = 9_000n;
 export const BRIDGE_LOG_TOO_OLD =
   'This transfer was sent too long ago for the wallet to search the receiving network for it; look up the sending transaction in LayerZero Scan or an explorer.';
 
+/** The same for a CCTP transfer: the mint is searched by the message's nonce. */
+export const BRIDGE_LOG_TOO_OLD_CCTP =
+  'This transfer was sent too long ago for the wallet to search the receiving network for its mint; look up the recipient on that network in an explorer. If the USDC was never minted, anyone can still send the mint with Circle’s attested message.';
+
 /**
  * The destination log reader: eth_getLogs on the receiving chain for one
  * contract, from `fromBlock` (the receiving chain's head when the transfer
  * was quoted, which is no later than its head when the transfer was sent)
  * to the current head, in windows of BRIDGE_LOG_WINDOW_BLOCKS.
  */
-export function destinationLogReader(readers: BridgeReaders, fromBlock: bigint | null): BridgeEventLogReader {
+export function destinationLogReader(readers: BridgeReaders, fromBlock: bigint | null, tooOld: string = BRIDGE_LOG_TOO_OLD): BridgeEventLogReader {
   return async ({ chainId, address, topics }) => {
     const transport = readers.transportFor(chainId);
     const headHex = await transport('eth_blockNumber', []);
@@ -679,7 +905,7 @@ export function destinationLogReader(readers: BridgeReaders, fromBlock: bigint |
     const head = BigInt(headHex);
     let start = fromBlock ?? (head > BRIDGE_LOG_FALLBACK_BLOCKS ? head - BRIDGE_LOG_FALLBACK_BLOCKS : 0n);
     if (start > head) return [];
-    if (head - start + 1n > BRIDGE_LOG_WINDOW_BLOCKS * BigInt(BRIDGE_LOG_MAX_WINDOWS)) throw new BridgeRefusal(BRIDGE_LOG_TOO_OLD);
+    if (head - start + 1n > BRIDGE_LOG_WINDOW_BLOCKS * BigInt(BRIDGE_LOG_MAX_WINDOWS)) throw new BridgeRefusal(tooOld);
     const out: BridgeLog[] = [];
     while (start <= head) {
       const end = start + BRIDGE_LOG_WINDOW_BLOCKS - 1n < head ? start + BRIDGE_LOG_WINDOW_BLOCKS - 1n : head;
@@ -746,8 +972,14 @@ export interface BridgeQuoteRequestApp {
   /** The address that signs: the regular account, or the smart account's address. */
   sender: string;
   senderKind: 'regular' | 'smart-account';
-  /** The active account's regular address (always the recipient; see the module comment). */
+  /**
+   * The address that receives. Test ETH: always the active account's
+   * regular address (see the module comment). USDC: the regular address, or
+   * the smart account's when the user chose it (recipientKind).
+   */
   recipient: string;
+  /** Which of the account's addresses receives (default 'regular'). Only USDC may go to the smart account. */
+  recipientKind?: 'regular' | 'smart-account';
   /** The profile's displaySymbol ("test ETH"). */
   nativeSymbol: string;
   readers: BridgeReaders;
@@ -766,10 +998,17 @@ export interface BridgePlan {
   sender: string;
   senderKind: 'regular' | 'smart-account';
   recipient: string;
+  recipientKind: 'regular' | 'smart-account';
   nativeSymbol: string;
-  /** The one call that is signed (no approval exists for a native pool). */
+  /** What moves: the network's coin or USDC. */
+  asset: BridgeAssetChoice;
+  /** The bridge call (the last call; for CCTP the burn). */
   call: Call;
-  /** The messaging fee, exactly as the adapter quoted it. */
+  /** Every call signed on the source network, in order (CCTP: the exact approval, then the burn). */
+  calls: Call[];
+  /** The exact approval the bridge call needs (CCTP), or null (a native pool takes the coin itself). */
+  approval: { token: string; spender: string; amount: bigint } | null;
+  /** The messaging fee, exactly as the adapter quoted it (0 for CCTP: there is none). */
   messagingFee: bigint;
   /** The receiving chain's head when quoted (where tracking starts), or null when unreadable. */
   destinationFromBlock: bigint | null;
@@ -782,23 +1021,59 @@ function word32At(data: Uint8Array, offset: number): string | null {
   return toHex(data.slice(start, start + 32)).toLowerCase();
 }
 
+function uintWord(value: bigint | number): string {
+  return '0x' + BigInt(value).toString(16).padStart(64, '0');
+}
+
+/** The checked parts of a quote, ready for the send paths. */
+export interface CheckedBridgeQuote {
+  /** The bridge call. */
+  call: Call;
+  /** Every source call, in order. */
+  calls: Call[];
+  messagingFee: bigint;
+  approval: { token: string; spender: string; amount: bigint } | null;
+}
+
+/**
+ * The words of CCTP's depositForBurn this wallet signs, by offset (the
+ * engine's depositForBurnPins; docs/BRIDGING.md section 4.4), as the
+ * checker re-reads them: every one of the seven.
+ */
+export const CCTP_BURN_WORD_OFFSETS = Object.freeze({
+  amount: 0,
+  destinationDomain: 32,
+  mintRecipient: 64,
+  burnToken: 96,
+  destinationCaller: 128,
+  maxFee: 160,
+  minFinalityThreshold: 192,
+} as const);
+
 /**
  * The wallet's own checks of a quote before it is shown or signed,
  * independent of the adapter that built it. Throws BridgeRefusal.
- * Checked: the route and amount are the ones asked for; every approval is
+ * Common: the route and amount are the ones asked for; every approval is
  * exact (more than zero, at most the amount, below the "unlimited" bound,
- * and its calldata says exactly that); a native pool needs no approval at
- * all; there is exactly one bridge call, last; it goes to the pinned
- * Stargate pool of the sending chain with the OFT send selector; its value
- * is exactly the amount plus the quoted messaging fee and equals its value
- * limit; and the pinned words of the calldata carry the destination's
- * endpoint id, the recipient, the amount and the refund address (the
- * sender).
+ * and its calldata says exactly that); there is exactly one bridge call,
+ * last. LayerZero: the call goes to the pinned Stargate pool of the sending
+ * chain with the OFT send selector, needs no approval, its value is
+ * exactly the amount plus the quoted messaging fee and equals its value
+ * limit, and the pinned words carry the destination's endpoint id, the
+ * recipient, the amount, the fee and the refund address (the sender).
+ * CCTP: exactly two calls — approve(TokenMessengerV2, exactly the amount)
+ * on the sending network's USDC, then depositForBurn on TokenMessengerV2 —
+ * both with value 0 and value limit 0; the burn is exactly the seven words
+ * (228 bytes) and EVERY word is re-read against what the wallet expects
+ * (the amount, the destination domain, the recipient, the USDC, a zero
+ * destination caller, a zero maximum fee, finality 2000) and against its
+ * own equal pin; one fee line, Circle's, of zero; expected and minimum
+ * arrival equal to the amount.
  */
 export function checkBridgeQuote(
   quote: BridgeQuote,
   expect: { sourceChainId: number; destinationChainId: number; amount: bigint; recipient: string; sender: string },
-): { call: Call; messagingFee: bigint } {
+): CheckedBridgeQuote {
   const fail = (why: string): never => {
     throw new BridgeRefusal(`The quote did not pass the wallet’s own checks (${why}). Nothing was signed.`);
   };
@@ -819,6 +1094,7 @@ export function checkBridgeQuote(
   const bridgeCalls = quote.calls.filter((c) => c.purpose === 'bridge');
   if (bridgeCalls.length !== 1 || quote.calls[quote.calls.length - 1] !== bridgeCalls[0]) fail('not exactly one bridge call, last');
   const call = bridgeCalls[0]!;
+  if (quote.providerId === CCTP_V2_PROVIDER_ID) return checkCctpQuote(quote, expect, call, fail);
   if (quote.providerId !== LAYERZERO_OFT_PROVIDER_ID) fail('a provider this screen does not send through');
   const pool = stargatePoolOn(expect.sourceChainId);
   if (!pool || call.to.toLowerCase() !== pool.address.toLowerCase()) fail('a contract other than the pinned Stargate pool');
@@ -843,32 +1119,136 @@ export function checkBridgeQuote(
     if (!pin || pin.rule.condition !== 'equal' || pin.rule.params[0]?.toLowerCase() !== value) fail(`the pin at byte ${offset}`);
   }
   if (quote.minAmountOut > quote.expectedAmountOut || quote.minAmountOut > expect.amount) fail('a minimum above what is expected to arrive');
-  return { call: { to: call.to, value: call.value, data: call.data }, messagingFee };
+  return { call: { to: call.to, value: call.value, data: call.data }, calls: [{ to: call.to, value: call.value, data: call.data }], messagingFee, approval: null };
+}
+
+/** The CCTP half of checkBridgeQuote (see its comment). */
+function checkCctpQuote(
+  quote: BridgeQuote,
+  expect: { sourceChainId: number; destinationChainId: number; amount: bigint; recipient: string; sender: string },
+  call: BridgeQuote['calls'][number],
+  fail: (why: string) => never,
+): CheckedBridgeQuote {
+  const usdc = CCTP_V2_TESTNET_USDC[expect.sourceChainId];
+  const domain = CCTP_V2_TESTNET_DOMAINS[expect.destinationChainId];
+  const tm = CCTP_V2_TESTNET.tokenMessengerV2;
+  if (!usdc || domain === undefined || CCTP_V2_TESTNET_DOMAINS[expect.sourceChainId] === undefined) fail('a network Circle CCTP does not serve in this wallet');
+  if (quote.route.sourceAsset.kind !== 'erc20' || quote.route.sourceAsset.address.toLowerCase() !== usdc!.toLowerCase()) fail('an asset other than this network’s USDC');
+  if (quote.calls.length !== 2 || quote.calls[0]!.purpose !== 'approve') fail('not exactly the approval and the burn');
+  const approve = quote.calls[0]!;
+  if (approve.to.toLowerCase() !== usdc!.toLowerCase()) fail('an approval on another token than USDC');
+  const approveHex = toHex(approve.data).toLowerCase();
+  if (approveHex.slice(10, 74) !== addressToBytes32(tm).toLowerCase().slice(2)) fail('an approval for another spender than Circle’s TokenMessengerV2');
+  if (BigInt('0x' + approveHex.slice(74, 138)) !== expect.amount) fail('an approval that is not exactly the amount');
+  if (
+    quote.approvals.length !== 1 ||
+    quote.approvals[0]!.token.toLowerCase() !== usdc!.toLowerCase() ||
+    quote.approvals[0]!.spender.toLowerCase() !== tm.toLowerCase() ||
+    quote.approvals[0]!.amount !== expect.amount
+  ) {
+    fail('an approval the quote does not list');
+  }
+  if (approve.value !== 0n || approve.valueLimit !== 0n) fail('an approval that carries a value');
+  if (call.to.toLowerCase() !== tm.toLowerCase()) fail('a contract other than Circle’s pinned TokenMessengerV2');
+  if (call.value !== 0n || call.valueLimit !== 0n) fail('a burn that carries a value');
+  const hex = toHex(call.data).toLowerCase();
+  if (hex.slice(0, 10) !== CCTP_DEPOSIT_FOR_BURN_SELECTOR) fail('another function');
+  if (call.data.length !== 4 + 7 * 32) fail('a burn that is not exactly seven words');
+  const O = CCTP_BURN_WORD_OFFSETS;
+  const want: [number, string][] = [
+    [O.amount, uintWord(expect.amount)],
+    [O.destinationDomain, uintWord(domain!)],
+    [O.mintRecipient, addressToBytes32(expect.recipient).toLowerCase()],
+    [O.burnToken, addressToBytes32(usdc!).toLowerCase()],
+    [O.destinationCaller, uintWord(0)],
+    [O.maxFee, uintWord(0)],
+    [O.minFinalityThreshold, uintWord(CCTP_FINALITY_STANDARD)],
+  ];
+  for (const [offset, value] of want) {
+    if (word32At(call.data, offset) !== value) fail(`the word at byte ${offset} of the burn`);
+    const pin = call.pins.find((p) => p.rule.offset === offset);
+    if (!pin || pin.rule.condition !== 'equal' || pin.rule.params[0]?.toLowerCase() !== value) fail(`the pin at byte ${offset} of the burn`);
+  }
+  if (call.pins.length !== 7 || call.unpinnable.length !== 0) fail('a burn that is not fully pinned');
+  if (quote.fees.length !== 1 || quote.fees[0]!.kind !== 'protocol' || quote.fees[0]!.amount !== 0n) fail('a Circle fee that is not zero');
+  if (quote.expectedAmountOut !== expect.amount || quote.minAmountOut !== expect.amount) fail('an arrival other than the amount');
+  const plain = (c: Call): Call => ({ to: c.to, value: c.value, data: c.data });
+  return {
+    call: plain(call),
+    calls: [plain(approve), plain(call)],
+    messagingFee: 0n,
+    approval: { token: usdc!, spender: tm, amount: expect.amount },
+  };
+}
+
+/** The refusal for test ETH sent to the smart account (Stargate's 2,300-gas delivery). */
+export const BRIDGE_NATIVE_SMART_RECIPIENT_REFUSAL =
+  'Test ETH is bridged only to your regular account: Stargate hands ETH over with a 2,300-gas transfer, which a deployed smart account cannot accept. Nothing was quoted.';
+
+/** The USDC balance refusal (exact amounts, never rounded). */
+export function usdcBalanceRefusal(balance: bigint, amount: bigint, sourceLabel: string): string {
+  return `You hold ${formatUnits(balance, 6, 6)} USDC on ${sourceLabel}, and this transfer needs ${formatUnits(amount, 6, 6)} USDC. Nothing was quoted.`;
+}
+
+/** USDC.balanceOf(owner) on the source network through the quote's transport. */
+async function readUsdcBalance(transport: JsonRpcTransport, token: string, owner: string): Promise<bigint> {
+  const data = '0x70a08231' + addressToBytes32(owner).slice(2);
+  let answer: unknown;
+  try {
+    answer = await transport('eth_call', [{ to: token, data }, 'latest']);
+  } catch (e) {
+    throw asReaderError(e);
+  }
+  if (typeof answer !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(answer)) throw asReaderError(new Error('The node answered balanceOf with something other than one word.'));
+  return BigInt(answer);
+}
+
+/**
+ * Whether the sender still has to approve the bridge's spender: reads
+ * USDC.allowance(sender, TokenMessengerV2) on the sending network. True
+ * while the allowance is below the amount (an earlier, unused approval of
+ * at least the amount is used as it is and nothing new is approved).
+ */
+export async function bridgeNeedsApproval(transport: JsonRpcTransport, plan: Pick<BridgePlan, 'approval' | 'sender'>): Promise<boolean> {
+  if (!plan.approval) return false;
+  const data = '0xdd62ed3e' + addressToBytes32(plan.sender).slice(2) + addressToBytes32(plan.approval.spender).slice(2);
+  const answer = await transport('eth_call', [{ to: plan.approval.token, data }, 'latest']);
+  if (typeof answer !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(answer)) throw new Error('The node answered allowance with something other than one word.');
+  return BigInt(answer) < plan.approval.amount;
 }
 
 /**
  * Quotes one transfer through the chosen provider and checks it. Refused
  * on a network readiness does not allow (before any request), for a
- * provider that is not offered for sending, and for a destination the
- * provider does not serve. Reads, besides the provider's own quote reads:
- * the receiving chain's head (where tracking starts) and whether the
- * recipient has code there (best effort; neither failure blocks a quote).
+ * provider that is not offered for sending, for a destination the provider
+ * does not serve, for test ETH to the smart account, and for USDC above the
+ * sender's balance. Reads, besides the provider's own quote reads: the
+ * sender's USDC balance (CCTP), the receiving chain's head (where tracking
+ * starts) and whether the recipient has code there (best effort; neither
+ * failure blocks a quote).
  */
 export async function quoteBridge(request: BridgeQuoteRequestApp): Promise<BridgePlan> {
   assertFeatureAllowed(BRIDGE_FEATURE, request.caip2);
   const sourceChainId = chainIdOf(request.caip2);
   const status = BRIDGE_PROVIDER_STATUS[request.providerId];
-  if (status !== 'offered') {
-    throw new BridgeRefusal(request.providerId === CCTP_V2_PROVIDER_ID ? CCTP_COMING_NOTE : 'This bridge provider is not offered in this wallet.');
-  }
+  if (status !== 'offered') throw new BridgeRefusal('This bridge provider is not offered in this wallet.');
   const destinationProfile = profileOfChain(request.destinationChainId);
   if (!destinationProfile || !destinationProfile.testnet || !isBuiltInEvmChain(destinationProfile.caip2)) {
     throw new BridgeRefusal('Bridging is offered only to the built-in test networks.');
   }
+  const recipientKind = request.recipientKind ?? 'regular';
   const registry = createAppBridgeRegistry(request.readers, { estimateGas: request.senderKind === 'regular' });
   const provider: BridgeProvider = registry.require(request.providerId);
   const route = registry.routes({ sourceChainId, destinationChainId: request.destinationChainId }).find((r) => r.providerId === request.providerId);
   if (!route) throw new BridgeRefusal(noRouteNote(labelOfChain(sourceChainId), destinationProfile.label));
+  const asset = routeAsset(route);
+  if (asset === 'native' && recipientKind !== 'regular') throw new BridgeRefusal(BRIDGE_NATIVE_SMART_RECIPIENT_REFUSAL);
+  if (request.amount <= 0n) throw new BridgeRefusal('Enter an amount greater than zero.');
+  if (asset === 'usdc' && route.sourceAsset.kind === 'erc20') {
+    // Above the balance: refused before quoting, with both exact figures.
+    const balance = await readUsdcBalance(request.readers.transportFor(sourceChainId), route.sourceAsset.address, request.sender);
+    if (request.amount > balance) throw new BridgeRefusal(usdcBalanceRefusal(balance, request.amount, labelOfChain(sourceChainId)));
+  }
   let quote: BridgeQuote;
   try {
     quote = await provider.quote({
@@ -884,7 +1264,7 @@ export async function quoteBridge(request: BridgeQuoteRequestApp): Promise<Bridg
     if (isBridgeReaderError(e)) throw e;
     throw new BridgeRefusal(e instanceof Error ? e.message : String(e));
   }
-  const { call, messagingFee } = checkBridgeQuote(quote, {
+  const checked = checkBridgeQuote(quote, {
     sourceChainId,
     destinationChainId: request.destinationChainId,
     amount: request.amount,
@@ -920,9 +1300,13 @@ export async function quoteBridge(request: BridgeQuoteRequestApp): Promise<Bridg
     sender: request.sender,
     senderKind: request.senderKind,
     recipient: request.recipient,
+    recipientKind,
     nativeSymbol: request.nativeSymbol,
-    call,
-    messagingFee,
+    asset,
+    call: checked.call,
+    calls: checked.calls,
+    approval: checked.approval,
+    messagingFee: checked.messagingFee,
     destinationFromBlock,
     recipientCode,
   };
@@ -935,8 +1319,10 @@ export async function quoteBridge(request: BridgeQuoteRequestApp): Promise<Bridg
 /**
  * The regular-account quote through prepareEvmSend (chain-id check, fee,
  * balance, eth_call pre-flight). The value is the call's value exactly as
- * the adapter built it (amount + messaging fee); a quote that would sign
- * another value is refused.
+ * the adapter built it (LayerZero: amount + messaging fee; CCTP's burn: 0);
+ * a quote that would sign another value is refused. For CCTP this is the
+ * SECOND transaction: its pre-flight passes only once the exact approval
+ * (prepareBridgeApprove) is confirmed.
  */
 export async function prepareBridgeSend(url: string, from: string, plan: BridgePlan): Promise<EvmSendQuote> {
   assertFeatureAllowed(BRIDGE_FEATURE, plan.sourceCaip2);
@@ -950,10 +1336,44 @@ export async function prepareBridgeSend(url: string, from: string, plan: BridgeP
   return quote;
 }
 
+function sameCall(a: Call, b: Call): boolean {
+  return a.to.toLowerCase() === b.to.toLowerCase() && a.value === b.value && toHex(a.data) === toHex(b.data);
+}
+
 /**
- * The smart-account quote through prepareAaCalls: the one bridge call as
- * one operation. The quote must be for the smart account the plan was
- * read for, and must send exactly the call's value.
+ * The regular account's FIRST CCTP transaction: the exact approval of the
+ * plan (approve(TokenMessengerV2, exactly the amount) on the sending
+ * network's USDC, value 0), through prepareEvmSend with its pre-flight.
+ */
+export async function prepareBridgeApprove(url: string, from: string, plan: BridgePlan): Promise<EvmSendQuote> {
+  assertFeatureAllowed(BRIDGE_FEATURE, plan.sourceCaip2);
+  if (plan.senderKind !== 'regular' || plan.sender.toLowerCase() !== from.toLowerCase()) {
+    throw new BridgeRefusal('This quote was prepared for another account. Nothing was quoted.');
+  }
+  const approve = plan.approval ? plan.calls[0] : undefined;
+  if (!plan.approval || !approve || plan.calls.length !== 2 || approve.to.toLowerCase() !== plan.approval.token.toLowerCase()) {
+    throw new BridgeRefusal('This transfer needs no token approval.');
+  }
+  const quote = await prepareEvmSend(url, from, approve.to, 0n, approve.data, plan.sourceCaip2);
+  if (quote.amount !== 0n || quote.to.toLowerCase() !== approve.to.toLowerCase() || toHex(quote.data ?? new Uint8Array()) !== toHex(approve.data)) {
+    throw new BridgeRefusal('The approval transaction would not be the exact approval quoted. Nothing was signed.');
+  }
+  return quote;
+}
+
+/** The device prompt for the exact approval (the regular account's step 1 of 2). */
+export function bridgeApprovePromptTitle(plan: Pick<BridgePlan, 'approval' | 'asset' | 'nativeSymbol'>): string {
+  const amount = plan.approval ? exactAsset(plan.approval.amount, plan.asset) : '0';
+  return `Approve exactly ${amount} ${bridgeAssetLabel(plan.asset, plan.nativeSymbol)} for Circle’s TokenMessengerV2`;
+}
+
+/**
+ * The smart-account quote through prepareAaCalls: every source call of the
+ * plan as ONE operation (LayerZero: the bridge call; CCTP: the exact
+ * approval and the burn, all-or-nothing, self-paid; the USDC the
+ * operation spends is checked against the smart account's balance). The
+ * quote must be for the smart account the plan was read for, and must
+ * carry exactly the plan's calls and value.
  */
 export async function prepareBridgeAa(bundle: AaClientBundle, ownerAddress: string, plan: BridgePlan): Promise<AaSendQuote> {
   assertFeatureAllowed(BRIDGE_FEATURE, plan.sourceCaip2);
@@ -961,14 +1381,24 @@ export async function prepareBridgeAa(bundle: AaClientBundle, ownerAddress: stri
   if (`eip155:${bundle.chainId}` !== plan.sourceCaip2) {
     throw new BridgeRefusal('The smart-account setup is for another network than this quote. Nothing was quoted.');
   }
-  const quote = await prepareAaCalls(bundle, ownerAddress, [{ to: plan.call.to, value: plan.call.value, data: plan.call.data }], {
+  // A plan with an approval is exactly [the approval on its token, the bridge call].
+  if (plan.approval && (plan.calls.length !== 2 || plan.calls[0]!.to.toLowerCase() !== plan.approval.token.toLowerCase() || !sameCall(plan.calls[1]!, plan.call))) {
+    throw new BridgeRefusal('The operation would not carry the quoted calls and value. Nothing was signed.');
+  }
+  const calls = plan.calls.map((c) => ({ to: c.to, value: c.value, data: c.data }));
+  const quote = await prepareAaCalls(bundle, ownerAddress, calls, {
     displayTo: plan.call.to,
+    ...(plan.approval ? { tokenSpend: { contract: plan.approval.token, amount: plan.approval.amount, symbol: 'USDC' } } : {}),
   });
   if (quote.sender.toLowerCase() !== plan.sender.toLowerCase()) {
     throw new BridgeRefusal('This quote was read for another address than the smart account. Nothing was quoted.');
   }
-  if (quote.amount !== plan.call.value || quote.calls.length !== 1) {
-    throw new BridgeRefusal('The operation would not carry the quoted value. Nothing was signed.');
+  const total = calls.reduce((sum, c) => sum + c.value, 0n);
+  const same =
+    quote.calls.length === calls.length &&
+    quote.calls.every((c, i) => c.to.toLowerCase() === calls[i]!.to.toLowerCase() && c.value === calls[i]!.value && toHex(c.data) === toHex(calls[i]!.data));
+  if (quote.amount !== total || !same) {
+    throw new BridgeRefusal('The operation would not carry the quoted calls and value. Nothing was signed.');
   }
   return quote;
 }
@@ -982,9 +1412,18 @@ export function exactNative(amount: bigint): string {
   return formatUnits(amount, 18, 18);
 }
 
+/** Full precision for an amount of the asset (18 decimals for the coin, 6 for USDC). */
+export function exactAsset(amount: bigint, asset: BridgeAssetChoice): string {
+  const d = bridgeAssetDecimals(asset);
+  return formatUnits(amount, d, d);
+}
+
 /** The device prompt (and the confirm button): "Bridge X test ETH to <network> through <provider>". */
-export function bridgePromptTitle(plan: Pick<BridgePlan, 'quote' | 'nativeSymbol' | 'destinationLabel' | 'providerLabel' | 'senderKind'>): string {
-  const base = `Bridge ${exactNative(plan.quote.amountIn)} ${plan.nativeSymbol} to ${plan.destinationLabel} through ${plan.providerLabel}`;
+export function bridgePromptTitle(
+  plan: Pick<BridgePlan, 'quote' | 'nativeSymbol' | 'destinationLabel' | 'providerLabel' | 'senderKind'> & { asset?: BridgeAssetChoice },
+): string {
+  const asset = plan.asset ?? 'native';
+  const base = `Bridge ${exactAsset(plan.quote.amountIn, asset)} ${bridgeAssetLabel(asset, plan.nativeSymbol)} to ${plan.destinationLabel} through ${plan.providerLabel}`;
   return plan.senderKind === 'smart-account' ? `${base} from your smart account` : base;
 }
 
@@ -1016,6 +1455,8 @@ export function bridgeSourceFeeLines(
 
 export interface BridgeConfirmModel {
   title: string;
+  /** The source calls in plain words, in order (CCTP: the approval, then the burn), with how many prompts they take. */
+  callLines: string[];
   youSend: string;
   arrives: string;
   minimum: string;
@@ -1040,6 +1481,7 @@ export interface BridgeConfirmModel {
  * pool; when present, each states its exact amount).
  */
 export function bridgeConfirmModel(plan: BridgePlan): BridgeConfirmModel {
+  if (plan.providerId === CCTP_V2_PROVIDER_ID) return cctpConfirmModel(plan);
   const q = plan.quote;
   const sym = plan.nativeSymbol;
   const feeLines = q.fees.map((f) => ({
@@ -1072,6 +1514,7 @@ export function bridgeConfirmModel(plan: BridgePlan): BridgeConfirmModel {
   if (codeNote) recipientLines.push(codeNote);
   return {
     title: bridgePromptTitle(plan),
+    callLines: [],
     youSend: `You send ${exactNative(q.amountIn)} ${sym} from ${plan.sourceLabel}`,
     arrives: `Expected to arrive on ${plan.destinationLabel}: ${exactNative(q.expectedAmountOut)} ${sym}`,
     minimum: `Least that may arrive (written into the call): ${exactNative(q.minAmountOut)} ${sym}`,
@@ -1085,6 +1528,83 @@ export function bridgeConfirmModel(plan: BridgePlan): BridgeConfirmModel {
     pinnedPool: pinnedPoolLine(plan.call.to, plan.sourceLabel),
     recipientLines,
     notes: q.notes,
+  };
+}
+
+/** The confirm's line about Circle's pinned contract (the risk card does not know it by name). */
+export function cctpPinnedContractLine(tokenMessenger: string, sourceLabel: string): string {
+  return (
+    `The burn goes to Circle’s TokenMessengerV2 on ${sourceLabel} (${tokenMessenger}), pinned by this wallet from Circle’s ` +
+    'published test-network addresses and checked on-chain on 2026-10-25. The risk card below does not know Circle’s contracts by name.'
+  );
+}
+
+/** Shown on the smart-account confirm: the fee is paid in the network's coin on this path. */
+export function cctpSmartAccountFeeNote(symbol: string): string {
+  return `The network fee is paid in ${symbol} from the smart account. Paying it in USDC through Circle’s paymaster is not offered for bridging in this version.`;
+}
+
+/**
+ * What has to happen on the receiving network, in the wallet's words (the
+ * adapter's own description is shown first).
+ */
+export function cctpMintStepLine(destinationLabel: string): string {
+  return (
+    `After Circle’s attestation (about 17 minutes in the measured runs) the USDC is minted on ${destinationLabel} by a transaction ` +
+    `there. This wallet can send it from your regular account when ${destinationLabel} is the active network and that account ` +
+    'holds test ETH there for gas; anyone else with gas there may send it too, and the USDC still goes only to the recipient written into the burn.'
+  );
+}
+
+function cctpConfirmModel(plan: BridgePlan): BridgeConfirmModel {
+  const q = plan.quote;
+  const amount = `${exactAsset(q.amountIn, 'usdc')} USDC`;
+  const approval = plan.approval!;
+  const domain = CCTP_V2_TESTNET_DOMAINS[q.route.destinationChainId];
+  const feeLines = q.fees.map((f) => ({
+    label: 'Circle protocol fee (Standard Transfer)',
+    value: f.amount === null ? 'not known before sending' : `${exactAsset(f.amount, 'usdc')} USDC`,
+    note: f.description,
+  }));
+  const timeLines: string[] = [];
+  const measured = measuredTimeLine(q.time);
+  if (measured) timeLines.push(measured);
+  timeLines.push(q.time.source);
+  if (!/not a promise/i.test(q.time.source)) timeLines.push(BRIDGE_TIME_NOT_PROMISE);
+  const callLines = [
+    `1. approve on USDC (${approval.token}): allows Circle’s TokenMessengerV2 ${approval.spender} to take exactly ${amount}.`,
+    `2. depositForBurn on Circle’s TokenMessengerV2 (${plan.call.to}): burns ${amount} on ${plan.sourceLabel} for minting on ${plan.destinationLabel}.`,
+    plan.senderKind === 'smart-account'
+      ? 'One smart-account operation carries both calls, all or nothing, so there is one device prompt.'
+      : 'Two transactions, each with its own device prompt: first the approval, then, once it is confirmed, the burn.',
+  ];
+  const pinnedSummary = [
+    `Receiving network: ${plan.destinationLabel} (CCTP domain ${domain}).`,
+    `Recipient: ${plan.recipient} (your ${plan.recipientKind === 'smart-account' ? 'smart account' : 'regular account'}).`,
+    `Amount: ${amount} (${q.amountIn} base units), burned here and minted there.`,
+    `Burn token: USDC ${approval.token} on ${plan.sourceLabel}.`,
+    'Destination caller: none (zero), so anyone may send the mint; it still goes only to the recipient above.',
+    'Maximum fee 0 and finality 2000: a Standard Transfer, which Circle attests after the sending network’s hard finality. This wallet never builds a Fast Transfer.',
+    `All seven words of the call are fixed (${q.calls[q.calls.length - 1]!.pins.length} pins), and before showing this screen the wallet re-read each of them from the call itself.`,
+  ];
+  return {
+    title: bridgePromptTitle(plan),
+    callLines,
+    youSend: `You send ${amount} from ${plan.sourceLabel}`,
+    arrives: `Expected to arrive on ${plan.destinationLabel}: ${exactAsset(q.expectedAmountOut, 'usdc')} USDC`,
+    minimum: `Least that may arrive (written into the call as a maximum fee of 0): ${exactAsset(q.minAmountOut, 'usdc')} USDC`,
+    feeLines,
+    total: `${amount} (amount ${exactAsset(q.amountIn, 'usdc')} + Circle fee 0), before the network fees in ${plan.nativeSymbol}`,
+    timeLines,
+    trust: plan.trust,
+    destinationStep: `${q.destination.description} ${cctpMintStepLine(plan.destinationLabel)}`,
+    approvalLine:
+      `Exact approval only: this allows Circle’s TokenMessengerV2 (${approval.spender}) to take exactly ${amount} ` +
+      `(${approval.amount} base units) of USDC (${approval.token}), nothing more; the burn uses all of it, so nothing stays approved.`,
+    pinnedSummary,
+    pinnedPool: cctpPinnedContractLine(plan.call.to, plan.sourceLabel),
+    recipientLines: [usdcRecipientNote(plan.recipientKind, plan.recipient, plan.destinationLabel)],
+    notes: plan.senderKind === 'smart-account' ? [...q.notes, cctpSmartAccountFeeNote(plan.nativeSymbol)] : [...q.notes],
   };
 }
 
@@ -1114,12 +1634,32 @@ export interface BridgeTransferRecord {
   checkedAt: number | null;
   /** The last tracking error, as plain text, or null. */
   checkError: string | null;
-  /** The retry transaction sent from this screen, when one was sent. */
+  /**
+   * The transaction this screen sent on the RECEIVING network for this
+   * transfer, when one was sent: Stargate's retryReceiveToken, or CCTP's
+   * mint (receiveMessage).
+   */
   retryTxHash: string | null;
+  /**
+   * CCTP: Circle's attested message, once the adapter has checked it
+   * against the burn (stored so the mint can be offered again after a
+   * restart without asking Circle; re-checked by the adapter every time it
+   * is used). Null for LayerZero and before the attestation.
+   */
+  attested: BridgeAttestation | null;
 }
 
 /** The storage key (store-keys.ts; per wallet). */
 export const BRIDGE_TRANSFERS_KEY = STORE_KEYS.bridgeTransfers.name;
+/**
+ * The stored document's version. Still 1 after phase 23 item 4 added the
+ * attested message: a record has exactly one of two key sets — the 18 keys
+ * written before (read with no attested message) or those 18 plus
+ * `attested` (what this version writes) — so the parse stays strict, a list
+ * written before keeps loading, and the records backup, which writes a
+ * restored list in the backup's own version (records-backup.ts), needs no
+ * change.
+ */
 const BRIDGE_STORE_VERSION = 1;
 /** At most this many transfers are kept (judgement, as the pending registry's 64); the oldest finished ones go first. */
 export const MAX_BRIDGE_TRANSFERS = 64;
@@ -1163,6 +1703,12 @@ const STORED_KEYS = [
   'amountIn', 'recipient', 'sender', 'senderKind', 'sourceTxHash', 'userOpHash', 'destinationFromBlock', 'sentAt',
   'retryTxHash', 'final',
 ] as const;
+/** Records written since phase 23 item 4 add the attested message (null until Circle attests a CCTP burn). */
+const STORED_KEYS_WITH_ATTESTED = [...STORED_KEYS, 'attested'] as const;
+/** The attested message's stored form: hex strings, the expiration block as a decimal string. */
+const ATTESTED_KEYS = ['message', 'attestation', 'nonce', 'expirationBlock'] as const;
+/** The longest attestation stored (65-byte signatures; judgement: 16 signatures, Circle uses 2). */
+const ATTESTATION_MAX_BYTES = 65 * 16;
 
 /** A finished transfer's status as stored (only delivered or failed are kept). */
 interface StoredFinal {
@@ -1211,7 +1757,39 @@ export function bridgeRecordToStored(record: BridgeTransferRecord): Record<strin
     sentAt: record.sentAt,
     retryTxHash: record.retryTxHash,
     final: finalOf(record),
+    attested:
+      record.attested === null
+        ? null
+        : {
+            message: record.attested.message,
+            attestation: record.attested.attestation,
+            nonce: record.attested.nonce,
+            expirationBlock: record.attested.expirationBlock.toString(),
+          },
   };
+}
+
+/**
+ * A stored attested message, checked: whole-byte hex, a message the CCTP
+ * decoder accepts whose nonce equals the stored one (non-zero), an
+ * attestation of whole 65-byte signatures, and the expiration block equal
+ * to the message's own. Null when anything is off.
+ */
+function storedAttested(v: unknown): BridgeAttestation | null {
+  if (!isObject(v) || !exactKeys(v, ATTESTED_KEYS)) return null;
+  if (typeof v.message !== 'string' || !/^0x([0-9a-f]{2})+$/.test(v.message)) return null;
+  if (typeof v.attestation !== 'string' || !/^0x([0-9a-f]{2})+$/.test(v.attestation)) return null;
+  const sig = (v.attestation.length - 2) / 2;
+  if (sig % 65 !== 0 || sig > ATTESTATION_MAX_BYTES) return null;
+  if (typeof v.nonce !== 'string' || !HEX_HASH.test(v.nonce) || v.nonce !== v.nonce.toLowerCase() || BigInt(v.nonce) === 0n) return null;
+  if (typeof v.expirationBlock !== 'string' || !DECIMAL.test(v.expirationBlock)) return null;
+  try {
+    const d = decodeCctpBurnMessage(v.message);
+    if (d.nonce !== v.nonce || d.body.expirationBlock !== BigInt(v.expirationBlock)) return null;
+  } catch {
+    return null;
+  }
+  return { message: v.message, attestation: v.attestation, nonce: v.nonce, expirationBlock: BigInt(v.expirationBlock) };
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -1253,8 +1831,14 @@ function storedAsset(v: unknown): BridgeRoute['sourceAsset'] | null {
  * chain ids that agree with the CAIP-2 ids); null when anything is off.
  */
 export function bridgeRecordFromStored(value: unknown): BridgeTransferRecord | null {
-  if (!isObject(value) || !exactKeys(value, STORED_KEYS)) return null;
+  if (!isObject(value) || !(exactKeys(value, STORED_KEYS_WITH_ATTESTED) || exactKeys(value, STORED_KEYS))) return null;
   const v = value;
+  let attested: BridgeAttestation | null = null;
+  if (Object.prototype.hasOwnProperty.call(v, 'attested') && v.attested !== null) {
+    attested = storedAttested(v.attested);
+    // Only a CCTP transfer carries an attested message.
+    if (attested === null || v.providerId !== CCTP_V2_PROVIDER_ID) return null;
+  }
   if (typeof v.id !== 'string' || !RECORD_ID.test(v.id)) return null;
   if (!text(v.providerId, 40) || !/^[a-z0-9-]{2,40}$/.test(v.providerId) || !text(v.providerLabel)) return null;
   const route = v.route;
@@ -1314,6 +1898,7 @@ export function bridgeRecordFromStored(value: unknown): BridgeTransferRecord | n
     checkedAt,
     checkError: null,
     retryTxHash: v.retryTxHash,
+    attested,
   };
 }
 
@@ -1436,6 +2021,7 @@ export function recordBridgeTransfer(
     checkedAt: null,
     checkError: null,
     retryTxHash: null,
+    attested: null,
   };
   records.set(record.id, record);
   for (const id of pruneRecordsMap()) records.delete(id);
@@ -1583,17 +2169,46 @@ export async function trackBridgeTransfer(record: BridgeTransferRecord, readers:
     sourceTxHash = outcome.txHash;
   }
   const registry = createAppBridgeRegistry(readers, { destinationFromBlock: record.destinationFromBlock });
-  return registry.require(record.providerId).track({
+  const provider = registry.require(record.providerId);
+  const transfer = {
     providerId: record.providerId,
     route: record.route,
     sourceTxHash,
     amountIn: record.amountIn,
     recipient: record.recipient,
-  });
+  };
+  if (record.providerId === CCTP_V2_PROVIDER_ID && record.attested) {
+    // The stored attested message lets a restart continue without asking
+    // Circle; the adapter re-checks it against the burn. If it no longer
+    // matches (a damaged or stale store), Circle's API is asked instead.
+    const stored = await provider.track({ ...transfer, attested: { message: record.attested.message, attestation: record.attested.attestation } });
+    if (stored.state !== 'unknown' || stored.onChain?.status !== 'unknown' || stored.onChain.guid !== null || !/stored on this phone/.test(stored.detail)) {
+      return stored;
+    }
+    updateBridgeTransfer(record.id, { attested: null });
+  }
+  return provider.track(transfer);
+}
+
+/**
+ * The record fields a tracking answer changes: the status, when it was
+ * learned, no error, and a CCTP transfer's attested message once the
+ * adapter has checked one (kept when the answer carries none).
+ */
+export function trackedPatch(
+  record: Pick<BridgeTransferRecord, 'attested'>,
+  status: BridgeTransferStatus,
+  now: number,
+): Pick<BridgeTransferRecord, 'status' | 'checkedAt' | 'checkError' | 'attested'> {
+  return { status, checkedAt: now, checkError: null, attested: status.attestation ?? record.attested };
 }
 
 /** The heading over the adapter's own detail sentence, for each state. */
-export function bridgeStatusHeading(status: BridgeTransferStatus | null, destinationLabel: string): string {
+export function bridgeStatusHeading(status: BridgeTransferStatus | null, destinationLabel: string, providerId?: string): string {
+  if (providerId === CCTP_V2_PROVIDER_ID) {
+    if (status?.state === 'in-flight') return 'Waiting for Circle’s attestation';
+    if (status?.state === 'awaiting-destination-action' && status.onChain?.status === 'attested') return `Attested: waiting for the mint on ${destinationLabel}`;
+  }
   switch (status?.state) {
     case undefined:
       return 'Not checked yet';
@@ -1610,11 +2225,132 @@ export function bridgeStatusHeading(status: BridgeTransferStatus | null, destina
   }
 }
 
-/** The tracking line shown under the heading: the adapter's detail, verbatim. */
-export function bridgeStatusSentence(record: Pick<BridgeTransferRecord, 'status' | 'checkError' | 'destinationLabel'>): string {
+/**
+ * The tracking line shown under the heading: the adapter's detail,
+ * verbatim, except the two CCTP waiting states, which the wallet words
+ * with the network names (the adapter's detail does not know them).
+ */
+export function bridgeStatusSentence(
+  record: Pick<BridgeTransferRecord, 'status' | 'checkError' | 'destinationLabel'> & Partial<Pick<BridgeTransferRecord, 'providerId' | 'sourceLabel'>>,
+): string {
   if (record.checkError && !record.status) return `The transfer could not be checked just now: ${record.checkError}`;
   if (!record.status) return 'The wallet has not asked where this transfer is yet.';
+  if (record.providerId === CCTP_V2_PROVIDER_ID && record.sourceLabel) {
+    const onChain = record.status.onChain;
+    if (record.status.state === 'in-flight' && onChain?.status === 'in-flight') {
+      return cctpBurnedSentence(record.sourceLabel, onChain.sourceBlock ?? null);
+    }
+    if (record.status.state === 'awaiting-destination-action' && onChain?.status === 'attested') {
+      return cctpAttestedSentence(record.destinationLabel);
+    }
+  }
   return record.status.detail;
+}
+
+/** CCTP, burned and waiting for the attestation. */
+export function cctpBurnedSentence(sourceLabel: string, block: bigint | null): string {
+  return (
+    `Burned on ${sourceLabel}${block === null ? '' : ` (block ${block})`}. Waiting for Circle’s attestation: it comes after the ` +
+    'source chain’s hard finality, about 17 minutes in the measured runs.'
+  );
+}
+
+/** CCTP, attested and not minted yet. */
+export function cctpAttestedSentence(destinationLabel: string): string {
+  return `Attested. The USDC can now be minted on ${destinationLabel}.`;
+}
+
+/**
+ * Whether the attested message expires, in plain words, from Circle's own
+ * documents: the technical guide (https://developers.circle.com/cctp/
+ * references/technical-guide.md, fetched 2026-10-25, sha256
+ * 0755271b…14f6, "Message body") says the attestation service writes "An
+ * expiration block 24 hours in the future" into the message and "If the
+ * burn expires, it must be re-signed", and that re-attestation through POST
+ * /v2/reattest/{nonce} has "no deadline"; it also says that on Arbitrum the
+ * expiration block "is an Ethereum (L1) block number". Circle's contract
+ * accepts a message whose expiration block is 0 at any time
+ * (TokenMessengerV2.sol lines 415-420 at evm-cctp-contracts 63ab1f0a:
+ * `_expirationBlock == 0 || _expirationBlock > block.number`), and both
+ * Standard Transfers of 2026-10-25 were attested with expiration block 0
+ * (docs/BRIDGING.md section 17).
+ */
+export function cctpExpirySentence(attested: Pick<BridgeAttestation, 'expirationBlock'> | null, destinationLabel: string): string {
+  if (attested === null) {
+    return 'Circle’s attested message is valid until it is used, unless it carries an expiration block: Circle’s technical guide says an expired message must be re-attested by Circle (possible at any time) before it can be minted.';
+  }
+  if (attested.expirationBlock === 0n) {
+    return 'The attested message carries no expiration block (0), so it stays valid until the mint is sent: Circle’s contract accepts such a message at any time, and only once.';
+  }
+  const arb = /arbitrum/i.test(destinationLabel) ? ' (on Arbitrum an Ethereum block number, as Circle’s guide notes)' : '';
+  return (
+    `The attested message expires after block ${attested.expirationBlock}${arb}. After that Circle’s contract refuses it until Circle ` +
+    're-attests it, which Circle’s technical guide says can be requested at any time; this wallet does not request it.'
+  );
+}
+
+/**
+ * The mint call the tracking offers, checked: exactly one call, to Circle's
+ * pinned MessageTransmitterV2, value 0, receiveMessage, and — when the
+ * record holds the attested message — exactly receiveMessage(that message,
+ * that attestation). Null when the status carries none or it fails a check.
+ */
+export function bridgeMintCall(record: Pick<BridgeTransferRecord, 'status' | 'providerId' | 'attested'>): Call | null {
+  if (record.providerId !== CCTP_V2_PROVIDER_ID) return null;
+  const st = record.status;
+  if (st?.state !== 'awaiting-destination-action' || st.onChain?.status !== 'attested') return null;
+  const calls = st.destinationCalls;
+  if (!calls || calls.length !== 1) return null;
+  const call = calls[0]!;
+  if (call.to.toLowerCase() !== CCTP_V2_TESTNET.messageTransmitterV2.toLowerCase() || call.value !== 0n) return null;
+  if (toHex(call.data).slice(0, 10).toLowerCase() !== CCTP_RECEIVE_MESSAGE_SELECTOR) return null;
+  const attested = st.attestation ?? record.attested;
+  if (!attested || toHex(call.data).toLowerCase() !== toHex(encodeReceiveMessage(attested.message, attested.attestation)).toLowerCase()) return null;
+  return call;
+}
+
+/**
+ * Why the mint cannot be sent from here right now, or null when it can:
+ * the receiving network must be the active one, and the regular account
+ * must hold some of its coin there (`nativeBalance`, read by the screen;
+ * null while unread, which does not block: the quote checks the balance
+ * again). Each sentence says that anyone with gas there can send it, and
+ * whether the attested message expires.
+ */
+export function bridgeMintBlocker(
+  activeCaip2: string,
+  record: Pick<BridgeTransferRecord, 'destinationCaip2' | 'destinationLabel' | 'recipient' | 'attested'>,
+  nativeBalance: bigint | null,
+  nativeSymbol = 'test ETH',
+): string | null {
+  const expiry = cctpExpirySentence(record.attested, record.destinationLabel);
+  if (activeCaip2 !== record.destinationCaip2) {
+    return (
+      `Anyone with ${nativeSymbol} on ${record.destinationLabel} can send this mint transaction, and the USDC still goes only to ` +
+      `${record.recipient}. ${expiry} To send it from this wallet, switch to ${record.destinationLabel} (Settings → Developer) and ` +
+      'come back to this screen; this transfer stays listed here.'
+    );
+  }
+  if (nativeBalance === 0n) {
+    return (
+      `Your regular account holds no ${nativeSymbol} on ${record.destinationLabel} to pay for the mint transaction. Anyone with ` +
+      `${nativeSymbol} there can send it, and the USDC still goes only to ${record.recipient}. ${expiry}`
+    );
+  }
+  return null;
+}
+
+/** The regular-account quote for the mint, on the receiving network (the active one). */
+export async function prepareBridgeMint(url: string, from: string, record: BridgeTransferRecord): Promise<EvmSendQuote> {
+  assertFeatureAllowed(BRIDGE_FEATURE, record.destinationCaip2);
+  const call = bridgeMintCall(record);
+  if (!call) throw new BridgeRefusal('There is no mint transaction to send for this transfer.');
+  return prepareEvmSend(url, from, call.to, 0n, call.data, record.destinationCaip2);
+}
+
+/** The device prompt for the mint. */
+export function bridgeMintPromptTitle(record: Pick<BridgeTransferRecord, 'destinationLabel'>): string {
+  return `Mint the bridged USDC on ${record.destinationLabel}`;
 }
 
 /**
@@ -1624,6 +2360,7 @@ export function bridgeStatusSentence(record: Pick<BridgeTransferRecord, 'status'
  * fails a check.
  */
 export function bridgeRetryCall(record: Pick<BridgeTransferRecord, 'status' | 'route'>): Call | null {
+  if (record.status?.onChain?.status === 'attested') return null;
   const calls = record.status?.state === 'awaiting-destination-action' ? record.status.destinationCalls : undefined;
   if (!calls || calls.length !== 1) return null;
   const call = calls[0]!;

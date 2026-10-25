@@ -15,8 +15,16 @@
 // cached the transfer), the endpoint failover for other networks, the
 // in-memory records, source pins on the screen and the route gates, and
 // mutation checks (an unlimited approval, a value other than amount + fee,
-// the gate removed, the provider choice hidden, the recipient pin removed,
-// CCTP offered).
+// the gate removed, the provider choice hidden, the recipient pin removed).
+// Phase 23 item 4 (the app half): USDC through Circle CCTP V2 — the asset
+// choice and the provider rows per asset, the CCTP quote re-checked word by
+// word, the two-transaction regular path and the one-operation smart-account
+// path through the real send paths, the confirm and prompts, Circle's
+// sandbox attestation reader (the documented response shape), the tracking
+// state machine from the chains' own events with fixtures synthesised from
+// the live leg of 2026-10-25 (docs/BRIDGING.md section 17), the Mint
+// button's conditions, the stored record (the attested message, version 1 kept)
+// and its restart, and mutants for each.
 //
 // Run from the app directory:
 //
@@ -32,9 +40,15 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { evmKeyProvider, mnemonicToSeed } from '@shiba-wallet/core';
 import {
+  CCTP_DEPOSIT_FOR_BURN_SELECTOR,
+  CCTP_RECEIVE_MESSAGE_SELECTOR,
   CCTP_V2_PROVIDER_ID,
+  CCTP_V2_TESTNET,
+  CCTP_V2_TESTNET_USDC,
   CCTP_V2_TRUST,
   KERNEL_V3_3,
+  cctpTimeEstimate,
+  createCctpV2Provider,
   LAYERZERO_OFT_PROVIDER_ID,
   LAYERZERO_OFT_TRUST,
   LAYERZERO_V2_TESTNET,
@@ -84,7 +98,36 @@ import {
   bridgeUserOpRevertedDetail,
   readBridgeUserOpReceipt,
   BridgeRefusal,
-  CCTP_COMING_NOTE,
+  BRIDGE_ASSETS,
+  BRIDGE_LOG_TOO_OLD_CCTP,
+  BRIDGE_NATIVE_SMART_RECIPIENT_REFUSAL,
+  BRIDGE_PROVIDER_COMING_NOTE,
+  CCTP_APP_LABEL,
+  CCTP_BURN_WORD_OFFSETS,
+  CIRCLE_IRIS_SANDBOX_API,
+  bridgeAmountHint,
+  bridgeApprovePromptTitle,
+  bridgeAssetLabel,
+  bridgeAssetSendableFrom,
+  bridgeMintBlocker,
+  bridgeMintCall,
+  bridgeMintPromptTitle,
+  bridgeNeedsApproval,
+  cctpAttestedSentence,
+  cctpBurnedSentence,
+  cctpExpirySentence,
+  cctpMintStepLine,
+  cctpPinnedContractLine,
+  cctpSmartAccountFeeNote,
+  circleIrisReader,
+  defaultBridgeAsset,
+  exactAsset,
+  prepareBridgeApprove,
+  prepareBridgeMint,
+  trackedPatch,
+  usdcBalanceRefusal,
+  usdcRecipientNote,
+  usdcSmartRecipientUnavailable,
   LAYERZERO_APP_LABEL,
   LAYERZERO_SCAN_TESTNET_API,
   bridgeConfirmModel,
@@ -226,6 +269,8 @@ function chainState(chainId, over = {}) {
     balance: E18,
     raw: [],
     calls: [],
+    usdc: new Map(), // holder (lower case) → USDC base units
+    allowance: new Map(), // `${owner}|${spender}` (lower case) → base units
     ...over,
   };
 }
@@ -285,6 +330,21 @@ function nodeFor(chainId) {
           return ethers.AbiCoder.defaultAbiCoder().encode(['tuple(uint256,uint256)'], [[s.nativeFee, 0n]]);
         }
         if (p && same(to, p.address) && (data.startsWith(OFT_SEND_SELECTOR) || data.startsWith(STARGATE_RETRY_RECEIVE_TOKEN_SELECTOR))) return '0x';
+        // Circle's USDC and TokenMessengerV2 (phase 23 item 4): balanceOf, allowance, and the
+        // pre-flight eth_call of an approve and a burn (the burn reverts while the allowance is short).
+        const usdc = CCTP_V2_TESTNET_USDC[chainId];
+        if (usdc && same(to, usdc) && data.startsWith('0x70a08231')) return word(s.usdc.get(('0x' + data.slice(34, 74)).toLowerCase()) ?? 0n);
+        if (usdc && same(to, usdc) && data.startsWith('0xdd62ed3e')) {
+          return word(s.allowance.get(`0x${data.slice(34, 74)}|0x${data.slice(98, 138)}`.toLowerCase()) ?? 0n);
+        }
+        if (usdc && same(to, usdc) && data.startsWith('0x095ea7b3')) return word(1n);
+        if (same(to, CCTP_V2_TESTNET.tokenMessengerV2) && data.startsWith(CCTP_DEPOSIT_FOR_BURN_SELECTOR)) {
+          const from = String(params[0].from ?? '').toLowerCase();
+          const amount = BigInt('0x' + data.slice(10, 74));
+          if ((s.allowance.get(`${from}|${CCTP_V2_TESTNET.tokenMessengerV2.toLowerCase()}`) ?? 0n) < amount) throw new Error('execution reverted: ERC20: transfer amount exceeds allowance');
+          return '0x';
+        }
+        if (same(to, CCTP_V2_TESTNET.messageTransmitterV2) && data.startsWith(CCTP_RECEIVE_MESSAGE_SELECTOR)) return word(1n);
         if (same(to, '0x420000000000000000000000000000000000000F')) {
           // GasPriceOracle (OP-stack): getL1Fee(bytes) → 268 wei; getOperatorFee(uint256) → 0.
           return data.startsWith(ethers.id('getL1Fee(bytes)').slice(0, 10)) ? word(268n) : word(0n);
@@ -310,8 +370,14 @@ for (const id of [SEPOLIA, ARB, OP, BASE, HOODI]) {
 let fetchLog = [];
 let urlOverride = new Map(); // url → 'down' | chain id answered instead
 let scanAnswer = { status: 404 };
+// Circle's sandbox attestation API (GET /v2/messages/{domain}?transactionHash=…), in the documented shape.
+let irisAnswer = { status: 404 };
 globalThis.fetch = async (url, init) => {
   fetchLog.push(String(url));
+  if (String(url).startsWith(CIRCLE_IRIS_SANDBOX_API)) {
+    const a = typeof irisAnswer === 'function' ? irisAnswer(String(url)) : irisAnswer;
+    return { ok: a.status >= 200 && a.status < 300, status: a.status, headers: { get: () => null }, json: async () => a.body };
+  }
   if (String(url).startsWith(LAYERZERO_SCAN_TESTNET_API)) {
     const a = scanAnswer;
     return { ok: a.status >= 200 && a.status < 300, status: a.status, headers: { get: () => null }, json: async () => a.body };
@@ -400,26 +466,41 @@ console.log('check-bridge: readiness, and what is offered on which network');
   setCustomEvmProfiles([]);
 }
 {
-  const dests = (id) => bridgeOfferFor(caip(id)).destinations.map((d) => `${d.chainId}:${d.sendable ? 'send' : 'list'}`).sort().join(',');
-  check('Ethereum Sepolia → Arbitrum Sepolia and OP Sepolia sendable; Base Sepolia listed (CCTP only)', dests(SEPOLIA) === `${ARB}:send,${OP}:send,${BASE}:list`.split(',').sort().join(','), dests(SEPOLIA));
-  check('Arbitrum Sepolia → Ethereum Sepolia and OP Sepolia sendable; Base Sepolia listed', dests(ARB) === [`${SEPOLIA}:send`, `${OP}:send`, `${BASE}:list`].sort().join(','), dests(ARB));
-  check('OP Sepolia → Ethereum Sepolia and Arbitrum Sepolia sendable; Base Sepolia listed', dests(OP) === [`${SEPOLIA}:send`, `${ARB}:send`, `${BASE}:list`].sort().join(','), dests(OP));
+  const dests = (id, asset = 'native') => bridgeOfferFor(caip(id), asset).destinations.map((d) => `${d.chainId}:${d.sendable ? 'send' : 'list'}`).sort().join(',');
+  check('test ETH: Ethereum Sepolia → Arbitrum Sepolia and OP Sepolia (no Base Sepolia: Stargate has no pool there)', dests(SEPOLIA) === [`${ARB}:send`, `${OP}:send`].sort().join(','), dests(SEPOLIA));
+  check('test ETH: Arbitrum Sepolia → Ethereum Sepolia and OP Sepolia', dests(ARB) === [`${SEPOLIA}:send`, `${OP}:send`].sort().join(','), dests(ARB));
+  check('test ETH: OP Sepolia → Ethereum Sepolia and Arbitrum Sepolia', dests(OP) === [`${SEPOLIA}:send`, `${ARB}:send`].sort().join(','), dests(OP));
+  check('USDC: every CCTP network → the other three, all sendable (Circle CCTP, offered since phase 23)',
+    [SEPOLIA, ARB, OP, BASE].every((id) => dests(id, 'usdc') === [SEPOLIA, ARB, OP, BASE].filter((x) => x !== id).map((x) => `${x}:send`).sort().join(',')),
+    [SEPOLIA, ARB, OP, BASE].map((id) => dests(id, 'usdc')).join(' | '));
   const base = bridgeOfferFor(caip(BASE));
-  check('Base Sepolia: three destinations, none sendable (Stargate has no pool there)', base.destinations.length === 3 && base.destinations.every((d) => !d.sendable));
-  check('Base Sepolia: the unavailable sentence (exact)',
-    base.unavailable === 'No provider in this wallet can bridge test ETH from Base Sepolia: Stargate has no pool there. Circle CCTP is listed below for comparison but is not offered yet.', base.unavailable);
+  check('Base Sepolia, test ETH: no destination; the sentence says why and points at USDC (exact)',
+    base.destinations.length === 0 &&
+      base.unavailable === 'No provider in this wallet can bridge test ETH from Base Sepolia: Stargate has no pool there. Choose USDC above to bridge USDC with Circle CCTP.', base.unavailable);
+  check('Base Sepolia, USDC: nothing unavailable', bridgeOfferFor(caip(BASE), 'usdc').unavailable === null);
   const hoodi = bridgeOfferFor(caip(HOODI));
-  check('Hoodi: no destination, "No bridge provider in this wallet serves Hoodi."', hoodi.destinations.length === 0 && hoodi.unavailable === 'No bridge provider in this wallet serves Hoodi.', hoodi.unavailable);
+  check('Hoodi: no destination for either asset, "No bridge provider in this wallet serves Hoodi."',
+    hoodi.destinations.length === 0 && hoodi.unavailable === 'No bridge provider in this wallet serves Hoodi.' &&
+      bridgeOfferFor(caip(HOODI), 'usdc').unavailable === 'No bridge provider in this wallet serves Hoodi.', hoodi.unavailable);
   const sep = bridgeOfferFor(caip(SEPOLIA));
-  check('Sepolia: sendable destinations come first', sep.destinations[0].sendable && sep.destinations[1].sendable && !sep.destinations[2].sendable);
-  check('Sepolia: nothing unavailable', sep.unavailable === null);
-  check('the providers, in registration order: LayerZero (offered), then Circle CCTP (coming)',
-    sep.providers.map((p) => `${p.id}:${p.status}`).join() === `${LAYERZERO_OFT_PROVIDER_ID}:offered,${CCTP_V2_PROVIDER_ID}:coming` &&
-      sep.providers[0].label === LAYERZERO_APP_LABEL && LAYERZERO_APP_LABEL === 'LayerZero (Stargate)',
+  check('Sepolia: nothing unavailable for either asset', sep.unavailable === null && bridgeOfferFor(caip(SEPOLIA), 'usdc').unavailable === null);
+  check('the providers per asset: test ETH → LayerZero (offered); USDC → Circle CCTP (offered)',
+    sep.providers.map((p) => `${p.id}:${p.status}`).join() === `${LAYERZERO_OFT_PROVIDER_ID}:offered` &&
+      bridgeOfferFor(caip(SEPOLIA), 'usdc').providers.map((p) => `${p.id}:${p.status}`).join() === `${CCTP_V2_PROVIDER_ID}:offered` &&
+      sep.providers[0].label === LAYERZERO_APP_LABEL && LAYERZERO_APP_LABEL === 'LayerZero (Stargate)' && CCTP_APP_LABEL === 'Circle CCTP (USDC)',
     sep.providers.map((p) => `${p.id}:${p.status}:${p.label}`).join());
-  check('the trust statements are the engine’s, verbatim', sep.providers[0].trust === LAYERZERO_OFT_TRUST && sep.providers[1].trust === CCTP_V2_TRUST &&
+  check('the trust statements are the engine’s, verbatim', sep.providers[0].trust === LAYERZERO_OFT_TRUST &&
+    bridgeOfferFor(caip(SEPOLIA), 'usdc').providers[0].trust === CCTP_V2_TRUST &&
     BRIDGE_TRUST[LAYERZERO_OFT_PROVIDER_ID] === LAYERZERO_OFT_TRUST && BRIDGE_TRUST[CCTP_V2_PROVIDER_ID] === CCTP_V2_TRUST);
-  check('BRIDGE_PROVIDER_STATUS: only LayerZero is offered for sending', Object.entries(BRIDGE_PROVIDER_STATUS).map(([k, v]) => `${k}:${v}`).sort().join() === [`${CCTP_V2_PROVIDER_ID}:coming`, `${LAYERZERO_OFT_PROVIDER_ID}:offered`].sort().join());
+  check('BRIDGE_PROVIDER_STATUS: both providers offered for sending', Object.entries(BRIDGE_PROVIDER_STATUS).map(([k, v]) => `${k}:${v}`).sort().join() === [`${CCTP_V2_PROVIDER_ID}:offered`, `${LAYERZERO_OFT_PROVIDER_ID}:offered`].sort().join());
+  check('the asset chips: test ETH then USDC; the labels (exact)', BRIDGE_ASSETS.join() === 'native,usdc' && bridgeAssetLabel('native', 'test ETH') === 'test ETH' && bridgeAssetLabel('usdc') === 'USDC');
+  check('the form starts on test ETH where it can be sent, on USDC on Base Sepolia (the provider is still never chosen for the user)',
+    defaultBridgeAsset(caip(SEPOLIA)) === 'native' && defaultBridgeAsset(caip(BASE)) === 'usdc' && defaultBridgeAsset(caip(HOODI)) === 'native' &&
+      bridgeAssetSendableFrom(caip(BASE), 'usdc') && !bridgeAssetSendableFrom(caip(BASE), 'native') && !bridgeAssetSendableFrom(caip(HOODI), 'usdc'));
+  check('CCTP’s trust statement (exact): 2 of 2 attesters, the roles held by addresses with no code, no refund, about 17 minutes',
+    CCTP_V2_TRUST.verification === 'Circle verifies every transfer: both of Circle\'s two attesters must sign the burn (2 of 2, read on-chain) before USDC can be minted on the other network. Circle also issues USDC itself.' &&
+      CCTP_V2_TRUST.control === 'Circle can pause transfers, refuse listed addresses (it checks the sending account and the transaction originator, which for a smart account is the bundler), and replace the contracts. On the test networks the roles that do this (the proxy admins, the owner, the denylister, the pauser and the attester manager) are held by addresses with no contract code.' &&
+      CCTP_V2_TRUST.refundRule === 'There is no refund: the USDC is burned on the sending network. Circle attests the burn only after the sending network\'s hard finality (about 17 minutes in the measured runs); after that, anyone with gas on the receiving network can submit the mint to your address.');
   check('the offer makes no request (pure)', true);
 }
 
@@ -429,30 +510,36 @@ console.log('check-bridge: the provider rows (the choice)');
 {
   const offer = bridgeOfferFor(caip(SEPOLIA));
   const toOp = bridgeProviderRows(offer, OP);
-  check('every registered provider is a row, LayerZero first', toOp.map((r) => r.id).join() === `${LAYERZERO_OFT_PROVIDER_ID},${CCTP_V2_PROVIDER_ID}`);
+  check('test ETH: only the provider that moves it is a row (LayerZero)', toOp.map((r) => r.id).join() === LAYERZERO_OFT_PROVIDER_ID);
   const lz = toOp[0];
-  const cctp = toOp[1];
   check('LayerZero row: selectable, moves test ETH, no note', lz.selectable && lz.asset === 'test ETH' && lz.note === null);
   const engineTime = oftTimeEstimate(pool(SEPOLIA), OP, pool(SEPOLIA).pathways[OP].confirmations);
   check('LayerZero row Sepolia → OP Sepolia: the measured line (exact)',
     lz.measured === 'Measured once on 2026-10-15: 90 s on this route, from the sending block to the delivery block.', lz.measured);
   check('…and the engine’s own time sentence, which ends "not a promise"', lz.timeSource === engineTime.source && /Not a promise/.test(lz.timeSource), lz.timeSource);
-  check('CCTP row: listed, NOT selectable, moves USDC, with the coming note (exact)',
-    !cctp.selectable && cctp.asset === 'USDC' && cctp.note === CCTP_COMING_NOTE &&
-      CCTP_COMING_NOTE === 'Coming later, not offered yet. Circle CCTP moves USDC, not test ETH, and this wallet has not yet sent a CCTP transfer on the test networks, so it does not offer one. It is listed so you can compare who you would be trusting.',
-    `${cctp.asset} ${cctp.note}`);
+  const usdcOffer = bridgeOfferFor(caip(BASE), 'usdc');
+  const toArbUsdc = bridgeProviderRows(usdcOffer, ARB);
+  const cctp = toArbUsdc[0];
+  check('USDC: only Circle CCTP is a row, selectable, moves USDC, no note', toArbUsdc.length === 1 && cctp.id === CCTP_V2_PROVIDER_ID && cctp.selectable && cctp.asset === 'USDC' && cctp.note === null);
+  check('CCTP row Base Sepolia → Arbitrum Sepolia: the measured line (exact, 996 s) and the engine’s sentence',
+    cctp.measured === 'Measured once on 2026-10-25: 996 s on this route, from the sending block to the delivery block.' && cctp.timeSource === cctpTimeEstimate(BASE, ARB).source &&
+      /Not a promise/.test(cctp.timeSource), cctp.measured);
+  check('CCTP row Ethereum Sepolia → Base Sepolia: 1,058 s; Arbitrum Sepolia → OP Sepolia: never measured',
+    bridgeProviderRows(bridgeOfferFor(caip(SEPOLIA), 'usdc'), BASE)[0].measured === 'Measured once on 2026-10-25: 1058 s on this route, from the sending block to the delivery block.' &&
+      bridgeProviderRows(bridgeOfferFor(caip(ARB), 'usdc'), OP)[0].measured === null && /This route was not measured\./.test(bridgeProviderRows(bridgeOfferFor(caip(ARB), 'usdc'), OP)[0].timeSource));
   const toArb = bridgeProviderRows(offer, ARB);
   check('Sepolia → Arbitrum Sepolia: never measured — no measured line; the engine says this route was not measured',
     toArb[0].measured === null && /This route was not measured\./.test(toArb[0].timeSource ?? ''), toArb[0].timeSource);
-  const toBase = bridgeProviderRows(offer, BASE);
-  check('Sepolia → Base Sepolia: LayerZero listed but not selectable, with the no-route sentence (exact)',
-    !toBase[0].selectable && toBase[0].note === 'Does not serve Ethereum Sepolia → Base Sepolia in this wallet.' && toBase[0].note === noRouteNote('Ethereum Sepolia', 'Base Sepolia'), toBase[0].note);
-  check('…and CCTP still listed with its coming note', !toBase[1].selectable && toBase[1].note === CCTP_COMING_NOTE);
+  check('a destination LayerZero does not serve (Sepolia → Base Sepolia, test ETH): listed, not selectable, the no-route sentence (exact)',
+    !bridgeProviderRows(offer, BASE)[0].selectable && bridgeProviderRows(offer, BASE)[0].note === 'Does not serve Ethereum Sepolia → Base Sepolia in this wallet.' &&
+      bridgeProviderRows(offer, BASE)[0].note === noRouteNote('Ethereum Sepolia', 'Base Sepolia'));
   check('measuredTimeLine is null without a measurement', measuredTimeLine({ minSeconds: null, maxSeconds: null, source: 'x' }) === null);
-  check('the screen copy: intro, choice note, records note (exact)',
-    BRIDGE_INTRO === 'Bridging moves test ETH from this network to another test network. A bridge provider carries the transfer, and you trust the provider’s contracts and verifiers while it is on its way, so each provider below says who that is. These are test networks: the coins have no value.' &&
-      BRIDGE_CHOICE_NOTE === 'You choose the provider. The wallet lists every provider it knows for this pair of networks and never picks one for you.' &&
-      BRIDGE_RECORDS_NOTE === 'Transfers sent from this screen are kept on this phone (the newest 64) and followed here whenever this screen is open. The sending transaction also appears in Activity.');
+  check('a provider registered but not offered gets the comparison note (exact)', BRIDGE_PROVIDER_COMING_NOTE === 'Listed for comparison; not offered for sending in this version.');
+  check('the screen copy: intro, choice note, records note, the USDC amount hint (exact)',
+    BRIDGE_INTRO === 'Bridging moves test ETH or USDC from this network to another test network. A bridge provider carries the transfer, and you trust the provider’s contracts and verifiers while it is on its way, so each provider below says who that is. These are test networks: the coins have no value.' &&
+      BRIDGE_CHOICE_NOTE === 'You choose the provider. The wallet lists every provider it knows for this asset and this pair of networks and never picks one for you.' &&
+      BRIDGE_RECORDS_NOTE === 'Transfers sent from this screen are kept on this phone (the newest 64) and followed here whenever this screen is open. The sending transaction also appears in Activity.' &&
+      bridgeAmountHint('usdc') === 'USDC has 6 decimal places; an amount with more is refused, not rounded.');
 }
 
 // ---------------------------------------------------------------------------
@@ -510,8 +597,13 @@ let planA;
 {
   // Refusals, verbatim from the engine or this module, before anything is signed.
   fetchLog = [];
-  const cctp = await rejection(() => quoteBridge(quoteRequest({ providerId: CCTP_V2_PROVIDER_ID, destinationChainId: BASE })));
-  check('Circle CCTP: refused with the coming note, zero requests', cctp instanceof BridgeRefusal && cctp.message === CCTP_COMING_NOTE && fetchLog.length === 0, cctp?.message);
+  const smartTo = await rejection(() => quoteBridge(quoteRequest({ recipient: KERNEL_ACCOUNT_0, recipientKind: 'smart-account' })));
+  check('test ETH to the smart account: refused with the 2,300-gas sentence (exact), zero requests',
+    smartTo instanceof BridgeRefusal && smartTo.message === BRIDGE_NATIVE_SMART_RECIPIENT_REFUSAL &&
+      BRIDGE_NATIVE_SMART_RECIPIENT_REFUSAL === 'Test ETH is bridged only to your regular account: Stargate hands ETH over with a 2,300-gas transfer, which a deployed smart account cannot accept. Nothing was quoted.' &&
+      fetchLog.length === 0, smartTo?.message);
+  const unknownProvider = await rejection(() => quoteBridge(quoteRequest({ providerId: 'not-a-provider' })));
+  check('a provider that is not offered: refused in plain words', unknownProvider instanceof BridgeRefusal && unknownProvider.message === 'This bridge provider is not offered in this wallet.');
   const base = await rejection(() => quoteBridge(quoteRequest({ destinationChainId: BASE })));
   check('LayerZero to Base Sepolia: refused with the no-route sentence, zero requests',
     base instanceof BridgeRefusal && base.message === 'Does not serve Ethereum Sepolia → Base Sepolia in this wallet.' && fetchLog.length === 0, base?.message);
@@ -573,9 +665,12 @@ let planA;
   const tooHighMin = clone(planA.quote);
   tooHighMin.minAmountOut = tooHighMin.expectedAmountOut + 1n;
   check('a minimum above what is expected to arrive is refused', why(refused(tooHighMin)) === 'a minimum above what is expected to arrive');
-  const cctpQuote = clone(planA.quote);
-  cctpQuote.providerId = CCTP_V2_PROVIDER_ID;
-  check('a quote from another provider is refused', why(refused(cctpQuote)) === 'a provider this screen does not send through');
+  const otherProvider = clone(planA.quote);
+  otherProvider.providerId = 'another-bridge';
+  check('a quote from another provider is refused', why(refused(otherProvider)) === 'a provider this screen does not send through');
+  const lzAsCctp = clone(planA.quote);
+  lzAsCctp.providerId = CCTP_V2_PROVIDER_ID;
+  check('a LayerZero quote presented as CCTP is refused by the CCTP checks (not this network’s USDC)', why(refused(lzAsCctp)) === 'an asset other than this network’s USDC', why(refused(lzAsCctp)));
   check('every refusal ends "Nothing was signed."', /Nothing was signed\.$/.test(refused(plusOne).message));
 }
 
@@ -863,8 +958,8 @@ console.log('check-bridge: transfer records stored per wallet (phase 21)');
   const rec = recordBridgeTransfer(plan, { sourceTxHash: SOURCE_TX, userOpHash: null, sentAt: 1_791_900_000_000 });
   await bridgeTransfersWritten();
   const stored = JSON.parse(store.map.get(BRIDGE_TRANSFERS_KEY));
-  check('a sent transfer is written at once: version 1, one record, bigints as decimal strings, no final status yet',
-    stored.version === 1 && stored.records.length === 1 && stored.records[0].id === rec.id && stored.records[0].amountIn === AMOUNT.toString() &&
+  check('a sent transfer is written at once: version 1, one record, bigints as decimal strings, no final status yet, no attested message',
+    stored.version === 1 && stored.records[0].attested === null && stored.records.length === 1 && stored.records[0].id === rec.id && stored.records[0].amountIn === AMOUNT.toString() &&
       stored.records[0].destinationFromBlock === rec.destinationFromBlock.toString() && stored.records[0].final === null);
   // A status that is not final is not stored; a final one is.
   updateBridgeTransfer(rec.id, { status: { state: 'in-flight', detail: 'x' }, checkedAt: 5 });
@@ -954,7 +1049,7 @@ console.log('check-bridge: transfer records stored per wallet (phase 21)');
   await mr.bridgeTransfersWritten();
   check('MUTANT (read-only guard removed) is caught: the damaged list was written over', damaged2.map.get(BRIDGE_TRANSFERS_KEY) !== damagedText);
   // MUTANT: the record parse no longer insists on its exact key set.
-  const mk = await bridgeMutant('  if (!isObject(value) || !exactKeys(value, STORED_KEYS)) return null;', '  if (!isObject(value)) return null;');
+  const mk = await bridgeMutant('  if (!isObject(value) || !(exactKeys(value, STORED_KEYS_WITH_ATTESTED) || exactKeys(value, STORED_KEYS))) return null;', '  if (!isObject(value)) return null;');
   check('MUTANT (exact key set dropped) is caught: a record with an extra key is accepted', mk.parseBridgeTransfers(bad({ extra: 1 })).readOnly === false);
   await mk.resetBridgeTransfers();
   await mr.resetBridgeTransfers();
@@ -986,9 +1081,9 @@ console.log('check-bridge: a smart-account transfer resolved from the bundler’
   await bridgeTransfersWritten();
   const storedBefore = store.map.get(BRIDGE_TRANSFERS_KEY);
   const parsedBefore = parseBridgeTransfers(storedBefore);
-  check('the stored record of an unresolved smart-account transfer parses: version 1, the same exact key set, sourceTxHash null, the userOpHash kept (no new field, no version bump)',
+  check('the stored record of an unresolved smart-account transfer parses: version 1, the exact key set (19 keys, with the attested message), sourceTxHash null, the userOpHash kept',
     JSON.parse(storedBefore).version === 1 && !parsedBefore.readOnly && parsedBefore.records.length === 1 &&
-      Object.keys(JSON.parse(storedBefore).records[0]).length === 18 && parsedBefore.records[0].sourceTxHash === null &&
+      Object.keys(JSON.parse(storedBefore).records[0]).length === 19 && parsedBefore.records[0].sourceTxHash === null &&
       parsedBefore.records[0].userOpHash === USEROP && parsedBefore.records[0].senderKind === 'smart-account');
   check('the copy: the waiting, not-included, reverted and malformed sentences (exact)',
     BRIDGE_USEROP_WAITING === 'Waiting for the bundle transaction that carries the smart-account operation; tracking starts once it is known.' &&
@@ -1029,8 +1124,8 @@ console.log('check-bridge: a smart-account transfer resolved from the bundler’
   await bridgeTransfersWritten();
   const storedAfter = JSON.parse(store.map.get(BRIDGE_TRANSFERS_KEY));
   const parsedAfter = parseBridgeTransfers(store.map.get(BRIDGE_TRANSFERS_KEY));
-  check('…and in the stored document, which still parses strictly: version 1, the same 18 keys, the hash, the operation, no final status yet',
-    storedAfter.version === 1 && Object.keys(storedAfter.records[0]).length === 18 && storedAfter.records[0].sourceTxHash === SOURCE_TX &&
+  check('…and in the stored document, which still parses strictly: version 1, the same 19 keys, the hash, the operation, no final status yet',
+    storedAfter.version === 1 && Object.keys(storedAfter.records[0]).length === 19 && storedAfter.records[0].sourceTxHash === SOURCE_TX &&
       storedAfter.records[0].userOpHash === USEROP && storedAfter.records[0].final === null && !parsedAfter.readOnly && parsedAfter.records[0].sourceTxHash === SOURCE_TX);
   await resetBridgeTransfers();
   await loadBridgeTransfers(store);
@@ -1194,9 +1289,27 @@ console.log('check-bridge: the screen, the route gates, Home and the navigator (
     /sendEvm\(sendUrl, signer, eoaQuote, evmChain\.explorerTxBase\)/.test(screen) && /sendAa\(bundle, signer, aaQuote, \{ kind: 'bridge' \}\)/.test(screen) &&
       screen.includes('prepareBridgeSend(ep.url, account.address, p)') && screen.includes('prepareBridgeAa(bundle, account.address, p)'));
   check('the smart account is checked against the bundler’s fee floor before the device prompt', screen.indexOf('checkAaQuoteBeforeApproval(bundle.bundler, aaQuote)') < screen.indexOf("sendAa(bundle, signer, aaQuote, { kind: 'bridge' })"));
-  check('the confirm: the preview (eth_simulateV1), the risk card, the spending notice and the pre-flight result',
-    (screen.match(/<BalanceChangePreview /g) ?? []).length === 2 && (screen.match(/<RiskWarnings /g) ?? []).length === 2 && screen.includes('Pre-flight simulation passed (eth_call).'));
-  check('the recipient is always the regular account (account.address), on both paths', (screen.match(/recipient: account\.address,/g) ?? []).length === 2);
+  check('the confirms (regular, the USDC approval step, smart account): the preview (eth_simulateV1; the smart account’s batch), the risk card, the spending notice and the pre-flight result',
+    (screen.match(/<BalanceChangePreview\b/g) ?? []).length === 3 && (screen.match(/<RiskWarnings /g) ?? []).length === 3 && screen.includes('Pre-flight simulation passed (eth_call).') &&
+      screen.includes('batch={aaQuote.calls.length > 1 ? aaQuote.calls.map((c) => ({ from: aaQuote.sender, to: c.to, value: c.value, data: c.data })) : undefined}'));
+  check('the recipient: the regular account, or the smart account only when chosen for USDC on a verified network (both paths pass it with its kind)',
+    screen.includes("const recipient = recipientKind === 'smart-account' && smartAddress !== null ? smartAddress : account.address;") &&
+      (screen.match(/\n\s+recipient,\n\s+recipientKind,/g) ?? []).length === 2 &&
+      screen.includes("const smartRecipientPossible = asset === 'usdc' && aaOffered && aaType === 'kernel-v3.3';") &&
+      screen.includes('const smartRecipientOffered = smartRecipientPossible && destinationProfile?.kernelV33Verified === true;') &&
+      screen.includes("const recipientKind: 'regular' | 'smart-account' = smartRecipientOffered && recipientPick === 'smart-account' ? 'smart-account' : 'regular';"));
+  check('the USDC regular path: the allowance read, step 1 the exact approval with its own prompt, the burn quoted only once the allowance is in place',
+    screen.includes('if (p.approval && (await bridgeNeedsApproval(evmHttpTransport(ep.url), p))) {') &&
+      screen.includes('const auth = await requireLocalAuth(bridgeApprovePromptTitle(plan));') &&
+      screen.indexOf('waitForAllowance(approveUrl, approval.token, account.address, approval.spender, approval.amount)') < screen.indexOf('const burn = await prepareBridgeSend(approveUrl, account.address, plan);') &&
+      screen.indexOf('const burn = await prepareBridgeSend(approveUrl, account.address, plan);') > 0);
+  check('the asset chips render every asset; changing the asset clears the destination, the provider and the recipient choice',
+    screen.includes('{BRIDGE_ASSETS.map((a) => (') && /setAssetPick\(a\);\s*setDestination\(null\);\s*setProviderId\(null\);\s*setRecipientPick\('regular'\);/.test(screen));
+  check('the Mint panel: shown for an attested CCTP transfer with no mint sent yet, its own prompt, prepareBridgeMint, and the blocker from bridgeMintBlocker',
+    screen.includes('{bridgeMintCall(r) && !r.retryTxHash ? (') && screen.includes('requireLocalAuth(bridgeMintPromptTitle(record))') &&
+      screen.includes('prepareBridgeMint(ep.url, fromAddress, record)') && screen.includes('const blocker = bridgeMintBlocker(activeCaip2, record, balance, symbol);') &&
+      screen.includes('title={`Mint on ${record.destinationLabel}`}') && screen.includes('updateBridgeTransfer(record.id, { retryTxHash: sent.txid });'));
+  check('tracking stores the status with trackedPatch (a CCTP transfer’s attested message kept for a restart)', screen.includes('updateBridgeTransfer(record.id, trackedPatch(record, status, Date.now()));'));
   check('the smart-account sentence is shown on the form before Review (Kernel), the EIP-7702 one for an upgraded account',
     screen.includes("aaActive && aaType === 'kernel-v3.3' ? (\n              <WarningBox>{smartAccountRecipientNote(account.address, destinationLabel)}</WarningBox>") &&
       screen.includes('upgradedAccountRecipientNote(account.address, destinationLabel)'));
@@ -1233,18 +1346,24 @@ console.log('check-bridge: the emulator pass p21b findings (provider choice, spo
   const sep = bridgeOfferFor(caip(SEPOLIA));
   const rows = bridgeProviderRows(sep, OP);
   const lz = rows.find((r) => r.id === LAYERZERO_OFT_PROVIDER_ID);
-  const cctp = rows.find((r) => r.id === CCTP_V2_PROVIDER_ID);
+  // Phase 23 item 4: CCTP is offered and its row lists only for USDC; a
+  // provider the wallet lists but does not offer is pinned with a synthetic
+  // row (none is registered today).
+  const cctp = { ...bridgeProviderRows(bridgeOfferFor(caip(BASE), 'usdc'), ARB)[0], selectable: false, note: BRIDGE_PROVIDER_COMING_NOTE };
 
   // (2) No provider is pre-selected, not even the only one that can be chosen.
   check('finding 2: nothing is chosen until the user taps a row (Sepolia → OP Sepolia, LayerZero the only selectable row)',
     rows.filter((r) => r.selectable).length === 1 && chosenBridgeProvider(rows, null) === null);
-  check('…a tap on LayerZero chooses it; a tap on CCTP (not selectable) chooses nothing; a choice from another route is dropped',
+  check('…a tap on LayerZero chooses it; a provider that is not a row for this asset chooses nothing; a choice from another route is dropped',
     chosenBridgeProvider(rows, LAYERZERO_OFT_PROVIDER_ID) === LAYERZERO_OFT_PROVIDER_ID && chosenBridgeProvider(rows, CCTP_V2_PROVIDER_ID) === null &&
-      chosenBridgeProvider(bridgeProviderRows(bridgeOfferFor(caip(BASE)), ARB), LAYERZERO_OFT_PROVIDER_ID) === null);
+      chosenBridgeProvider(bridgeProviderRows(bridgeOfferFor(caip(SEPOLIA)), BASE), LAYERZERO_OFT_PROVIDER_ID) === null &&
+      chosenBridgeProvider(bridgeProviderRows(bridgeOfferFor(caip(BASE), 'usdc'), ARB), CCTP_V2_PROVIDER_ID) === CCTP_V2_PROVIDER_ID &&
+      chosenBridgeProvider(bridgeProviderRows(bridgeOfferFor(caip(BASE), 'usdc'), ARB), null) === null);
   check('…the single-provider sentence (exact) while nothing is chosen, none once chosen or when no row can be chosen',
     BRIDGE_SINGLE_PROVIDER_NOTE === 'One provider serves this route; choose it to continue.' &&
       bridgeProviderChoiceHint(rows, null) === BRIDGE_SINGLE_PROVIDER_NOTE && bridgeProviderChoiceHint(rows, LAYERZERO_OFT_PROVIDER_ID) === null &&
-      bridgeProviderChoiceHint(bridgeProviderRows(bridgeOfferFor(caip(BASE)), ARB), null) === null);
+      bridgeProviderChoiceHint(bridgeProviderRows(bridgeOfferFor(caip(SEPOLIA)), BASE), null) === null &&
+      bridgeProviderChoiceHint(bridgeProviderRows(bridgeOfferFor(caip(BASE), 'usdc'), ARB), null) === BRIDGE_SINGLE_PROVIDER_NOTE);
   check('…the screen: chosenProvider comes from chosenBridgeProvider (no fallback to the first row), the hint is drawn, Get quotes and Review are disabled while nothing is chosen, each row is checked only when chosen',
     screen.includes('const chosenProvider = chosenBridgeProvider(rows, providerId);') && !/rows\.find\(\(r\) => r\.selectable\)\?\.id/.test(screen) &&
       screen.includes('{providerChoiceHint ? <Text style={[styles.hint, { color: theme.text }]}>{providerChoiceHint}</Text> : null}') &&
@@ -1330,21 +1449,21 @@ console.log('check-bridge: the emulator pass p21b findings (provider choice, spo
     !rowStructureOk(views.replace('<Text accessible style={[styles.body, { color: theme.text }]}>\n          <Text style={styles.strong}>Who controls: </Text>', '<Text style={[styles.body, { color: theme.text }]}>\n          <Text style={styles.strong}>Who controls: </Text>')));
   // The sentences each Text speaks, exactly, and none with a doubled period
   // (the CCTP row read "…at any time.. disabled").
-  const cctpRow = rows.find((r) => r.id === CCTP_V2_PROVIDER_ID);
+  const cctpRow = bridgeProviderRows(bridgeOfferFor(caip(BASE), 'usdc'), ARB)[0];
   const lzRow = rows.find((r) => r.id === LAYERZERO_OFT_PROVIDER_ID);
   const spoken = (r) => [r.note, `Who verifies: ${r.trust.verification}`, `Who controls: ${r.trust.control}`, `If it does not arrive: ${r.trust.refundRule}`, r.measured, r.timeSource].filter(Boolean);
   check('p21e finding B2b: the CCTP refund sentence is read exactly as written, ending in one period',
     `If it does not arrive: ${cctpRow.trust.refundRule}` ===
-      'If it does not arrive: There is no refund: the USDC is burned on the sending network. Once Circle attests the burn, anyone with gas on the receiving network can complete the mint to your address, at any time.');
+      'If it does not arrive: There is no refund: the USDC is burned on the sending network. Circle attests the burn only after the sending network\'s hard finality (about 17 minutes in the measured runs); after that, anyone with gas on the receiving network can submit the mint to your address.');
   check('p21e finding B2b: no provider-row sentence has a doubled period or ends without one',
     [...spoken(cctpRow), ...spoken(lzRow)].every((t) => !/\.\./.test(t) && /[.)]$/.test(t.trim())), [...spoken(cctpRow), ...spoken(lzRow)].filter((t) => /\.\./.test(t) || !/[.)]$/.test(t.trim())).join(' | '));
 
   // (4) Each phase opens at the top: one ScrollView key per view.
   const keys = [...screen.matchAll(/<ScrollView key="(bridge-[a-z-]+)"/g)].map((m) => m[1]);
   check('finding 4: the form, both confirms and the success view each have their own ScrollView key, so a new view never inherits the form’s scroll position (React reuses a native view only for the same key and type)',
-    JSON.stringify(keys.sort()) === JSON.stringify(['bridge-aa-confirm', 'bridge-confirm', 'bridge-form', 'bridge-success']), keys.join());
+    JSON.stringify(keys.sort()) === JSON.stringify(['bridge-aa-confirm', 'bridge-approve', 'bridge-confirm', 'bridge-form', 'bridge-success']), keys.join());
   const keyless = screen.replace('<ScrollView key="bridge-confirm" ', '<ScrollView ');
-  check('MUTANT (the confirm without its key) is caught', [...keyless.matchAll(/<ScrollView key="(bridge-[a-z-]+)"/g)].length !== 4);
+  check('MUTANT (the confirm without its key) is caught', [...keyless.matchAll(/<ScrollView key="(bridge-[a-z-]+)"/g)].length !== 5);
 
   // (6) The gas limit follows Send's rule: prepareEvmSend uses the node's estimate as the limit, with no padding, for Send and the bridge alike.
   const planA = await quoteBridge(quoteRequest());
@@ -1359,24 +1478,25 @@ console.log('check-bridge: the emulator pass p21b findings (provider choice, spo
   const qm = await m6b.prepareBridgeSend(ACTIVE_URL(SEPOLIA), EOA, planA);
   check('MUTANT (a bridge-only padding, diverging from Send) is caught', qm.gasLimit !== plain.gasLimit);
 
-  // (7) No chips and no amount where no provider can send.
-  check('finding 7: the destination chips and the amount field are shown on Ethereum Sepolia, hidden on Base Sepolia and Hoodi (nothing can be sent there)',
-    bridgeFormInputsShown(sep) && !bridgeFormInputsShown(bridgeOfferFor(caip(BASE))) && !bridgeFormInputsShown(bridgeOfferFor(caip(HOODI))));
+  // (7) No chips and no amount where no provider can send the chosen asset.
+  check('finding 7: the destination chips and the amount field are shown on Ethereum Sepolia, hidden for test ETH on Base Sepolia and on Hoodi (nothing can be sent), shown for USDC on Base Sepolia',
+    bridgeFormInputsShown(sep) && !bridgeFormInputsShown(bridgeOfferFor(caip(BASE))) && !bridgeFormInputsShown(bridgeOfferFor(caip(HOODI))) &&
+      bridgeFormInputsShown(bridgeOfferFor(caip(BASE), 'usdc')));
   const inputsGated = (src) =>
     src.includes('{inputsShown && offer.destinations.length > 0 ? (') && /\{inputsShown \? \(\s*<>\s*<Text \{\.\.\.amountField\.label\}/.test(src) &&
     src.includes('const inputsShown = offer !== null && bridgeFormInputsShown(offer);') && src.includes('{offer.unavailable ? <WarningBox>{offer.unavailable}</WarningBox> : null}');
-  check('…the screen gates the chips and the amount on it; the explanatory sentence and the provider rows stay (source)', inputsGated(screen));
+  check('…the screen gates the chips and the amount on it; the explanatory sentence stays (source)', inputsGated(screen));
   check('MUTANT (the amount field shown regardless) is caught', !inputsGated(screen.replace('{inputsShown ? (\n        <>\n          <Text {...amountField.label}', '{true ? (\n        <>\n          <Text {...amountField.label}')));
 
-  // (7, leftover) Where the chips are hidden, a provider row's reason names
-  // only the source network: the form offers no destination to point at.
-  const baseOffer = bridgeOfferFor(caip(BASE));
-  const baseRowsAll = baseOffer.destinations.map((d) => bridgeProviderRows(baseOffer, d.chainId));
-  const lzNotes = baseRowsAll.map((rows) => rows.find((r) => r.label === LAYERZERO_APP_LABEL)?.note);
-  check('finding 7 leftover: on Base Sepolia (chips hidden) the LayerZero row says only "Does not serve Base Sepolia in this wallet." for every destination the screen could fall back to (exact)',
-    baseOffer.destinations.length > 0 && lzNotes.every((n) => n === 'Does not serve Base Sepolia in this wallet.') && noSourceRouteNote('Base Sepolia') === 'Does not serve Base Sepolia in this wallet.' &&
+  // (7, leftover) Where a provider is listed but no destination can be sent
+  // to from this network, a row's reason names only the source network. No
+  // registered provider is in that state today (both are offered; a network
+  // with no route lists no destination), so a synthetic offer pins it.
+  const noSendOffer = { ...bridgeOfferFor(caip(SEPOLIA)), unavailable: 'No provider in this wallet can bridge test ETH from Ethereum Sepolia yet.' };
+  const lzNotes = [OP, ARB, BASE].map((d) => bridgeProviderRows(noSendOffer, d)[0].note);
+  check('finding 7 leftover: with the chips hidden, a row that cannot serve says only "Does not serve Ethereum Sepolia in this wallet." (exact)',
+    lzNotes[2] === 'Does not serve Ethereum Sepolia in this wallet.' && noSourceRouteNote('Base Sepolia') === 'Does not serve Base Sepolia in this wallet.' &&
       lzNotes.every((n) => !/→/.test(n ?? '')), lzNotes.join(' | '));
-  check('…the CCTP row on Base Sepolia keeps its coming note', baseRowsAll.every((rows) => rows.some((r) => !r.selectable && r.note === CCTP_COMING_NOTE)));
   const sepToBase = bridgeProviderRows(bridgeOfferFor(caip(SEPOLIA)), BASE);
   check('…where the chips are shown (Ethereum Sepolia), the destination variant stays: "Does not serve Ethereum Sepolia → Base Sepolia in this wallet." (exact)',
     sepToBase[0].note === 'Does not serve Ethereum Sepolia → Base Sepolia in this wallet.', sepToBase[0].note);
@@ -1384,33 +1504,29 @@ console.log('check-bridge: the emulator pass p21b findings (provider choice, spo
     "const noRoute = bridgeFormInputsShown(offer) ? noRouteNote(offer.sourceLabel, destinationLabel) : noSourceRouteNote(offer.sourceLabel);",
     'const noRoute = noRouteNote(offer.sourceLabel, destinationLabel);',
   );
-  const mBase = m7b.bridgeOfferFor(caip(BASE));
-  const mNote = m7b.bridgeProviderRows(mBase, mBase.destinations[0].chainId)[0].note;
-  check('MUTANT (the old destination sentence on a network with the chips hidden) is caught', mNote !== 'Does not serve Base Sepolia in this wallet.', mNote);
+  const mNote = m7b.bridgeProviderRows({ ...m7b.bridgeOfferFor(caip(SEPOLIA)), unavailable: 'x' }, BASE)[0].note;
+  check('MUTANT (the destination sentence where the chips are hidden) is caught', mNote !== 'Does not serve Ethereum Sepolia in this wallet.', mNote);
 
   // (7, the choice-note leftover; phase 22 polish) The note under "Choose a
   // provider" spoke of "this pair of networks" where no pair can be chosen.
-  const BASE_CHOICE = 'The wallet lists every provider it knows, each with the reason it cannot send from Base Sepolia, and never picks one for you.';
-  const baseRows = bridgeProviderRows(baseOffer, baseOffer.destinations[0].chainId);
-  check('choice note: Ethereum Sepolia (chips shown) keeps "…for this pair of networks…" (exact)',
+  const SEP_NO_PAIR = 'The wallet lists every provider it knows, each with the reason it cannot send from Ethereum Sepolia, and never picks one for you.';
+  check('choice note: Ethereum Sepolia (chips shown) keeps "…for this asset and this pair of networks…" (exact)',
     bridgeChoiceNote(sep, bridgeProviderRows(sep, OP).length) === BRIDGE_CHOICE_NOTE);
-  check('choice note: Base Sepolia (chips hidden) names only the source network and no pair (exact), and every row there does give its reason',
-    bridgeChoiceNote(baseOffer, baseRows.length) === BASE_CHOICE && !/pair of networks/.test(BASE_CHOICE) &&
-      baseRows.length > 0 && baseRows.every((r) => !r.selectable && typeof r.note === 'string' && r.note.length > 0), bridgeChoiceNote(baseOffer, baseRows.length));
+  check('choice note: with the chips hidden it names only the source network and no pair (exact)',
+    bridgeChoiceNote(noSendOffer, 1) === SEP_NO_PAIR && !/pair of networks/.test(SEP_NO_PAIR), bridgeChoiceNote(noSendOffer, 1));
   const hoodiOffer = bridgeOfferFor(caip(HOODI));
-  check('choice note: none where no provider is listed (Hoodi: no destination, no rows; the warning above says why)',
-    hoodiOffer.destinations.length === 0 && bridgeChoiceNote(hoodiOffer, 0) === null && hoodiOffer.unavailable === 'No bridge provider in this wallet serves Hoodi.');
+  check('choice note: none where no provider row is listed (Hoodi; Base Sepolia for test ETH: no destination, no rows; the warning above says why)',
+    hoodiOffer.destinations.length === 0 && bridgeChoiceNote(hoodiOffer, 0) === null && hoodiOffer.unavailable === 'No bridge provider in this wallet serves Hoodi.' &&
+      bridgeChoiceNote(bridgeOfferFor(caip(BASE)), 0) === null);
   const choiceNoteWired = (src) =>
     src.includes('const choiceNote = offer !== null ? bridgeChoiceNote(offer, rows.length) : null;') &&
-    /\{choiceNote \? \(\s*<>\s*<Text accessibilityRole="header" style=\{\[styles\.label, \{ color: theme\.textMuted \}\]\}>Choose a provider<\/Text>\s*<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}>\{choiceNote\}<\/Text>/.test(src) &&
+    /\{choiceNote \? \(\s*<>\s*<Text accessibilityRole="header" style=\{\[styles\.label, \{ color: theme\.textMuted \}\]\}>Choose a provider<\/Text>\s*<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}>\{choiceNote\}<\/Text>/.test(src) &
     !src.includes('{BRIDGE_CHOICE_NOTE}');
   check('…the screen shows "Choose a provider" and that note only when there is one (source)', choiceNoteWired(screen));
   check('MUTANT (the screen showing the pair sentence everywhere) is caught',
     !choiceNoteWired(screen.replace('<Text style={[styles.hint, { color: theme.textMuted }]}>{choiceNote}</Text>', '<Text style={[styles.hint, { color: theme.textMuted }]}>{BRIDGE_CHOICE_NOTE}</Text>')));
   const m7c = await bridgeMutant('  if (bridgeFormInputsShown(offer)) return BRIDGE_CHOICE_NOTE;', '  return BRIDGE_CHOICE_NOTE;');
-  const mBase7c = m7c.bridgeOfferFor(caip(BASE));
-  check('MUTANT (the pair sentence on Base Sepolia, where no pair can be chosen) is caught',
-    m7c.bridgeChoiceNote(mBase7c, m7c.bridgeProviderRows(mBase7c, mBase7c.destinations[0].chainId).length) !== BASE_CHOICE);
+  check('MUTANT (the pair sentence where no pair can be chosen) is caught', m7c.bridgeChoiceNote(noSendOffer, 1) !== SEP_NO_PAIR);
 
   // (8) The sent time is the broadcast's, whatever waits afterwards.
   let clock = 1_000;
@@ -1449,6 +1565,472 @@ console.log('check-bridge: the emulator pass p21b findings (provider choice, spo
   check('finding 9: the amount placeholder is a worded example (exact), the step hint unchanged',
     BRIDGE_AMOUNT_PLACEHOLDER === 'Amount, for example 0.0002' && screen.includes('placeholder={BRIDGE_AMOUNT_PLACEHOLDER}') && !screen.includes('placeholder="0.0002"') &&
       screen.includes('Stargate moves {symbol} in steps of 0.000001; an amount with more decimal places is refused, not rounded.'));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-bridge: USDC through Circle CCTP V2 — the quote, the wallet’s own checks, the confirm and the send paths (phase 23 item 4)');
+// ---------------------------------------------------------------------------
+// Fixtures from the live leg of 2026-10-25 (docs/BRIDGING.md section 17, leg
+// 1: Base Sepolia → Arbitrum Sepolia, 1 USDC): the burn block, Circle's
+// nonce, the mint transaction; the attestation is a stand-in of the live
+// length (130 bytes: two 65-byte signatures), since MessageTransmitterV2,
+// not the wallet, verifies the signatures. The burn transaction hash is the
+// live one; the test owner (the public test mnemonic) stands in for the dev
+// EOA, so every address-dependent byte differs from the live message.
+const USDC_AMOUNT = 1_000_000n;
+const CCTP_NONCE = '0x4ebf0adf94bbd5a7a92f1bbbd05cba6b5d7641f4c71cda1afe15f1aa24e3fc79';
+const BURN_TX = '0x847e641f6f038bf78f22881ff2186e0b453f18f24eb543556e8fda1db84e67a7';
+const MINT_TX = '0x425891cf15b9bb3df0bb52f1972bcc0b8cfc767db0a104ece758c20db9d96ddb';
+const BURN_BLOCK = 50_079_573n;
+const ATTESTATION = '0x' + '5a'.repeat(130);
+const TM = CCTP_V2_TESTNET.tokenMessengerV2;
+const MT = CCTP_V2_TESTNET.messageTransmitterV2;
+const cctpIface = new ethers.Interface([
+  'function depositForBurn(uint256 amount, uint32 destinationDomain, bytes32 mintRecipient, address burnToken, bytes32 destinationCaller, uint256 maxFee, uint32 minFinalityThreshold)',
+  'function approve(address spender, uint256 amount)',
+  'function receiveMessage(bytes message, bytes attestation)',
+  'event MessageSent(bytes message)',
+  'event MessageReceived(address indexed caller, uint32 sourceDomain, bytes32 indexed nonce, bytes32 sender, uint32 indexed finalityThresholdExecuted, bytes messageBody)',
+  'event DepositForBurn(address indexed burnToken, uint256 amount, address indexed depositor, bytes32 mintRecipient, uint32 destinationDomain, bytes32 destinationTokenMessenger, bytes32 destinationCaller, uint256 maxFee, uint32 indexed minFinalityThreshold, bytes hookData)',
+  'event MintAndWithdraw(address indexed mintRecipient, uint256 amount, address indexed mintToken, uint256 feeCollected)',
+]);
+const u32 = (n) => ethers.toBeHex(n, 4);
+const pad = (a) => ethers.zeroPadValue(a, 32);
+/** MessageV2 ‖ BurnMessageV2 (Circle's technical guide, "Message body"). */
+function cctpMessage(over = {}) {
+  const o = { nonce: ethers.ZeroHash, finality: 0, recipient: EOA, amount: USDC_AMOUNT, feeExecuted: 0n, expiration: 0n, src: 6, dst: 3, token: CCTP_V2_TESTNET_USDC[BASE], ...over };
+  return ethers
+    .concat([
+      u32(1), u32(o.src), u32(o.dst), o.nonce, pad(TM), pad(TM), ethers.ZeroHash, u32(2000), u32(o.finality),
+      u32(1), pad(o.token), pad(o.recipient), word(o.amount), pad(EOA), word(0n), word(o.feeExecuted), word(o.expiration),
+    ])
+    .toLowerCase();
+}
+const SENT_MSG = cctpMessage();
+const ATTESTED_MSG = cctpMessage({ nonce: CCTP_NONCE, finality: 2000 });
+const cctpLog = (address, name, args, extra = {}) => logOfIface(cctpIface, address, name, args, extra);
+function logOfIface(iface, address, name, args, extra) {
+  const e = iface.encodeEventLog(name, args);
+  return { address, data: e.data, topics: [...e.topics], ...extra };
+}
+const burnReceiptLogs = (recipient = EOA) => [
+  cctpLog(MT, 'MessageSent', [cctpMessage({ recipient })], { blockNumber: ethers.toQuantity(BURN_BLOCK), transactionHash: BURN_TX }),
+  cctpLog(TM, 'DepositForBurn', [CCTP_V2_TESTNET_USDC[BASE], USDC_AMOUNT, EOA, pad(recipient), 3, pad(TM), ethers.ZeroHash, 0n, 2000, '0x'], { blockNumber: ethers.toQuantity(BURN_BLOCK), transactionHash: BURN_TX }),
+];
+/** Circle's GET /v2/messages answer, in the documented MessagesV2Response shape (complete). */
+const irisComplete = (message = ATTESTED_MSG, attestation = ATTESTATION) => ({
+  status: 200,
+  body: {
+    messages: [
+      {
+        message,
+        eventNonce: CCTP_NONCE,
+        attestation,
+        decodedMessage: { sourceDomain: '6', destinationDomain: '3', nonce: CCTP_NONCE, sender: TM, recipient: TM, destinationCaller: ethers.ZeroAddress, minFinalityThreshold: '2000', finalityThresholdExecuted: '2000' },
+        cctpVersion: 2,
+        status: 'complete',
+        delayReason: null,
+      },
+    ],
+    sourceTxHash: BURN_TX,
+  },
+});
+/** …and while Circle waits for finality (as cctp-smoke.mjs saw it: message "0x", attestation "PENDING"). */
+const irisPending = { status: 200, body: { messages: [{ message: '0x', eventNonce: CCTP_NONCE, attestation: 'PENDING', decodedMessage: null, cctpVersion: 2, status: 'pending_confirmations', delayReason: null }], sourceTxHash: BURN_TX } };
+function cctpRequest(over = {}) {
+  return {
+    caip2: caip(BASE),
+    destinationChainId: ARB,
+    providerId: CCTP_V2_PROVIDER_ID,
+    amount: USDC_AMOUNT,
+    sender: EOA,
+    senderKind: 'regular',
+    recipient: EOA,
+    nativeSymbol: 'test ETH',
+    readers: readersFor(BASE),
+    ...over,
+  };
+}
+const fundUsdc = (chainId, holder, amount) => chains.get(chainId).usdc.set(holder.toLowerCase(), amount);
+let planU;
+{
+  resetChains();
+  fundUsdc(BASE, EOA, 5_000_000n);
+  chains.get(ARB).head = 322_726_000n;
+  fetchLog = [];
+  planU = await quoteBridge(cctpRequest());
+  const engine = createCctpV2Provider();
+  const route = engine.supportedRoutes().find((r) => r.sourceChainId === BASE && r.destinationChainId === ARB);
+  const eq = await engine.quote({ route, amount: USDC_AMOUNT, sender: EOA, recipient: EOA, nativeSymbol: 'test ETH' });
+  check('the plan’s two calls are the engine’s, byte for byte (the exact approval, then the burn)',
+    planU.calls.length === 2 && planU.calls.every((c, i) => same(c.to, eq.calls[i].to) && c.value === eq.calls[i].value && toHex(c.data) === toHex(eq.calls[i].data)) &&
+      same(planU.call.to, eq.calls[1].to) && toHex(planU.call.data) === toHex(eq.calls[1].data));
+  const approveArgs = cctpIface.decodeFunctionData('approve', toHex(planU.calls[0].data));
+  check('decoded with ethers: approve(Circle’s TokenMessengerV2, exactly 1,000,000) on Base Sepolia USDC, value 0',
+    same(planU.calls[0].to, CCTP_V2_TESTNET_USDC[BASE]) && same(approveArgs[0], TM) && approveArgs[1] === USDC_AMOUNT && planU.calls[0].value === 0n);
+  const burnArgs = cctpIface.decodeFunctionData('depositForBurn', toHex(planU.call.data));
+  check('decoded with ethers: depositForBurn(1,000,000, domain 3, the regular account, USDC, caller 0, maxFee 0, finality 2000) to TokenMessengerV2, value 0',
+    same(planU.call.to, TM) && planU.call.value === 0n && burnArgs[0] === USDC_AMOUNT && Number(burnArgs[1]) === 3 && same(ethers.dataSlice(burnArgs[2], 12), EOA) &&
+      same(burnArgs[3], CCTP_V2_TESTNET_USDC[BASE]) && burnArgs[4] === ethers.ZeroHash && burnArgs[5] === 0n && Number(burnArgs[6]) === 2000);
+  check('the plan: asset USDC, the regular recipient, the exact approval, no messaging fee, the receiving head, the measured time (996 s)',
+    planU.asset === 'usdc' && planU.recipientKind === 'regular' && planU.messagingFee === 0n && planU.destinationFromBlock === 322_726_000n &&
+      planU.approval && same(planU.approval.token, CCTP_V2_TESTNET_USDC[BASE]) && same(planU.approval.spender, TM) && planU.approval.amount === USDC_AMOUNT &&
+      planU.quote.time.measured?.seconds === 996);
+  check('the sender’s USDC balance was read on the sending network before quoting (balanceOf on Base Sepolia USDC)',
+    chains.get(BASE).calls.some((c) => c.method === 'eth_call' && same(c.params[0].to, CCTP_V2_TESTNET_USDC[BASE]) && c.params[0].data.startsWith('0x70a08231')));
+
+  // The wallet's own checks, word by word.
+  const expectU = { sourceChainId: BASE, destinationChainId: ARB, amount: USDC_AMOUNT, recipient: EOA, sender: EOA };
+  const cloneU = (q) => ({ ...q, calls: q.calls.map((c) => ({ ...c, data: new Uint8Array(c.data), pins: c.pins.map((p) => ({ ...p, rule: { ...p.rule, params: [...p.rule.params] } })), unpinnable: [...c.unpinnable] })), approvals: q.approvals.map((a) => ({ ...a })), fees: q.fees.map((f) => ({ ...f })) });
+  const refusedU = (q) => {
+    try {
+      checkBridgeQuote(q, expectU);
+      return null;
+    } catch (e) {
+      return e;
+    }
+  };
+  const whyU = (e) => (e instanceof BridgeRefusal ? (/\((.*)\)\. Nothing was signed\.$/.exec(e.message)?.[1] ?? e.message) : String(e));
+  check('the untouched CCTP quote passes', refusedU(cloneU(planU.quote)) === null);
+  check('the seven burn words are checked at their offsets (exact table)',
+    JSON.stringify(CCTP_BURN_WORD_OFFSETS) === JSON.stringify({ amount: 0, destinationDomain: 32, mintRecipient: 64, burnToken: 96, destinationCaller: 128, maxFee: 160, minFinalityThreshold: 192 }));
+  const wordTampered = Object.entries(CCTP_BURN_WORD_OFFSETS).filter(([, offset]) => {
+    const q = cloneU(planU.quote);
+    q.calls[1].data[4 + offset + 31] ^= 0x01;
+    return whyU(refusedU(q)) !== `the word at byte ${offset} of the burn`;
+  });
+  check('each of the seven words, changed by one bit, is refused naming its byte', wordTampered.length === 0, wordTampered.map(([k]) => k).join());
+  const pinTampered = Object.entries(CCTP_BURN_WORD_OFFSETS).filter(([, offset]) => {
+    const q = cloneU(planU.quote);
+    const pin = q.calls[1].pins.find((p) => p.rule.offset === offset);
+    pin.rule.params[0] = '0x' + 'ff'.repeat(32);
+    return whyU(refusedU(q)) !== `the pin at byte ${offset} of the burn`;
+  });
+  check('each of the seven pins, changed, is refused naming its byte', pinTampered.length === 0, pinTampered.map(([k]) => k).join());
+  const redirectedBurn = cloneU(planU.quote);
+  redirectedBurn.calls[1].data.set(ethers.getBytes(pad(KERNEL_ACCOUNT_0)), 4 + 64);
+  check('another recipient in the burn is refused', whyU(refusedU(redirectedBurn)) === 'the word at byte 64 of the burn');
+  const fast = cloneU(planU.quote);
+  fast.calls[1].data.set(ethers.getBytes(word(1000n)), 4 + 192);
+  check('finality 1000 (Fast) in the burn is refused', whyU(refusedU(fast)) === 'the word at byte 192 of the burn');
+  const otherSpender = cloneU(planU.quote);
+  otherSpender.calls[0].data = ethers.getBytes(cctpIface.encodeFunctionData('approve', [KERNEL_ACCOUNT_0, USDC_AMOUNT]));
+  check('an approval for another spender is refused', whyU(refusedU(otherSpender)) === 'an approval for another spender than Circle’s TokenMessengerV2', whyU(refusedU(otherSpender)));
+  const shortApproval = cloneU(planU.quote);
+  shortApproval.calls[0].data = ethers.getBytes(cctpIface.encodeFunctionData('approve', [TM, USDC_AMOUNT - 1n]));
+  shortApproval.approvals[0].amount = USDC_AMOUNT - 1n;
+  check('an approval one unit short of the amount is refused', whyU(refusedU(shortApproval)) === 'an approval that is not exactly the amount', whyU(refusedU(shortApproval)));
+  const otherToken = cloneU(planU.quote);
+  otherToken.calls[0].to = CCTP_V2_TESTNET_USDC[ARB];
+  otherToken.approvals[0].token = CCTP_V2_TESTNET_USDC[ARB];
+  check('an approval on another token is refused', whyU(refusedU(otherToken)) === 'an approval on another token than USDC', whyU(refusedU(otherToken)));
+  const unlimitedU = cloneU(planU.quote);
+  unlimitedU.calls[0].data = ethers.getBytes(cctpIface.encodeFunctionData('approve', [TM, ethers.MaxUint256]));
+  check('an unlimited approval is refused as not exact', whyU(refusedU(unlimitedU)) === 'an approval that is not exact');
+  const valuedBurn = cloneU(planU.quote);
+  valuedBurn.calls[1].value = 1n;
+  check('a burn that carries a value is refused', whyU(refusedU(valuedBurn)) === 'a burn that carries a value');
+  const otherContract = cloneU(planU.quote);
+  otherContract.calls[1].to = MT;
+  check('a burn to another contract than Circle’s pinned TokenMessengerV2 is refused', whyU(refusedU(otherContract)) === 'a contract other than Circle’s pinned TokenMessengerV2');
+  const feeU = cloneU(planU.quote);
+  feeU.fees[0].amount = 1n;
+  check('a Circle fee that is not zero is refused', whyU(refusedU(feeU)) === 'a Circle fee that is not zero');
+  const lessU = cloneU(planU.quote);
+  lessU.minAmountOut = USDC_AMOUNT - 1n;
+  check('an arrival other than the amount is refused', whyU(refusedU(lessU)) === 'an arrival other than the amount');
+  const threeCalls = cloneU(planU.quote);
+  threeCalls.calls.unshift({ ...threeCalls.calls[0] });
+  check('a third call is refused', whyU(refusedU(threeCalls)) === 'not exactly the approval and the burn', whyU(refusedU(threeCalls)));
+  const longBurn = cloneU(planU.quote);
+  longBurn.calls[1].data = new Uint8Array([...longBurn.calls[1].data, 0]);
+  check('a burn that is not exactly seven words is refused', whyU(refusedU(longBurn)) === 'a burn that is not exactly seven words');
+
+  // Refusals before anything is signed.
+  fetchLog = [];
+  const over = await rejection(() => quoteBridge(cctpRequest({ amount: 6_000_000n })));
+  check('more USDC than the sender holds: refused with both exact figures (exact), before any quote',
+    over instanceof BridgeRefusal && over.message === 'You hold 5 USDC on Base Sepolia, and this transfer needs 6 USDC. Nothing was quoted.' &&
+      over.message === usdcBalanceRefusal(5_000_000n, 6_000_000n, 'Base Sepolia'), over?.message);
+  const zero = await rejection(() => quoteBridge(cctpRequest({ amount: 0n })));
+  check('an amount of 0 (below one base unit): refused (exact)', zero instanceof BridgeRefusal && zero.message === 'Enter an amount greater than zero.', zero?.message);
+  const toHoodi = await rejection(() => quoteBridge(cctpRequest({ destinationChainId: HOODI })));
+  check('a route CCTP does not serve (Base Sepolia → Hoodi): the no-route sentence (exact)', toHoodi instanceof BridgeRefusal && toHoodi.message === 'Does not serve Base Sepolia → Hoodi in this wallet.', toHoodi?.message);
+  const fromHoodi = await rejection(() => quoteBridge(cctpRequest({ caip2: caip(HOODI), readers: readersFor(HOODI) })));
+  check('…and from Hoodi (exact)', fromHoodi instanceof BridgeRefusal && fromHoodi.message === 'Does not serve Hoodi → Arbitrum Sepolia in this wallet.', fromHoodi?.message);
+  const mainnetU = await rejection(() => quoteBridge(cctpRequest({ caip2: 'eip155:1', readers: readersFor(1) })));
+  check('USDC on mainnet: refused by the readiness gate first', mainnetU?.name === 'FeatureNotAllowedError');
+
+  // The confirm, worded for CCTP.
+  const m = bridgeConfirmModel(planU);
+  check('CCTP prompt titles (exact): the bridge and the exact approval',
+    bridgePromptTitle(planU) === 'Bridge 1 USDC to Arbitrum Sepolia through Circle CCTP (USDC)' && m.title === bridgePromptTitle(planU) &&
+      bridgeApprovePromptTitle(planU) === 'Approve exactly 1 USDC for Circle’s TokenMessengerV2', `${bridgePromptTitle(planU)} | ${bridgeApprovePromptTitle(planU)}`);
+  check('you send / arrives / minimum / fee / total (exact)',
+    m.youSend === 'You send 1 USDC from Base Sepolia' && m.arrives === 'Expected to arrive on Arbitrum Sepolia: 1 USDC' &&
+      m.minimum === 'Least that may arrive (written into the call as a maximum fee of 0): 1 USDC' &&
+      m.feeLines.length === 1 && m.feeLines[0].label === 'Circle protocol fee (Standard Transfer)' && m.feeLines[0].value === '0 USDC' &&
+      m.total === '1 USDC (amount 1 + Circle fee 0), before the network fees in test ETH', JSON.stringify(m, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)).slice(0, 600));
+  check('the two calls in plain words, and two prompts for the regular account (exact)',
+    m.callLines.join('\n') === [
+      `1. approve on USDC (${CCTP_V2_TESTNET_USDC[BASE]}): allows Circle’s TokenMessengerV2 ${TM} to take exactly 1 USDC.`,
+      `2. depositForBurn on Circle’s TokenMessengerV2 (${TM}): burns 1 USDC on Base Sepolia for minting on Arbitrum Sepolia.`,
+      'Two transactions, each with its own device prompt: first the approval, then, once it is confirmed, the burn.',
+    ].join('\n'), m.callLines.join('\n'));
+  check('the exact-approval line (exact)',
+    m.approvalLine === `Exact approval only: this allows Circle’s TokenMessengerV2 (${TM}) to take exactly 1 USDC (1000000 base units) of USDC (${CCTP_V2_TESTNET_USDC[BASE]}), nothing more; the burn uses all of it, so nothing stays approved.`, m.approvalLine);
+  check('the seven pinned words in plain words (exact)',
+    m.pinnedSummary.join('\n') === [
+      'Receiving network: Arbitrum Sepolia (CCTP domain 3).',
+      `Recipient: ${EOA} (your regular account).`,
+      'Amount: 1 USDC (1000000 base units), burned here and minted there.',
+      `Burn token: USDC ${CCTP_V2_TESTNET_USDC[BASE]} on Base Sepolia.`,
+      'Destination caller: none (zero), so anyone may send the mint; it still goes only to the recipient above.',
+      'Maximum fee 0 and finality 2000: a Standard Transfer, which Circle attests after the sending network’s hard finality. This wallet never builds a Fast Transfer.',
+      'All seven words of the call are fixed (7 pins), and before showing this screen the wallet re-read each of them from the call itself.',
+    ].join('\n'), m.pinnedSummary.join('\n'));
+  check('the pinned-contract line (exact)',
+    m.pinnedPool === cctpPinnedContractLine(TM, 'Base Sepolia') &&
+      m.pinnedPool === `The burn goes to Circle’s TokenMessengerV2 on Base Sepolia (${TM}), pinned by this wallet from Circle’s published test-network addresses and checked on-chain on 2026-10-25. The risk card below does not know Circle’s contracts by name.`);
+  check('the recipient line, the mint step and the time lines (exact)',
+    m.recipientLines.join() === usdcRecipientNote('regular', EOA, 'Arbitrum Sepolia') &&
+      usdcRecipientNote('regular', EOA, 'Arbitrum Sepolia') === `The USDC is minted to your regular account ${EOA} on Arbitrum Sepolia, the same address as on this network.` &&
+      m.destinationStep === `${planU.quote.destination.description} ${cctpMintStepLine('Arbitrum Sepolia')}` &&
+      cctpMintStepLine('Arbitrum Sepolia') === 'After Circle’s attestation (about 17 minutes in the measured runs) the USDC is minted on Arbitrum Sepolia by a transaction there. This wallet can send it from your regular account when Arbitrum Sepolia is the active network and that account holds test ETH there for gas; anyone else with gas there may send it too, and the USDC still goes only to the recipient written into the burn.' &&
+      m.timeLines.length === 2 && m.timeLines[0] === 'Measured once on 2026-10-25: 996 s on this route, from the sending block to the delivery block.' && m.timeLines[1] === cctpTimeEstimate(BASE, ARB).source,
+    `${m.destinationStep} | ${m.timeLines.join(' | ')}`);
+  check('the smart-account recipient sentences (exact): the address, the form’s variant, the 2,300-gas difference from LayerZero, the unverified network',
+    usdcRecipientNote('smart-account', KERNEL_ACCOUNT_0, 'Arbitrum Sepolia') === `The USDC is minted to your smart account ${KERNEL_ACCOUNT_0} on Arbitrum Sepolia, the same address as on this network. It does not need to be deployed there: CCTP mints USDC with an ordinary token mint, which needs no code at the recipient, unlike Stargate’s 2,300-gas ETH transfer.` &&
+      usdcRecipientNote('smart-account', null, 'Arbitrum Sepolia') === 'The USDC is minted to your smart account on Arbitrum Sepolia, the same address as on this network (shown when you review). It does not need to be deployed there: CCTP mints USDC with an ordinary token mint, which needs no code at the recipient, unlike Stargate’s 2,300-gas ETH transfer.' &&
+      usdcSmartRecipientUnavailable('Hoodi') === 'Your smart account cannot be chosen as the recipient on Hoodi: the wallet has not verified the smart-account contracts there, so it cannot say the address is the same. Your regular account receives.');
+
+  // The regular account: step 1 the exact approval, step 2 the burn once the allowance is in place.
+  const base = httpTransport(ACTIVE_URL(BASE));
+  check('the allowance is read: an approval is needed while it is below the amount', (await bridgeNeedsApproval(base, planU)) === true);
+  const qa = await prepareBridgeApprove(ACTIVE_URL(BASE), EOA, planU);
+  check('step 1 through prepareEvmSend: to USDC, value 0, data = the exact approve, pre-flight passed',
+    same(qa.to, CCTP_V2_TESTNET_USDC[BASE]) && qa.amount === 0n && toHex(qa.data) === toHex(planU.calls[0].data) && qa.simulation.ok);
+  const early = await prepareBridgeSend(ACTIVE_URL(BASE), EOA, planU);
+  check('the burn before the approval is confirmed: its pre-flight fails (nothing is sent)', early.simulation.ok === false, JSON.stringify(early.simulation));
+  const sentApprove = await sendEvm(ACTIVE_URL(BASE), owner, qa, null);
+  const rawApprove = ethers.Transaction.from(chains.get(BASE).raw.at(-1));
+  check('the signed approval: to USDC, value 0, the exact approve calldata, chain id Base Sepolia', same(rawApprove.to, CCTP_V2_TESTNET_USDC[BASE]) && rawApprove.value === 0n && rawApprove.data === toHex(planU.calls[0].data) && rawApprove.chainId === BigInt(BASE) && same(sentApprove.txid, ethers.keccak256(chains.get(BASE).raw.at(-1))));
+  chains.get(BASE).allowance.set(`${EOA.toLowerCase()}|${TM.toLowerCase()}`, USDC_AMOUNT);
+  check('once the allowance equals the amount, no approval is needed', (await bridgeNeedsApproval(base, planU)) === false);
+  const qb = await prepareBridgeSend(ACTIVE_URL(BASE), EOA, planU);
+  check('step 2: the burn through prepareEvmSend: to TokenMessengerV2, value 0, the burn calldata, pre-flight passed',
+    same(qb.to, TM) && qb.amount === 0n && toHex(qb.data) === toHex(planU.call.data) && qb.simulation.ok);
+  await sendEvm(ACTIVE_URL(BASE), owner, qb, null);
+  const rawBurn = ethers.Transaction.from(chains.get(BASE).raw.at(-1));
+  check('the signed burn: to TokenMessengerV2, value 0, the engine’s calldata, from the account', same(rawBurn.to, TM) && rawBurn.value === 0n && rawBurn.data === toHex(planU.call.data) && same(rawBurn.from, EOA));
+  check('a LayerZero plan has no approval step', (await rejection(() => prepareBridgeApprove(ACTIVE_URL(SEPOLIA), EOA, planA)))?.message === 'This transfer needs no token approval.' && (await bridgeNeedsApproval(base, planA)) === false);
+
+  // The smart account: ONE operation carrying both calls; USDC may go to the smart account.
+  const kernelConfig = {
+    bundlerUrl: 'https://bundler.example', bundlerVerifiedAt: 'x', accountType: 'kernel-v3.3', factory: KERNEL_V3_3.factory,
+    factoryImplementation: KERNEL_V3_3.implementation, kernelMetaFactory: KERNEL_V3_3.metaFactory, kernelValidator: KERNEL_V3_3.ecdsaValidator,
+    kernelAccountId: KERNEL_V3_3.accountId, factoryVerifiedAt: 'x', paymasterUrl: null, paymasterContext: null, paymasterVerifiedAt: null,
+    chain: caip(BASE), eip7702Owners: [], recoveredAccounts: [], bundlerUrlIgnoredReason: null, paymasterUrlIgnoredReason: null,
+  };
+  const kernel = fakeKernelNode({ chainIdHex: ethers.toQuantity(BASE), balance: E18, tokenBalances: { [`${CCTP_V2_TESTNET_USDC[BASE].toLowerCase()}|${KERNEL_ACCOUNT_0.toLowerCase()}`]: 5_000_000n } });
+  const bundler = fakeBundler();
+  const bundle = createAaClientFromConfig(kernelConfig, {
+    nodeUrl: 'https://node.example', chainId: BigInt(BASE), accountIndex: 0, ownerAddress: OWNER_0,
+    transportFor: (u) => (u === 'https://node.example' ? kernel : bundler),
+  });
+  fundUsdc(BASE, KERNEL_ACCOUNT_0, 5_000_000n);
+  const aaPlan = await quoteBridge(cctpRequest({ sender: KERNEL_ACCOUNT_0, senderKind: 'smart-account', recipient: KERNEL_ACCOUNT_0, recipientKind: 'smart-account' }));
+  const aaBurn = cctpIface.decodeFunctionData('depositForBurn', toHex(aaPlan.call.data));
+  check('USDC to the smart account: the burn’s recipient word is the smart account', same(ethers.dataSlice(aaBurn[2], 12), KERNEL_ACCOUNT_0) && aaPlan.recipientKind === 'smart-account');
+  const aq = await prepareBridgeAa(bundle, OWNER_0, aaPlan);
+  check('prepareAaCalls: TWO calls (the approval, then the burn), value 0, the smart account as sender, its USDC checked',
+    aq.calls.length === 2 && same(aq.calls[0].to, CCTP_V2_TESTNET_USDC[BASE]) && same(aq.calls[1].to, TM) && aq.amount === 0n && same(aq.sender, KERNEL_ACCOUNT_0) && aq.tokenSpend?.amount === USDC_AMOUNT);
+  await sendAa(bundle, owner, aq, { kind: 'bridge' });
+  const execU = decodeKernelExecute(bundler.lastOp.callData);
+  check('the submitted UserOperation executes exactly the approval and the burn, in order, as one batch',
+    execU.calls.length === 2 && same(execU.calls[0].to, CCTP_V2_TESTNET_USDC[BASE]) && execU.calls[0].data === toHex(aaPlan.calls[0].data) &&
+      same(execU.calls[1].to, TM) && execU.calls[1].data === toHex(aaPlan.call.data) && execU.calls.every((c) => c.value === 0n));
+  const am = bridgeConfirmModel(aaPlan);
+  check('the smart-account confirm: one prompt, the fee in test ETH and no USDC-fee paymaster (exact), the smart-account recipient sentence',
+    bridgePromptTitle(aaPlan) === 'Bridge 1 USDC to Arbitrum Sepolia through Circle CCTP (USDC) from your smart account' &&
+      am.callLines[2] === 'One smart-account operation carries both calls, all or nothing, so there is one device prompt.' &&
+      am.notes.includes(cctpSmartAccountFeeNote('test ETH')) &&
+      cctpSmartAccountFeeNote('test ETH') === 'The network fee is paid in test ETH from the smart account. Paying it in USDC through Circle’s paymaster is not offered for bridging in this version.' &&
+      am.recipientLines[0] === usdcRecipientNote('smart-account', KERNEL_ACCOUNT_0, 'Arbitrum Sepolia'));
+  const aaOver = await rejection(() => prepareBridgeAa(bundle, OWNER_0, { ...aaPlan, calls: [aaPlan.calls[1]] }));
+  check('an operation that would not carry exactly the plan’s calls is refused', aaOver instanceof BridgeRefusal && aaOver.message === 'The operation would not carry the quoted calls and value. Nothing was signed.', aaOver?.message);
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-bridge: CCTP tracking — burned, attested, the Mint button, delivered, and a restart');
+// ---------------------------------------------------------------------------
+{
+  const memStore = (initial = {}) => {
+    const map = new Map(Object.entries(initial));
+    return { map, getItem: async (k) => (map.has(k) ? map.get(k) : null), setItem: async (k, v) => void map.set(k, v), removeItem: async (k) => void map.delete(k) };
+  };
+  resetChains();
+  await resetBridgeTransfers();
+  fundUsdc(BASE, EOA, 5_000_000n);
+  chains.get(ARB).head = 322_726_000n;
+  const plan = await quoteBridge(cctpRequest());
+  const store = memStore();
+  await loadBridgeTransfers(store);
+  let rec = recordBridgeTransfer(plan, { sourceTxHash: BURN_TX, userOpHash: null, sentAt: 1_792_000_000_000 });
+  const readers = readersFor(BASE);
+  const findRec = () => listBridgeTransfers().find((r) => r.id === rec.id);
+  const step = async () => {
+    const st = await trackBridgeTransfer(findRec(), readers);
+    updateBridgeTransfer(rec.id, trackedPatch(findRec(), st, 1_792_000_100_000));
+    await bridgeTransfersWritten();
+    return st;
+  };
+  irisAnswer = { status: 404 };
+  // 1. No receipt yet.
+  let st = await step();
+  check('no receipt yet → "Not known yet" with the engine’s sentence (exact)',
+    st.state === 'unknown' && bridgeStatusHeading(st, 'Arbitrum Sepolia', CCTP_V2_PROVIDER_ID) === 'Not known yet' &&
+      bridgeStatusSentence(findRec()) === 'The burn transaction has no receipt yet; it may still be pending.', bridgeStatusSentence(findRec()));
+  // 2. Burned; Circle has nothing yet (404), then pending_confirmations.
+  chains.get(BASE).receipts.set(BURN_TX, { status: '0x1', logs: burnReceiptLogs() });
+  fetchLog = [];
+  st = await step();
+  check('burned, Iris 404 → "Waiting for Circle’s attestation" and the burned sentence with the block (exact)',
+    st.state === 'in-flight' && st.onChain?.sourceBlock === BURN_BLOCK && bridgeStatusHeading(st, 'Arbitrum Sepolia', CCTP_V2_PROVIDER_ID) === 'Waiting for Circle’s attestation' &&
+      bridgeStatusSentence(findRec()) === 'Burned on Base Sepolia (block 50079573). Waiting for Circle’s attestation: it comes after the source chain’s hard finality, about 17 minutes in the measured runs.' &&
+      bridgeStatusSentence(findRec()) === cctpBurnedSentence('Base Sepolia', BURN_BLOCK), bridgeStatusSentence(findRec()));
+  check('Circle was asked at the sandbox host, by source domain 6 and the burn hash', fetchLog.includes(`${CIRCLE_IRIS_SANDBOX_API}/v2/messages/6?transactionHash=${BURN_TX}`) && CIRCLE_IRIS_SANDBOX_API === 'https://iris-api-sandbox.circle.com');
+  check('nothing is searched on the receiving network before the attestation', chains.get(ARB).calls.filter((c) => c.method === 'eth_getLogs').length === 0);
+  irisAnswer = irisPending;
+  st = await step();
+  check('Iris "pending_confirmations" (message "0x", attestation "PENDING", as documented) → still waiting', st.state === 'in-flight' && bridgeMintCall(findRec()) === null);
+  // 3. Attested: the mint call.
+  irisAnswer = irisComplete();
+  st = await step();
+  check('attested → "Attested: waiting for the mint on Arbitrum Sepolia" and the attested sentence (exact)',
+    st.state === 'awaiting-destination-action' && st.onChain?.status === 'attested' && st.onChain.guid === CCTP_NONCE &&
+      bridgeStatusHeading(st, 'Arbitrum Sepolia', CCTP_V2_PROVIDER_ID) === 'Attested: waiting for the mint on Arbitrum Sepolia' &&
+      bridgeStatusSentence(findRec()) === 'Attested. The USDC can now be minted on Arbitrum Sepolia.' && cctpAttestedSentence('Arbitrum Sepolia') === bridgeStatusSentence(findRec()),
+    `${st.state} ${st.detail}`);
+  const arbLogs = chains.get(ARB).calls.filter((c) => c.method === 'eth_getLogs');
+  check('the receiving network was searched for MessageReceived by the nonce, from the head recorded at quote time',
+    arbLogs.length >= 1 && same(arbLogs[0].params[0].address, MT) && arbLogs[0].params[0].topics[2] === CCTP_NONCE && BigInt(arbLogs[0].params[0].fromBlock) === 322_726_000n);
+  check('the record keeps the checked attested message (trackedPatch)', findRec().attested?.nonce === CCTP_NONCE && findRec().attested.message === ATTESTED_MSG && findRec().attested.expirationBlock === 0n);
+  const stored = JSON.parse(store.map.get(BRIDGE_TRANSFERS_KEY)).records[0];
+  check('…and stores it (still version 1, one more key): message, attestation, nonce, expiration block as a decimal string; no final status',
+    JSON.stringify(stored.attested) === JSON.stringify({ message: ATTESTED_MSG, attestation: ATTESTATION, nonce: CCTP_NONCE, expirationBlock: '0' }) && stored.final === null);
+  const mint = bridgeMintCall(findRec());
+  check('the Mint call: receiveMessage(attested message, attestation) to Circle’s MessageTransmitterV2, value 0 (ethers agrees)',
+    mint && same(mint.to, MT) && mint.value === 0n && toHex(mint.data) === cctpIface.encodeFunctionData('receiveMessage', [ATTESTED_MSG, ATTESTATION]));
+  check('…no Stargate retry is offered for it', bridgeRetryCall(findRec()) === null);
+  // The Mint button's conditions.
+  const expiry0 = cctpExpirySentence(findRec().attested, 'Arbitrum Sepolia');
+  check('expiry, from Circle’s documents (exact): block 0 stays valid; a set block names it (on Arbitrum an Ethereum block); none read yet',
+    expiry0 === 'The attested message carries no expiration block (0), so it stays valid until the mint is sent: Circle’s contract accepts such a message at any time, and only once.' &&
+      cctpExpirySentence({ expirationBlock: 9_876_543n }, 'Arbitrum Sepolia') === 'The attested message expires after block 9876543 (on Arbitrum an Ethereum block number, as Circle’s guide notes). After that Circle’s contract refuses it until Circle re-attests it, which Circle’s technical guide says can be requested at any time; this wallet does not request it.' &&
+      cctpExpirySentence({ expirationBlock: 9_876_543n }, 'Base Sepolia') === 'The attested message expires after block 9876543. After that Circle’s contract refuses it until Circle re-attests it, which Circle’s technical guide says can be requested at any time; this wallet does not request it.' &&
+      cctpExpirySentence(null, 'Base Sepolia') === 'Circle’s attested message is valid until it is used, unless it carries an expiration block: Circle’s technical guide says an expired message must be re-attested by Circle (possible at any time) before it can be minted.');
+  check('Mint from another active network: the switch sentence, that anyone can send it, and the expiry (exact)',
+    bridgeMintBlocker(caip(BASE), findRec(), null) === `Anyone with test ETH on Arbitrum Sepolia can send this mint transaction, and the USDC still goes only to ${EOA}. ${expiry0} To send it from this wallet, switch to Arbitrum Sepolia (Settings → Developer) and come back to this screen; this transfer stays listed here.`,
+    bridgeMintBlocker(caip(BASE), findRec(), null));
+  check('Mint on the receiving network with no coin there: the sentence (exact); with some coin, or not read yet: offered',
+    bridgeMintBlocker(caip(ARB), findRec(), 0n) === `Your regular account holds no test ETH on Arbitrum Sepolia to pay for the mint transaction. Anyone with test ETH there can send it, and the USDC still goes only to ${EOA}. ${expiry0}` &&
+      bridgeMintBlocker(caip(ARB), findRec(), 1n) === null && bridgeMintBlocker(caip(ARB), findRec(), null) === null);
+  check('the Mint prompt (exact)', bridgeMintPromptTitle(findRec()) === 'Mint the bridged USDC on Arbitrum Sepolia');
+  const mq = await prepareBridgeMint(ACTIVE_URL(ARB), EOA, findRec());
+  check('the Mint quote through prepareEvmSend on the receiving network: to MessageTransmitterV2, value 0, the mint calldata, pre-flight passed',
+    same(mq.to, MT) && mq.amount === 0n && toHex(mq.data) === toHex(mint.data) && mq.simulation.ok);
+  const forgedMint = { ...findRec(), status: { ...findRec().status, destinationCalls: [{ ...mint, to: TM }] } };
+  const otherData = { ...findRec(), status: { ...findRec().status, destinationCalls: [{ ...mint, data: ethers.getBytes(cctpIface.encodeFunctionData('receiveMessage', [ATTESTED_MSG, '0x' + '00'.repeat(130)])) }] } };
+  check('a mint call to another contract, or not exactly the checked attested message, is not offered', bridgeMintCall(forgedMint) === null && bridgeMintCall(otherData) === null);
+  check('no mint call for a LayerZero transfer, and none to send → refused in plain words',
+    bridgeMintCall({ ...findRec(), providerId: LAYERZERO_OFT_PROVIDER_ID }) === null &&
+      (await rejection(() => prepareBridgeMint(ACTIVE_URL(ARB), EOA, { ...findRec(), status: null })))?.message === 'There is no mint transaction to send for this transfer.');
+  // 4. A restart: the stored attested message is used without asking Circle.
+  await resetBridgeTransfers();
+  await loadBridgeTransfers(store);
+  rec = listBridgeTransfers()[0];
+  check('after a restart the record comes back with its attested message', rec.attested?.nonce === CCTP_NONCE && rec.status === null);
+  let irisCalls = 0;
+  irisAnswer = () => {
+    irisCalls += 1;
+    return { status: 500 };
+  };
+  st = await step();
+  check('…tracking continues from it with no request to Circle: attested again, the Mint call rebuilt', irisCalls === 0 && st.state === 'awaiting-destination-action' && bridgeMintCall(findRec()) !== null);
+  // A stored message that no longer matches the burn: Circle is asked instead.
+  updateBridgeTransfer(rec.id, { attested: { ...findRec().attested, message: cctpMessage({ nonce: CCTP_NONCE, finality: 2000, recipient: KERNEL_ACCOUNT_0 }) } });
+  irisAnswer = () => {
+    irisCalls += 1;
+    return irisComplete();
+  };
+  st = await step();
+  check('a stored attested message that does not match the burn is dropped and Circle asked again (one request)', irisCalls === 1 && st.state === 'awaiting-destination-action' && findRec().attested.message === ATTESTED_MSG);
+  // 5. Minted (by this wallet or anyone): delivered from the chain's own events.
+  updateBridgeTransfer(rec.id, { retryTxHash: MINT_TX });
+  chains.get(ARB).head = 322_727_000n;
+  chains.get(ARB).logs.push(
+    cctpLog(MT, 'MessageReceived', [EOA, 6, CCTP_NONCE, pad(TM), 2000, '0x'], { transactionHash: MINT_TX, blockNumber: ethers.toQuantity(322_726_898n) }),
+    cctpLog(TM, 'MintAndWithdraw', [EOA, USDC_AMOUNT, CCTP_V2_TESTNET_USDC[ARB], 0n], { transactionHash: MINT_TX, blockNumber: ethers.toQuantity(322_726_898n) }),
+  );
+  st = await step();
+  check('minted → "Delivered on Arbitrum Sepolia", the mint transaction, the engine’s sentence (exact), final',
+    st.state === 'delivered' && st.destinationTxHash === MINT_TX && bridgeStatusHeading(st, 'Arbitrum Sepolia', CCTP_V2_PROVIDER_ID) === 'Delivered on Arbitrum Sepolia' &&
+      bridgeStatusSentence(findRec()) === `Delivered: the receiving network shows MessageReceived for this transfer's message (nonce ${CCTP_NONCE}) and MintAndWithdraw of ${USDC_AMOUNT} base units of USDC to ${EOA} in transaction ${MINT_TX}.` &&
+      bridgeTransferFinal(findRec()) && bridgeMintCall(findRec()) === null, bridgeStatusSentence(findRec()));
+  const storedFinal = JSON.parse(store.map.get(BRIDGE_TRANSFERS_KEY)).records[0];
+  check('the delivered status is stored with the mint transaction, and the mint sent from this screen is kept', storedFinal.final?.state === 'delivered' && storedFinal.final.destinationTxHash === MINT_TX && storedFinal.retryTxHash === MINT_TX);
+  check('the CCTP log-age sentence (exact)', BRIDGE_LOG_TOO_OLD_CCTP === 'This transfer was sent too long ago for the wallet to search the receiving network for its mint; look up the recipient on that network in an explorer. If the USDC was never minted, anyone can still send the mint with Circle’s attested message.');
+
+  // 6. The stored record: strict, the attested message one more key, and a record written before it still read.
+  const v2 = bridgeRecordToStored(findRec());
+  const back = bridgeRecordFromStored(v2);
+  check('a CCTP record round-trips with its attested message', back && back.attested?.nonce === CCTP_NONCE && back.attested.expirationBlock === 0n && back.attested.message === ATTESTED_MSG && back.route.sourceAsset.kind === 'erc20');
+  const strictU = {
+    'an attested message on a LayerZero record': { providerId: LAYERZERO_OFT_PROVIDER_ID, route: { ...v2.route, providerId: LAYERZERO_OFT_PROVIDER_ID } },
+    'a nonce that is not the message’s': { attested: { ...v2.attested, nonce: '0x' + '42'.repeat(32) } },
+    'an attestation that is not whole 65-byte signatures': { attested: { ...v2.attested, attestation: '0x' + '5a'.repeat(129) } },
+    'an expiration block that is not the message’s': { attested: { ...v2.attested, expirationBlock: '7' } },
+    'an extra key in the attested message': { attested: { ...v2.attested, extra: 1 } },
+    'upper-case hex in the message': { attested: { ...v2.attested, message: v2.attested.message.toUpperCase().replace('0X', '0x') } },
+    'the attested key left undefined (neither key set)': { attested: undefined },
+  };
+  const loose = Object.entries(strictU).filter(([, patch]) => bridgeRecordFromStored({ ...v2, ...patch }) !== null);
+  check(`the attested field is parsed strictly: ${Object.keys(strictU).length} damaged forms each refused`, loose.length === 0, loose.map(([k]) => k).join());
+  const legacyRecord = { ...v2, final: null };
+  delete legacyRecord.attested;
+  const legacy = parseBridgeTransfers(JSON.stringify({ version: 1, records: [legacyRecord] }));
+  check('a record written before the attested message (the 18 keys) still loads, writable, with no attested message', !legacy.readOnly && legacy.records.length === 1 && legacy.records[0].attested === null);
+  check('…a document version other than 1 is read-only', parseBridgeTransfers(JSON.stringify({ version: 2, records: [legacyRecord] })).readOnly);
+  const legacyStore = memStore({ [BRIDGE_TRANSFERS_KEY]: JSON.stringify({ version: 1, records: [{ ...legacyRecord, id: 'bridge-1-9' }] }) });
+  await resetBridgeTransfers();
+  await loadBridgeTransfers(legacyStore);
+  recordBridgeTransfer(plan, { sourceTxHash: BURN_TX, userOpHash: null, sentAt: 1_792_000_200_000 });
+  await bridgeTransfersWritten();
+  const migrated = JSON.parse(legacyStore.map.get(BRIDGE_TRANSFERS_KEY));
+  check('…and the next write keeps version 1 and writes every record with the attested key (the old one with null)', migrated.version === 1 && migrated.records.length === 2 && migrated.records.every((r) => 'attested' in r) && migrated.records.some((r) => r.id === 'bridge-1-9' && r.attested === null));
+  await resetBridgeTransfers();
+
+  // 7. The Iris reader on its own.
+  const iris = circleIrisReader();
+  irisAnswer = { status: 404 };
+  check('Iris reader: 404 → pending', (await iris({ sourceDomain: 6, sourceTxHash: BURN_TX })).status === 'pending');
+  irisAnswer = { status: 200, body: { messages: [], sourceTxHash: BURN_TX } };
+  check('Iris reader: no message yet → pending', (await iris({ sourceDomain: 6, sourceTxHash: BURN_TX })).status === 'pending');
+  irisAnswer = irisComplete();
+  const done = await iris({ sourceDomain: 6, sourceTxHash: BURN_TX });
+  check('Iris reader: complete → the message and attestation, verbatim', done.status === 'complete' && done.message === ATTESTED_MSG && done.attestation === ATTESTATION);
+  irisAnswer = irisComplete(ATTESTED_MSG, 'PENDING');
+  check('Iris reader: "complete" with the attestation still "PENDING" → pending', (await iris({ sourceDomain: 6, sourceTxHash: BURN_TX })).status === 'pending');
+  irisAnswer = { status: 200, body: { messages: [irisComplete().body.messages[0], irisComplete().body.messages[0]], sourceTxHash: BURN_TX } };
+  check('Iris reader: two messages for one burn → refused, the wallet does not pick one', /returned 2 messages for one burn; the wallet does not pick one\./.test((await rejection(() => iris({ sourceDomain: 6, sourceTxHash: BURN_TX })))?.message ?? ''));
+  irisAnswer = { status: 200, body: { ...irisComplete().body, sourceTxHash: MINT_TX } };
+  check('Iris reader: an answer for another transaction → refused', (await rejection(() => iris({ sourceDomain: 6, sourceTxHash: BURN_TX })))?.message === 'Circle’s attestation service answered for another transaction.');
+  irisAnswer = { status: 500 };
+  check('Iris reader: HTTP 500 → an error', (await rejection(() => iris({ sourceDomain: 6, sourceTxHash: BURN_TX })))?.message === 'Circle’s attestation service answered HTTP 500');
+  fetchLog = [];
+  check('Iris reader: a malformed hash is refused before any request', /32 bytes of hex/.test((await rejection(() => iris({ sourceDomain: 6, sourceTxHash: '0x12' })))?.message ?? '') && fetchLog.length === 0);
+  irisAnswer = { status: 404 };
 }
 
 // ---------------------------------------------------------------------------
@@ -1515,15 +2097,18 @@ console.log('check-bridge: mutation checks');
   const r3 = await rejection(() => m3.quoteBridge(quoteRequest({ caip2: 'eip155:1', readers: readersFor(1) })));
   check('MUTANT (gate removed) is caught: a mainnet quote is no longer refused by readiness', r3?.name !== 'FeatureNotAllowedError', `${r3?.name}`);
 
-  // 4. The provider choice hidden (only offered providers listed).
+  // 4. The asset filter removed from the rows: a provider that does not move the asset would be listed.
   const m4 = await bridgeMutant(
-    `  const destinationLabel = labelOfChain(destinationChainId);
-  return registry.list().map((p) => {`,
-    `  const destinationLabel = labelOfChain(destinationChainId);
-  return registry.list().filter((p) => BRIDGE_PROVIDER_STATUS[p.id] === 'offered').map((p) => {`,
+    `  return registry
+    .list()
+    .filter((p) => providerMoves(p, offer.asset))
+    .map((p) => {`,
+    `  return registry
+    .list()
+    .map((p) => {`,
   );
-  const rows4 = m4.bridgeProviderRows(m4.bridgeOfferFor(caip(SEPOLIA)), OP);
-  check('MUTANT (CCTP hidden from the choice) is caught: the rows no longer list every provider', rows4.length !== 2);
+  const rows4 = m4.bridgeProviderRows(m4.bridgeOfferFor(caip(BASE), 'usdc'), ARB);
+  check('MUTANT (the asset filter removed) is caught: the USDC rows list LayerZero too', rows4.length !== 1, rows4.map((r) => r.id).join());
 
   // 5. The recipient word not checked.
   const m5 = await bridgeMutant('[OFT_SEND_LAYOUT.to, addressToBytes32(expect.recipient).toLowerCase()],', '');
@@ -1532,10 +2117,82 @@ console.log('check-bridge: mutation checks');
   check('MUTANT (recipient word not checked) is caught: a redirected recipient passes', run(m5, redirected) === null);
   check('…while the real module refuses it', run({ checkBridgeQuote }, redirected) instanceof BridgeRefusal);
 
-  // 6. CCTP offered for sending.
-  const m6 = await bridgeMutant(`[CCTP_V2_PROVIDER_ID]: 'coming',`, `[CCTP_V2_PROVIDER_ID]: 'offered',`);
-  const r6 = await rejection(() => m6.quoteBridge(quoteRequest({ providerId: CCTP_V2_PROVIDER_ID, destinationChainId: BASE })));
-  check('MUTANT (CCTP offered) is caught: the refusal is no longer the coming note', r6?.message !== CCTP_COMING_NOTE, r6?.message);
+  // 6. CCTP taken off the offer: a USDC quote is refused.
+  const m6 = await bridgeMutant(`[CCTP_V2_PROVIDER_ID]: 'offered',`, `[CCTP_V2_PROVIDER_ID]: 'coming',`);
+  resetChains();
+  fundUsdc(BASE, EOA, 5_000_000n);
+  const r6 = await rejection(() => m6.quoteBridge(cctpRequest()));
+  check('MUTANT (CCTP not offered) is caught: a USDC quote is refused', r6 instanceof Error && r6.message === 'This bridge provider is not offered in this wallet.', r6?.message);
+  const realU = await quoteBridge(cctpRequest());
+  const runU = (mod, q) => {
+    try {
+      mod.checkBridgeQuote(q, { sourceChainId: BASE, destinationChainId: ARB, amount: USDC_AMOUNT, recipient: EOA, sender: EOA });
+      return null;
+    } catch (e) {
+      return e;
+    }
+  };
+  const burnWith = (offset, bytes) => {
+    const calls = realU.quote.calls.map((c) => ({ ...c, data: new Uint8Array(c.data) }));
+    calls[1].data.set(ethers.getBytes(bytes), 4 + offset);
+    return { ...realU.quote, calls };
+  };
+  // 7–9. One burn word no longer re-read: the recipient, the maximum fee, the finality.
+  for (const [name, entry, offset, bytes] of [
+    ['mintRecipient', '[O.mintRecipient, addressToBytes32(expect.recipient).toLowerCase()],', 64, pad(KERNEL_ACCOUNT_0)],
+    ['maxFee', '[O.maxFee, uintWord(0)],', 160, word(1n)],
+    ['minFinalityThreshold', '[O.minFinalityThreshold, uintWord(CCTP_FINALITY_STANDARD)],', 192, word(1000n)],
+  ]) {
+    const mm = await bridgeMutant(entry, '');
+    const tampered = burnWith(offset, bytes);
+    check(`MUTANT (the burn’s ${name} word not re-read) is caught: the tampered burn passes`, runU(mm, tampered) === null);
+    check(`…while the real module refuses it (${name})`, runU({ checkBridgeQuote }, tampered) instanceof BridgeRefusal);
+  }
+  // 10. The approval's spender not checked.
+  const m10 = await bridgeMutant("  if (approveHex.slice(10, 74) !== addressToBytes32(tm).toLowerCase().slice(2)) fail('an approval for another spender than Circle’s TokenMessengerV2');", '');
+  const spender = { ...realU.quote, calls: [{ ...realU.quote.calls[0], data: ethers.getBytes(cctpIface.encodeFunctionData('approve', [KERNEL_ACCOUNT_0, USDC_AMOUNT])) }, realU.quote.calls[1]] };
+  check('MUTANT (the approval’s spender not checked) is caught: an approval for another spender passes', runU(m10, spender) === null && runU({ checkBridgeQuote }, spender) instanceof BridgeRefusal);
+  // 11. A Circle fee accepted.
+  const m11 = await bridgeMutant("fail('a Circle fee that is not zero');", '{}');
+  const feeQ = { ...realU.quote, fees: [{ ...realU.quote.fees[0], amount: 1n }] };
+  check('MUTANT (a non-zero Circle fee accepted) is caught', runU(m11, feeQ) === null && runU({ checkBridgeQuote }, feeQ) instanceof BridgeRefusal);
+  // 12. The balance check removed.
+  const m12 = await bridgeMutant('    if (request.amount > balance) throw new BridgeRefusal(usdcBalanceRefusal(balance, request.amount, labelOfChain(sourceChainId)));', '');
+  const r12 = await rejection(() => m12.quoteBridge(cctpRequest({ amount: 6_000_000n })));
+  check('MUTANT (the USDC balance check removed) is caught: a quote above the balance is not refused with the balance sentence', r12?.message !== usdcBalanceRefusal(5_000_000n, 6_000_000n, 'Base Sepolia'), r12?.message);
+  // 13. trackedPatch forgetting the attested message.
+  const m13 = await bridgeMutant('attested: status.attestation ?? record.attested', 'attested: record.attested');
+  const fakeAtt = { message: ATTESTED_MSG, attestation: ATTESTATION, nonce: CCTP_NONCE, expirationBlock: 0n };
+  check('MUTANT (the attested message not kept) is caught', m13.trackedPatch({ attested: null }, { state: 'awaiting-destination-action', detail: 'x', attestation: fakeAtt }, 1).attested === null &&
+    trackedPatch({ attested: null }, { state: 'awaiting-destination-action', detail: 'x', attestation: fakeAtt }, 1).attested === fakeAtt);
+  // 14. The mint call not matched to the checked attested message.
+  const m14 = await bridgeMutant(
+    '  if (!attested || toHex(call.data).toLowerCase() !== toHex(encodeReceiveMessage(attested.message, attested.attestation)).toLowerCase()) return null;',
+    '',
+  );
+  const mintStatus = (data) => ({
+    providerId: CCTP_V2_PROVIDER_ID,
+    attested: fakeAtt,
+    status: { state: 'awaiting-destination-action', detail: 'x', onChain: { status: 'attested' }, destinationCalls: [{ to: MT, value: 0n, data: ethers.getBytes(data) }] },
+  });
+  const forged = mintStatus(cctpIface.encodeFunctionData('receiveMessage', [ATTESTED_MSG, '0x' + '00'.repeat(130)]));
+  check('MUTANT (the mint call not matched to the attested message) is caught', m14.bridgeMintCall(forged) !== null && bridgeMintCall(forged) === null);
+  // 15. The Mint offered from another network.
+  const m15 = await bridgeMutant('  if (activeCaip2 !== record.destinationCaip2) {\n    return (\n      `Anyone with', '  if (false) {\n    return (\n      `Anyone with');
+  const recLike = { destinationCaip2: caip(ARB), destinationLabel: 'Arbitrum Sepolia', recipient: EOA, attested: fakeAtt };
+  check('MUTANT (the Mint offered while another network is active) is caught', m15.bridgeMintBlocker(caip(BASE), recLike, 1n) === null && bridgeMintBlocker(caip(BASE), recLike, 1n) !== null);
+  // 16. Records written before the attested message no longer read.
+  const m16 = await bridgeMutant('!(exactKeys(value, STORED_KEYS_WITH_ATTESTED) || exactKeys(value, STORED_KEYS))', '!exactKeys(value, STORED_KEYS_WITH_ATTESTED)');
+  const oldRec = bridgeRecordToStored(recordBridgeTransfer(realU, { sourceTxHash: BURN_TX, userOpHash: null, sentAt: 1_792_000_300_000 }));
+  delete oldRec.attested;
+  const oldDoc = JSON.stringify({ version: 1, records: [oldRec] });
+  check('MUTANT (a record without the attested key refused) is caught: a list written before becomes read-only', m16.parseBridgeTransfers(oldDoc).readOnly === true && parseBridgeTransfers(oldDoc).readOnly === false);
+  await resetBridgeTransfers();
+  // 17. Test ETH to the smart account no longer refused.
+  const m17 = await bridgeMutant("  if (asset === 'native' && recipientKind !== 'regular') throw new BridgeRefusal(BRIDGE_NATIVE_SMART_RECIPIENT_REFUSAL);", '');
+  const r17 = await rejection(() => m17.quoteBridge(quoteRequest({ recipient: KERNEL_ACCOUNT_0, recipientKind: 'smart-account' })));
+  check('MUTANT (test ETH to the smart account allowed) is caught', r17?.message !== BRIDGE_NATIVE_SMART_RECIPIENT_REFUSAL, r17?.message);
+  for (const mod of [m6, m10, m11, m12, m13, m14, m15, m16, m17]) await mod.resetBridgeTransfers();
 }
 
 console.log(`\ncheck-bridge: ${passed} passed, ${failed} failed (${mutantCount} mutants)`);

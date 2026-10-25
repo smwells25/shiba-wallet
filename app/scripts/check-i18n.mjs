@@ -219,8 +219,8 @@ function fixtureProblems(table, fixture) {
   check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes and the cold-aa readiness row',
     FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id)) &&
       LOCK_KIND_NEW.every((id) => FIXTURE.new.includes(id)) && COLD_AA_NEW.every((id) => FIXTURE.new.includes(id)));
-  check('the changed entries are exactly the transaction-notes line (reworded for the records backup) and the watch-only notice (reworded for the off-line signer), each with its reason',
-    JSON.stringify(Object.keys(FIXTURE.changed ?? {})) === JSON.stringify(['activity.note.privacy', 'notice.watchOnly']) &&
+  check('the changed entries are exactly the transaction-notes line (reworded for the records backup), the watch-only notice (reworded for the off-line signer) and the bridge readiness reason (CCTP sent, phase 23), each with its reason',
+    JSON.stringify(Object.keys(FIXTURE.changed ?? {})) === JSON.stringify(['activity.note.privacy', 'notice.watchOnly', 'readiness.bridge.reason']) &&
       en['activity.note.privacy'] === 'Notes are kept on this phone and are not sent anywhere. They are deleted when the wallet is wiped. A records backup (Settings → Records backup) includes them, and your recovery phrase restores them from it. Hide amounts does not hide them.');
   // Pass p22a: the shared watch-only notice no longer says the wallet cannot
   // send for the address (the off-line signer screen prepares sends for it,
@@ -231,6 +231,15 @@ function fixtureProblems(table, fixture) {
       es['notice.watchOnly'].includes(`«${es['home.link.coldSign']}»`) && !/No puede enviar/i.test(es['notice.watchOnly']));
   check('…mutant caught (p22a): the old notice that said it cannot send',
     fixtureProblems({ ...en, 'notice.watchOnly': FIXTURE.changed['notice.watchOnly'].before }, FIXTURE).length === 1);
+  // Phase 23 item 4: the bridge readiness reason says CCTP has been sent on
+  // the test networks (it said "has not yet sent one"); the Spanish follows.
+  check('…the bridge readiness reason (phase 23 item 4): two CCTP Standard Transfers sent by script, the LayerZero sentences kept, in both languages, never "has not yet sent one"',
+    en['readiness.bridge.reason'] === FIXTURE.changed['readiness.bridge.reason'].en &&
+      /has sent two Circle CCTP Standard Transfers on the test networks, by script/.test(en['readiness.bridge.reason']) &&
+      /single verifier operated by LayerZero Labs/.test(en['readiness.bridge.reason']) && !/has not yet sent one/.test(en['readiness.bridge.reason']) &&
+      /ha enviado dos transferencias estándar de Circle CCTP/.test(es['readiness.bridge.reason']));
+  check('…mutant caught (phase 23 item 4): the old bridge reason',
+    fixtureProblems({ ...en, 'readiness.bridge.reason': FIXTURE.changed['readiness.bridge.reason'].before }, FIXTURE).length === 1);
 }
 
 // The composites, assembled the old way from their pieces.
