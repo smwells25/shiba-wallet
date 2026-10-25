@@ -778,6 +778,8 @@ export type {
   EnsResolutionErrorReason,
   EnsRevertKind,
 } from './ens.js';
+// Registering a .eth handle on Sepolia through ENSv2 (phase 23 item 6; docs/WALLET_HANDLES.md).
+export * from './ens-register.js';
 export {
   LIDO_DEPLOYMENTS,
   LIDO_MAX_WITHDRAWAL_WEI,
