@@ -12235,3 +12235,89 @@ to the Chairperson at once.
       USDC 18.786299 (20.4 − 1 for the CCTP leg − 0.613701 for the name),
       nonce 54.
 
+- [x] Item 4, the comparison — docs/CROSS_CHAIN_OPTIONS.md, every
+      cross-chain option compared for this wallet with LayerZero judged
+      as a full alternative to CCTP (the Chairperson's 2026-10-25 request;
+      commit recorded below; about 6,900 words of prose plus 1,300 in
+      tables; documentation only, nothing sent, no code; the secret scan
+      clean on the three touched docs — one false positive removed on the
+      way, a GitHub source URL whose path ("v2" followed by the message
+      transmitter's file name) matched the Alchemy-key pattern — the same
+      line tripped this record's first commit; check-bridge 237 and check-readiness
+      green with the file present; one pointer line each in BRIDGING.md
+      and BRIDGE_PROVIDERS.md §4.4). Every fact is tagged LIVE (a
+      transaction this wallet sent), READ (a read-only answer in the
+      record), DOC (documentation or pinned source) or NM (not measured /
+      not read); the only new fact fetched was the licence headers at the
+      pinned commits (2026-10-25 15:01 UTC): CCTP Apache-2.0
+      (TokenMessengerV2.sol, MessageTransmitterV2.sol and LICENSE at
+      63ab1f0a), Across BUSL-1.1 (SpokePool.sol and LICENSE at 950e9154),
+      the OP L1StandardBridge.sol MIT at 0e82422c. Both "stronger
+      verification" judgements the CTO asked to remove are gone: §6.1
+      states only the counts (two Circle signatures per message, one
+      LayerZero Labs verifier per test route) and §6.3 says which
+      arrangement is stronger depends on how the keys are held, which was
+      verified for neither; the overall verdict is labelled the CTO's
+      reading of the record. THE FINDING THAT DECIDES IT: on every route
+      this wallet has, LayerZero and CCTP do not compete — CCTP moves only
+      Circle's USDC and cannot move ETH; no LayerZero token on the four
+      test networks carries Circle's USDC (Stargate's test "USDC" pools
+      hold a mock token with a public mint; on main networks LayerZero's
+      "Bridged USDC" is Stargate's representation, not Circle-issued — not
+      read on-chain). Measured: LayerZero 30–90 s with no destination
+      transaction, a ~0.0001–0.00013 ETH messaging fee, 1 verifier;
+      CCTP ~17 minutes with a second transaction on the receiving
+      network, protocol fee 0, 2-of-2 attesters, a call pinnable
+      completely by construction (LayerZero's 14 words only because the
+      wallet fixes the layout, the fee capped not fixed); Stargate ETH
+      cannot reach a deployed Kernel without the permissionless retry
+      (simulated). RECOMMENDATION (§6): test networks now — two providers
+      chosen by asset, the user still choosing (LayerZero for test ETH
+      among Ethereum / Arbitrum / OP Sepolia; CCTP V2 Standard Transfers
+      made sendable for USDC on all four, the wallet submitting the mint
+      itself where the regular account holds gas there, else stating
+      plainly what waits: the USDC is burned, the attestation does not
+      expire, anyone can mint to the user's address; the screen asks
+      for the asset first, lists every provider with its trust statement,
+      preselects nothing; before CCTP is offered — a smart-account leg and
+      an OP Sepolia route by script, a CCTP branch in checkBridgeQuote, the
+      stale "never sent" wording corrected); Across next after a live leg
+      (the only option serving test ETH on Base Sepolia; depositor AND
+      recipient pinned, the API's unlimited approval replaced, amounts
+      under the relayer caps); native rollup bridges optional (deposit
+      only, regular account, no USDC, no rollup-to-rollup, OP withdrawals
+      ≥ 7 days); not offered — aggregators (unpinnable calldata),
+      Stargate's mock-USDC pools, Wormhole; MAIN NETWORKS NOTHING YET
+      (every address pinned and verified per network — none today; the
+      LayerZero main-network verifier configuration read and the
+      Chairperson's single-verifier decision; Circle's main attestation
+      host checked for a key, the Base / Arbitrum / OP contracts and roles
+      read, Fast Transfer and the Forwarding Service decided; audit
+      coverage of the deployed code per provider; C1–C3 block a
+      smart-account bridge but not a regular-account one; the test-network
+      gaps closed — a smart-account bridge and the Stargate retry live,
+      the pathway re-read at quote time (T-81)). §4.1 lists every NM
+      (LayerZero: 4 of 6 route times, bus mode, a smart-account sender, a
+      Kernel recipient and the retry live, a 7702 recipient, an ERC-20
+      OFT, a CallPolicy refusing a bridge call, Scan's limits, the fee
+      library, the endpoint owners' key holders, every main-network fact,
+      audit commit coverage; CCTP: OP Sepolia routes, Fast Transfer, the
+      Forwarding Service, the smart-account sender and a mint to a smart
+      account, a third-party mint, a CallPolicy refusing a burn, whether
+      the main Iris host needs a key, the Base / Arbitrum / OP main
+      contracts, how Circle secures its EOA-held roles, audit coverage;
+      Across, native bridges, aggregators: every actual transfer, fee and
+      time, and more). ELEVEN OPEN QUESTIONS for the Chairperson (§7):
+      the asset-first screen; the mint from the regular account only where
+      it holds gas (a network switch) versus Circle's Forwarding Service;
+      Fast Transfer kept out; USDC to the smart account once a Kernel mint
+      is seen live; a live Across leg; a deposit-only native-bridge path;
+      LayerZero's single test verifier and the main-network minimum;
+      keyed APIs on main networks; counsel on BUSL-1.1 and LZBL-1.2;
+      bridged USDC never offered beside CCTP (recommended); re-reading the
+      pathway at each quote. STALE STATEMENTS FOUND (§5.2 item 6; left
+      for the item-4 app slice, which owns those files): readiness.ts's
+      bridge reason and bridge.ts's CCTP_COMING_NOTE say CCTP was never
+      sent; MAINNET_READINESS §2 and AUDIT_SCOPE §§4 / 5.6 say "never
+      sent"; BRIDGE_PROVIDERS §6 says "not yet seen on a device" and §10
+      still lists the emulator pass as next.

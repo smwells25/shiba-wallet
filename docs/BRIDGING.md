@@ -4,6 +4,8 @@
 
 Sections 15 and 16 were added on 2026-10-14 (US Eastern; the reads ran between 02:25 and 02:50 UTC on 2026-10-15) for phase 21 item 1: LayerZero V2 and Stargate V2 on the same four networks, and the updated recommendation. The adapter design that lets the user choose a provider is in `docs/BRIDGE_PROVIDERS.md`.
 
+The comparison of every option for this wallet, with LayerZero judged as a full alternative to CCTP and a recommendation on which providers the in-app choice should offer, is in `docs/CROSS_CHAIN_OPTIONS.md` (2026-10-25).
+
 This file is plain technical prose for leadership and for the engineers who would build a slice. The persona and compression rules do not apply to it.
 
 ## 1. Summary

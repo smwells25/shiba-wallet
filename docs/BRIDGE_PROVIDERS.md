@@ -85,7 +85,7 @@ The registry never picks a provider. `routes()` returns every match from every p
 
 ### 4.4 LayerZero (Stargate) versus CCTP V2 as measured in this wallet
 
-Facts only, each from a live leg run by this wallet's scripts with the engine's own calls (`docs/BRIDGING.md` sections 15.16 and 17) or a read made for it; no recommendation. The two providers moved different assets (native test ETH and Circle's USDC), so the fee and time columns are not a like-for-like price comparison.
+Facts only, each from a live leg run by this wallet's scripts with the engine's own calls (`docs/BRIDGING.md` sections 15.16 and 17) or a read made for it; no recommendation. The recommendation drawn from these and the other options is in `docs/CROSS_CHAIN_OPTIONS.md`. The two providers moved different assets (native test ETH and Circle's USDC), so the fee and time columns are not a like-for-like price comparison.
 
 | | LayerZero OFT through Stargate V2 (2026-10-15) | Circle CCTP V2, Standard Transfer (2026-10-25) |
 |---|---|---|
