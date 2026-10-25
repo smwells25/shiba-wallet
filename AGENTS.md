@@ -12054,4 +12054,101 @@ to the Chairperson at once.
       and 77 at the refresh; the app half (a readiness row, the commit
       secret wallet-scoped until register, a two-step screen stating the
       wait, Home and Receive showing the name through readEnsPrimaryName).
+- [x] Item 4, script leg — CIRCLE CCTP V2 STANDARD TRANSFERS PROVEN LIVE
+      THROUGH THE WALLET'S OWN ADAPTER (commit 5466f91; new
+      scripts/testnet/cctp-smoke.mjs, docs/BRIDGING.md §17,
+      docs/BRIDGE_PROVIDERS.md §4.1 / §4.3 / new §4.4 "LayerZero (Stargate)
+      versus CCTP V2 as measured in this wallet" (facts only) / §10;
+      verified in the CTO's isolated worktree on HEAD 5576866: node
+      --check clean, check-bridge 237, check-readiness 208, lint ALL
+      GREEN, the scan clean; NO engine or app change was needed; every
+      sent call was quote.calls (and track()'s mint call) UNCHANGED, the
+      script adding only nonce, gas (estimate + 20%) and fees and signing
+      with the engine's signEip1559; every hash re-read by the CTO on two
+      RPCs per network — all status 0x1 at the recorded blocks with the
+      recorded gas; the dev EOA spent 2 USDC (now Base 36 / Arbitrum 38 /
+      Sepolia 19.4) and 0.000005039124558446 ETH in network fees across the
+      three networks; nothing from .dev-wallet printed). SOURCES RE-READ
+      BEFORE ANY SEND (2026-10-25 ~14:07 UTC; sha256 of each Circle page
+      in §17): the testnet address table (TokenMessengerV2 0x8FE6…2DAA,
+      MessageTransmitterV2 0xE737…E275, TokenMinterV2 0xb43d…F192, all 12
+      rows for domains 0/2/3/6 = the adapter's constants), the domain
+      table (Ethereum 0, OP 2, Arbitrum 3, Base 6), GET /v2/messages/
+      {sourceDomainId}?transactionHash=… documented with security: [] (no
+      key), "Standard Transfers are free." (the sandbox fee API with no
+      key: Standard 0 on both routes; Fast 1.3 bps 6→3, 1 bp 0→6);
+      circlefin/evm-cctp-contracts at 63ab1f0a. DRY RUN (0 FAIL): the
+      engine dist equals a fresh transpile; on all four networks on two
+      endpoints the contract code is identical, the implementations
+      unchanged since §4.5, localDomain 0/2/3/6, each TokenMessengerV2
+      points at the other three, getLocalToken maps each foreign USDC to
+      the local one, TokenMinterV2 is a USDC minter with a 10M burn limit,
+      nothing paused, threshold 2 with 2 enabled attesters, the dev EOA not
+      denylisted; the approve (68 B) and depositForBurn (228 B) calls equal
+      an independent ethers encoding, all 2 + 7 pinned words read back,
+      fee line 0; engine refusals (amount 0, a minimum above the amount,
+      chain 1 / Hoodi / EURC routes, a zero recipient, a bad checksum,
+      domains 1 and 5, finality 1500, maxFee = amount); simulated
+      negatives never broadcast ("Max fee must be less than amount", "No
+      TokenMessenger for domain", "Mint recipient must be nonzero", an
+      approval one unit short "exceeds allowance"); NOTE: Fast Transfer is
+      refused only by construction (the quote pins maxFee 0 and finality
+      2000; encodeDepositForBurn itself accepts finality 1000). LEG 1 Base
+      Sepolia → Arbitrum Sepolia 1 USDC: approve
+      0x95daddf2a7b4da1b064c98dc68fd2d778cb09245279f494d8b06f1155932e1ad
+      (block 50079549, 55,437 gas, Approval exactly 1,000,000); burn
+      0x847e641f6f038bf78f22881ff2186e0b453f18f24eb543556e8fda1db84e67a7
+      (block 50079573, 14:16:23 UTC, 109,091 gas; DepositForBurn and the
+      376-byte MessageSent exact; allowance back to 0; USDC −1,000,000 and
+      totalSupply −1,000,000 over the block on both endpoints); the
+      ATTESTATION pending for 99 polls and complete at 14:32:58.8 — 986–996
+      s after the burn block (nonce 0x4ebf0adf…fc79, executed finality
+      2000, fee 0; two signatures recovering to 0x49fD…8b28 and
+      0x8867…5287 in ascending order, both enabled attesters on Arbitrum;
+      the attested message equals MessageSent except Circle's fields);
+      simulated before the mint: [mint, mint] → "Nonce already used", one
+      recipient byte changed → "Invalid signature: not attester"; mint
+      0x425891cf15b9bb3df0bb52f1972bcc0b8cfc767db0a104ece758c20db9d96ddb
+      (Arbitrum block 322726898, 14:32:59, 154,152 gas; MessageReceived,
+      MintAndWithdraw feeCollected 0, the mint Transfer; usedNonces 1;
+      USDC and supply +1,000,000); track() delivered; the replayed
+      receiveMessage as an eth_call reverts "Nonce already used" (not
+      broadcast); 996 s burn block → mint block. LEG 2 Ethereum Sepolia →
+      Base Sepolia 1 USDC: approve
+      0xd00197fa19904e05b41569a5e2cb7471b0d8765e64e7e4496d72481acc35c35d
+      (block 11991485, 137,757 gas), burn
+      0xd412d22a2a9e09e958b52b855e73cba5011ad373829c316ca6f8af4e97a8556f
+      (block 11991486, 14:33:48, 120,675 gas), the attestation complete
+      between 14:51:15 and 14:51:25 — 1,047–1,057 s after the burn block,
+      and a separate read-only poller saw Sepolia's FINALIZED head pass the
+      burn block between 14:51:04 and 14:51:19, so the attestation came
+      at most ~21 s after hard finality, as Circle documents for Standard
+      Transfers; mint
+      0xfc463033a481aaac66d06e76328aca5bbe4ab511846b78aee0cf1cf6c68c63c7
+      (Base block 50090088, 14:51:26, 154,099 gas); 1,058 s burn → mint.
+      TOTALS: 2 USDC burned and 2 minted, Circle's fee 0 on both legs;
+      network fees Base 1,911,762,000,494 wei, Arbitrum 3,087,664,560,000,
+      Sepolia 39,697,997,952, each matching the balance delta exactly
+      (the dev EOA's Sepolia nonce also moved 45 → 48 during the run: the
+      cold-signing item's funding transaction, not this script). VERSUS
+      LAYERZERO AS MEASURED (BRIDGE_PROVIDERS §4.4): LayerZero delivered
+      native ETH in 30–90 s through ONE required verifier with a messaging
+      fee of ~0.0001–0.00013 ETH per leg and Stargate's flat 10^12-wei
+      pool fee; CCTP moved USDC in ~996–1,058 s (it waits for the source
+      chain's hard finality) through Circle's 2-of-2 attesters with NO
+      protocol fee on a Standard Transfer, both legs' calls fully
+      pinnable, and a destination mint the recipient (or anyone) must
+      submit with gas there. DECISIONS (CTO): the run record's "version":
+      1 false positive in the secret scan is left as is (git-ignored, like
+      bridge-run.json); engine follow-ups for the app slice — a measured
+      time on the CCTP quote (996 / 1,058 s) and encodeDepositForBurn
+      refusing finality 1000 by itself. UNVERIFIED: the smart-account leg
+      (a Kernel burn paying its fee in USDC; a mint to a Kernel address);
+      a CallPolicy refusing a burn to another recipient; Fast Transfer and
+      the Forwarding Service; OP Sepolia routes; a third-party mint;
+      anything on main networks; whether the mainnet Iris host needs a
+      key (every Circle page carries a generic "API key required" banner
+      while the sandbox worked without one); the §4.2 trust roles beyond
+      the threshold, attester count and pause flags; attestation time
+      beyond one sample per route.
 
