@@ -1,5 +1,8 @@
 import { toChecksumAddress } from '@shiba-wallet/core';
 import {
+  CCTP_V2_TESTNET,
+  CCTP_V2_TESTNET_DOMAINS,
+  CCTP_V2_TESTNET_USDC,
   LIDO_DEPLOYMENTS,
   MAX_UINT256,
   ROCKET_POOL_DEPLOYMENTS,
@@ -103,6 +106,27 @@ import { knownStakingTokensForChain } from './tokens.ts';
  *    read or another chain keeps every generic line, and nothing resolved
  *    earlier is reused. RocketStorage itself is never a transaction target
  *    of the wallet and is not listed.
+ *
+ *  - Bridge contracts (phase 23, pass p23-cctp finding 4): Circle's
+ *    TokenMessengerV2, which the wallet pins for Circle CCTP V2 on the four
+ *    test networks it serves (engine CCTP_V2_TESTNET and
+ *    CCTP_V2_TESTNET_DOMAINS: Ethereum, OP, Arbitrum and Base Sepolia, the
+ *    same address on each, checked on-chain on 2026-10-25 — docs/BRIDGING.md
+ *    section 17). The burn's `to` is that contract: the card names it in
+ *    one line, like a staking contract, instead of "goes to a contract",
+ *    the contract-age line and the first-interaction line. The approval
+ *    before the burn goes to the USDC contract with approve(TokenMessengerV2,
+ *    amount): the card used to describe the USDC contract ("goes to a
+ *    contract", its age, a first-transfer search about the token itself);
+ *    now, when `to` is a token the wallet tracks or knows on this chain (or
+ *    Circle's USDC the CCTP table pins there) and holds code, and the
+ *    calldata is exactly approve(<the pinned spender on this chain>, x),
+ *    the card describes the SPENDER in one line (bridgeApprovalText). The
+ *    engine's approval signals from the calldata are kept. The match is on
+ *    the exact (chain, address) pair; a look-alike spender, the address on
+ *    a network CCTP does not serve, a token without code or an unknown
+ *    token keeps every generic line. Stargate's pools are NOT listed here:
+ *    the Bridge confirm names them in its own line beside the card.
  *
  * The look-alike-contact warning is NOT produced here; it stays in
  * ./contacts.ts and the send screens' RecipientContactNotice.
@@ -601,6 +625,98 @@ export async function resolvedRocketDepositPoolAt(
   };
 }
 
+/** A bridge contract the wallet pins for one chain (see the file comment). */
+export interface PinnedBridgeContract {
+  /** CAIP-2 id of the chain the address is pinned for. */
+  chain: string;
+  /** The address as the engine's table lists it (EIP-55). */
+  address: string;
+  /** Who runs it, for the card ("Circle"). */
+  operator: 'Circle';
+  /** What the contract is ("TokenMessengerV2"). */
+  name: string;
+}
+
+/**
+ * Every bridge contract the card names: Circle's TokenMessengerV2 on each
+ * test network the engine's CCTP tables serve (the spender of the approval
+ * and the target of the burn). Built from the engine's pinned tables.
+ */
+export function pinnedBridgeContracts(): PinnedBridgeContract[] {
+  return Object.keys(CCTP_V2_TESTNET_DOMAINS).map((id) => ({
+    chain: `eip155:${id}`,
+    address: CCTP_V2_TESTNET.tokenMessengerV2,
+    operator: 'Circle' as const,
+    name: 'TokenMessengerV2',
+  }));
+}
+
+/** The pinned bridge contract at exactly `address` on `chainCaip2`, or null (all 40 hex digits, that chain only). */
+export function bridgeContractAt(chainCaip2: string, address: string): PinnedBridgeContract | null {
+  if (!ADDRESS.test(address)) return null;
+  const lower = address.toLowerCase();
+  return pinnedBridgeContracts().find((c) => c.chain === chainCaip2 && c.address.toLowerCase() === lower) ?? null;
+}
+
+/** The token whose approval names a pinned bridge spender (RiskFacts.bridgeApproval). */
+export interface PinnedSpenderApproval {
+  token: RiskTokenRef;
+  spender: PinnedBridgeContract;
+}
+
+/**
+ * The approval the card may describe by its pinned SPENDER, or null. All of
+ * these must hold, otherwise the card keeps describing the contract `to`:
+ *  - the calldata is exactly approve(spender, amount) (selector plus two
+ *    words, a clean address word);
+ *  - the spender is a bridge contract the wallet pins on THIS chain
+ *    (bridgeContractAt);
+ *  - `to` is one of `tokens` (tracked plus known on the active chain), or
+ *    Circle's USDC that the CCTP table pins on this chain.
+ * Whether `to` holds code is checked separately (gatherRiskFacts).
+ */
+export function pinnedSpenderApprovalTarget(
+  to: string,
+  data: Uint8Array | string | undefined,
+  chainCaip2: string,
+  tokens: readonly RiskTokenRef[],
+): PinnedSpenderApproval | null {
+  if (!ADDRESS.test(to)) return null;
+  const hex = dataToHex(data);
+  if (!/^0x[0-9a-f]*$/.test(hex) || hex.length !== 2 + 8 + 128 || hex.slice(0, 10) !== ERC20_APPROVE_SELECTOR_HEX) return null;
+  const spenderAddress = wordToAddress(hex.slice(10, 74));
+  if (!spenderAddress) return null;
+  const spender = bridgeContractAt(chainCaip2, spenderAddress);
+  if (!spender) return null;
+  const lower = to.toLowerCase();
+  const listed = tokens.find((t) => ADDRESS.test(t.address) && t.address.toLowerCase() === lower);
+  if (listed) return { token: listed, spender };
+  const chainId = /^eip155:(\d+)$/.exec(chainCaip2)?.[1];
+  const usdc = chainId !== undefined ? CCTP_V2_TESTNET_USDC[Number(chainId)] : undefined;
+  if (usdc && usdc.toLowerCase() === lower) return { token: { address: usdc, symbol: 'USDC' }, spender };
+  return null;
+}
+
+/** The card's one line for a pinned bridge contract (RiskFacts.bridgeContract). */
+export function bridgeContractText(contract: PinnedBridgeContract): string {
+  const network = evmProfileByCaip2(contract.chain)?.label ?? contract.chain;
+  return (
+    `This transaction goes to ${contract.operator}’s ${contract.name} on ${network} (${contract.address}), ` +
+    `pinned by this wallet from ${contract.operator}’s published test-network addresses.`
+  );
+}
+
+/** The card's one line for an approval whose spender is a pinned bridge contract (RiskFacts.bridgeApproval). */
+export function bridgeApprovalText(approval: { contract: string; symbol: string; spender: PinnedBridgeContract }): string {
+  const s = approval.spender;
+  const network = evmProfileByCaip2(s.chain)?.label ?? s.chain;
+  return (
+    `This approves ${s.operator}’s ${s.name} on ${network} (${s.address}), pinned by this wallet from ` +
+    `${s.operator}’s published test-network addresses, to take ${approval.symbol} from this account through its ` +
+    `token contract ${approval.contract}.`
+  );
+}
+
 /** The card's one line for a pinned staking contract (RiskFacts.stakingContract). */
 export function stakingContractText(contract: PinnedStakingContract): string {
   const network = evmProfileByCaip2(contract.chain)?.label ?? contract.chain;
@@ -634,6 +750,19 @@ export interface RiskFacts {
    * first-interaction check runs for it, and the card names it.
    */
   stakingContract?: PinnedStakingContract;
+  /**
+   * Set when `to` is a bridge contract the wallet pins for this chain
+   * (bridgeContractAt) and was seen to hold code: the card names it, with
+   * no contract-age or first-interaction check.
+   */
+  bridgeContract?: PinnedBridgeContract;
+  /**
+   * Set when the transaction approves a pinned bridge contract on a token
+   * the wallet tracks, knows or pins on this chain, and the token was seen
+   * to hold code (pinnedSpenderApprovalTarget): the card describes the
+   * spender, with no contract-age or first-interaction check.
+   */
+  bridgeApproval?: { contract: string; symbol: string; spender: PinnedBridgeContract };
   /** Set when `to` is one of the wallet's own addresses (no age or first-interaction checks then). */
   ownRecipient?: OwnAddress;
   /** Set when the paid party differs from `to` and is one of the wallet's own addresses. */
@@ -905,6 +1034,22 @@ export function computeRiskLines(facts: RiskFacts): RiskLine[] {
       tone: 'notice',
       text: stakingContractText(facts.stakingContract),
       subject: facts.to,
+    });
+  } else if (facts.bridgeContract) {
+    // A pinned bridge contract on this chain (Circle's TokenMessengerV2).
+    lines.push({
+      type: 'recipient-class',
+      tone: 'notice',
+      text: bridgeContractText(facts.bridgeContract),
+      subject: facts.to,
+    });
+  } else if (facts.bridgeApproval) {
+    // An approval for a pinned bridge spender: about the spender, not the token contract.
+    lines.push({
+      type: 'recipient-class',
+      tone: 'notice',
+      text: bridgeApprovalText(facts.bridgeApproval),
+      subject: facts.bridgeApproval.spender.address,
     });
   } else if (facts.ownRecipient && !facts.expectedOwnDelegation) {
     // A send between the wallet's own accounts: one calm line, whatever the
@@ -1199,6 +1344,13 @@ export async function gatherRiskFacts(options: GatherRiskOptions): Promise<RiskF
     stakingRef = await resolvedRocketDepositPoolAt(transport, options.chainCaip2, options.to);
   }
 
+  // A pinned bridge contract (the burn's target), or an approval whose
+  // spender is one (the step before the burn); each confirmed below only if
+  // `to` holds code.
+  const bridgeRef = facts.ownRecipient || tokenRef || stakingRef ? null : bridgeContractAt(options.chainCaip2, options.to);
+  const bridgeApprovalRef =
+    facts.ownRecipient || tokenRef || stakingRef || bridgeRef ? null : pinnedSpenderApprovalTarget(options.to, options.data, options.chainCaip2, tokens);
+
   // Class, delegation and age of `address`, recorded as the card's subject.
   const describeSubject = async (address: string, known?: RecipientClass) => {
     const recipientClass = known ?? (await attempt(() => classifyRecipient(transport, address)));
@@ -1232,6 +1384,20 @@ export async function gatherRiskFacts(options: GatherRiskOptions): Promise<RiskF
       // Named by the card; no age check for a pinned contract.
       facts.recipientClass = toClass;
       facts.stakingContract = stakingRef;
+      return;
+    }
+    if (bridgeRef && toClass.kind === 'contract') {
+      facts.recipientClass = toClass;
+      facts.bridgeContract = bridgeRef;
+      return;
+    }
+    if (bridgeApprovalRef && toClass.kind === 'contract') {
+      facts.recipientClass = toClass;
+      facts.bridgeApproval = {
+        contract: checksum(options.to),
+        symbol: sanitizeSymbol(bridgeApprovalRef.token.symbol) ?? 'the token',
+        spender: bridgeApprovalRef.spender,
+      };
       return;
     }
     await describeSubject(options.to, toClass);
@@ -1282,12 +1448,13 @@ export async function gatherRiskFacts(options: GatherRiskOptions): Promise<RiskF
   // a first interaction worth a warning (finding 13), so no search runs.
   const selfSend = ownParty !== null;
   facts.firstInteractionApplicable = !selfSend;
-  if (stakingRef && !selfSend && counterparty.toLowerCase() === options.to.toLowerCase()) {
-    // The paid party is the pinned staking contract itself: when its code is
+  if ((stakingRef || bridgeRef || bridgeApprovalRef) && !selfSend && counterparty.toLowerCase() === options.to.toLowerCase()) {
+    // The paid party is the pinned staking or bridge contract itself (or the
+    // token whose approval names a pinned bridge spender): when its code is
     // confirmed, "have you sent here before" adds nothing, so no search
     // runs; otherwise the searches run as for any other address.
     await classifyTask();
-    if (facts.stakingContract) {
+    if (facts.stakingContract || facts.bridgeContract || facts.bridgeApproval) {
       facts.firstInteractionApplicable = false;
       return facts;
     }

@@ -52,7 +52,7 @@ import { shortAccountAddress } from '../wallet/accounts';
 import { delegationLabelSuffix, FOREIGN_DELEGATE_WARNING, upgradeLinkShown, walletDelegateDeployed } from '../wallet/delegation';
 import { isFeatureAllowed } from '../config/readiness';
 import { stakingOfferFor } from '../wallet/staking';
-import { bridgeOfferFor } from '../wallet/bridge';
+import { bridgeLinkShown } from '../wallet/bridge';
 import { evmProfileByCaip2, multisigNetworkVerified } from '../config/evm-chain';
 import { usePrices } from '../wallet/usePrices';
 import { tokenSendFeeSentence } from '../wallet/token-gas';
@@ -556,10 +556,12 @@ export function HomeScreen({ navigation }: Props) {
             : null,
           // Bridging (feature 35): test networks only (readiness row
           // 'bridge', enforced), and only where a provider lists a route
-          // from the active network (Ethereum, Arbitrum, OP and Base
-          // Sepolia; on Base Sepolia only Circle CCTP, shown as not offered
-          // yet).
-          isFeatureAllowed('bridge', evmChain.caip2) && bridgeOfferFor(evmChain.caip2).destinations.length > 0
+          // for SOME asset from the active network (wallet/bridge.ts
+          // bridgeLinkShown): Ethereum, Arbitrum and OP Sepolia (test ETH
+          // and USDC) and Base Sepolia (USDC through Circle CCTP only; pass
+          // p23-cctp found the link missing there). Hidden on mainnet, Hoodi
+          // and networks the user added.
+          bridgeLinkShown(evmChain.caip2)
             ? cardLink('bridge', 'Bridge', () => navigation.navigate('Bridge'), 'Opens bridging between test networks')
             : null,
           // A wallet handle (phase 23 item 6): an ENS name registered on

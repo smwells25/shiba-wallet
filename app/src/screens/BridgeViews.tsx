@@ -3,9 +3,10 @@ import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { BridgeTrustStatement } from '@shiba-wallet/chains-evm';
 import type { Theme } from '../theme';
 import { WarningBox } from '../components';
+import { withShortAddresses } from '../a11y';
 import {
   BRIDGE_FEE_BEFORE_QUOTE,
-  bridgeStatusHeading,
+  bridgeLiveStatusText,
   bridgeStatusSentence,
   exactAsset,
   routeAsset,
@@ -212,8 +213,15 @@ export function TransferStatusCard({
   theme: Theme;
   children?: React.ReactNode;
 }) {
-  const heading = bridgeStatusHeading(record.status, record.destinationLabel, record.providerId);
+  // The live region holds the status heading alone (bridgeLiveStatusText).
+  // The "(checking…)" mark that every 15-second poll sets and clears is a
+  // separate, non-live Text: with it inside the live region, TalkBack
+  // announced the unchanged status on every idle poll (pass p23-cctp).
+  const liveStatus = bridgeLiveStatusText(record);
   const asset = routeAsset(record.route);
+  const through =
+    `Through ${record.providerLabel}, to ${record.recipient}, sent ${new Date(record.sentAt).toISOString().slice(11, 19)} UTC` +
+    `${record.senderKind === 'smart-account' ? ' from your smart account' : ''}.`;
   const assetName = asset === 'usdc' ? 'USDC' : symbol;
   const failed = record.status?.state === 'failed';
   return (
@@ -221,14 +229,15 @@ export function TransferStatusCard({
       <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>
         {exactAsset(record.amountIn, asset)} {assetName} · {record.sourceLabel} → {record.destinationLabel}
       </Text>
-      <Text style={[styles.body, { color: theme.textMuted }]}>
-        Through {record.providerLabel}, to {record.recipient}, sent {new Date(record.sentAt).toISOString().slice(11, 19)} UTC
-        {record.senderKind === 'smart-account' ? ' from your smart account' : ''}.
+      <Text accessibilityLabel={withShortAddresses(through)} style={[styles.body, { color: theme.textMuted }]}>
+        {through}
       </Text>
-      <Text accessibilityLiveRegion="polite" style={[styles.status, { color: failed ? theme.danger : theme.text }]}>
-        {heading}
-        {checking ? ' (checking…)' : ''}
-      </Text>
+      <View style={styles.statusRow}>
+        <Text accessibilityLiveRegion="polite" style={[styles.status, { color: failed ? theme.danger : theme.text }]}>
+          {liveStatus}
+        </Text>
+        {checking ? <Text style={[styles.body, { color: theme.textMuted }]}>(checking…)</Text> : null}
+      </View>
       <Text style={[styles.body, { color: theme.text }]}>{bridgeStatusSentence(record)}</Text>
       {record.status && record.checkError ? (
         <Text style={[styles.body, { color: theme.textMuted }]}>The last check failed: {record.checkError}</Text>
@@ -275,7 +284,8 @@ const styles = StyleSheet.create({
   radioInner: { width: 10, height: 10, borderRadius: 5 },
   body: { fontSize: 13, lineHeight: 19 },
   strong: { fontWeight: '700' },
-  status: { fontSize: 15, fontWeight: '700' },
+  status: { fontSize: 15, fontWeight: '700', flexShrink: 1 },
+  statusRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', gap: 6 },
   label: { fontSize: 13, fontWeight: '600', marginTop: 4 },
   monoText: { fontFamily: mono, fontSize: 13, lineHeight: 19 },
 });

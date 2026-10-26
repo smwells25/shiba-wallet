@@ -59,8 +59,8 @@ import {
 } from './store-keys.ts';
 import { prepareAaCalls, summarizeAaReceipt, type AaClientBundle, type AaSendQuote } from './aa.ts';
 import { formatUnits } from './balances.ts';
-import { assertFeatureAllowed } from '../config/readiness.ts';
-import { evmProfileByCaip2, isBuiltInEvmChain, type EvmChainProfile } from '../config/evm-chain.ts';
+import { assertFeatureAllowed, isFeatureAllowed } from '../config/readiness.ts';
+import { evmProfileByCaip2, isBuiltInEvmChain, isTestProfileId, type EvmChainProfile, type TestNetworkId } from '../config/evm-chain.ts';
 import { isEndpointFailure } from '../config/endpoint-probe.ts';
 
 /**
@@ -315,6 +315,14 @@ export const BRIDGE_SINGLE_PROVIDER_NOTE = 'One provider serves this route; choo
  * cannot be mistaken for a value.
  */
 export const BRIDGE_AMOUNT_PLACEHOLDER = 'Amount, for example 0.0002';
+
+/** The USDC field's placeholder (pass p23-cctp finding: the test-ETH-sized example read oddly on a USDC field). */
+export const BRIDGE_USDC_AMOUNT_PLACEHOLDER = 'Amount, for example 1';
+
+/** The amount field's placeholder for the chosen asset. */
+export function bridgeAmountPlaceholder(asset: BridgeAssetChoice): string {
+  return asset === 'usdc' ? BRIDGE_USDC_AMOUNT_PLACEHOLDER : BRIDGE_AMOUNT_PLACEHOLDER;
+}
 
 /**
  * The provider the form uses (pass p21b, finding 2): the user's own choice,
@@ -674,6 +682,22 @@ export function defaultBridgeAsset(caip2: string): BridgeAssetChoice {
   return 'native';
 }
 
+/**
+ * Whether Home shows the Bridge link on `caip2` (pure; no request). Only
+ * where the readiness switchboard allows bridging (test networks), and
+ * only where SOME asset the screen offers (BRIDGE_ASSETS) has a destination
+ * from this network. Pass p23-cctp found the link keyed on test ETH alone,
+ * so Base Sepolia (no Stargate pool, but a Circle CCTP source of USDC) had
+ * no link, the Bridge screen could not be opened there, and a USDC
+ * transfer TO Base Sepolia could not be minted from this wallet. Hidden,
+ * as before, on mainnet (readiness), on Hoodi (no provider serves it) and
+ * on every network the user added (no pinned bridge contracts).
+ */
+export function bridgeLinkShown(caip2: string): boolean {
+  if (!isFeatureAllowed(BRIDGE_FEATURE, caip2)) return false;
+  return BRIDGE_ASSETS.some((asset) => bridgeOfferFor(caip2, asset).destinations.length > 0);
+}
+
 /** The measured-time line for a route, or null when it was never measured. */
 export function measuredTimeLine(time: BridgeTimeEstimate): string | null {
   if (!time.measured) return null;
@@ -1013,6 +1037,14 @@ export interface BridgePlan {
   /** The receiving chain's head when quoted (where tracking starts), or null when unreadable. */
   destinationFromBlock: bigint | null;
   recipientCode: RecipientCodeState;
+  /**
+   * USDC only: whether the recipient holds USDC on the receiving network,
+   * read once at the quote (Circle's USDC there, balanceOf, through the
+   * built-in endpoints with failover): 'zero', 'held', or 'unknown' when
+   * the read failed. Null for test ETH. Decides whether the confirm shows
+   * the paymaster sentence (CCTP_FIRST_MINT_PAYMASTER_NOTE).
+   */
+  recipientDestinationUsdc: 'zero' | 'held' | 'unknown' | null;
 }
 
 function word32At(data: Uint8Array, offset: number): string | null {
@@ -1274,7 +1306,19 @@ export async function quoteBridge(request: BridgeQuoteRequestApp): Promise<Bridg
   const destination = request.readers.transportFor(request.destinationChainId);
   let destinationFromBlock: bigint | null = null;
   let recipientCode: RecipientCodeState = 'unknown';
+  let recipientDestinationUsdc: BridgePlan['recipientDestinationUsdc'] = null;
+  const destinationUsdc = asset === 'usdc' ? CCTP_V2_TESTNET_USDC[request.destinationChainId] : undefined;
+  if (asset === 'usdc') recipientDestinationUsdc = 'unknown';
   await Promise.all([
+    // USDC only: the recipient's USDC on the receiving network (best effort; unreadable stays 'unknown').
+    destinationUsdc
+      ? readUsdcBalance(destination, destinationUsdc, request.recipient).then(
+          (b) => {
+            recipientDestinationUsdc = b === 0n ? 'zero' : 'held';
+          },
+          () => undefined,
+        )
+      : Promise.resolve(),
     destination('eth_blockNumber', []).then(
       (h) => {
         if (typeof h === 'string' && /^0x[0-9a-fA-F]+$/.test(h)) destinationFromBlock = BigInt(h);
@@ -1309,6 +1353,7 @@ export async function quoteBridge(request: BridgeQuoteRequestApp): Promise<Bridg
     messagingFee: checked.messagingFee,
     destinationFromBlock,
     recipientCode,
+    recipientDestinationUsdc,
   };
 }
 
@@ -1535,8 +1580,28 @@ export function bridgeConfirmModel(plan: BridgePlan): BridgeConfirmModel {
 export function cctpPinnedContractLine(tokenMessenger: string, sourceLabel: string): string {
   return (
     `The burn goes to Circle’s TokenMessengerV2 on ${sourceLabel} (${tokenMessenger}), pinned by this wallet from Circle’s ` +
-    'published test-network addresses and checked on-chain on 2026-10-25. The risk card below does not know Circle’s contracts by name.'
+    'published test-network addresses and checked on-chain on 2026-10-25. The risk card below names it too.'
   );
+}
+
+/**
+ * The CCTP adapter's note about Circle's USDC fee paymaster, word for word
+ * (packages/chains-evm/src/bridge/cctp-v2.ts, the quote's `notes`). The
+ * adapter adds it to every quote; the confirm shows it only where it
+ * applies (pass p23-cctp): when the recipient's USDC on the receiving
+ * network reads 0, or could not be read (cctpFirstMintPaymasterNote).
+ */
+export const CCTP_FIRST_MINT_PAYMASTER_NOTE =
+  "Circle's USDC fee paymaster cannot pay for the first mint on a network where this account holds no USDC: it takes its fee before the mint runs.";
+
+/** The paymaster sentence for the confirm, or null when the recipient was seen to hold USDC there. */
+export function cctpFirstMintPaymasterNote(
+  state: BridgePlan['recipientDestinationUsdc'] | undefined,
+  destinationLabel: string,
+): string | null {
+  if (state === 'held') return null;
+  if (state === 'zero') return CCTP_FIRST_MINT_PAYMASTER_NOTE;
+  return `${CCTP_FIRST_MINT_PAYMASTER_NOTE} Whether the recipient holds USDC on ${destinationLabel} could not be read just now.`;
 }
 
 /** Shown on the smart-account confirm: the fee is paid in the network's coin on this path. */
@@ -1554,6 +1619,19 @@ export function cctpMintStepLine(destinationLabel: string): string {
     `there. This wallet can send it from your regular account when ${destinationLabel} is the active network and that account ` +
     'holds test ETH there for gas; anyone else with gas there may send it too, and the USDC still goes only to the recipient written into the burn.'
   );
+}
+
+/**
+ * The CCTP confirm's notes: the adapter's own, without its paymaster note,
+ * which comes back only where it applies (cctpFirstMintPaymasterNote), and
+ * the smart-account fee note on that path.
+ */
+function cctpConfirmNotes(plan: BridgePlan): string[] {
+  const notes = plan.quote.notes.filter((n) => n !== CCTP_FIRST_MINT_PAYMASTER_NOTE);
+  const paymaster = cctpFirstMintPaymasterNote(plan.recipientDestinationUsdc, plan.destinationLabel);
+  if (paymaster) notes.push(paymaster);
+  if (plan.senderKind === 'smart-account') notes.push(cctpSmartAccountFeeNote(plan.nativeSymbol));
+  return notes;
 }
 
 function cctpConfirmModel(plan: BridgePlan): BridgeConfirmModel {
@@ -1604,7 +1682,7 @@ function cctpConfirmModel(plan: BridgePlan): BridgeConfirmModel {
     pinnedSummary,
     pinnedPool: cctpPinnedContractLine(plan.call.to, plan.sourceLabel),
     recipientLines: [usdcRecipientNote(plan.recipientKind, plan.recipient, plan.destinationLabel)],
-    notes: plan.senderKind === 'smart-account' ? [...q.notes, cctpSmartAccountFeeNote(plan.nativeSymbol)] : [...q.notes],
+    notes: cctpConfirmNotes(plan),
   };
 }
 
@@ -2247,6 +2325,17 @@ export function bridgeStatusSentence(
   return record.status.detail;
 }
 
+/**
+ * The text of the tracking card's live region (pass p23-cctp, TalkBack):
+ * the status heading ALONE. The "(checking…)" mark and the time of the
+ * last check change on every 15-second poll and are shown outside the live
+ * region, so a screen reader announces the status only when the status
+ * itself changes, never on an idle poll.
+ */
+export function bridgeLiveStatusText(record: Pick<BridgeTransferRecord, 'status' | 'destinationLabel' | 'providerId'>): string {
+  return bridgeStatusHeading(record.status, record.destinationLabel, record.providerId);
+}
+
 /** CCTP, burned and waiting for the attestation. */
 export function cctpBurnedSentence(sourceLabel: string, block: bigint | null): string {
   return (
@@ -2327,8 +2416,7 @@ export function bridgeMintBlocker(
   if (activeCaip2 !== record.destinationCaip2) {
     return (
       `Anyone with ${nativeSymbol} on ${record.destinationLabel} can send this mint transaction, and the USDC still goes only to ` +
-      `${record.recipient}. ${expiry} To send it from this wallet, switch to ${record.destinationLabel} (Settings → Developer) and ` +
-      'come back to this screen; this transfer stays listed here.'
+      `${record.recipient}. ${expiry} ${bridgeSwitchSentence(record.destinationLabel)}`
     );
   }
   if (nativeBalance === 0n) {
@@ -2338,6 +2426,40 @@ export function bridgeMintBlocker(
     );
   }
   return null;
+}
+
+/**
+ * The end of the mint and delivery sentences while the receiving network is
+ * not the active one (pass p23-cctp): the panel offers a button that makes
+ * it the active test network through the same preference Settings →
+ * Developer writes (PrefsContext setTestNetwork). The navigator is keyed on
+ * the active ACCOUNT only (App.tsx), so the switch keeps this screen open.
+ */
+export function bridgeSwitchSentence(destinationLabel: string): string {
+  return (
+    `To send it from this wallet, make ${destinationLabel} the active network with the button below (the same choice as ` +
+    'Settings → Developer → Test network); this screen stays open and this transfer stays listed here.'
+  );
+}
+
+/** The switch button's title. */
+export function bridgeSwitchButtonTitle(destinationLabel: string): string {
+  return `Switch to ${destinationLabel}`;
+}
+
+/**
+ * The test network the mint or delivery panel may switch to, or null: the
+ * transfer's receiving network, when it is not the active one, is one of
+ * the built-in test profiles (the only values Settings → Developer offers)
+ * and bridging is allowed there. Pure.
+ */
+export function bridgeSwitchTarget(
+  activeCaip2: string,
+  record: Pick<BridgeTransferRecord, 'destinationCaip2'>,
+): TestNetworkId | null {
+  const target = record.destinationCaip2;
+  if (target === activeCaip2 || !isTestProfileId(target) || !isFeatureAllowed(BRIDGE_FEATURE, target)) return null;
+  return target;
 }
 
 /** The regular-account quote for the mint, on the receiving network (the active one). */
@@ -2374,7 +2496,7 @@ export function bridgeRetryCall(record: Pick<BridgeTransferRecord, 'status' | 'r
 /** Why the retry cannot be sent from here right now, or null when it can. */
 export function bridgeRetryBlocker(activeCaip2: string, record: Pick<BridgeTransferRecord, 'destinationCaip2' | 'destinationLabel'>): string | null {
   if (activeCaip2 !== record.destinationCaip2) {
-    return `Anyone can send this delivery transaction on ${record.destinationLabel}, paying the gas there. To send it from this wallet, switch to ${record.destinationLabel} (Settings → Developer) and come back to this screen; this transfer stays listed here.`;
+    return `Anyone can send this delivery transaction on ${record.destinationLabel}, paying the gas there. ${bridgeSwitchSentence(record.destinationLabel)}`;
   }
   return null;
 }
