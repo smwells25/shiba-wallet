@@ -680,17 +680,21 @@ export function MultisigScreen() {
         />
         {cosigners.map((c, i) => (
           <View key={i} style={[styles.card, { borderColor: theme.border }]}>
+            {/* The card's heading names the co-signer; the captions under it say only
+                which field (phase 23 item 8): "Co-signer 1. Heading", then "Ethereum
+                address", then "0x…. Edit box for Ethereum address", then "Weight".
+                Each caption is still the field's labelled-by source. */}
             <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>Co-signer {i + 1}</Text>
             <PasteOrScan
               value={c.address}
               onChange={(text) => setCosigners((prev) => prev.map((x, j) => (j === i ? { ...x, address: text.replace(/^ethereum:/i, '').split(/[@?]/)[0]!.trim() } : x)))}
-              label={`Co-signer ${i + 1}: Ethereum address`}
+              label="Ethereum address"
               placeholder="0x…"
               rationale="Scan the co-signer’s Ethereum address QR code."
             />
-            <Text {...fieldLabel(`cosigner-${i}-weight`, `Co-signer ${i + 1} weight`).label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel(`cosigner-${i}-weight`, `Co-signer ${i + 1} weight`).text}</Text>
+            <Text {...fieldLabel(`cosigner-${i}-weight`, 'Weight').label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel(`cosigner-${i}-weight`, 'Weight').text}</Text>
             <TextInput
-              {...fieldLabel(`cosigner-${i}-weight`, `Co-signer ${i + 1} weight`).input}
+              {...fieldLabel(`cosigner-${i}-weight`, 'Weight').input}
               value={c.weight}
               onChangeText={(text) => setCosigners((prev) => prev.map((x, j) => (j === i ? { ...x, weight: text } : x)))}
               keyboardType="number-pad"

@@ -1899,7 +1899,7 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
       ['screens/ApproveRecoveryScreen.tsx', 'label="Paste the recovery request"', 'placeholder="Request text"'],
       ['screens/GuardiansScreen.tsx', 'label="Paste a recovery request or a proposal id (0x…)"', 'placeholder="Request text or a 0x… id"'],
       ['screens/InheritanceScreen.tsx', 'label="Paste a takeover request or its id (0x…)"', 'placeholder="Request text or a 0x… id"'],
-      ['screens/MultisigScreen.tsx', 'label={`Co-signer ${i + 1}: Ethereum address`}', 'placeholder="0x…"'],
+      ['screens/MultisigScreen.tsx', 'label="Ethereum address"', 'placeholder="0x…"'],
     ];
     const pasteOrScanTags = files.flatMap(({ f, src }) => tags(src, 'PasteOrScan').map((t) => ({ f, t })));
     check('phase 22: every PasteOrScan caller passes the caption it had before as `label` and a short `placeholder` (exact; 6 callers)',
@@ -1961,7 +1961,7 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
       ['screens/GuardiansScreen.tsx', 'fieldLabel(`guardian-${i}-weight`, `Guardian ${i + 1} weight`)'],
       ['screens/InheritanceScreen.tsx', 'fieldLabel(`heir-${i}-label`, `Heir ${i + 1} label (optional)`)'],
       ['screens/InheritanceScreen.tsx', 'fieldLabel(`heir-${i}-weight`, `Heir ${i + 1} weight`)'],
-      ['screens/MultisigScreen.tsx', 'fieldLabel(`cosigner-${i}-weight`, `Co-signer ${i + 1} weight`)'],
+      ['screens/MultisigScreen.tsx', "fieldLabel(`cosigner-${i}-weight`, 'Weight')"],
       // Phase 23 item 8: the two captions through the string table, English unchanged.
       ['screens/SessionsScreen.tsx', "fieldLabel(`call-${i}-function`, t('sessions.call.function', { n: i + 1 }))"],
       ['screens/SessionsScreen.tsx', "fieldLabel(`call-${i}-cap`, t('sessions.call.cap', { n: i + 1, symbol }))"],
@@ -2027,7 +2027,7 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
       const norm = (t) => t.toLowerCase().replace(/[^a-z0-9$]/g, '');
       // Pass p22a: a placeholder whose every word is already a word of the
       // caption repeats it too — the co-signer weight field ("Weight" under
-      // the caption "Co-signer 1 weight") was read "1. Edit box. Weight for
+      // the caption "Co-signer 1 weight", "Weight" since phase 23 item 8) was read "1. Edit box. Weight for
       // Co-signer 1 weight": once filled, TalkBack read the value, then the
       // placeholder (the EditText's hint, ReactEditText.kt :563–568), then
       // the caption it is labelled by. Words are compared lower-cased, split
@@ -2123,7 +2123,7 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
         noteTag !== undefined && texts(caption(activity, noteTag) ?? '').includes('Note (private, this phone only)') &&
           JSON.stringify(texts(prop(noteTag, 'placeholder') ?? '')) === JSON.stringify(['For example: rent for October']) &&
           EN_TABLE['activity.note.placeholder'] === 'For example: rent for October');
-      check('…mutant caught (p22a): the co-signer weight field\'s placeholder "Weight" again (every word already in its caption "Co-signer N weight")',
+      check('…mutant caught (p22a): the co-signer weight field\'s placeholder "Weight" again (every word already in its caption, "Co-signer N weight" then, "Weight" since phase 23 item 8)',
         placeholderProblems(withFile('screens/MultisigScreen.tsx', "keyboardType=\"number-pad\"\n              style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}\n            />\n            {cosigners.length > 1",
           "keyboardType=\"number-pad\"\n              placeholder=\"Weight\"\n              style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}\n            />\n            {cosigners.length > 1")).length === 1);
       check('…mutant caught (p22a): the Contacts name field\'s placeholder "Name" again (a word of its caption "Contact name")',

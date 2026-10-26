@@ -912,8 +912,13 @@ async function dryRun() {
   const inst = encodePermissionInstall(grant, { chainId: CHAIN_ID, account, currentNonce: 1, validationNonce: 0, now: latest });
   console.log(`Permission id ${toHex(inst.permissionId)}`);
 
+  // Root-signed operations (deploy + install, revoke). After Sepolia's
+  // Glamsterdam upgrade (2026-10-06; EIP-8037 / EIP-8038) the install's
+  // self-call alone estimates about 2.66M gas, so the 3,000,000 used before
+  // left the install out of gas inside the simulation (UserOperationEvent
+  // success=false) and every later step failed with AA23 (re-run 2026-10-26).
   const gas = {
-    callGasLimit: 3_000_000n,
+    callGasLimit: 10_000_000n,
     verificationGasLimit: 1_500_000n,
     preVerificationGas: 100_000n,
     maxFeePerGas: 2_000_000_000n,
