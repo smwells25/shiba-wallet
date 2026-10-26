@@ -1563,16 +1563,23 @@ export function SendScreen({ route, navigation }: Props) {
       }
       setPhase('sending');
       try {
-        const { userOpHash } = await sendPasskeyCalls(bundle, quote, {
-          chain: evmChain.caip2,
-          sender: quote.sender,
-          owner: quotedFrom,
-          bundler: bundle.bundler,
-          kind: 'send',
-          resend: resendFor(quote),
-        });
+        const { userOpHash } = await sendPasskeyCalls(
+          bundle,
+          quote,
+          {
+            chain: evmChain.caip2,
+            sender: quote.sender,
+            owner: quotedFrom,
+            bundler: bundle.bundler,
+            kind: 'send',
+            resend: resendFor(quote),
+          },
+          // Counted before the broadcast (kept when the outcome is unknown).
+          { chain: evmChain.caip2, owner: quotedFrom, ...spendingInputForQuote(quote, quotedFrom) },
+        );
         // The passkey path bypasses sendAa's listeners: record the accepted
-        // operation for the spending limits here.
+        // operation for the spending limits here (already counted before the
+        // broadcast under the same hash, so nothing is added twice).
         void recordAcceptedSpend({
           scope: { chain: evmChain.caip2, owner: quotedFrom },
           ...spendingInputForQuote(quote, quotedFrom),

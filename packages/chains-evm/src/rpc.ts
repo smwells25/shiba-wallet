@@ -62,6 +62,66 @@ export function isBroadcastTimeoutError(error: unknown): boolean {
 }
 
 /**
+ * Why a broadcast's answer never arrived intact (BroadcastUnansweredError):
+ *  - 'server-error': the endpoint answered with an HTTP 5xx status. The
+ *    node (or a proxy in front of it) may have received and forwarded the
+ *    transaction before the error, so this is NOT a refusal;
+ *  - 'connection': the request failed below JSON-RPC (the platform fetch
+ *    rejected: a dropped connection, a reset, a DNS failure after the
+ *    request may have been written) or the answer's body could not be read
+ *    or parsed as JSON. Nothing says the endpoint did not receive it.
+ */
+export type BroadcastUnansweredReason = 'server-error' | 'connection';
+
+/**
+ * A broadcast (BROADCAST_METHODS) whose answer never arrived intact: an
+ * HTTP 5xx status, or a failure before a JSON-RPC answer was parsed (phase
+ * 23, the bounded-broadcast follow-ups). Like BroadcastTimeoutError the
+ * outcome is UNKNOWN: never retry it elsewhere automatically and never
+ * report it as not sent. A parsed JSON-RPC error (the node answered:
+ * "transaction underpriced", "nonce too low", AA2x…) and an HTTP 4xx stay
+ * ordinary errors, i.e. definite refusals, exactly as before. `causeText`
+ * keeps the raw cause (the HTTP status line or the platform's message); the
+ * message carries it too, inside one sentence that never starts with the
+ * platform's text (an anchored "fetch failed" classifier never matches it).
+ */
+export class BroadcastUnansweredError extends Error {
+  readonly method: string;
+  readonly reason: BroadcastUnansweredReason;
+  /** The HTTP status for 'server-error'; null otherwise. */
+  readonly status: number | null;
+  readonly causeText: string;
+  constructor(method: string, reason: BroadcastUnansweredReason, causeText: string, status: number | null = null) {
+    // One sentence (screens that clean a technical line keep only the first
+    // one), never starting with the platform's text, the cause inside it.
+    super(
+      `No usable answer to ${method} (${
+        reason === 'server-error' ? 'the endpoint answered with a server error' : 'the connection failed'
+      }; cause: ${causeText}), so whether it was accepted is unknown.`,
+    );
+    this.name = 'BroadcastUnansweredError';
+    this.method = method;
+    this.reason = reason;
+    this.status = status;
+    this.causeText = causeText;
+  }
+}
+
+/** True for a BroadcastUnansweredError (by name, so it survives module copies). */
+export function isBroadcastUnansweredError(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === 'object' &&
+    (error as { name?: unknown }).name === 'BroadcastUnansweredError'
+  );
+}
+
+function errorText(error: unknown): string {
+  if (error instanceof Error) return error.name && error.name !== 'Error' ? `${error.name}: ${error.message}` : error.message;
+  return String(error);
+}
+
+/**
  * Builds a fetch-based transport. Kept tiny so tests can inject fakes.
  *
  * Broadcasts (BROADCAST_METHODS) are bounded by `broadcastTimeoutMs`
@@ -69,6 +129,13 @@ export function isBroadcastTimeoutError(error: unknown): boolean {
  * the platform has AbortController) and the call rejects with a
  * BroadcastTimeoutError. Every other method is sent exactly as before: no
  * signal, no timer.
+ *
+ * A broadcast whose answer never arrives intact — the platform fetch
+ * rejects (a dropped connection), the endpoint answers HTTP 5xx, or the
+ * body cannot be read or parsed — rejects with BroadcastUnansweredError (the
+ * outcome is open, as for the timeout). An HTTP 4xx and a parsed JSON-RPC
+ * error stay plain errors with the same messages as before. Every other
+ * method keeps exactly its old error behaviour.
  */
 export function httpTransport(
   url: string,
@@ -76,6 +143,8 @@ export function httpTransport(
   options: { broadcastTimeoutMs?: number } = {},
 ): JsonRpcTransport {
   let id = 0;
+  // The exchange every method other than a broadcast uses, byte for byte as
+  // before (the endpoint failover rules read its errors).
   const exchange = async (method: string, params: unknown[], signal?: AbortSignal): Promise<unknown> => {
     const response = await fetchFn(url, {
       method: 'POST',
@@ -95,6 +164,43 @@ export function httpTransport(
     }
     return body.result;
   };
+  // A broadcast's exchange: the same request, but everything that happens
+  // BEFORE a JSON-RPC answer is parsed leaves the outcome open
+  // (BroadcastUnansweredError): the platform fetch rejecting, an HTTP 5xx
+  // status, a body that cannot be read or parsed. An HTTP 4xx and a parsed
+  // JSON-RPC error are thrown exactly as `exchange` throws them.
+  const broadcastExchange = async (method: string, params: unknown[], signal?: AbortSignal): Promise<unknown> => {
+    let response: Response;
+    try {
+      response = await fetchFn(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }),
+        ...(signal ? { signal } : {}),
+      });
+    } catch (error) {
+      throw new BroadcastUnansweredError(method, 'connection', errorText(error));
+    }
+    if (!response.ok) {
+      if (response.status >= 500 && response.status <= 599) {
+        throw new BroadcastUnansweredError(method, 'server-error', `RPC HTTP error ${response.status} for ${method}`, response.status);
+      }
+      throw new Error(`RPC HTTP error ${response.status} for ${method}`);
+    }
+    let body: { result?: unknown; error?: { code: number; message: string } };
+    try {
+      body = (await response.json()) as typeof body;
+    } catch (error) {
+      throw new BroadcastUnansweredError(method, 'connection', `the answer could not be read: ${errorText(error)}`);
+    }
+    if (body === null || typeof body !== 'object') {
+      throw new BroadcastUnansweredError(method, 'connection', 'the answer was not a JSON-RPC object');
+    }
+    if (body.error) {
+      throw new Error(`RPC error ${body.error.code}: ${body.error.message} (${method})`);
+    }
+    return body.result;
+  };
   const timeoutMs = options.broadcastTimeoutMs ?? BROADCAST_TIMEOUT_MS;
   return async (method, params) => {
     if (!BROADCAST_METHODS.includes(method)) return exchange(method, params);
@@ -108,7 +214,7 @@ export function httpTransport(
         controller?.abort();
       }, timeoutMs);
     });
-    const attempt = exchange(method, params, controller?.signal);
+    const attempt = broadcastExchange(method, params, controller?.signal);
     // The losing promise's rejection (an abort after the deadline) is not
     // an unhandled rejection.
     attempt.catch(() => undefined);

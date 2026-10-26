@@ -251,7 +251,7 @@ function PnlPanel({
     return <Text style={[styles.hint, { color: theme.warningText }]}>Profit and loss needs the transaction history, which is not available: {state.note}</Text>;
   }
   if (state.status === 'error') {
-    return <Text style={[styles.hint, { color: theme.danger }]}>The history could not be loaded: {state.message} Pull down or choose the coin again to retry.</Text>;
+    return <Text style={[styles.hint, { color: theme.danger }]}>The history could not be loaded: {state.message} Pull down or choose it again to retry.</Text>;
   }
 
   const prices: PnlPriceHistory =

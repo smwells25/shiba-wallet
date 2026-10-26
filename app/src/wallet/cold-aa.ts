@@ -80,6 +80,7 @@ import {
   isBroadcastOutcomeUnknown,
 } from './broadcast-outcome.ts';
 import { eip155Caip2 } from '../config/readiness.ts';
+import type { BroadcastSpend } from './broadcast-spend.ts';
 
 // ---------------------------------------------------------------------------
 // QR codes in parts: the request's own prefix
@@ -438,6 +439,8 @@ export async function submitColdAa(args: {
   quote: AaSendQuote;
   signatureText: string;
   nowSeconds: number;
+  /** What it counts against the spending limits, counted before the broadcast (./broadcast-spend.ts). */
+  spend?: BroadcastSpend;
 }): Promise<{ userOpHash: string; userOp: UserOperation }> {
   const { bundle, request, quote } = args;
   assertColdAaBundle(bundle);
@@ -473,6 +476,7 @@ export async function submitColdAa(args: {
           },
           beforeSend,
         }),
+      args.spend ?? null,
     );
   } catch (error) {
     if (isBroadcastOutcomeUnknown(error)) outcomeUnknownRequests.add(request.requestId);

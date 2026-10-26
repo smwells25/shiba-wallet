@@ -661,6 +661,23 @@ async function approveHeadSignature() {
   await controller.decline(item.key);
   check('…and declined with 4001', (await rejection(sending))?.code === 4001);
 }
+// The bounded-broadcast follow-ups: a transaction whose broadcast outcome is
+// open (no answer in time, an HTTP 5xx, a dropped connection) is answered
+// like an accepted one with the hash computed on the device, through the same
+// respondApproved, and completed — the page gets an ordinary EIP-1193 result
+// (no error code to translate), and nothing returns to the queue.
+{
+  const OPEN_HASH = `0x${'5e'.repeat(32)}`;
+  const sending = page.request('eth_sendTransaction', [{ from: ACCOUNT_0.address, to: ACCOUNT_1.address, value: '0x2' }]);
+  await settle();
+  const item = controller.queue[0];
+  const claimed = controller.begin(item.key);
+  await respondApproved(composite, item.event.topic, item.event.id, OPEN_HASH);
+  controller.complete(item.key);
+  await settle();
+  check('an open-outcome transaction: the page receives the device-computed hash as its plain result, and the queue is empty (no second approval)',
+    claimed && (await sending) === OPEN_HASH && controller.queue.length === 0);
+}
 // wallet_switchEthereumChain, answered like WalletConnect's.
 {
   const same = page.request('wallet_switchEthereumChain', [{ chainId: '0xaa36a7' }]);

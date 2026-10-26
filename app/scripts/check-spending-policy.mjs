@@ -652,5 +652,68 @@ console.log('the confirm screen warns before Send (finding 12):');
       /<SpendingPolicyNotice owner=\{ready\.owner\} quote=\{ready\.quote\} from=\{ready\.owner\} \/>/.test(wc));
 }
 
+// ---------------------------------------------------------------------------
+console.log('check-spending-policy: counting before the broadcast (the bounded-broadcast follow-ups)');
+// ---------------------------------------------------------------------------
+{
+  const { broadcastSpendRecorder, releaseSpend, releaseSettledSpend } = await import('../src/wallet/spending-policy.ts');
+  const bs = await import('../src/wallet/broadcast-spend.ts');
+  const s = memoryStore();
+  await saveSpendingPolicy(SCOPE, { token: NATIVE_TOKEN, symbol: 'test ETH', decimals: 18, cap: 10n ** 18n, windowSeconds: 3600, countFees: true }, [NATIVE_TOKEN], { store: s, now: NOW });
+  const rec = broadcastSpendRecorder(s);
+  const spend = { chain: SCOPE.chain, owner: SCOPE.owner, spender: OWNER, calls: [{ to: TO, value: 70n }], fee: 9n, now: NOW };
+  const refs = async (ref) => (await listSpendRecords(SCOPE, s)).records.filter((r) => r.ref.toLowerCase() === ref.toLowerCase());
+  const R1 = `0x${'a1'.repeat(32)}`;
+  check('record: the value and the worst-case fee are counted under the hash (state created)', (await rec.record(spend, R1)) === 'created' && (await refs(R1)).length === 2);
+  check('…a second count of the same hash adds nothing (state existed): a send is counted once', (await rec.record(spend, R1)) === 'existed' && (await refs(R1)).length === 2);
+  await recordAcceptedSpend({ scope: SCOPE, spender: OWNER, calls: spend.calls, fee: spend.fee, ref: R1.toUpperCase().replace('0X', '0x'), store: s, now: NOW });
+  check('…nor does the acceptance recorder under the same hash in another case', (await refs(R1)).length === 2);
+  const R2 = `0x${'a2'.repeat(32)}`;
+  await rec.accepted(spend, R1, R2);
+  check('accepted under another hash: the records move to it, none left under the first', (await refs(R1)).length === 0 && (await refs(R2)).length === 2);
+  await recordAcceptedSpend({ scope: SCOPE, spender: OWNER, calls: spend.calls, fee: spend.fee, ref: R2, store: s, now: NOW });
+  check('…and the acceptance recorder under the returned hash adds nothing', (await refs(R2)).length === 2);
+  // A refusal releases the count and puts the staged check back.
+  const R3 = `0x${'a3'.repeat(32)}`;
+  await evaluateBeforeSigning({ scope: SCOPE, spender: OWNER, calls: [{ to: TO, value: 5n }], fee: 1n, url: null, quoteOutflows: [{ token: NATIVE_TOKEN, amount: 50n }], store: s, now: NOW });
+  const staged = { ...spend, calls: [{ to: TO, value: 5n }], fee: 1n };
+  await rec.record(staged, R3);
+  check('the staged check is what is counted (50 from the quote, not the 5 of the calls)', (await refs(R3)).some((r) => r.kind === 'transfer' && r.amount === 50n));
+  await rec.release(staged, R3);
+  check('release: the records of that hash are gone', (await refs(R3)).length === 0);
+  const R4 = `0x${'a4'.repeat(32)}`;
+  await rec.record(staged, R4);
+  check('…and the staged check was put back: approving the same calls again counts the same 50', (await refs(R4)).some((r) => r.kind === 'transfer' && r.amount === 50n));
+  // The orchestration: only what THIS attempt created is released.
+  const bsS = memoryStore();
+  await saveSpendingPolicy(SCOPE, { token: NATIVE_TOKEN, symbol: 'test ETH', decimals: 18, cap: 10n ** 18n, windowSeconds: 3600 }, [NATIVE_TOKEN], { store: bsS, now: NOW });
+  const off = bs.addBroadcastSpendRecorder(broadcastSpendRecorder(bsS));
+  const R5 = `0x${'a5'.repeat(32)}`;
+  const first = await bs.countSpendBeforeBroadcast({ ...spend, store: bsS }, R5);
+  const second = await bs.countSpendBeforeBroadcast({ ...spend, store: bsS }, R5);
+  await bs.releaseSpendAfterRefusal({ ...spend, store: bsS }, R5, second);
+  const kept = (await listSpendRecords(SCOPE, bsS)).records.filter((r) => r.ref === R5);
+  check('a refused attempt whose count already existed (an earlier attempt, outcome unknown) never releases it',
+    first[0]?.[1] === 'created' && second[0]?.[1] === 'existed' && kept.length === 2);
+  await bs.releaseSpendAfterRefusal({ ...spend, store: bsS }, R5, first);
+  check('…the attempt that created it does', (await listSpendRecords(SCOPE, bsS)).records.filter((r) => r.ref === R5).length === 0);
+  check('no limit in the scope: nothing counted (state none), nothing to release', (await bs.countSpendBeforeBroadcast({ ...spend, owner: TO, store: bsS }, R5))[0]?.[1] === 'none');
+  check('no spend given (a path that counts nothing): no recorder is asked', (await bs.countSpendBeforeBroadcast(null, R5)).length === 0);
+  off();
+  check('…with no recorder registered nothing is counted', (await bs.countSpendBeforeBroadcast({ ...spend, store: bsS }, `0x${'a6'.repeat(32)}`)).length === 0);
+  // The settled-nonce release.
+  const S7 = `0x${'b7'.repeat(32)}`;
+  const S8 = `0x${'b8'.repeat(32)}`;
+  await recordAcceptedSpend({ scope: SCOPE, spender: OWNER, calls: [{ to: TO, value: 7n }], fee: 3n, ref: S7, store: s, now: NOW });
+  await recordAcceptedSpend({ scope: SCOPE, spender: OWNER, calls: [], fee: 4n, ref: S8, store: s, now: NOW });
+  const evt = (outcome) => ({ chain: SCOPE.chain, from: OWNER.toLowerCase(), nonce: '9', minedHash: S8, outcome, txs: [{ hash: S7, action: 'send' }, { hash: S8, action: 'speed-up' }] });
+  check('settled as mined (a single broadcast): nothing released', (await releaseSettledSpend(evt('mined'), s)) === 0);
+  check('settled as replaced: only the losing broadcast\'s FEE is released (its value was re-sent by the speed-up)',
+    (await releaseSettledSpend(evt('replaced'), s)) === 1 && (await refs(S7)).length === 1 && (await refs(S7))[0].kind === 'transfer' && (await refs(S8)).length === 1);
+  check('settled as cancelled: everything left of the losing broadcast is released, the included one kept',
+    (await releaseSettledSpend(evt('cancelled'), s)) === 1 && (await refs(S7)).length === 0 && (await refs(S8)).length === 1);
+  check('releaseSpend of an unknown hash removes nothing', (await releaseSpend({ scope: SCOPE, ref: `0x${'c0'.repeat(32)}`, store: s })) === 0);
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

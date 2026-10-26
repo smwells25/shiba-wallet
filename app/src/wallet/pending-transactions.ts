@@ -1210,6 +1210,44 @@ export function resolvedRecordFor(
 }
 
 /**
+ * A nonce the pending registry settled because a block included one of its
+ * broadcasts (refreshAccountPending): every broadcast the wallet made for it,
+ * which one was included and what that means (minedOutcome). Known from the
+ * reads the settle already made; listeners make no network request of their
+ * own. spending-policy.ts releases the counts of the broadcasts that can now
+ * never be included.
+ */
+export interface NonceSettledEvent {
+  chain: string;
+  /** Lower-case sender. */
+  from: string;
+  nonce: string;
+  minedHash: string;
+  outcome: 'mined' | ResolvedOutcome;
+  txs: { hash: string; action: PendingTxRecord['action'] }[];
+}
+
+const nonceSettledListeners = new Set<(event: NonceSettledEvent) => unknown>();
+
+/** Called after each settled nonce (bookkeeping; a failing listener changes nothing). Returns the unsubscribe function. */
+export function addNonceSettledListener(listener: (event: NonceSettledEvent) => unknown): () => void {
+  nonceSettledListeners.add(listener);
+  return () => {
+    nonceSettledListeners.delete(listener);
+  };
+}
+
+async function notifyNonceSettled(event: NonceSettledEvent): Promise<void> {
+  for (const listener of [...nonceSettledListeners]) {
+    try {
+      await listener(event);
+    } catch {
+      // Bookkeeping only.
+    }
+  }
+}
+
+/**
  * Re-reads every pending nonce of one account on one chain, settles the
  * decided ones in the store (removing their records; keeping a notice when
  * a replacement was involved) and returns the statuses. A read failure for
@@ -1236,10 +1274,24 @@ export async function refreshAccountPending(options: {
       continue;
     }
     if (status.state === 'mined' && !registry.readOnly) {
+      let settled = false;
       try {
         await settleNonce(group, resolvedRecordFor(group, status, nowMs), store, nowMs);
+        settled = true;
       } catch {
         // The notice is display only; the next refresh tries again.
+      }
+      // Announced once per settle: the records are gone afterwards, so the
+      // next refresh does not find this nonce again.
+      if (settled) {
+        await notifyNonceSettled({
+          chain: group.chain,
+          from: group.from,
+          nonce: group.nonce,
+          minedHash: lower(status.hash),
+          outcome: status.outcome,
+          txs: group.txs.map((t) => ({ hash: t.hash, action: t.action })),
+        });
       }
     }
     out.push({ group, status });

@@ -52,6 +52,7 @@ import {
   MULTISIG_CONFIG_BUNDLE_REFUSAL,
 } from './aa.ts';
 import { utf8Decode } from './erc20.ts';
+import type { BroadcastSpend } from './broadcast-spend.ts';
 import type { KeyValueStore } from './tokens.ts';
 import { PASSKEY_RP_ID_PLACEHOLDER, PASSKEY_RP_NAME } from '../config/passkey.ts';
 import { assertFeatureAllowed, eip155Caip2 } from '../config/readiness.ts';
@@ -1476,12 +1477,14 @@ export async function preparePasskeyCalls(
  * pending registry BEFORE it is handed to the bundler (aa.ts
  * submitWithPendingRecord), so a bundler that does not answer in time
  * leaves it listed (BroadcastOutcomeUnknownError). The callers' own
- * announcements after acceptance are unchanged.
+ * announcements after acceptance are unchanged. `spend` (with `listAs`) is
+ * counted against the app's spending limits in the same moment.
  */
 export async function sendPasskeyCalls(
   bundle: PasskeyBundle,
   quote: AaSendQuote,
   listAs?: AaOperationBase,
+  spend?: BroadcastSpend,
 ): Promise<{ userOpHash: string; signature: Uint8Array }> {
   assertFeatureAllowed('passkeys', eip155Caip2(bundle.chainId));
   if (!quote.passkey) throw new Error('This operation was not prepared for the passkey signer. Nothing was signed.');
@@ -1501,7 +1504,9 @@ export async function sendPasskeyCalls(
       beforeSign: signedFeeGuard(fees, quote.sponsored ? 0n : quote.fee),
       ...(beforeSend ? { beforeSend } : {}),
     });
-  const { userOpHash, userOp } = listAs ? await submitWithPendingRecord(listAs, submit) : await submit();
+  // `spend` (with `listAs` only): counted against the spending limits before
+  // the broadcast (./broadcast-spend.ts), as submitWithPendingRecord describes.
+  const { userOpHash, userOp } = listAs ? await submitWithPendingRecord(listAs, submit, spend ?? null) : await submit();
   return { userOpHash, signature: userOp.signature };
 }
 

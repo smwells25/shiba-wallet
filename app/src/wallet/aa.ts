@@ -75,7 +75,20 @@ import { PREVIEW_AA_NOTE } from './simulation.ts';
 import { suggestFeesRetryingOnce } from './fee-read.ts';
 // broadcast-outcome.ts imports only the engine and pending-transactions.ts
 // (which imports only types from this module), so no cycle.
-import { BroadcastOutcomeUnknownError, describeBroadcastOutcome, isBroadcastOutcomeUnknown } from './broadcast-outcome.ts';
+import {
+  BroadcastOutcomeUnknownError,
+  broadcastOutcomeReasonOf,
+  describeBroadcastOutcome,
+  isBroadcastOutcomeUnknown,
+} from './broadcast-outcome.ts';
+// A leaf module (no imports): the before-broadcast spending count.
+import {
+  countSpendBeforeBroadcast,
+  releaseSpendAfterRefusal,
+  spendAccepted,
+  type BroadcastSpend,
+  type BroadcastSpendStates,
+} from './broadcast-spend.ts';
 import { t } from '../i18n/index.ts';
 
 /**
@@ -4157,12 +4170,22 @@ export function addAaBroadcastRecorder(recorder: AaBroadcastRecorder): () => voi
  *
  * Recording is best effort, as before: a recorder that fails or throws
  * counts as 'failed' and never stops the submission.
+ *
+ * `spend`, when given, is what the operation counts against the app's
+ * spending limits (./broadcast-spend.ts): counted in the same hook, under the
+ * device's userOpHash, right after the pending record; released after a
+ * definite refusal (only what this attempt counted); kept when the outcome
+ * is unknown (no answer in time, an HTTP 5xx, a dropped connection); on
+ * acceptance re-keyed to the bundler's userOpHash when it differs, so the
+ * acceptance recorders (sendAa's sent listener, the screens'
+ * recordAcceptedSpend) find it and add nothing.
  */
 export async function submitWithPendingRecord<T>(
   base: AaOperationBase,
   submit: (beforeSend: (op: unknown, userOpHash: string) => Promise<void>) => Promise<T>,
+  spend: BroadcastSpend | null = null,
 ): Promise<T> {
-  let announced: { event: AaOperationSentEvent; states: RecorderState[] } | null =
+  let announced: { event: AaOperationSentEvent; states: RecorderState[]; spendStates: BroadcastSpendStates } | null =
     null;
   const beforeSend = async (_op: unknown, userOpHash: string): Promise<void> => {
     const event: AaOperationSentEvent = { ...base, userOpHash, sentAt: Date.now() };
@@ -4176,22 +4199,27 @@ export async function submitWithPendingRecord<T>(
       }
       states.push([recorder, state]);
     }
-    announced = { event, states };
+    const spendStates = await countSpendBeforeBroadcast(spend, userOpHash);
+    announced = { event, states, spendStates };
   };
+  let result: T;
   try {
-    return await submit(beforeSend);
+    result = await submit(beforeSend);
   } catch (error) {
-    const done = announced as { event: AaOperationSentEvent; states: RecorderState[] } | null;
+    const done = announced as { event: AaOperationSentEvent; states: RecorderState[]; spendStates: BroadcastSpendStates } | null;
     if (done) {
       if (isBroadcastOutcomeUnknown(error)) {
+        // The spend stays counted: the operation may have gone through.
         throw new BroadcastOutcomeUnknownError({
           kind: 'userop',
           hash: done.event.userOpHash,
           chain: done.event.chain,
           recorded: done.states.some(([, state]) => state !== 'failed'),
           technical: error instanceof Error ? error.message : String(error),
+          reason: broadcastOutcomeReasonOf(error) ?? 'timeout',
         });
       }
+      await releaseSpendAfterRefusal(spend, done.event.userOpHash, done.spendStates);
       for (const [recorder, state] of done.states) {
         if (state !== 'created') continue;
         try {
@@ -4203,6 +4231,25 @@ export async function submitWithPendingRecord<T>(
     }
     throw error;
   }
+  const done = announced as { event: AaOperationSentEvent; states: RecorderState[]; spendStates: BroadcastSpendStates } | null;
+  if (done) {
+    const returned = (result as { userOpHash?: unknown } | null)?.userOpHash;
+    await spendAccepted(spend, done.event.userOpHash, typeof returned === 'string' ? returned : done.event.userOpHash, done.spendStates);
+  }
+  return result;
+}
+
+/**
+ * What a smart-account quote counts against the app's spending limits: the
+ * smart account's own outflows (its calls) and the worst-case fee, 0 when a
+ * paymaster sponsors it. The one definition: spending-policy.ts
+ * spendingInputForQuote uses it for an 'aa' quote, and sendAa counts it
+ * before the broadcast (./broadcast-spend.ts).
+ */
+export function aaQuoteSpendInput(
+  quote: Pick<AaSendQuote, 'sender' | 'calls' | 'sponsored' | 'fee'>,
+): { spender: string; calls: AaSendQuote['calls']; fee: bigint } {
+  return { spender: quote.sender, calls: quote.calls, fee: quote.sponsored ? 0n : quote.fee };
 }
 
 /**
@@ -4500,6 +4547,8 @@ export async function sendAa(
           beforeSign: signedFeeGuard(fees, quote.sponsored ? 0n : quote.fee),
           beforeSend,
         }),
+      // Counted before the broadcast as aaSentRecorder counts it on acceptance.
+      { chain: eip155Caip2(bundle.chainId), owner: owner.address, ...aaQuoteSpendInput(quote) },
     );
     // The deploying operation changes "not deployed yet": re-read next time.
     forgetSmartAccountAddress(sender);

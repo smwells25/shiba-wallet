@@ -914,6 +914,119 @@ stopAaState();
   stopOps();
 }
 
+// ---------------------------------------------------------------------------
+// The bounded-broadcast follow-ups: an HTTP 5xx or a dropped connection on
+// eth_sendUserOperation is an open outcome like the timeout (the record
+// stays, never "not sent"), and the spending limits count the operation
+// before it is handed over (released after a definite refusal, kept on an
+// open outcome, counted once on acceptance even when the bundler returns a
+// userOpHash other than the device's). The engine's real httpTransport over a
+// fake fetch; the app's real spending recorder over an in-memory store.
+// ---------------------------------------------------------------------------
+{
+  console.log('\nThe bounded-broadcast follow-ups: open outcomes and spending counts on eth_sendUserOperation');
+  const { httpTransport } = await import('@shiba-wallet/chains-evm');
+  const outcome = await import('../src/wallet/broadcast-outcome.ts');
+  const { addAaBroadcastRecorder, sendAa: sendAaReal } = await import('../src/wallet/aa.ts');
+  const { pendingUserOpBroadcastRecorder, parseRegistry } = await import('../src/wallet/pending-transactions.ts');
+  const spending = await import('../src/wallet/spending-policy.ts');
+  const { isEndpointFailure } = await import('../src/config/endpoint-probe.ts');
+  const NOT_SENT = /not sent|nothing was sent|could not be sent|was not sent/i;
+  const KEY = 'shiba-wallet.pending-tx.v1';
+  const memStore = () => {
+    const map = new Map();
+    return { map, getItem: async (k) => map.get(k) ?? null, setItem: async (k, v) => void map.set(k, v), removeItem: async (k) => void map.delete(k) };
+  };
+  const opsIn = (text) => (text ? parseRegistry(text).records.filter((r) => r.kind === 'userop') : []);
+  const spendStore = memStore();
+  // The fake node answers eth_chainId 0x1, so the bundle (and the limits) are on chain 1.
+  const scope = { chain: 'eip155:1', owner: owner.address };
+  await spending.saveSpendingPolicy(scope, { token: spending.NATIVE_TOKEN, symbol: 'test ETH', decimals: 18, cap: 10n ** 30n, windowSeconds: 86400, countFees: true }, [spending.NATIVE_TOKEN], { store: spendStore });
+  const uninstall = spending.installSpendingRecorder(spendStore);
+  const countedFor = async (hash) => (await spending.listSpendRecords(scope, spendStore)).records.filter((r) => r.ref.toLowerCase() === hash.toLowerCase());
+  // `onSend(id)` answers eth_sendUserOperation (a Response-like object, or it throws).
+  function bundleAnswering(onSend, store) {
+    const inner = fakeBundler({});
+    const seen = [];
+    const fetchFn = async (_url, init) => {
+      const { method, params, id } = JSON.parse(init.body);
+      if (method === 'eth_sendUserOperation') {
+        const at = opsIn(store.map.get(KEY));
+        seen.push({ at, countedAtSend: at[0] ? await countedFor(at[0].userOpHash) : [] });
+        return onSend(id);
+      }
+      let body;
+      try {
+        body = { jsonrpc: '2.0', id, result: await inner(method, params) };
+      } catch (e) {
+        body = { jsonrpc: '2.0', id, error: { code: -32000, message: e.message } };
+      }
+      return { ok: true, status: 200, json: async () => body };
+    };
+    const node = fakeNode({});
+    const bundle = createAaClient({
+      nodeUrl: 'https://node.example',
+      bundlerUrl: 'https://bundler.example',
+      factory: FACTORY_INPUT,
+      transportFor: (url) => (url === 'https://node.example' ? node : httpTransport(url, fetchFn)),
+    });
+    return { bundle, seen };
+  }
+  const store = memStore();
+  const stopRec = addAaBroadcastRecorder(pendingUserOpBroadcastRecorder(store));
+
+  // 502.
+  const b502 = bundleAnswering(async () => ({ ok: false, status: 502, json: async () => ({}) }), store);
+  const q1 = await prepareAaSend(b502.bundle, owner.address, RECIPIENT, AMOUNT);
+  check('(the bundle is on chain 1, the limits\' scope)', b502.bundle.chainId === 1n);
+  const e1 = await sendAaReal(b502.bundle, owner, q1, { kind: 'send' }).then(() => null, (e) => e);
+  const h1 = b502.seen[0]?.at[0]?.userOpHash;
+  check('HTTP 502 on eth_sendUserOperation: BroadcastOutcomeUnknownError (reason server-error), listed under the device userOpHash',
+    e1?.name === 'BroadcastOutcomeUnknownError' && e1.kind === 'userop' && e1.reason === 'server-error' && e1.recorded === true && e1.hash === h1, String(e1?.message));
+  check('…the record stays', opsIn(store.map.get(KEY)).some((r) => r.userOpHash === h1));
+  const d1 = describeAaError(e1, { accountType: q1.accountType, deployed: q1.deployed, sender: q1.sender });
+  check('describeAaError: "No usable answer from the network.", the operation\'s open sentence (the bundler may have accepted it), the raw cause, never "not sent"',
+    d1?.title === outcome.BROADCAST_OUTCOME_OPEN_TITLE && d1.detail.startsWith(outcome.BROADCAST_USEROP_OPEN_SENTENCE) && d1.detail.includes('RPC HTTP error 502 for eth_sendUserOperation') &&
+      !/within 60 seconds/.test(d1.detail) && !NOT_SENT.test(d1.title + d1.detail));
+  check('…never an endpoint failure', !isEndpointFailure(e1));
+  const c1 = await countedFor(h1 ?? '#');
+  check('SPENDING: the operation was counted before eth_sendUserOperation (value and worst-case fee) and stays counted on the open outcome',
+    b502.seen[0]?.countedAtSend.length === 2 && c1.length === 2 && c1.find((r) => r.kind === 'transfer')?.amount === AMOUNT && c1.find((r) => r.kind === 'fee')?.amount === q1.fee);
+
+  // A dropped connection.
+  const bDrop = bundleAnswering(async () => {
+    throw Object.assign(new Error('fetch failed: java.io.IOException: unexpected end of stream'), { name: 'FetchError' });
+  }, store);
+  const q2 = await prepareAaSend(bDrop.bundle, owner.address, RECIPIENT, AMOUNT + 1n);
+  const e2 = await sendAaReal(bDrop.bundle, owner, q2, { kind: 'send' }).then(() => null, (e) => e);
+  const h2 = bDrop.seen[0]?.at.find((r) => r.userOpHash !== h1)?.userOpHash;
+  check('a dropped connection on eth_sendUserOperation: open outcome (reason connection), counted and kept',
+    e2?.name === 'BroadcastOutcomeUnknownError' && e2.reason === 'connection' && /unexpected end of stream/.test(e2.technical) && (await countedFor(h2 ?? '#')).length === 2);
+
+  // A bundler refusal: released.
+  const bRef = bundleAnswering(async (id) => ({ ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id, error: { code: -32500, message: "AA21 didn't pay prefund" } }) }), store);
+  const q3 = await prepareAaSend(bRef.bundle, owner.address, RECIPIENT, AMOUNT + 2n);
+  const e3 = await sendAaReal(bRef.bundle, owner, q3, { kind: 'send' }).then(() => null, (e) => e);
+  const h3 = bRef.seen[0]?.at.find((r) => r.userOpHash !== h1 && r.userOpHash !== h2)?.userOpHash;
+  check('a bundler refusal (a JSON-RPC error): counted at the request, released after it, the record removed',
+    /AA21/.test(e3?.message ?? '') && e3?.name !== 'BroadcastOutcomeUnknownError' && bRef.seen[0]?.countedAtSend.length === 2 &&
+      (await countedFor(h3 ?? '#')).length === 0 && !opsIn(store.map.get(KEY)).some((r) => r.userOpHash === h3));
+
+  // Accepted: the fake bundler returns its own fixed hash (USEROP_HASH), not
+  // the device's — the count moves to it and sendAa's sent listener
+  // (aaSentRecorder, recording under the returned hash) adds nothing.
+  const bOk = bundleAnswering(async (id) => ({ ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id, result: USEROP_HASH }) }), store);
+  const q4 = await prepareAaSend(bOk.bundle, owner.address, RECIPIENT, AMOUNT + 3n);
+  const r4 = await sendAaReal(bOk.bundle, owner, q4, { kind: 'send' });
+  await spending.flushSpendingWrites();
+  const h4 = bOk.seen[0]?.at.find((r) => ![h1, h2, h3].includes(r.userOpHash))?.userOpHash;
+  check('accepted with the bundler\'s own userOpHash: counted ONCE, under the returned hash, nothing left under the device hash',
+    r4.userOpHash === USEROP_HASH && h4 !== USEROP_HASH && (await countedFor(USEROP_HASH)).length === 2 && (await countedFor(h4 ?? '#')).length === 0);
+
+  stopRec();
+  uninstall();
+}
+
 const op = sendBundlerT.lastOp;
 check('submitted op sender is the counterfactual account', same(op.sender, SENDER));
 check('undeployed send carries factory + factoryData', same(op.factory, FACTORY_INPUT) && typeof op.factoryData === 'string' && op.factoryData.length > 2);

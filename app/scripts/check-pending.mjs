@@ -906,6 +906,211 @@ console.log('check-pending: the bounded broadcast (phase 23 item 8)');
 }
 
 // ---------------------------------------------------------------------------
+console.log('check-pending: an HTTP 5xx or a dropped connection is an open outcome, and spending limits count before the broadcast (bounded-broadcast follow-ups)');
+// ---------------------------------------------------------------------------
+// The engine's real httpTransport over a fake fetch: a 502 answer, a fetch
+// that rejects (a dropped connection) and an answer that is not JSON on
+// eth_sendRawTransaction are open outcomes (the record stays, the spend stays
+// counted); a JSON-RPC error and an HTTP 400 stay definite refusals (the
+// record and the count this attempt made are removed). The app's spending
+// recorder (spending-policy.ts installSpendingRecorder) is installed over an
+// in-memory store with a native-coin limit that counts fees.
+{
+  const outcome = await import('../src/wallet/broadcast-outcome.ts');
+  const { isEndpointFailure } = await import('../src/config/endpoint-probe.ts');
+  const { httpTransport } = await import('@shiba-wallet/chains-evm');
+  const spending = await import('../src/wallet/spending-policy.ts');
+  const NOT_SENT = /not sent|nothing was sent|could not be sent|was not sent/i;
+  const recordsOf = (store) => parseRegistry(store.map.get(PENDING_TX_KEY) ?? null).records;
+  const evmQuote = (nonce) => ({ kind: 'evm', ...quoteLike({ nonce }), balance: 10n ** 18n, fee: 21_000n, total: 0n, simulation: { ok: true, returnData: '0x' } });
+  const answer = (id, body) => ({ ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id, ...body }) });
+  const spendStore = memoryStore();
+  const scope = { chain: CHAIN, owner: FROM };
+  await saveSpendingPolicy(scope, { token: NATIVE_TOKEN, symbol: 'test ETH', decimals: 18, cap: 10n ** 18n, windowSeconds: 86400, countFees: true }, [NATIVE_TOKEN], { store: spendStore });
+  const uninstall = spending.installSpendingRecorder(spendStore);
+  const spendRecords = async () => (await spending.listSpendRecords(scope, spendStore)).records;
+  const countedFor = async (hash) => (await spendRecords()).filter((r) => r.ref.toLowerCase() === hash.toLowerCase());
+  // A fetch over a fake node; `onBroadcast(raw, id)` answers eth_sendRawTransaction
+  // (a Response-like object, or it throws). The spend history at the moment
+  // of the broadcast request is captured.
+  function fetchWith(node, onBroadcast) {
+    const seen = [];
+    const fetchFn = async (_url, init) => {
+      const { method, params, id } = JSON.parse(init.body);
+      if (method === 'eth_sendRawTransaction') {
+        const hash = ethers.Transaction.from(params[0]).hash.toLowerCase();
+        seen.push({ raw: params[0], hash, countedAtSend: await countedFor(hash) });
+        return onBroadcast(params[0], id);
+      }
+      try {
+        return answer(id, { result: await node.transport(method, params) });
+      } catch (e) {
+        return answer(id, { error: { code: -32000, message: e.message } });
+      }
+    };
+    return { fetchFn, seen };
+  }
+  const savedFetch = globalThis.fetch;
+  const store = memoryStore();
+  send.setPendingRecordStore(store);
+  const node = fakeNode();
+  const sentEvents = [];
+  const offSent = send.addEvmSentListener((e) => void sentEvents.push(e));
+
+  // A. HTTP 502.
+  const f502 = fetchWith(node, async () => ({ ok: false, status: 502, json: async () => ({}) }));
+  globalThis.fetch = f502.fetchFn;
+  const q1 = evmQuote(31n);
+  const e1 = await send.sendEvm(URL, signer, q1, null).then(() => null, (e) => e);
+  const h1 = f502.seen[0]?.hash;
+  check('HTTP 502 on eth_sendRawTransaction: BroadcastOutcomeUnknownError (reason server-error) under the device hash, listed',
+    e1?.name === 'BroadcastOutcomeUnknownError' && e1.reason === 'server-error' && e1.hash === h1 && e1.kind === 'tx' && e1.recorded === true, String(e1?.message));
+  check('…its message is the open sentence (a server error or a dropped connection; the endpoint may have accepted it), never the 60-second one',
+    e1?.message === outcome.BROADCAST_TX_OPEN_SENTENCE && /may have accepted it/.test(e1.message) && !/within 60 seconds/.test(e1.message) && !NOT_SENT.test(e1.message));
+  check('…the record stays (Pending on this phone lists it)', recordsOf(store).some((r) => r.hash === h1));
+  const d1 = send.describeSendError(e1, 'test ETH', 'test ETH');
+  check('describeSendError: "No usable answer from the network.", the open sentence, the hash and the raw cause (HTTP 502) in the technical line, never "not sent"',
+    d1.title === outcome.BROADCAST_OUTCOME_OPEN_TITLE && d1.title === 'No usable answer from the network.' && d1.detail.startsWith(outcome.BROADCAST_TX_OPEN_SENTENCE) &&
+      d1.detail.includes('RPC HTTP error 502 for eth_sendRawTransaction') && d1.detail.includes(h1 ?? '#') && !NOT_SENT.test(d1.title + d1.detail), d1.detail);
+  check('…no endpoint failover (by name, the engine\'s error and the wrapper)', !isEndpointFailure(e1) &&
+    !isEndpointFailure(Object.assign(new Error('RPC HTTP error 502 for eth_sendRawTransaction'), { name: 'BroadcastUnansweredError' })));
+  const e1again = await send.sendEvm(URL, signer, q1, null).then(() => null, (e) => e);
+  check('…and the same quote is never broadcast again', e1again?.name === 'BroadcastAlreadyHandedOverError' && f502.seen.length === 1);
+  const c1 = await countedFor(h1);
+  check('SPENDING: the open outcome is counted before the broadcast (value and worst-case fee, under the device hash) and stays counted',
+    f502.seen[0]?.countedAtSend.length === 2 && c1.length === 2 && c1.find((r) => r.kind === 'transfer')?.amount === q1.amount && c1.find((r) => r.kind === 'fee')?.amount === q1.fee);
+  check('…no sent listener fired (the acceptance channel still means "accepted")', sentEvents.length === 0);
+
+  // B. A dropped connection (Expo's FetchError: "fetch failed: …").
+  const fDrop = fetchWith(node, async () => {
+    throw Object.assign(new Error('fetch failed: java.net.SocketException: Connection reset'), { name: 'FetchError' });
+  });
+  globalThis.fetch = fDrop.fetchFn;
+  const e2 = await send.sendEvm(URL, signer, evmQuote(32n), null).then(() => null, (e) => e);
+  const h2 = fDrop.seen[0]?.hash;
+  check('a dropped connection on the broadcast: open outcome (reason connection), listed, the raw cause kept', e2?.name === 'BroadcastOutcomeUnknownError' && e2.reason === 'connection' &&
+    recordsOf(store).some((r) => r.hash === h2) && /Connection reset/.test(e2.technical) && e2.message === outcome.BROADCAST_TX_OPEN_SENTENCE);
+  check('…counted and kept', (await countedFor(h2)).length === 2);
+  check('…never an endpoint failure (no second broadcast elsewhere)', !isEndpointFailure(e2));
+
+  // C. An answer that is not JSON (a proxy's HTML page on a 200).
+  const fHtml = fetchWith(node, async () => ({ ok: true, status: 200, json: async () => JSON.parse('<html>') }));
+  globalThis.fetch = fHtml.fetchFn;
+  const e3 = await send.sendEvm(URL, signer, evmQuote(33n), null).then(() => null, (e) => e);
+  check('an unreadable answer: open outcome (reason connection), listed, counted', e3?.name === 'BroadcastOutcomeUnknownError' && e3.reason === 'connection' &&
+    recordsOf(store).some((r) => r.hash === fHtml.seen[0]?.hash) && (await countedFor(fHtml.seen[0]?.hash ?? '#')).length === 2);
+
+  // D. HTTP 400 and E. a JSON-RPC error stay definite refusals: the record and the count are removed.
+  const f400 = fetchWith(node, async () => ({ ok: false, status: 400, json: async () => ({}) }));
+  globalThis.fetch = f400.fetchFn;
+  const e4 = await send.sendEvm(URL, signer, evmQuote(34n), null).then(() => null, (e) => e);
+  const h4 = f400.seen[0]?.hash;
+  check('HTTP 400: a definite refusal worded as before (record removed)', e4?.message === 'RPC HTTP error 400 for eth_sendRawTransaction' && e4.name === 'Error' && !recordsOf(store).some((r) => r.hash === h4));
+  check('…the spend WAS counted at the broadcast request, and is released after the refusal', f400.seen[0]?.countedAtSend.length === 2 && (await countedFor(h4)).length === 0);
+  const fRpc = fetchWith(node, async (_raw, id) => answer(id, { error: { code: -32000, message: 'nonce too low' } }));
+  globalThis.fetch = fRpc.fetchFn;
+  const e5 = await send.sendEvm(URL, signer, evmQuote(35n), null).then(() => null, (e) => e);
+  const h5 = fRpc.seen[0]?.hash;
+  check('a parsed JSON-RPC error: a definite refusal (the node answered), record removed, spend released',
+    e5?.message === 'RPC error -32000: nonce too low (eth_sendRawTransaction)' && !recordsOf(store).some((r) => r.hash === h5) &&
+      fRpc.seen[0]?.countedAtSend.length === 2 && (await countedFor(h5)).length === 0);
+
+  // F. Accepted: counted once although the sent listener records too, also
+  // when the node returns the hash in another case or a different hash.
+  const fOk = fetchWith(node, async (raw, id) => answer(id, { result: ethers.Transaction.from(raw).hash }));
+  globalThis.fetch = fOk.fetchFn;
+  const q6 = evmQuote(36n);
+  const r6 = await send.sendEvm(URL, signer, q6, null);
+  await spending.flushSpendingWrites();
+  check('accepted: counted ONCE (before the broadcast; the sent listener finds it and adds nothing)', sentEvents.length === 1 && (await countedFor(r6.txid)).length === 2);
+  const fUpper = fetchWith(node, async (raw, id) => answer(id, { result: `0x${ethers.Transaction.from(raw).hash.slice(2).toUpperCase()}` }));
+  globalThis.fetch = fUpper.fetchFn;
+  const r7 = await send.sendEvm(URL, signer, evmQuote(37n), null);
+  await spending.flushSpendingWrites();
+  check('…the node\'s hash in upper case: still once', sentEvents.length === 2 && (await countedFor(r7.txid)).length === 2);
+  const OTHER = H(424242);
+  const fOther = fetchWith(node, async (_raw, id) => answer(id, { result: OTHER }));
+  globalThis.fetch = fOther.fetchFn;
+  await send.sendEvm(URL, signer, evmQuote(38n), null);
+  await spending.flushSpendingWrites();
+  check('…a node that returns a DIFFERENT hash: the count moves to it, still once (no record left under the device hash)',
+    sentEvents.length === 3 && (await countedFor(OTHER)).length === 2 && (await countedFor(fOther.seen[0]?.hash ?? '#')).length === 0);
+
+  // G. A replacement counts its fee only, before its broadcast, kept on an open outcome.
+  const rStore = memoryStore();
+  const orig = rec(40, { hash: H(40) });
+  await recordPendingTransaction(orig, rStore);
+  const rGroup = nonceGroups([orig], CHAIN, FROM)[0];
+  const rNode = fakeNode({ latestNonce: 40n, pendingNonce: 41n });
+  rNode.state.txs.set(H(40), null);
+  const rQuote = await send.prepareEvmReplacement(URL, rGroup, 'speed-up', CHAIN, { transport: rNode.transport });
+  const rFetch = fetchWith(rNode, async () => ({ ok: false, status: 503, json: async () => ({}) }));
+  const rErr = await send.sendEvmReplacement(URL, signer, rQuote, null, { transport: httpTransport(URL, rFetch.fetchFn), store: rStore }).then(() => null, (e) => e);
+  const rHash = rFetch.seen[0]?.hash;
+  const rc = await countedFor(rHash ?? '#');
+  check('a speed-up answered HTTP 503: open outcome (not "Not replaced"), listed, its FEE counted (never the value again)',
+    rErr?.name === 'BroadcastOutcomeUnknownError' && rErr.reason === 'server-error' && recordsOf(rStore).length === 2 &&
+      rc.length === 1 && rc[0].kind === 'fee' && rc[0].amount === rQuote.fee);
+  const aStore = memoryStore();
+  const origA = rec(41, { hash: H(41) });
+  await recordPendingTransaction(origA, aStore);
+  const aNode = fakeNode({ latestNonce: 41n, pendingNonce: 42n });
+  aNode.state.txs.set(H(41), null);
+  const aQuote = await send.prepareEvmReplacement(URL, nonceGroups([origA], CHAIN, FROM)[0], 'cancel', CHAIN, { transport: aNode.transport });
+  const aSent = await send.sendEvmReplacement(URL, signer, aQuote, null, { transport: aNode.transport, store: aStore });
+  const aIn = replacementSpendingInput({ fee: aQuote.fee, from: FROM });
+  await spending.recordAcceptedSpend({ scope, spender: aIn.spender, calls: aIn.calls, fee: aIn.fee, ref: aSent.txid, store: spendStore });
+  check('an accepted cancellation + the screen\'s own recordAcceptedSpend: its fee counted once', (await countedFor(aSent.txid)).length === 1);
+
+  // H. A settled nonce releases what can never be included (no network read of its own).
+  const settle = async (outcomeTx, txs) => {
+    const pStore = memoryStore();
+    for (const t of txs) await recordPendingTransaction(t, pStore);
+    const sNode = fakeNode({ latestNonce: 61n, pendingNonce: 61n });
+    sNode.state.receipts.set(outcomeTx, { block: 99n });
+    sNode.state.txs.set(outcomeTx, 99n);
+    const before = sNode.calls.length;
+    await refreshAccountPending({ reader: nodeReader(sNode.transport), chain: CHAIN, from: FROM, store: pStore });
+    return sNode.calls.length - before;
+  };
+  const spendAs = (ref, value, fee) => spending.recordAcceptedSpend({ scope, spender: FROM, calls: value > 0n ? [{ to: TO, value }] : [], fee, ref, store: spendStore });
+  // Cancelled: the original (value 7, fee 3) and its cancellation (fee 5) mined.
+  await spendAs(H(50), 7n, 3n);
+  await spendAs(H(51), 0n, 5n);
+  const cOrig = rec(60, { hash: H(50) });
+  const cCancel = rec(60, { hash: H(51), to: FROM_L, amount: 0n, sentAt: T0 + 61 }, { action: 'cancel', replaces: H(50) });
+  await settle(H(51), [cOrig, cCancel]);
+  check('a nonce that went to the CANCELLATION: every record of the original is released, the cancellation\'s fee stays',
+    (await countedFor(H(50))).length === 0 && (await countedFor(H(51))).length === 1);
+  // Replaced: the original (value 7, fee 3) and a speed-up (fee 5) mined.
+  await spendAs(H(52), 7n, 3n);
+  await spendAs(H(53), 0n, 5n);
+  const sOrig = rec(60, { hash: H(52) });
+  const sUp = rec(60, { hash: H(53), sentAt: T0 + 61 }, { action: 'speed-up', replaces: H(52) });
+  await settle(H(53), [sOrig, sUp]);
+  const kept52 = await countedFor(H(52));
+  check('a nonce that went to the SPEED-UP: the original\'s value stays counted (the speed-up re-sent it), only its fee is released',
+    kept52.length === 1 && kept52[0].kind === 'transfer' && kept52[0].amount === 7n && (await countedFor(H(53))).length === 1);
+  // Superseded: two ordinary sends, the second mined.
+  await spendAs(H(54), 7n, 3n);
+  await spendAs(H(55), 9n, 3n);
+  await settle(H(55), [rec(60, { hash: H(54) }), rec(60, { hash: H(55), sentAt: T0 + 61 })]);
+  check('a nonce that went to ANOTHER ordinary send: the losing send is released entirely, the included one stays',
+    (await countedFor(H(54))).length === 0 && (await countedFor(H(55))).length === 2);
+  // A single broadcast included: nothing released.
+  await spendAs(H(56), 7n, 3n);
+  await settle(H(56), [rec(60, { hash: H(56) })]);
+  check('a nonce with a single broadcast included: nothing released', (await countedFor(H(56))).length === 2);
+  check('…the release reads nothing from the network beyond the settle\'s own reads (releaseSettledSpend takes only the event)',
+    spending.releaseSettledSpend.length >= 1 && !/fetch|transport|reader/.test(spending.releaseSettledSpend.toString()));
+
+  uninstall();
+  offSent();
+  send.setPendingRecordStore(null);
+  globalThis.fetch = savedFetch;
+}
+
+// ---------------------------------------------------------------------------
 console.log('check-pending: the minimum-fee rehearsal (Settings → Developer, phase 21 item 3)');
 // ---------------------------------------------------------------------------
 {

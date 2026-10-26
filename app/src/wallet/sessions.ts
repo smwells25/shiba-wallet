@@ -64,6 +64,7 @@ import {
   type AaOperationKind,
 } from './aa.ts';
 import { formatUnits, parseUnits } from './balances.ts';
+import type { BroadcastSpend } from './broadcast-spend.ts';
 import { readAtInclusionBlock } from './recovery.ts';
 import { WALLET_7702_DELEGATE } from './delegation.ts';
 import { EVM_CHAIN_ID, validateRecipient } from './send.ts';
@@ -1505,6 +1506,11 @@ export async function sendSessionCalls(args: {
   vault: SessionKeyVault;
   /** Unix seconds for the local grant check. */
   now?: number;
+  /**
+   * What the operation counts against the spending limits, counted before
+   * the broadcast (./broadcast-spend.ts): recurring payments and swaps.
+   */
+  spend?: BroadcastSpend;
 }): Promise<{ userOpHash: string; client: SmartAccountClient }> {
   const { record, bundle } = args;
   // Mainnet readiness: using a session key is refused where session keys
@@ -1619,6 +1625,7 @@ export async function sendSessionCalls(args: {
       resend: null,
     },
     (beforeSend) => client.sendCalls(sessionAccount, args.calls, fees, { beforeSend }),
+    args.spend ?? null,
   );
   // Accepted by the bundler: the pending-operation registry records it
   // (phase 20 item 3), exactly once, never for a refused operation.
