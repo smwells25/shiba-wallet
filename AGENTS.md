@@ -13206,3 +13206,128 @@ to the Chairperson at once.
       non-2xx is the "price history could not be read" gap); Base /
       Arbitrum One / OP Mainnet mapping only if main-network profiles
       exist; the buttons not yet seen on a device.
+- [x] Item 8 — A BOUNDED BROADCAST, RECORDED BEFORE IT IS SENT, REPORTING AN
+      UNKNOWN OUTCOME AND NEVER "NOT SENT" (commit e0c04ff; 29 files incl. the new
+      app/src/wallet/broadcast-outcome.ts; engine 1,241 → 1,252 (rpc +7,
+      smart-account +3, cold-userop +1), check-pending 288 (was 248),
+      check-aa 395 (379), check-recurring 201 (197), check-cold-signing 110
+      (105), check-cold-aa 107 (102), check-home / check-sessions /
+      check-passkeys pins updated at the same counts; offline runner ALL
+      GREEN in the CTO's isolated worktree on HEAD d497e04 with
+      --skip-bundle: app 10,402 across 65 suites, lint 0/0, tsc clean; the
+      staged patch id equals the verified tree's; the scan clean; the agent
+      started on 2bbf769, was cut once by the session limit, reset its
+      worktree to 5038a9e, re-diffed and checked the patch on a pristine
+      copy; one transient ens.test.ts timeout under a parallel build, not
+      reproduced; not seen on a device). CTO DESIGN, as built: (1) THE
+      TIME LIMIT, broadcasts only — rpc.ts httpTransport bounds the methods
+      in BROADCAST_METHODS (the two send methods) at BROADCAST_TIMEOUT_MS =
+      60,000 (a judgement, stated); the request gets an AbortController
+      signal and races a timer that rejects with BroadcastTimeoutError
+      BEFORE calling abort, so the error is the same whatever Expo's fetch
+      does when aborted (Expo 57's fetch honours signal: fetch.ts 44, 77–84);
+      every other method takes the unchanged path, no signal, no timer; the
+      message avoids the words isEndpointFailure treats as a failover
+      reason. (2) THE SMART-ACCOUNT CLIENT gains an optional
+      beforeSend(op, userOpHash) called after signing and immediately before
+      eth_sendUserOperation in sendCalls and submitPreparedUserOperation;
+      cold-userop.ts passes it through — no larger change was needed. (3)
+      EOA PATHS: send.ts broadcastRecorded, used by sendEvm,
+      sendEvmWithSignature and both replacement functions — refuse a quote
+      object or signed hash whose earlier broadcast got no answer
+      (BroadcastAlreadyHandedOverError) → await the pending record keyed by
+      the DEVICE-COMPUTED hash → broadcast → no answer: mark the quote and
+      the hash, keep the record, throw BroadcastOutcomeUnknownError; any
+      other error: remove the record only if this attempt created it, then
+      rethrow unchanged (the underpriced / nonce / rehearsal translations
+      still apply); the old addEvmSentListener(recordSentForPending) is
+      gone (records are keyed by hash, no double record); the sent
+      listeners (the spending recorder, Home) still fire only on acceptance.
+      (4) SMART-ACCOUNT PATHS: aa.ts addAaBroadcastRecorder /
+      submitWithPendingRecord, WalletContext registering
+      pendingUserOpBroadcastRecorder; wired into sendAa, sendSessionCalls,
+      submitColdAa, sendPasskeyCalls (a new optional listAs argument) and
+      submitGuardianRecovery; notifyAaOperationSent / notifyAaSent keep
+      meaning "the bundler accepted" and the registry merges the accepted
+      record into the pre-recorded one. (5) REGISTRY:
+      recordPendingTransactionBeforeBroadcast, forgetPendingTransaction,
+      recordPendingUserOperationBeforeBroadcast,
+      pendingUserOpBroadcastRecorder, each reporting created | existed |
+      failed; a failed write never blocks the broadcast. (6) NO FAILOVER:
+      isEndpointFailure returns false by name for BroadcastTimeoutError,
+      BroadcastOutcomeUnknownError and BroadcastAlreadyHandedOverError. (7)
+      A QUOTE USED ONCE: EOA — the quote object AND the signed hash are
+      marked, so a fresh quote for the identical transaction is refused too
+      (deterministic signing, confirmed by the check); smart account — the
+      existing claimQuoteForSubmission; cold requests — by request id;
+      replacements — the existing claim. SENTENCES (broadcast-outcome.ts):
+      title "No answer from the network in time."; a listed regular
+      transaction "The network endpoint did not answer within 60 seconds,
+      so this wallet does not know whether the transaction was sent. It is
+      listed under Pending on this phone in Activity, which checks it every
+      15 seconds; do not send it again until that list says what
+      happened."; not listed "…and it could not add it to Pending on this
+      phone. Look the transaction up in a block explorer before sending
+      anything again."; a listed smart-account operation "The bundler did
+      not answer within 60 seconds, so this wallet does not know whether it
+      received the operation. It is listed under Pending on this phone in
+      Activity; tap Check status there, and do not send it again until that
+      list says what happened." (and the not-listed ERC-4337-explorer
+      form); the bare engine error "The network did not answer within 60
+      seconds, so this wallet does not know whether it was sent. Check this
+      account in a block explorer before sending anything again."; a second
+      attempt "Already handed to the network once." / "This transaction was
+      already handed to the network endpoint once and whether it was
+      accepted is still unknown, so this wallet did not hand it over a
+      second time. Check Pending on this phone in Activity; review a new
+      send only if that list says it was dropped."; recurring payments and
+      swaps get RECURRING_NO_ANSWER_SENTENCE / DCA_NO_ANSWER_SENTENCE under
+      the existing "Payment status unknown" / "Swap status unknown" titles;
+      the technical line carries the hash and the engine message.
+      DESCRIBERS: describeSendError and describeAaError map the timeout
+      first, so do describeRecurringPaymentError and describeDcaSwapError;
+      describeColdAaError maps it with back: true; reached by Send (EOA,
+      ERC-20, NFT, smart account, passkey), Swap, Staking, Bridge,
+      WalletConnect and the browser, Multisig, Sessions / recurring / DCA,
+      Handle, Approvals, the Activity card's replacements and ColdSign (EOA
+      and smart account); SendScreen returns to the form after an unknown
+      outcome on the EOA path too, so its confirm cannot resend.
+      DELIBERATELY LEFT: the EIP-7702 set-code transaction and the guardian
+      approveWithSig transaction were never in the pending registry — they
+      get the limit and the "not listed" sentence, no record; UTXO and
+      Solana broadcasts use other transports, unchanged. PINS: the record
+      exists when the broadcast fetch is made; still pending at 59.999 s and
+      unknown at 60 s; the request aborted; the card listed and settled by
+      the poll; no sent listener; the wording; no failover by name; the
+      same quote refused, also by hash; a refusal removes the record, a
+      pre-existing record kept; a speed-up timeout; reads with no limit
+      after 10 minutes; the same set for eth_sendUserOperation; a real
+      recurring payment with no answer. MUTANTS caught: the EOA record
+      written after the broadcast, the describeSendError mapping removed,
+      "Nothing was sent" added, no claim after a timeout, a refusal keeping
+      the record, the smart-account record after the broadcast, a
+      smart-account refusal keeping the record, the describeAaError mapping
+      removed, the recurring branch removed, the failover guard removed, a
+      cold request not claimed, the limit on every method incl. eth_call,
+      beforeSend after the send; one equivalent (describeColdAaError maps
+      the outcome before describeAaError). CTO DECISIONS on the open
+      questions: (1) SPENDING LIMITS count accepted sends only, so a send
+      that went through despite no answer is uncounted — a FOLLOW-UP to
+      count unknown outcomes conservatively at the before-broadcast record
+      and release them on a refusal; (2) WALLETCONNECT: after an unknown
+      outcome the request returns to the queue and the dApp gets an error,
+      and a re-approval re-quotes at the next nonce if the first is in the
+      pool — ACCEPTED for now with the sentence's warning; answering the
+      dApp with the locally computed hash is the better long-term answer
+      (follow-up); (3) HTTP 5xx answers and connection drops on a broadcast
+      still remove the record although their outcome is open — a FOLLOW-UP
+      to give them the same open-outcome treatment; (4) an "already known"
+      refusal removing a record this attempt created is right (the earlier
+      copy's record exists), the clients' exact wordings unverified; (5)
+      the 60 s abort under Hermes / OkHttp is from source only; (6) the
+      recurring card line "(the connection failed while it was being
+      sent)" is inexact for a timeout — reword at the refresh; (7) session
+      operations have no quote to claim — the account's nonce decides if a
+      user ignores "Refresh status first" (stated); (8) a bundler returning
+      a userOpHash different from the device's would leave two records
+      (ERC-4337 defines the hash; not expected).
