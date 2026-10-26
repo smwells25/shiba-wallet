@@ -31,6 +31,49 @@
  *   exceeds the allowed time range. Public API users are limited to querying
  *   historical data within the past 365 days. ..."}}}.
  *
+ * The TOKEN form (phase 23 item 8, second slice), read 2026-10-26 04:19 UTC
+ * from CoinGecko's official documentation:
+ *
+ * - https://docs.coingecko.com/demo/reference/endpoint-overview.md, "Coin
+ *   Charts" (the Demo / Keyless list): "| /coins/{id}/contract
+ *   /{contract_address}/market_chart/range | Historical chart data within a
+ *   time range by asset platform and token contract address |".
+ * - https://docs.coingecko.com/demo/reference/contract-address-market-chart-range.md
+ *   (OpenAPI "get /coins/{id}/contract/{contract_address}/market_chart/range",
+ *   server https://api.coingecko.com/api/v3): path `id` "Asset platform ID.
+ *   *refers to /asset_platforms", path `contract_address` "The contract
+ *   address of token.", query `vs_currency` (required), `from` and `to`
+ *   (required, "Starting date in UNIX timestamp." / "Ending date in UNIX
+ *   timestamp."), `precision` (optional, "full" or 0–18); the answer is the
+ *   same CoinsMarketChart object as the coin-id range ("prices",
+ *   "market_caps", "total_volumes", each "[timestamp, value] pairs"). The
+ *   page states the same auto-granularity table ("1 day from current time |
+ *   5-minutely", "1 day from any other time | hourly", "2–90 days | hourly",
+ *   "Above 90 days | daily (00:00 UTC)") and "Historical data via the Demo
+ *   API is restricted to the past 365 days."; its "Cache / Update
+ *   Frequency:" line is EMPTY in the fetched page (the coin-id page's is now
+ *   empty too), so the 5-minute cache figure above is not re-confirmed.
+ * - Asset platform ids, from ONE keyless GET /asset_platforms answer of
+ *   2026-10-26 04:20 UTC (470 platforms; "chain_identifier" is "Chainlist's
+ *   chain ID" per the asset-platforms-list page): chain 1 → "ethereum",
+ *   8453 → "base", 42161 → "arbitrum-one", 10 → "optimistic-ethereum". Only
+ *   "ethereum" is used (coingecko.ts COINGECKO_TOKEN_PLATFORMS, the same
+ *   table the spot token price uses); the wallet has no Base, Arbitrum One
+ *   or OP Mainnet profile, so those three are recorded here and not mapped.
+ * - Rate limits as above (https://docs.coingecko.com/docs/errors-and-rate-limits.md,
+ *   re-read the same day: "Demo plan: 100 calls/min.", "Keyless (no API
+ *   key): IP-based rate limiting — shared across all users on the same IP.",
+ *   "All requests count toward your per-minute rate limit — including 4xx
+ *   and 5xx errors.").
+ * - Recorded keyless answer (the fixture
+ *   test/fixtures/coingecko-usdc-ethereum-contract-range-2026-10-23.json):
+ *   mainnet USDC 0xa0b8…eb48 on "ethereum", from 1792713600 (2026-10-23
+ *   00:00 UTC) to 1792886400 (2026-10-25 00:00 UTC), precision=full: HTTP
+ *   200, 49 price points exactly 3,600,000 ms apart from the first second
+ *   to the last, keys prices / market_caps / total_volumes; response
+ *   headers cache-control "max-age=30, public, must-revalidate,
+ *   s-maxage=300" (observed, not documented).
+ *
  * Prices are kept as the vendor's decimal literal, digit for digit, through
  * the lossless JSON parser (as the spot-price adapter does); they remain
  * indicative market prices, never execution prices.
@@ -91,6 +134,20 @@ export interface MarketChartRangeRequest {
   toSec: number;
 }
 
+/** A token's range, by CoinGecko asset platform and contract address. */
+export interface TokenMarketChartRangeRequest {
+  /** CoinGecko asset platform id, e.g. "ethereum" (see the module comment). */
+  platformId: string;
+  /** The token contract, 0x + 40 hex digits in any case; sent lowercase. */
+  contract: string;
+  /** Fiat currency code, e.g. "usd". */
+  currency: string;
+  /** Unix seconds. */
+  fromSec: number;
+  /** Unix seconds. */
+  toSec: number;
+}
+
 export interface MarketChartRangeConfig {
   fetchFn?: FetchLike;
   demoApiKey?: string;
@@ -99,18 +156,43 @@ export interface MarketChartRangeConfig {
 
 const COIN_ID_RE = /^[a-z0-9-]{1,80}$/;
 
-/** The request URL for a range (exported for the tests). */
-export function marketChartRangeUrl(request: MarketChartRangeRequest, baseUrl: string = COINGECKO_BASE_URL): string {
-  const currency = normalizeCurrency(request.currency);
-  if (!COIN_ID_RE.test(request.coinId)) throw new Error(`Invalid CoinGecko coin id: ${JSON.stringify(request.coinId)}`);
-  const from = Math.floor(request.fromSec);
-  const to = Math.floor(request.toSec);
+const CONTRACT_RE = /^0x[0-9a-fA-F]{40}$/;
+
+/** The query string shared by both range forms: currency, whole seconds, full precision. */
+function rangeQuery(currency: string, fromSec: number, toSec: number): string {
+  const vs = normalizeCurrency(currency);
+  const from = Math.floor(fromSec);
+  const to = Math.floor(toSec);
   if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to <= from) {
     throw new Error('Invalid time range');
   }
+  return `?vs_currency=${encodeURIComponent(vs)}&from=${from}&to=${to}&precision=full`;
+}
+
+/** The request URL for a range (exported for the tests). */
+export function marketChartRangeUrl(request: MarketChartRangeRequest, baseUrl: string = COINGECKO_BASE_URL): string {
+  if (!COIN_ID_RE.test(request.coinId)) throw new Error(`Invalid CoinGecko coin id: ${JSON.stringify(request.coinId)}`);
+  const query = rangeQuery(request.currency, request.fromSec, request.toSec);
+  return `${baseUrl.replace(/\/+$/, '')}/coins/${request.coinId}/market_chart/range${query}`;
+}
+
+/**
+ * The request URL for a token's range by asset platform and contract
+ * (exported for the tests): /coins/{platform}/contract/{contract}/market_chart/range,
+ * the contract lowercased (the case the vendor's own examples use).
+ */
+export function tokenMarketChartRangeUrl(
+  request: TokenMarketChartRangeRequest,
+  baseUrl: string = COINGECKO_BASE_URL,
+): string {
+  if (!COIN_ID_RE.test(request.platformId)) {
+    throw new Error(`Invalid CoinGecko asset platform id: ${JSON.stringify(request.platformId)}`);
+  }
+  if (!CONTRACT_RE.test(request.contract)) throw new Error(`Invalid token contract address: ${JSON.stringify(request.contract)}`);
+  const query = rangeQuery(request.currency, request.fromSec, request.toSec);
   return (
-    `${baseUrl.replace(/\/+$/, '')}/coins/${request.coinId}/market_chart/range` +
-    `?vs_currency=${encodeURIComponent(currency)}&from=${from}&to=${to}&precision=full`
+    `${baseUrl.replace(/\/+$/, '')}/coins/${request.platformId}/contract/${request.contract.toLowerCase()}` +
+    `/market_chart/range${query}`
   );
 }
 
@@ -124,7 +206,23 @@ export async function fetchMarketChartRange(
   request: MarketChartRangeRequest,
   config: MarketChartRangeConfig = {},
 ): Promise<HistoricalPricePoint[]> {
-  const url = marketChartRangeUrl(request, config.baseUrl ?? COINGECKO_BASE_URL);
+  return fetchChart(marketChartRangeUrl(request, config.baseUrl ?? COINGECKO_BASE_URL), config);
+}
+
+/**
+ * Fetches the price points of one TOKEN over a range, by asset platform and
+ * contract, with exactly the rules of fetchMarketChartRange (the same
+ * errors, the same strict parser). The answer does not repeat the contract,
+ * so the caller must key any cache by platform AND contract.
+ */
+export async function fetchTokenMarketChartRange(
+  request: TokenMarketChartRangeRequest,
+  config: MarketChartRangeConfig = {},
+): Promise<HistoricalPricePoint[]> {
+  return fetchChart(tokenMarketChartRangeUrl(request, config.baseUrl ?? COINGECKO_BASE_URL), config);
+}
+
+async function fetchChart(url: string, config: MarketChartRangeConfig): Promise<HistoricalPricePoint[]> {
   const fetchFn: FetchLike = config.fetchFn ?? (globalThis.fetch as unknown as FetchLike);
   const headers: Record<string, string> = { accept: 'application/json' };
   const key = config.demoApiKey?.trim();

@@ -8,8 +8,12 @@
 // amount, time, price point, balance, today's price, the smart account),
 // tokens (a tracked token counted by its exact contract, look-alikes left out,
 // a contract-less token transfer a gap, no assumed fees), Hide amounts, and the price request discipline (one
-// request, none when fiat is off, none out of range, cached). Ends with
-// mutants written from scratch copies of pnl.ts, each caught.
+// request, none when fiat is off, none out of range, cached). Phase 23 item 8,
+// second slice: a tracked token's price history by contract (the request,
+// the cache keyed by contract, the recorded keyless USDC answer in
+// packages/prices/test/fixtures driving exact token figures), which tokens
+// get a button (pnlTokenChoices) and the panel's source. Ends with mutants
+// written from scratch copies of pnl.ts and prices.ts, each caught.
 //
 //   export PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH"
 //   node scripts/check-pnl.mjs
@@ -19,7 +23,7 @@ import { dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as L from '../src/wallet/pnl.ts';
 import { formatMoney, moneyEquals, moneyOf, moneySub, moneySum } from '../src/wallet/portfolio.ts';
-import { fetchPriceHistory, resetPriceHistoryCache, resetSharedPriceProvider } from '../src/wallet/prices.ts';
+import { fetchPriceHistory, historySourceFor, resetPriceHistoryCache, resetSharedPriceProvider } from '../src/wallet/prices.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 let passed = 0;
@@ -169,8 +173,9 @@ console.log('check-pnl: tokens, failed and pending entries');
 {
   const token = entry('0x5', t2, 'in', 0n, EXCHANGE, { assetSymbol: 'USDC', assetAmount: 5_000_000n, assetDecimals: 6 });
   const withToken = L.computeNativePnl({ ...base, entries: [token, ...baseEntries] });
-  check('a token transfer is not part of the ETH figures and the true reason tokens are not offered is stated', withToken.kind === 'ok' && moneyEquals(withToken.realised, usd(2500n)) &&
-    withToken.notes.includes('1 token transfer is in the loaded history and is not part of these ETH figures. Profit and loss for tokens is not offered yet: this wallet reads CoinGecko’s price history only for the native coins of the main networks, not for tokens.') &&
+  check('a token transfer is not part of the ETH figures, and where token figures are is stated', withToken.kind === 'ok' && moneyEquals(withToken.realised, usd(2500n)) &&
+    withToken.notes.includes('1 token transfer is in the loaded history and is not part of these ETH figures. Profit and loss for a token is worked out separately, from that token’s own transfers: each ERC-20 token tracked on the active main network that CoinGecko prices has its own button.') &&
+    !withToken.notes.some((n) => n.includes('not offered yet')) &&
     !withToken.notes.some((n) => n.includes('look-alike')), JSON.stringify(withToken.notes));
   const withContract = L.computeNativePnl({ ...base, entries: [{ ...token, contract: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48' }, ...baseEntries] });
   check('…a token transfer that names its contract changes nothing in the ETH figures', withContract.kind === 'ok' && moneyEquals(withContract.realised, usd(2500n)) &&
@@ -344,13 +349,165 @@ console.log('check-pnl: the historical price request (prices.ts fetchPriceHistor
   check('Show fiat values off: no request', off.status === 'unavailable' && off.reason === 'fiat-off' && calls.length === 1);
   const far = await fetchPriceHistory('eip155:1/slip44:60', nowSec - 400 * 86_400, nowSec, opts);
   check('a range older than 365 days: no request', far.status === 'unavailable' && far.reason === 'out-of-range' && calls.length === 1);
-  const token = await fetchPriceHistory('eip155:1/erc20:0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', nowSec - 86_400 * 2, nowSec, opts);
-  check('a token has no history read: no request', token.status === 'unavailable' && token.reason === 'unsupported' && calls.length === 1);
   const test = await fetchPriceHistory('eip155:11155111/slip44:60', nowSec - 86_400 * 2, nowSec, opts);
   check('a test-network coin has no history read: no request', test.status === 'unavailable' && test.reason === 'unsupported' && calls.length === 1);
+  // Tokens (phase 23 item 8, second slice): mainnet ERC-20 tokens are read by contract.
+  const usdc = await fetchPriceHistory('eip155:1/erc20:0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', nowSec - 86_400 * 2, nowSec, opts);
+  check('a mainnet token: one request to /coins/ethereum/contract/<its contract, lowercase>/market_chart/range',
+    usdc.status === 'ok' && calls.length === 2 &&
+      calls[1].url.startsWith('https://api.coingecko.com/api/v3/coins/ethereum/contract/0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48/market_chart/range?vs_currency=usd&from=') &&
+      calls[1].url.endsWith('&precision=full'), calls[1]?.url);
+  const testToken = await fetchPriceHistory('eip155:11155111/erc20:0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238', nowSec - 86_400 * 2, nowSec, opts);
+  check('a test-network token has no history read: no request', testToken.status === 'unavailable' && testToken.reason === 'unsupported' && calls.length === 2);
+  const baseToken = await fetchPriceHistory('eip155:8453/erc20:0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', nowSec - 86_400 * 2, nowSec, opts);
+  check('a token of a chain that is not one of the wallet’s main networks (Base): no request', baseToken.status === 'unavailable' && baseToken.reason === 'unsupported' && calls.length === 2);
+  const nft = await fetchPriceHistory('eip155:1/erc721:0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', nowSec - 86_400 * 2, nowSec, opts);
+  check('an NFT id or a malformed id: no request', nft.status === 'unavailable' && (await fetchPriceHistory('eip155:1/erc20:0xA0b8', nowSec - 86_400, nowSec, opts)).status === 'unavailable' && calls.length === 2);
+  check('historySourceFor maps the native coin to its coin id and a mainnet token to (ethereum, lowercase contract), nothing else',
+    JSON.stringify(historySourceFor('eip155:1/slip44:60')) === JSON.stringify({ kind: 'coin', coinId: 'ethereum' }) &&
+      JSON.stringify(historySourceFor('eip155:1/erc20:0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48')) === JSON.stringify({ kind: 'token', platformId: 'ethereum', contract: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48' }) &&
+      historySourceFor('eip155:11155111/erc20:0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238') === null &&
+      historySourceFor('constructor') === null);
+  const dai = await fetchPriceHistory('eip155:1/erc20:0x6B175474E89094C44Da98b954EedeAC495271d0F', nowSec - 86_400 * 2, nowSec, opts);
+  check('a second token over the same range makes its OWN request (the cache is keyed by contract)',
+    dai.status === 'ok' && calls.length === 3 && calls[2].url.includes('/contract/0x6b175474e89094c44da98b954eedeac495271d0f/'), calls[2]?.url);
+  await fetchPriceHistory('eip155:1/erc20:0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', nowSec - 86_400 * 2, nowSec, opts);
+  check('…and the first token again is served from its own cache entry', calls.length === 3);
   const refused = await fetchPriceHistory('bip122:000000000019d6689c085ae165831e93/slip44:0', nowSec - 200 * 86_400, nowSec, opts);
-  check('the vendor’s 365-day refusal is named', refused.status === 'failed' && refused.message.includes('past 365 days') && calls.length === 2);
+  check('the vendor’s 365-day refusal is named', refused.status === 'failed' && refused.message.includes('past 365 days') && calls.length === 4);
   check('200 days is daily granularity (documented)', (await fetchPriceHistory('eip155:1/slip44:60', nowSec - 200 * 86_400, nowSec, opts)).granularity === 'daily');
+}
+
+// ===========================================================================
+console.log('check-pnl: token profit and loss from the recorded keyless USDC answer (phase 23 item 8, second slice)');
+// ===========================================================================
+// The ONE keyless answer recorded on 2026-10-26 (packages/prices/test/fixtures):
+// /coins/ethereum/contract/0xa0b8…eb48/market_chart/range, 2026-10-23 00:00 to
+// 2026-10-25 00:00 UTC, 49 hourly points. A synthetic history is placed exactly
+// on three of its points, so every figure is the fixture's prices, exact.
+const USDC_FIXTURE = readFileSync(join(HERE, '..', '..', 'packages', 'prices', 'test', 'fixtures', 'coingecko-usdc-ethereum-contract-range-2026-10-23.json'), 'utf8');
+const USDC_CHECKSUM = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
+const USDC = USDC_CHECKSUM.toLowerCase();
+const USDC_TOKEN = { kind: 'fungible', assetId: { chainId: 'eip155:1', namespace: 'erc20', reference: USDC_CHECKSUM }, symbol: 'USDC', name: 'USD Coin', decimals: 6 };
+const NOW_T = 1_792_890_000_000; // 2026-10-25 01:00 UTC
+const U = 10n ** 6n;
+const usdcTx = (id, ts, direction, amount, counterparty, extra = {}) => ({
+  id, timestamp: ts, confirmed: true, blockHeight: ts, direction,
+  assetSymbol: 'USDC', assetAmount: amount, assetDecimals: 6, contract: USDC, counterparty, ...extra,
+});
+const tA = 1_792_720_800; // point 2: 0.9995026714754317
+const tB = 1_792_800_000; // point 24: 0.9997198080018516
+const tC = 1_792_857_600; // point 40: 0.9996848575625291
+const usdcEntries = [
+  usdcTx('0xu3', tC, 'out', 300n * U, SHOP), // a sale of 300
+  usdcTx('0xu2', tB, 'in', 500n * U, EXCHANGE), // a purchase of 500
+  usdcTx('0xu1', tA, 'in', 1_000n * U, EXCHANGE), // a purchase of 1,000
+  entry('0xe1', tA, 'in', ETH, EXCHANGE), // the network's own coin: not part of USDC
+];
+// An exact fraction from a decimal literal, independent of the module under test.
+const frac = (lit) => { const [w, f = ''] = lit.split('.'); return { n: BigInt(w + f), d: 10n ** BigInt(f.length) }; };
+const mul = (a, b) => ({ n: a.n * b.n, d: a.d * b.d });
+const add = (a, b) => ({ n: a.n * b.d + b.n * a.d, d: a.d * b.d });
+const sub = (a, b) => ({ n: a.n * b.d - b.n * a.d, d: a.d * b.d });
+const amt = (base) => ({ n: base, d: U });
+{
+  const choices = L.pnlTokenChoices([USDC_TOKEN], 'eip155:1');
+  const USDC_ASSET = choices[0];
+  check('the tracked mainnet USDC is offered, with its price id and lowercase contract',
+    choices.length === 1 && USDC_ASSET.priceId === `eip155:1/erc20:${USDC_CHECKSUM}` && USDC_ASSET.contract === USDC && USDC_ASSET.decimals === 6, JSON.stringify(choices));
+  const own = [ME];
+  const range = L.pnlPriceRange({ entries: usdcEntries, ownAddresses: own, nowMs: NOW_T, asset: USDC_ASSET });
+  const calls = [];
+  const fixtureFetch = async (url) => {
+    calls.push(url);
+    return { ok: true, status: 200, headers: { get: () => null }, text: async () => USDC_FIXTURE };
+  };
+  resetPriceHistoryCache();
+  resetSharedPriceProvider();
+  const history = await fetchPriceHistory(USDC_ASSET.priceId, range.fromSec, range.toSec, {
+    enabled: true, store: { getItem: async () => null, setItem: async () => undefined }, fetchFn: fixtureFetch, now: () => NOW_T,
+  });
+  check('the price history is one request by USDC’s own contract', calls.length === 1 && calls[0].includes(`/coins/ethereum/contract/${USDC}/market_chart/range?`), calls[0]);
+  check('the recorded answer gives 49 hourly points, digit for digit', history.status === 'ok' && history.points.length === 49 && history.granularity === 'hourly' &&
+    history.points[2].price === '0.9995026714754317' && history.points[24].price === '0.9997198080018516' && history.points[40].price === '0.9996848575625291');
+  const usdcInput = {
+    asset: USDC_ASSET,
+    entries: usdcEntries,
+    hasMore: false,
+    smartAccount: null,
+    ownAddresses: own,
+    balance: 1_200n * U,
+    prices: { status: 'ok', points: history.points, granularity: history.granularity },
+    currentQuote: { assetId: USDC_ASSET.priceId, currency: 'usd', price: '0.9998', provider: 'coingecko', updatedAtMs: NOW_T - 60_000, fetchedAtMs: NOW_T - 30_000 },
+    nowMs: NOW_T,
+  };
+  const ur = L.computeTokenPnl(usdcInput);
+  const p1 = frac('0.9995026714754317'), p2 = frac('0.9997198080018516'), p3 = frac('0.9996848575625291');
+  const cost = add(mul(amt(1_000n * U), p1), mul(amt(500n * U), p2));
+  const costOut = mul(cost, { n: 300n, d: 1_500n });
+  const realised = sub(mul(amt(300n * U), p3), costOut);
+  const remaining = sub(cost, costOut);
+  const unrealised = sub(mul(amt(1_200n * U), frac('0.9998')), remaining);
+  check('computed from the fixture prices (no gap)', ur.kind === 'ok', JSON.stringify(ur.reasons ?? []));
+  check('realised = 300 × p(C) − 300/1500 of the pool’s cost, exact to the fraction', ur.kind === 'ok' && moneyEquals(ur.realised, realised));
+  check('cost of what is held = 1200/1500 of the pool’s cost; unrealised at $0.9998 exact', ur.kind === 'ok' && moneyEquals(ur.costBasis, remaining) && moneyEquals(ur.unrealised, unrealised));
+  check('held 1,200 USDC; 2 purchases and 1 sale; no assumed fees', ur.kind === 'ok' && ur.held === 1_200n * U && ur.purchases === 2 && ur.sales === 1 && ur.assumedFees === 0n);
+  check('the figure lines', ur.kind === 'ok' && JSON.stringify(L.pnlFigureLines(ur, USDC_ASSET, false).map((l) => l.text)) ===
+    // Worked by hand: cost 1,000 × 0.99950267… + 500 × 0.99971980… = $1,499.36…;
+    // 1,200/1,500 of it held = $1,199.49…; realised 300 × 0.99968485… − $299.87… = +$0.03…;
+    // value 1,200 × $0.9998 = $1,199.76; unrealised +$0.26994… → +$0.27.
+    JSON.stringify(['1200 USDC', '$1,199.76', '$1,199.49', '$1.00 per USDC', '+$0.27', '+$0.03', '2 purchases, 1 sale']), JSON.stringify(ur.kind === 'ok' && L.pnlFigureLines(ur, USDC_ASSET, false).map((l) => l.text)));
+  check('the notes name the contract counted and the coin left out', ur.kind === 'ok' &&
+    ur.notes.includes(`Only transfers of the tracked USDC contract ${USDC} are counted.`) &&
+    ur.notes.includes('1 transfer of the network’s own coin or of other tokens is not part of these USDC figures.'), JSON.stringify(ur.notes));
+  // A look-alike: another contract that calls itself USDC, with a large "purchase".
+  const fakeUsdc = usdcTx('0xfake', tB, 'in', 1_000_000n * U, EXCHANGE, { contract: LOOKALIKE });
+  const withFakeUsdc = L.computeTokenPnl({ ...usdcInput, entries: [fakeUsdc, ...usdcEntries] });
+  check('a look-alike “USDC” is left out: the figures are the same to the fraction', withFakeUsdc.kind === 'ok' && moneyEquals(withFakeUsdc.realised, realised) && moneyEquals(withFakeUsdc.costBasis, remaining) && withFakeUsdc.held === 1_200n * U);
+  check('…and the look-alike note says so', withFakeUsdc.kind === 'ok' && withFakeUsdc.notes.includes('1 transfer of a token from another contract calls itself USDC; it is not the tracked USDC and is left out.'), JSON.stringify(withFakeUsdc.notes));
+  check('…an older look-alike does not widen the price range', JSON.stringify(L.pnlPriceRange({ entries: [usdcTx('0xold', tA - 30 * 86_400, 'in', U, EXCHANGE, { contract: LOOKALIKE }), ...usdcEntries], ownAddresses: own, nowMs: NOW_T, asset: USDC_ASSET })) === JSON.stringify(range));
+  // Nothing in the fixture near a transaction outside its range: the gap, not a figure.
+  const outside = L.computeTokenPnl({ ...usdcInput, entries: [usdcTx('0xu0', tA - 2 * 86_400, 'in', 100n * U, EXCHANGE), ...usdcEntries], balance: 1_300n * U });
+  check('a transfer the recorded range has no price near is a gap sentence', outside.kind === 'gap' && outside.reasons.includes('Profit and loss cannot be worked out for USDC: no CoinGecko price was found within 3 hours of 1 transaction.'), JSON.stringify(outside));
+  // Every gap sentence of the first slice is unchanged.
+  check('…the token “unsupported” sentence is unchanged', (() => {
+    const out = L.computeTokenPnl({ ...usdcInput, prices: { status: 'unavailable', reason: 'unsupported' } });
+    return out.kind === 'gap' && out.reasons.includes('Profit and loss cannot be worked out for USDC: this wallet does not read CoinGecko’s price history for tokens yet (only for the native coins of the main networks), so there is no price at the time of its transfers.');
+  })());
+}
+
+// ===========================================================================
+console.log('check-pnl: which tokens get a profit-and-loss button (pnlTokenChoices)');
+// ===========================================================================
+{
+  const sepoliaUsdc = { kind: 'fungible', assetId: { chainId: 'eip155:11155111', namespace: 'erc20', reference: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238' }, symbol: 'USDC', name: 'USDC', decimals: 6 };
+  const dai = { kind: 'fungible', assetId: { chainId: 'eip155:1', namespace: 'erc20', reference: '0x6B175474E89094C44Da98b954EedeAC495271d0F' }, symbol: 'DAI', name: 'Dai', decimals: 18 };
+  const fakeTracked = { ...USDC_TOKEN, assetId: { ...USDC_TOKEN.assetId, reference: '0x00000000000000000000000000000000000000Aa' } };
+  const ids = (list) => list.map((a) => a.contract);
+  check('mainnet active: every tracked mainnet ERC-20 with a price id, in stored order', JSON.stringify(ids(L.pnlTokenChoices([USDC_TOKEN, dai], 'eip155:1'))) === JSON.stringify([USDC, dai.assetId.reference.toLowerCase()]));
+  check('a test network active: none (its tokens have no value; a mainnet token is not on the active network)',
+    L.pnlTokenChoices([sepoliaUsdc], 'eip155:11155111').length === 0 && L.pnlTokenChoices([USDC_TOKEN], 'eip155:11155111').length === 0);
+  check('a test-network token in a mainnet list is never offered', JSON.stringify(ids(L.pnlTokenChoices([sepoliaUsdc, USDC_TOKEN], 'eip155:1'))) === JSON.stringify([USDC]));
+  check('an NFT or a token of a chain the wallet has no main network for is never offered',
+    L.pnlTokenChoices([{ ...dai, assetId: { ...dai.assetId, namespace: 'erc721' } }, { ...dai, assetId: { ...dai.assetId, chainId: 'eip155:8453' } }], 'eip155:1').length === 0);
+  check('a contract listed twice (any case) is offered once', L.pnlTokenChoices([USDC_TOKEN, { ...USDC_TOKEN, assetId: { ...USDC_TOKEN.assetId, reference: USDC } }], 'eip155:1').length === 1);
+  const both = L.pnlTokenChoices([USDC_TOKEN, fakeTracked], 'eip155:1');
+  check('two tracked tokens with the same symbol: two buttons, each title naming its short contract',
+    both.length === 2 && L.pnlTokenChipTitle(both[0], both, 'Ethereum', 'ETH') === 'USDC (0xa0b8…eb48) on Ethereum' &&
+      L.pnlTokenChipTitle(both[1], both, 'Ethereum', 'ETH') === 'USDC (0x0000…00aa) on Ethereum');
+  check('…a unique symbol keeps the short title', L.pnlTokenChipTitle(L.pnlTokenChoices([USDC_TOKEN], 'eip155:1')[0], L.pnlTokenChoices([USDC_TOKEN], 'eip155:1'), 'Ethereum', 'ETH') === 'USDC on Ethereum');
+  check('…a token calling itself the network’s coin is told apart too', L.pnlTokenChipTitle({ ...both[1], symbol: 'eth' }, [both[1]], 'Ethereum', 'ETH') === 'eth (0x0000…00aa) on Ethereum');
+  const panel = readFileSync(join(HERE, '..', 'src/screens/PortfolioViews.tsx'), 'utf8');
+  check('the panel offers tokens only from pnlTokenChoices, only with the EVM slot priced on the active network',
+    panel.includes('const evmSlot = usable.find((s) => s.evm && s.networkChainId === evmCaip2) ?? null;') &&
+      panel.includes('pnlTokenChoices(tracked.tokens, evmCaip2)') &&
+      panel.includes("...(evmSlot ? tokenChoices.map((asset) => ({ kind: 'token' as const, slot: evmSlot, asset })) : [])") &&
+      panel.includes('computeTokenPnl({ ...common, asset: token })') &&
+      panel.includes("loadTokenBalance(contract, h, { expectedChain: evmCaip2 })"));
+  check('the intro says which coins and tokens are offered and that test-network ones are not',
+    panel.includes("'CoinGecko’s prices. It is offered for the native coin of a main network and for each ERC-20 token tracked on ' +") &&
+      panel.includes("'the active main network that CoinGecko prices, a token counted only by its own contract: test-network coins and ' +") &&
+      panel.includes("'tokens have no price, so they are not offered.") && !panel.includes('tokens are not offered (see the notes)'));
 }
 
 // ===========================================================================
@@ -398,16 +555,18 @@ console.log('Mutation checks (scratch copies of pnl.ts)');
 const MUTANT_DIR = join(HERE, `.mutants-pnl-${process.pid}`);
 let mutantCount = 0;
 process.on('exit', () => rmSync(MUTANT_DIR, { recursive: true, force: true }));
-async function importMutant(from, to) {
-  const relPath = 'src/wallet/pnl.ts';
+async function importMutant(from, to, relPath = 'src/wallet/pnl.ts', more = []) {
   const original = readFileSync(join(HERE, '..', relPath), 'utf8');
-  if (!original.includes(from)) throw new Error(`mutation anchor not found: ${from}`);
-  const source = original.replace(from, to);
+  let source = original;
+  for (const [f, t] of [[from, to], ...more]) {
+    if (!source.includes(f)) throw new Error(`mutation anchor not found: ${f}`);
+    source = source.replace(f, t);
+  }
   const originalDir = dirname(join(HERE, '..', relPath));
   const rewritten = source.replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolvePath(originalDir, spec)).href}'`);
   mkdirSync(MUTANT_DIR, { recursive: true });
   mutantCount += 1;
-  const file = join(MUTANT_DIR, `m${mutantCount}-pnl.ts`);
+  const file = join(MUTANT_DIR, `m${mutantCount}-${relPath.split('/').pop()}`);
   writeFileSync(file, rewritten);
   return import(pathToFileURL(file).href);
 }
@@ -441,6 +600,44 @@ async function importMutant(from, to) {
   const r10 = m10.computeTokenPnl({ ...tokenBase, balance: 70n * UNIT });
   check('mutant (a token shortfall assumed to be network fees) is caught', r10.kind === 'ok' && r10.assumedFees === 5n * UNIT);
   check('mutant (the old "0 entries … older ones exist" line) is caught', m6.pnlHistoryLoadedLine(0, true) === '0 entries of history loaded; older ones exist.');
+
+  // Phase 23 item 8, second slice.
+  const sepoliaUsdc = { kind: 'fungible', assetId: { chainId: 'eip155:11155111', namespace: 'erc20', reference: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238' }, symbol: 'USDC', name: 'USDC', decimals: 6 };
+  const m11 = await importMutant('    const chosen = tokenPnlAsset(token, activeEvmCaip2);', '    const chosen = tokenPnlAsset(token, token.assetId.chainId);');
+  check('mutant (a token checked against its own chain, not the active one: a mainnet token offered while a test network is active) is caught',
+    m11.pnlTokenChoices([USDC_TOKEN], 'eip155:11155111').length === 1);
+  const m12 = await importMutant('  if (priceId === null) {', '  if (false) {', 'src/wallet/pnl.ts', [
+    ["    if (!source || source.kind !== 'token' || source.contract !== chosen.asset.contract) continue;\n", "    void source;\n"],
+  ]);
+  check('mutant (both guards gone: a test-network token offered) is caught', m12.pnlTokenChoices([sepoliaUsdc], 'eip155:11155111').length === 1);
+  const m13 = await importMutant('    if (e.contract.toLowerCase() !== contract) {', '    if (false) {');
+  const fakeUsdc = { id: '0xfake', timestamp: 1_792_800_000, confirmed: true, blockHeight: 1_792_800_000, direction: 'in', assetSymbol: 'USDC', assetAmount: 10n ** 12n, assetDecimals: 6, contract: LOOKALIKE, counterparty: EXCHANGE };
+  const usdcAsset = L.pnlTokenChoices([USDC_TOKEN], 'eip155:1')[0];
+  const fixturePoints = JSON.parse(USDC_FIXTURE).prices.map(([t, p]) => ({ timeMs: t, price: String(p) }));
+  const lookalikeInput = {
+    asset: usdcAsset, entries: [fakeUsdc, ...usdcEntries], hasMore: false, smartAccount: null, ownAddresses: [ME], balance: 1_200n * U,
+    prices: { status: 'ok', points: fixturePoints, granularity: 'hourly' },
+    currentQuote: { assetId: usdcAsset.priceId, currency: 'usd', price: '0.9998', provider: 'coingecko', updatedAtMs: NOW_T - 60_000, fetchedAtMs: NOW_T - 30_000 },
+    nowMs: NOW_T,
+  };
+  check('…the real module leaves the look-alike out of the fixture case', L.computeTokenPnl(lookalikeInput).kind === 'ok');
+  const r13 = m13.computeTokenPnl(lookalikeInput);
+  check('mutant (a look-alike “USDC” counted in the fixture case) is caught', !(r13.kind === 'ok' && r13.held === 1_200n * U && r13.purchases === 2));
+  const m14 = await importMutant('`token:${source.platformId}:${source.contract}|${from}|${to}`', '`token:${source.platformId}|${from}|${to}`', 'src/wallet/prices.ts');
+  {
+    const urls = [];
+    const fetchFn = async (url) => {
+      urls.push(url);
+      const body = url.includes(USDC) ? USDC_FIXTURE : '{"prices":[[1792713600000,1.001]],"market_caps":[],"total_volumes":[]}';
+      return { ok: true, status: 200, headers: { get: () => null }, text: async () => body };
+    };
+    const opts = { enabled: true, store: { getItem: async () => null, setItem: async () => undefined }, fetchFn, now: () => NOW_T };
+    m14.resetPriceHistoryCache();
+    await m14.fetchPriceHistory(usdcAsset.priceId, 1_792_713_600, 1_792_886_400, opts);
+    const daiRes = await m14.fetchPriceHistory('eip155:1/erc20:0x6B175474E89094C44Da98b954EedeAC495271d0F', 1_792_713_600, 1_792_886_400, opts);
+    check('mutant (the history cache keyed without the contract: another contract’s prices used) is caught',
+      urls.length === 1 && daiRes.status === 'ok' && daiRes.points.length === 49);
+  }
 }
 
 console.log(`\nformatMoney sanity: ${formatMoney(usd(2500n), { hidden: false, signed: true })}`);

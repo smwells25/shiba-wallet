@@ -4,9 +4,11 @@ import {
   COINGECKO_DEMO_KEY_HEADER,
   COINGECKO_HISTORY_MAX_DAYS,
   COINGECKO_NATIVE_IDS,
+  COINGECKO_TOKEN_PLATFORMS,
   PriceError,
   documentedGranularity,
   fetchMarketChartRange,
+  fetchTokenMarketChartRange,
   cachedPriceProvider,
   coinGeckoPriceProvider,
   fiatValue,
@@ -484,11 +486,49 @@ export const PRICE_HISTORY_CACHE_MS = 5 * 60_000;
 
 /**
  * The CoinGecko coin id for a MAINNET native coin's CAIP-19 id, or null.
- * Only the four mainnet native coins have a history read (the same table
- * the spot prices use); tokens and test-network assets never do.
+ * Only the four mainnet native coins have a coin id here (the same table
+ * the spot prices use); tokens go through historySourceFor, test-network
+ * assets never have either.
  */
 export function historyCoinIdFor(assetId: string): string | null {
   return Object.prototype.hasOwnProperty.call(COINGECKO_NATIVE_IDS, assetId) ? COINGECKO_NATIVE_IDS[assetId]! : null;
+}
+
+const ERC20_ASSET_RE = /^(eip155:\d+)\/erc20:(0x[0-9a-fA-F]{40})$/;
+
+/**
+ * Where a CAIP-19 id's price history is read, or null when it is not read
+ * at all (phase 23 item 8, second slice):
+ *
+ *  - a mainnet native coin → CoinGecko's coin id (historyCoinIdFor);
+ *  - an ERC-20 token → CoinGecko's /coins/{platform}/contract/{contract}
+ *    range, ONLY when its chain is one of the wallet's main networks
+ *    (config/defaults.ts, never a test network) AND CoinGecko's asset
+ *    platform for that chain is in COINGECKO_TOKEN_PLATFORMS (the table the
+ *    spot token price uses: today "eip155:1" → "ethereum" only). The
+ *    contract is the token's own, lowercased: a history is never read under
+ *    another contract's address.
+ *
+ * Why the contract route and not a coin id: the wallet already prices
+ * tracked tokens by (platform, contract) through /simple/token_price, and
+ * holds no contract → coin-id table (mainnet USDC is "eip155:1/erc20:0xA0b8…"
+ * here, not "usd-coin"); a coin-id table would be a new mapping to keep
+ * true, the contract route needs none.
+ */
+export type PriceHistorySource =
+  | { kind: 'coin'; coinId: string }
+  | { kind: 'token'; platformId: string; contract: string };
+
+export function historySourceFor(assetId: string): PriceHistorySource | null {
+  const coinId = historyCoinIdFor(assetId);
+  if (coinId) return { kind: 'coin', coinId };
+  const erc20 = ERC20_ASSET_RE.exec(assetId);
+  if (!erc20) return null;
+  const chain = erc20[1]!;
+  if (!MAINNET_CHAIN_IDS.has(chain)) return null;
+  if (!Object.prototype.hasOwnProperty.call(COINGECKO_TOKEN_PLATFORMS, chain)) return null;
+  const platformId = COINGECKO_TOKEN_PLATFORMS[chain]!;
+  return { kind: 'token', platformId, contract: erc20[2]!.toLowerCase() };
 }
 
 export type PriceHistoryResult =
@@ -512,14 +552,17 @@ export function resetPriceHistoryCache(): void {
 }
 
 /**
- * The USD price history of one mainnet native coin from `fromSec` to
- * `toSec`, in ONE request to CoinGecko's /coins/{id}/market_chart/range
- * (through the same key store and key guard as the spot prices). Nothing is
- * requested when "Show fiat values" is off, for an asset without a coin id,
- * or for a range that starts more than PRICE_HISTORY_MAX_DAYS days ago (the
- * free API refuses it; the caller reports those transactions as a gap). A
- * result is reused for PRICE_HISTORY_CACHE_MS for the same coin and the same
- * range rounded to the hour.
+ * The USD price history of one mainnet native coin, or of one ERC-20 token
+ * tracked on a main network, from `fromSec` to `toSec`, in ONE request to
+ * CoinGecko's /coins/{id}/market_chart/range or, for a token,
+ * /coins/{platform}/contract/{contract}/market_chart/range (historySourceFor;
+ * through the same key store and key guard as the spot prices). Nothing is
+ * requested when "Show fiat values" is off, for an asset historySourceFor
+ * does not map ('unsupported'), or for a range that starts more than
+ * PRICE_HISTORY_MAX_DAYS days ago (the free API refuses it; the caller
+ * reports those transactions as a gap). A result is reused for
+ * PRICE_HISTORY_CACHE_MS for the same source (a token's platform AND
+ * contract) and the same range rounded to the hour.
  */
 export async function fetchPriceHistory(
   assetId: string,
@@ -528,22 +571,26 @@ export async function fetchPriceHistory(
   options: { enabled: boolean; store?: KeyValueStore; fetchFn?: FetchLike; now?: () => number },
 ): Promise<PriceHistoryResult> {
   if (!options.enabled) return { status: 'unavailable', reason: 'fiat-off' };
-  const coinId = historyCoinIdFor(assetId);
-  if (!coinId) return { status: 'unavailable', reason: 'unsupported' };
+  const source = historySourceFor(assetId);
+  if (!source) return { status: 'unavailable', reason: 'unsupported' };
   const nowMs = (options.now ?? Date.now)();
   const nowSec = Math.floor(nowMs / 1000);
   const from = Math.floor(fromSec / 3600) * 3600;
   const to = Math.min(nowSec, Math.ceil(toSec / 3600) * 3600);
   if (from < nowSec - PRICE_HISTORY_MAX_DAYS * 86_400 || to <= from) return { status: 'unavailable', reason: 'out-of-range' };
-  const cacheKey = `${coinId}|${from}|${to}`;
+  const cacheKey = source.kind === 'coin' ? `coin:${source.coinId}|${from}|${to}` : `token:${source.platformId}:${source.contract}|${from}|${to}`;
   const cached = historyCache.get(cacheKey);
   if (cached && nowMs - cached.at < PRICE_HISTORY_CACHE_MS) return cached.result;
   const config = await getPriceConfig(options.store ?? AsyncStorage);
   try {
-    const points = await fetchMarketChartRange(
-      { coinId, currency: PRICE_CURRENCY, fromSec: from, toSec: to },
-      { fetchFn: guardedCoinGeckoFetch(options.fetchFn), ...(config.demoApiKey ? { demoApiKey: config.demoApiKey } : {}) },
-    );
+    const transport = { fetchFn: guardedCoinGeckoFetch(options.fetchFn), ...(config.demoApiKey ? { demoApiKey: config.demoApiKey } : {}) };
+    const points =
+      source.kind === 'coin'
+        ? await fetchMarketChartRange({ coinId: source.coinId, currency: PRICE_CURRENCY, fromSec: from, toSec: to }, transport)
+        : await fetchTokenMarketChartRange(
+            { platformId: source.platformId, contract: source.contract, currency: PRICE_CURRENCY, fromSec: from, toSec: to },
+            transport,
+          );
     const result = {
       status: 'ok' as const,
       points,
