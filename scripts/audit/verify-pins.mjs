@@ -208,6 +208,8 @@ const STAKING_FILE = 'packages/chains-evm/src/staking.ts';
 const LZ_FILE = 'packages/chains-evm/src/bridge/layerzero-oft.ts';
 const CCTP_FILE = 'packages/chains-evm/src/bridge/cctp-v2.ts';
 const ENS_FILE = 'packages/chains-evm/src/ens.ts';
+const ENS_REG_FILE = 'packages/chains-evm/src/ens-register.ts';
+const ENS_SMOKE_FILE = 'scripts/testnet/ens-register-smoke.mjs';
 const ASSET_FILE = 'packages/chains-evm/src/asset-diff.ts';
 const ACTIVITY_FILE = 'packages/chains-evm/src/activity-decode.ts';
 const USEROP_FILE = 'packages/chains-evm/src/userop.ts';
@@ -665,6 +667,191 @@ pin({
   source: cite(ENS_FILE, evm.ENS_UNIVERSAL_RESOLVER),
 });
 
+// --- ENSv2 on Ethereum Sepolia (wallet handles, phase 23 item 6) ------------------
+// ens-register.ts pins the ENSv2 Sepolia deployment (ENS_V2_SEPOLIA) and its
+// one payment token (ENS_V2_SEPOLIA_USDC). Two more addresses on the Universal
+// Resolver's proxy chain are pinned only in the smoke script's code
+// (MANAGED_URP, UR_V2); the engine comment gives them abbreviated. They are
+// parsed from the script's source (importing it would run it) and cited there.
+// The engine's own reads (readEnsRegistrarConfig, readEnsPricing,
+// quoteEnsRegistration, readEnsOwnedResolver) first read the latest block with
+// eth_getBlockByNumber, which this script does not send, so the same facts are
+// read here with eth_call at 'latest' and compared with the same constants the
+// engine compares; readEnsPrimaryName (eth_chainId + eth_call only) runs as is.
+const ENSR = evm.ENS_V2_SEPOLIA;
+const ENS_SEPOLIA = [Number(ENSR.chainId)];
+const ensSmokeText = fs.readFileSync(path.join(ROOT, ENS_SMOKE_FILE), 'utf8');
+const smokeConst = (name) => {
+  const m = ensSmokeText.match(new RegExp(`^const ${name} = '(0x[0-9a-fA-F]{40})';`, 'm'));
+  if (!m) throw new Error(`Collector bug: ${name} is not written in ${ENS_SMOKE_FILE}`);
+  return m[1];
+};
+const ENS_MANAGED_URP = smokeConst('MANAGED_URP');
+const ENS_UR_V2 = smokeConst('UR_V2');
+// ETHRegistry root roles the registrar must hold: REGISTRAR | RENEW, the
+// bitmap the smoke script asserts (1 | 1 << 16).
+const ENS_REGISTRAR_ROLES = 1n | (1n << 16n);
+const ensRolesSource = cite(ENS_SMOKE_FILE, '1n | (1n << 16n)');
+const ensLimitsSource = cite(ENS_REG_FILE, 'export const ENS_V2_SEPOLIA_REGISTRAR_LIMITS');
+const ensBytes = (s) => ({ kind: 'bytes', value: Buffer.from(s, 'utf8') });
+const EIP165_IETHREGISTRAR = '0xc1401b80'; // docs/WALLET_HANDLES.md 3.3 (a document, not code: report only)
+
+pin({
+  group: 'ENSv2 (Sepolia)',
+  label: 'ENSv2 ETHRegistrar',
+  address: ENSR.ethRegistrar,
+  chains: ENS_SEPOLIA,
+  source: cite(ENS_REG_FILE, ENSR.ethRegistrar),
+  checks: [
+    async (c) => addressCheck(c, ENSR.ethRegistrar, 'rentPriceOracle()', [], ENSR.rentPriceOracle, 'rentPriceOracle() (the engine refuses a quote otherwise)'),
+    async (c) => addressCheck(c, ENSR.ethRegistrar, 'ETH_REGISTRY()', [], ENSR.ethRegistry, 'ETH_REGISTRY() (the engine refuses a quote otherwise)'),
+    ...[
+      ['MIN_COMMITMENT_AGE()', 'minCommitmentAge'],
+      ['MAX_COMMITMENT_AGE()', 'maxCommitmentAge'],
+      ['MIN_REGISTER_DURATION()', 'minRegisterDuration'],
+      ['GRACE_PERIOD()', 'gracePeriod'],
+    ].map(([sig, key]) => async (c) => uintCheck(c, ENSR.ethRegistrar, sig, evm.ENS_V2_SEPOLIA_REGISTRAR_LIMITS[key], `${sig} = ENS_V2_SEPOLIA_REGISTRAR_LIMITS.${key} (${ensLimitsSource})`)),
+    async (c) => reportBool(c, ENSR.ethRegistrar, 'supportsInterface(bytes4)', [{ kind: 'fixedBytes', value: toBytes(EIP165_IETHREGISTRAR) }], `supportsInterface(${EIP165_IETHREGISTRAR}) (report only; docs/WALLET_HANDLES.md 3.3 says true)`),
+    async (c) => reportAddressWithCode(c, ENSR.ethRegistrar, 'owner()', 'owner() (report only; docs/WALLET_HANDLES.md 3.4: a key with no code)'),
+    async (c) => reportAddressWithCode(c, ENSR.ethRegistrar, 'BENEFICIARY()', 'BENEFICIARY() (report only)'),
+  ],
+});
+pin({
+  group: 'ENSv2 (Sepolia)',
+  label: 'ENSv2 ETHRegistry (.eth PermissionedRegistry)',
+  address: ENSR.ethRegistry,
+  chains: ENS_SEPOLIA,
+  source: cite(ENS_REG_FILE, ENSR.ethRegistry),
+  checks: [
+    async (c) => boolCheck(c, ENSR.ethRegistry, 'hasRootRoles(uint256,address)', [uintArg(ENS_REGISTRAR_ROLES), addrArg(ENSR.ethRegistrar)], true, `hasRootRoles(REGISTRAR|RENEW, ETHRegistrar) (${ensRolesSource})`),
+  ],
+});
+pin({
+  group: 'ENSv2 (Sepolia)',
+  label: 'ENSv2 RootRegistry',
+  address: ENSR.rootRegistry,
+  chains: ENS_SEPOLIA,
+  source: cite(ENS_REG_FILE, ENSR.rootRegistry),
+  checks: [
+    async (c) => addressCheck(c, ENSR.rootRegistry, 'getSubregistry(string)', [ensBytes('eth')], ENSR.ethRegistry, 'getSubregistry("eth") = the pinned ETHRegistry'),
+    async (c) => addressCheck(c, ENSR.rootRegistry, 'getResolver(string)', [ensBytes('reverse')], ENSR.reverseMirrorResolver, 'getResolver("reverse") = the pinned ENSV1Resolver mirror'),
+  ],
+});
+pin({
+  group: 'ENSv2 (Sepolia)',
+  label: 'ENSv2 StandardRentPriceOracle',
+  address: ENSR.rentPriceOracle,
+  chains: ENS_SEPOLIA,
+  source: cite(ENS_REG_FILE, ENSR.rentPriceOracle),
+  checks: [
+    async (c) => boolCheck(c, ENSR.rentPriceOracle, 'isPaymentToken(address)', [addrArg(evm.ENS_V2_SEPOLIA_USDC.address)], true, "isPaymentToken(Circle's Sepolia USDC)"),
+    async (c) => {
+      const name = `getPaymentTokenRatio(USDC) (report only; ${cite(ENS_REG_FILE, 'true / (1, 1000000)')} says (1, 1000000))`;
+      try {
+        const out = await call(c, ENSR.rentPriceOracle, 'getPaymentTokenRatio(address)', [addrArg(evm.ENS_V2_SEPOLIA_USDC.address)]);
+        const n = asUint(out, 0);
+        const d = asUint(out, 1);
+        return { name, ok: true, detail: `(${n}, ${d})${n === 1n && d === 1000000n ? ' = the comment' : ' DIFFERS from the comment'}` };
+      } catch (e) {
+        return { name, ok: null, detail: `could not read: ${short(e)}` };
+      }
+    },
+    async (c) => {
+      // readPricingAt refuses unless the first priced label length is ENS_V2_MIN_LABEL_LENGTH.
+      const name = `getBaseRates(): first priced label length = ENS_V2_MIN_LABEL_LENGTH ${evm.ENS_V2_MIN_LABEL_LENGTH} (${cite(ENS_REG_FILE, 'export const ENS_V2_MIN_LABEL_LENGTH')})`;
+      try {
+        const rates = asUintArray(await call(c, ENSR.rentPriceOracle, 'getBaseRates()'));
+        const first = rates.findIndex((r) => r > 0n) + 1;
+        return { name, ok: first === evm.ENS_V2_MIN_LABEL_LENGTH, detail: `rates [${rates.join(', ')}]; first priced ${first}` };
+      } catch (e) {
+        return { name, ok: null, detail: `could not read: ${short(e)}` };
+      }
+    },
+  ],
+});
+pin({
+  group: 'ENSv2 (Sepolia)',
+  label: 'ENSv2 VerifiableFactory',
+  address: ENSR.verifiableFactory,
+  chains: ENS_SEPOLIA,
+  source: cite(ENS_REG_FILE, ENSR.verifiableFactory),
+  checks: [
+    async (c) => addressCheck(c, ENSR.verifiableFactory, 'proxyLogic()', [], ENSR.verifiableProxyLogic, 'proxyLogic() = the pinned proxy logic'),
+    async (c) => {
+      // The engine's CREATE2 prediction against the factory's own answer, for a
+      // sample owner (the registrar's address: any address serves).
+      const owner = ENSR.ethRegistrar;
+      const salt = evm.ensOwnedResolverSalt(owner);
+      const mine = evm.predictVerifiableProxyAddress(owner, salt);
+      return addressCheck(c, ENSR.verifiableFactory, 'predictProxyAddress(address,uint256)', [addrArg(owner), uintArg(salt)], mine, 'predictProxyAddress(sample owner, OwnedResolver salt) = the engine\'s predictVerifiableProxyAddress');
+    },
+  ],
+});
+pin({ group: 'ENSv2 (Sepolia)', label: "ENSv2 VerifiableFactory proxyLogic()", address: ENSR.verifiableProxyLogic, chains: ENS_SEPOLIA, source: cite(ENS_REG_FILE, ENSR.verifiableProxyLogic) });
+pin({ group: 'ENSv2 (Sepolia)', label: 'ENSv2 PermissionedResolver implementation', address: ENSR.permissionedResolverImpl, chains: ENS_SEPOLIA, source: cite(ENS_REG_FILE, ENSR.permissionedResolverImpl) });
+pin({ group: 'ENSv2 (Sepolia)', label: 'ENSv2 UserRegistry implementation', address: ENSR.userRegistryImpl, chains: ENS_SEPOLIA, source: cite(ENS_REG_FILE, ENSR.userRegistryImpl) });
+pin({
+  group: 'ENSv2 (Sepolia)',
+  label: 'ENSv1 ReverseRegistrar (primary names)',
+  address: ENSR.v1ReverseRegistrar,
+  chains: ENS_SEPOLIA,
+  source: cite(ENS_REG_FILE, ENSR.v1ReverseRegistrar),
+  checks: [async (c) => addressCheck(c, ENSR.v1ReverseRegistrar, 'defaultResolver()', [], ENSR.v1DefaultResolver, 'defaultResolver() = the pinned v1 PublicResolver')],
+});
+pin({ group: 'ENSv2 (Sepolia)', label: 'ENSv1 PublicResolver (the ReverseRegistrar\'s default)', address: ENSR.v1DefaultResolver, chains: ENS_SEPOLIA, source: cite(ENS_REG_FILE, ENSR.v1DefaultResolver) });
+pin({ group: 'ENSv2 (Sepolia)', label: 'ENSV1Resolver (reverse mirror)', address: ENSR.reverseMirrorResolver, chains: ENS_SEPOLIA, source: cite(ENS_REG_FILE, ENSR.reverseMirrorResolver) });
+// The Universal Resolver proxy is collected above; on Sepolia its proxy chain
+// is checked too (merged into the same row).
+pin({
+  group: 'ENS',
+  label: 'ENS Universal Resolver',
+  address: evm.ENS_UNIVERSAL_RESOLVER,
+  chains: ENS_SEPOLIA,
+  source: cite(ENS_FILE, evm.ENS_UNIVERSAL_RESOLVER),
+  checks: [
+    async (c) => slotAddressCheck(c, evm.ENS_UNIVERSAL_RESOLVER, ENS_MANAGED_URP, `ERC-1967 slot = MANAGED_URP (${cite(ENS_SMOKE_FILE, 'const MANAGED_URP =')})`),
+    async (c) => reportAddressWithCode(c, evm.ENS_UNIVERSAL_RESOLVER, 'admin()', 'admin() (report only; docs/WALLET_HANDLES.md 3.4: no code)'),
+  ],
+});
+pin({
+  group: 'ENSv2 (Sepolia)',
+  label: 'ManagedUniversalResolverProxy (pinned in the smoke script)',
+  address: ENS_MANAGED_URP,
+  chains: ENS_SEPOLIA,
+  source: cite(ENS_SMOKE_FILE, 'const MANAGED_URP ='),
+  checks: [
+    async (c) => slotAddressCheck(c, ENS_MANAGED_URP, ENS_UR_V2, `ERC-1967 slot = UR_V2 (${cite(ENS_SMOKE_FILE, 'const UR_V2 =')})`),
+    async (c) => addressCheck(c, ENS_MANAGED_URP, 'implementation()', [], ENS_UR_V2, 'implementation() = UR_V2'),
+    async (c) => reportAddressWithCode(c, ENS_MANAGED_URP, 'admin()', 'admin() (report only; docs/WALLET_HANDLES.md 3.4: no code)'),
+  ],
+  documented: [{ fact: 'engine comment abbreviates it', source: cite(ENS_REG_FILE, '0x6d80…e6F1'), addressPrefix: '0x6d80', addressSuffix: 'e6F1' }],
+});
+pin({
+  group: 'ENSv2 (Sepolia)',
+  label: 'UniversalResolverV2 (pinned in the smoke script)',
+  address: ENS_UR_V2,
+  chains: ENS_SEPOLIA,
+  source: cite(ENS_SMOKE_FILE, 'const UR_V2 ='),
+  checks: [async (c) => addressCheck(c, ENS_UR_V2, 'ROOT_REGISTRY()', [], ENSR.rootRegistry, 'ROOT_REGISTRY() = the pinned RootRegistry')],
+  documented: [{ fact: 'engine comment abbreviates it', source: cite(ENS_REG_FILE, '0x24E1…2D72'), addressPrefix: '0x24E1', addressSuffix: '2D72' }],
+});
+// readEnsPrimaryName through the Universal Resolver on both ENS networks, for
+// an address with no expected primary name (the registrar's): the engine's own
+// strict decode must answer without a refusal.
+pin({
+  group: 'ENS',
+  label: 'ENS Universal Resolver',
+  address: evm.ENS_UNIVERSAL_RESOLVER,
+  chains: evm.ENS_RESOLUTION_CHAIN_IDS.map(Number),
+  source: cite(ENS_FILE, evm.ENS_UNIVERSAL_RESOLVER),
+  checks: [
+    async (c) => engineCheck(c, 'readEnsPrimaryName (engine, sample address)', async () => {
+      const r = await evm.readEnsPrimaryName(c.node, ENSR.ethRegistrar, BigInt(c.chainId));
+      return `status ${r.status}${r.name ? ` (${r.name})` : ''} for ${ENSR.ethRegistrar}`;
+    }),
+  ],
+});
+
 // --- Tokens and fixed addresses ---------------------------------------------------
 const tokenRows = new Map(); // chainId:address -> { symbol, decimals, sources: [] }
 function addToken(chainId, address, symbol, decimals, source) {
@@ -684,6 +871,10 @@ addToken(1, erc20App.USDC_MAINNET.assetId.reference, erc20App.USDC_MAINNET.symbo
 for (const [id, usdc] of Object.entries(evm.CCTP_V2_TESTNET_USDC)) addToken(Number(id), usdc, 'USDC', 6, `${cite(CCTP_FILE, usdc)} (CCTP)`);
 for (const [id, t] of Object.entries(C.tokens)) addToken(Number(id), t, 'USDC', 6, `${cite(CIRCLE_FILE, t)} (Circle paymaster token)`);
 for (const [id, t] of Object.entries(PM.tokens)) addToken(Number(id), t, 'USDC', 6, `${cite(PIMLICO_FILE, t)} (Pimlico paymaster token)`);
+{
+  const t = evm.ENS_V2_SEPOLIA_USDC;
+  addToken(Number(evm.ENS_V2_SEPOLIA.chainId), t.address, t.symbol, t.decimals, `${cite(ENS_REG_FILE, t.address)} (ENS registration payment token)`);
+}
 for (const row of tokenRows.values()) {
   pin({
     group: 'Tokens',
@@ -751,8 +942,9 @@ function rowsFor(chainId) {
     if (!row) {
       out.set(key, { ...p, labels: [p.label], sources: [p.source], checks: [...p.checks], documented: [...p.documented], hash: p.hashes[chainId] ?? null, hashSources: p.hashes[chainId] ? [p.hashSource] : [] });
     } else {
-      row.labels.push(p.label);
-      row.sources.push(p.source);
+      // A pin repeated for extra checks on one network adds no new label or source.
+      if (!row.labels.includes(p.label)) row.labels.push(p.label);
+      if (!row.sources.includes(p.source)) row.sources.push(p.source);
       row.checks.push(...p.checks);
       row.documented.push(...p.documented);
       if (p.hashes[chainId]) {
@@ -935,6 +1127,44 @@ async function reportUint(c, to, sig, name) {
     return { name, ok: null, detail: `could not read: ${short(e)}` };
   }
 }
+async function reportBool(c, to, sig, args, name) {
+  try {
+    const got = asUint(await call(c, to, sig, args));
+    if (got > 1n) throw new Error('not a boolean word');
+    return { name, ok: true, detail: String(got === 1n) };
+  } catch (e) {
+    return { name, ok: null, detail: `could not read: ${short(e)}` };
+  }
+}
+/** Reads an address-returning view and reports the address and whether it holds code. */
+async function reportAddressWithCode(c, to, sig, name) {
+  try {
+    const got = asAddress(await call(c, to, sig));
+    const code = await c.node('eth_getCode', [got, 'latest']);
+    const len = typeof code === 'string' ? (code.length - 2) / 2 : null;
+    const delegated = len === 23 && code.slice(2, 8).toLowerCase() === 'ef0100' ? `, an EIP-7702 delegation to ${checksum('0x' + code.slice(8))}` : '';
+    return { name, ok: true, detail: `${got} (${len === 0 ? 'no code' : `${len} bytes of code${delegated}`})` };
+  } catch (e) {
+    return { name, ok: null, detail: `could not read: ${short(e)}` };
+  }
+}
+/** The ERC-1967 implementation slot of `to` must hold `expected`. */
+async function slotAddressCheck(c, to, expected, name) {
+  try {
+    const slot = await c.node('eth_getStorageAt', [to, ERC1967_SLOT, 'latest']);
+    if (typeof slot !== 'string' || !/^0x[0-9a-fA-F]{1,64}$/.test(slot)) throw new Error('eth_getStorageAt returned a non-word answer');
+    const got = checksum('0x' + slot.slice(2).padStart(64, '0').slice(24));
+    return { name, ok: same(got, expected), detail: same(got, expected) ? got : `${got} (expected ${checksum(expected)})` };
+  } catch (e) {
+    return { name, ok: null, detail: `could not read: ${short(e)}` };
+  }
+}
+/** A uint256[] return value (one dynamic array). */
+function asUintArray(hex) {
+  const off = Number(asUint(hex, 0)) / 32;
+  const len = Number(asUint(hex, off));
+  return Array.from({ length: len }, (_, i) => asUint(hex, off + 1 + i));
+}
 async function eip712DomainCheck(c, to, expectedName, expectedVersion) {
   const name = 'eip712Domain()';
   try {
@@ -1054,6 +1284,7 @@ async function verifyRow(c, row) {
     const parts = [];
     if (d.length !== undefined) parts.push(d.length === r.length ? `length ${r.length} = documented` : `length ${r.length} ≠ documented ${d.length}`);
     if (d.keccakPrefix) parts.push(r.keccak.startsWith(d.keccakPrefix) && r.keccak.endsWith(d.keccakSuffix) ? 'keccak agrees with the truncated documented value' : 'keccak differs from the truncated documented value');
+    if (d.addressPrefix) parts.push(lower(r.address).startsWith(lower(d.addressPrefix)) && lower(r.address).endsWith(lower(d.addressSuffix)) ? `address agrees with the abbreviated ${d.addressPrefix}…${d.addressSuffix}` : `address differs from the abbreviated ${d.addressPrefix}…${d.addressSuffix}`);
     r.documentedResults.push(`${parts.join('; ')} (${d.source})`);
   }
   try {
@@ -1233,12 +1464,22 @@ function stripFns(r) {
 }
 function readHead() {
   try {
-    const head = fs.readFileSync(path.join(ROOT, '.git', 'HEAD'), 'utf8').trim();
+    // In a linked worktree .git is a file "gitdir: <path>"; its refs live in
+    // the common directory named by <gitdir>/commondir.
+    let gitDir = path.join(ROOT, '.git');
+    if (fs.statSync(gitDir).isFile()) {
+      const m = fs.readFileSync(gitDir, 'utf8').match(/^gitdir:\s*(.+)$/m);
+      if (!m) return 'unknown';
+      gitDir = path.resolve(ROOT, m[1].trim());
+    }
+    const commonFile = path.join(gitDir, 'commondir');
+    const commonDir = fs.existsSync(commonFile) ? path.resolve(gitDir, fs.readFileSync(commonFile, 'utf8').trim()) : gitDir;
+    const head = fs.readFileSync(path.join(gitDir, 'HEAD'), 'utf8').trim();
     if (!head.startsWith('ref: ')) return head;
     const ref = head.slice(5);
-    const loose = path.join(ROOT, '.git', ref);
+    const loose = path.join(commonDir, ref);
     if (fs.existsSync(loose)) return fs.readFileSync(loose, 'utf8').trim();
-    const packed = fs.readFileSync(path.join(ROOT, '.git', 'packed-refs'), 'utf8').split('\n').find((l) => l.endsWith(' ' + ref));
+    const packed = fs.readFileSync(path.join(commonDir, 'packed-refs'), 'utf8').split('\n').find((l) => l.endsWith(' ' + ref));
     return packed ? packed.split(' ')[0] : 'unknown';
   } catch {
     return 'unknown';
