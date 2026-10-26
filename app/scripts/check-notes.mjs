@@ -416,6 +416,26 @@ async function exportFixture(mod = notes) {
     failedRows[0][2] === 'Received (failed)' && failedRows[0][3] === '' && failedRows[0][4] === 'test ETH' &&
       failedRows[1][2] === 'Received (failed)' && failedRows[1][3] === '' && failedRows[1][4] === 'USDC');
   check('failed outgoing keeps its attempted amount ("Sent (failed)")', failedRows[2][2] === 'Sent (failed)' && failedRows[2][3] === '0.003');
+  // Phase 23 item 8: a token row whose entry names its contract
+  // (HistoryEntry.contract) names it in the asset cell; an entry without one
+  // exports exactly as before (the rows above).
+  const USDC_C = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
+  const contractRows = activityExportRows({
+    ...input,
+    entries: [
+      { id: TX_A, timestamp: 1760084100, confirmed: true, direction: 'in', assetSymbol: 'USDC', assetAmount: 1234567n, assetDecimals: 6, contract: USDC_C },
+      { id: TX_B, timestamp: 1760084000, confirmed: true, direction: 'in', assetSymbol: 'PUNK', contract: USDC_C },
+      { id: TX_C, timestamp: 1760083900, confirmed: true, direction: 'in', contract: USDC_C },
+      { id: TX_C, timestamp: 1760083900, confirmed: true, direction: 'in', assetSymbol: '=cmd|calc', contract: USDC_C },
+    ],
+  });
+  check('a token row names its contract after the symbol, the amount unchanged',
+    contractRows[0][3] === '1.234567' && contractRows[0][4] === `USDC (contract ${USDC_C})`, contractRows[0][4]);
+  check('…without an exact amount too (amount empty)', contractRows[1][3] === '' && contractRows[1][4] === `PUNK (contract ${USDC_C})`);
+  check('…and a token with no symbol is named by its contract alone', contractRows[2][3] === '' && contractRows[2][4] === `contract ${USDC_C}`);
+  check('…a symbol starting with = is still defused with the contract after it',
+    csvField(contractRows[3][4]) === `"'=cmd|calc (contract ${USDC_C})"`);
+  check('tokenAssetCell: no contract → the symbol alone, byte for byte', notes.tokenAssetCell('USDC', undefined) === 'USDC' && notes.tokenAssetCell('', undefined) === '');
   check('file name',
     activityExportFileName(SEPOLIA, '0x772e9f0A3B6f3b1F0c2e1C0D6dB34b7aE9cAF44F', new Date('2026-10-10T23:59:00Z')) ===
       'shiba-activity_eip155-11155111_0x772e-F44F_2026-10-10.csv');
@@ -691,6 +711,16 @@ async function importMutant(from, to) {
     "  'Notes are kept only on this phone. They are not sent anywhere, not backed up by your ' +\n  'recovery phrase and are deleted when the wallet is wiped. Hide amounts does not hide them.';",
   );
   check('mutant (the old line saying notes are not backed up by the phrase) is caught', !privacyLineOk(m6.NOTE_PRIVACY_LINE));
+
+  // 7. An entry without a contract (old-shaped) exported differently.
+  const m7 = await importMutant('  if (contract === undefined) return symbol;\n', '');
+  const rows7 = m7.activityExportRows(await exportFixture(m7));
+  check('mutant (old-shaped token rows changed by the contract rule) is caught', rows7[1][4] !== 'USDC');
+
+  // 8. The contract left out of the asset cell.
+  const m8 = await importMutant("  return symbol === '' ? `contract ${contract}` : `${symbol} (contract ${contract})`;", '  return symbol;');
+  const rows8 = m8.activityExportRows({ ...(await exportFixture(m8)), entries: [{ id: TX_A, timestamp: 1, confirmed: true, direction: 'in', assetSymbol: 'USDC', assetAmount: 1n, assetDecimals: 6, contract: '0x' + 'ab'.repeat(20) }] });
+  check('mutant (the contract dropped from the asset cell) is caught', rows8[0][4] === 'USDC');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

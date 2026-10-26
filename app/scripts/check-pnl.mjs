@@ -6,7 +6,8 @@
 // wallet's own addresses excluded, assumed fees kept out of realised, every
 // gap sentence (incomplete history, the 365-day window, missing counterparty,
 // amount, time, price point, balance, today's price, the smart account),
-// tokens refused, Hide amounts, and the price request discipline (one
+// tokens (a tracked token counted by its exact contract, look-alikes left out,
+// a contract-less token transfer a gap, no assumed fees), Hide amounts, and the price request discipline (one
 // request, none when fiat is off, none out of range, cached). Ends with
 // mutants written from scratch copies of pnl.ts, each caught.
 //
@@ -168,13 +169,135 @@ console.log('check-pnl: tokens, failed and pending entries');
 {
   const token = entry('0x5', t2, 'in', 0n, EXCHANGE, { assetSymbol: 'USDC', assetAmount: 5_000_000n, assetDecimals: 6 });
   const withToken = L.computeNativePnl({ ...base, entries: [token, ...baseEntries] });
-  check('a token transfer is not part of the ETH figures and the refusal is stated', withToken.kind === 'ok' && moneyEquals(withToken.realised, usd(2500n)) &&
-    withToken.notes.some((n) => n.startsWith('1 token transfer is in the loaded history') && n.includes('a look-alike token could not be told apart')));
+  check('a token transfer is not part of the ETH figures and the true reason tokens are not offered is stated', withToken.kind === 'ok' && moneyEquals(withToken.realised, usd(2500n)) &&
+    withToken.notes.includes('1 token transfer is in the loaded history and is not part of these ETH figures. Profit and loss for tokens is not offered yet: this wallet reads CoinGecko’s price history only for the native coins of the main networks, not for tokens.') &&
+    !withToken.notes.some((n) => n.includes('look-alike')), JSON.stringify(withToken.notes));
+  const withContract = L.computeNativePnl({ ...base, entries: [{ ...token, contract: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48' }, ...baseEntries] });
+  check('…a token transfer that names its contract changes nothing in the ETH figures', withContract.kind === 'ok' && moneyEquals(withContract.realised, usd(2500n)) &&
+    JSON.stringify(withContract.notes) === JSON.stringify(withToken.notes));
   const failedTx = entry('0x6', t2, 'out', ETH, SHOP, { failed: true });
   const pending = { ...entry('0x7', null, 'in', ETH, EXCHANGE), confirmed: false };
   const r2 = L.computeNativePnl({ ...base, entries: [pending, failedTx, ...baseEntries] });
   check('failed and pending transactions are skipped and said', r2.kind === 'ok' && moneyEquals(r2.realised, usd(2500n)) &&
     r2.notes.includes('1 failed transaction moved no coins and is skipped.') && r2.notes.includes('1 pending transaction is not counted until confirmed.'));
+}
+
+// ===========================================================================
+console.log('check-pnl: a tracked token, counted by its exact contract (phase 23 item 8)');
+// ===========================================================================
+const UNI = '0x1f9840a85d5af5bf1d1762f925bdaddc4201f984'; // the contract under test (any 20 bytes would do)
+const UNI_CHECKSUM = '0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984';
+const LOOKALIKE = '0x00000000000000000000000000000000000000aa';
+const UNIT = 10n ** 6n; // a 6-decimal token keeps the arithmetic readable
+const tok = (id, ts, direction, amount, counterparty, extra = {}) => ({
+  id, timestamp: ts, confirmed: true, blockHeight: ts, direction,
+  assetSymbol: 'UNI', assetAmount: amount, assetDecimals: 6, contract: UNI,
+  ...(counterparty ? { counterparty } : {}), ...extra,
+});
+const tokenEntries = [
+  tok('0xt4', t4, 'out', 10n * UNIT, SMART), // own transfer
+  tok('0xt3', t3, 'out', 75n * UNIT, SHOP), // sale of 75 at $8
+  tok('0xt2', t2, 'in', 50n * UNIT, EXCHANGE), // purchase of 50 at $6
+  tok('0xt1', t1, 'in', 100n * UNIT, EXCHANGE), // purchase of 100 at $5
+];
+const tokenPoints = [];
+for (let s = nowSec - 31 * 86_400; s <= nowSec; s += H) {
+  tokenPoints.push({ timeMs: s * 1000, price: s < t2 - H / 2 ? '5' : s < t3 - H / 2 ? '6' : '8' });
+}
+const TOKEN_ASSET = { priceId: `eip155:1/erc20:${UNI_CHECKSUM}`, symbol: 'UNI', decimals: 6, contract: UNI };
+const tokenBase = {
+  ...base,
+  asset: TOKEN_ASSET,
+  // Old-shaped native entries (no contract) stay in the history as the Activity list holds them.
+  entries: [...tokenEntries, ...baseEntries],
+  balance: 75n * UNIT,
+  prices: { status: 'ok', points: tokenPoints, granularity: 'hourly' },
+  currentQuote: { ...quote, assetId: TOKEN_ASSET.priceId, price: '7' },
+};
+const tr = L.computeTokenPnl(tokenBase);
+{
+  const tgap = (s) => `Profit and loss cannot be worked out for UNI: ${s}`;
+  const treasons = (input) => {
+    const out = L.computeTokenPnl(input);
+    return out.kind === 'gap' ? out.reasons : [];
+  };
+  check('computed from the token’s own entries (no gap)', tr.kind === 'ok', JSON.stringify(tr.reasons ?? []));
+  check('average cost $5.33… per UNI; realised = 75 × $8 − 75 × $5.33… = +$200 exactly', tr.kind === 'ok' && moneyEquals(tr.realised, usd(200n)) && moneyEquals(tr.averageCost, usd(16n, 3n)));
+  check('held 75 UNI; cost of what is held $400; unrealised = 75 × $7 − $400 = +$125', tr.kind === 'ok' && tr.held === 75n * UNIT && moneyEquals(tr.costBasis, usd(400n)) && moneyEquals(tr.unrealised, usd(125n)));
+  check('2 purchases and 1 sale; no assumed fees for a token', tr.kind === 'ok' && tr.purchases === 2 && tr.sales === 1 && tr.assumedFees === 0n);
+  check('the figure lines name the token', tr.kind === 'ok' && JSON.stringify(L.pnlFigureLines(tr, TOKEN_ASSET, false).map((l) => l.text)) === JSON.stringify(['75 UNI', '$525.00', '$400.00', '$5.33 per UNI', '+$125.00', '+$200.00', '2 purchases, 1 sale']), JSON.stringify(tr.kind === 'ok' && L.pnlFigureLines(tr, TOKEN_ASSET, false).map((l) => l.text)));
+  check('the method note says fees are not in the token', tr.kind === 'ok' && tr.notes[0] === 'Method: average cost. Each purchase adds UNI and its cost to one pool; each sale removes UNI at the pool’s average cost. Network fees are paid in the network’s own coin, not in UNI, and are not part of these figures.');
+  check('the contract counted is stated, and the native entries are said to be left out', tr.kind === 'ok' &&
+    tr.notes.includes(`Only transfers of the tracked UNI contract ${UNI} are counted.`) &&
+    tr.notes.includes('4 transfers of the network’s own coin or of other tokens are not part of these UNI figures.') &&
+    tr.notes.includes('1 transfer between your own addresses (accounts, smart accounts, multi-signature accounts) is not counted as a purchase or a sale.'), JSON.stringify(tr.notes));
+
+  // A look-alike: another contract that calls itself UNI.
+  const fake = tok('0xf1', t2, 'in', 1_000n * UNIT, EXCHANGE, { contract: LOOKALIKE });
+  const withFake = L.computeTokenPnl({ ...tokenBase, entries: [fake, ...tokenBase.entries] });
+  check('a look-alike (same symbol, another contract) is left out: the figures are unchanged', withFake.kind === 'ok' && moneyEquals(withFake.realised, usd(200n)) && withFake.held === 75n * UNIT);
+  check('…and counted in a sentence', withFake.kind === 'ok' && withFake.notes.includes('1 transfer of a token from another contract calls itself UNI; it is not the tracked UNI and is left out.'), JSON.stringify(withFake.notes));
+  const twoFakes = L.computeTokenPnl({ ...tokenBase, entries: [fake, { ...fake, id: '0xf2', assetSymbol: 'uni ' }, ...tokenBase.entries] });
+  check('…plural, and the symbol compared without case or edge spaces', twoFakes.kind === 'ok' && twoFakes.notes.includes('2 transfers of tokens from another contract call themselves UNI; they are not the tracked UNI and are left out.'));
+  const otherToken = L.computeTokenPnl({ ...tokenBase, entries: [tok('0xo1', t2, 'in', 5n * UNIT, EXCHANGE, { assetSymbol: 'DAI', contract: '0x6b175474e89094c44da98b954eedeac495271d0f' }), ...tokenBase.entries] });
+  check('another token (other symbol, other contract) is an other asset, not a look-alike', otherToken.kind === 'ok' && otherToken.notes.includes('5 transfers of the network’s own coin or of other tokens are not part of these UNI figures.') && !otherToken.notes.some((n) => n.includes('calls itself')));
+  check('the contract is compared without case (a checksummed entry is still the token)', L.computeTokenPnl({ ...tokenBase, entries: tokenBase.entries.map((e) => (e.contract ? { ...e, contract: UNI_CHECKSUM } : e)) }).kind === 'ok');
+
+  // A token transfer without a contract (an entry built before the field existed, or a provider that did not know it).
+  const noContract = (e) => { const { contract: _c, ...rest } = e; return rest; };
+  check('a token transfer that names no contract is a gap (it could be the tracked token under another label), never a guess',
+    treasons({ ...tokenBase, entries: [noContract(tok('0xn1', t2, 'in', 1n, EXCHANGE, { assetSymbol: 'SOMETHING' })), ...tokenBase.entries] })
+      .includes(tgap('1 token transfer does not name its contract, so it cannot be told apart from the tracked UNI.')));
+  check('…plural', treasons({ ...tokenBase, entries: tokenEntries.map(noContract) }).includes(tgap('4 token transfers do not name their contract, so they cannot be told apart from the tracked UNI.')));
+  check('old-shaped native entries (no contract) are never a gap for a token', tr.kind === 'ok' && baseEntries.every((e) => !('contract' in e)));
+  check('another number of decimals on the token’s own contract is a gap',
+    treasons({ ...tokenBase, entries: [tok('0xd1', t2, 'in', 5n, EXCHANGE, { assetDecimals: 18 }), ...tokenBase.entries] })
+      .includes(tgap('1 transfer of its contract reports a number of decimals other than the 6 this wallet has for UNI, so its amount is not certain.')));
+  check('no amount on the token’s own entry is a gap', treasons({ ...tokenBase, entries: [tok('0xa1', t2, 'in', undefined, EXCHANGE), ...tokenBase.entries] }).includes(tgap('1 transaction in the loaded history has no amount.')));
+
+  // Fees are never assumed for a token.
+  check('less held than the history shows is a gap for a token (fees are not paid in it)',
+    treasons({ ...tokenBase, balance: 70n * UNIT }).includes(tgap('the loaded history shows 5 UNI more received than is held now, and network fees are not paid in UNI, so some UNI left in a way the history does not list.')));
+  check('more held than the history explains is the native gap sentence', treasons({ ...tokenBase, balance: 80n * UNIT }).includes(tgap('the balance is 5 UNI more than the loaded history explains, so some UNI arrived in a way the history does not list.')));
+
+  // Today: the wallet reads no price history for tokens.
+  check('no token price history in this wallet: the gap says so plainly',
+    treasons({ ...tokenBase, prices: { status: 'unavailable', reason: 'unsupported' } })
+      .includes(tgap('this wallet does not read CoinGecko’s price history for tokens yet (only for the native coins of the main networks), so there is no price at the time of its transfers.')));
+  check('…the native sentence for "unsupported" is unchanged',
+    reasonsOf({ ...base, prices: { status: 'unavailable', reason: 'unsupported' } }).includes('Profit and loss cannot be worked out for ETH: CoinGecko has no price history for it.'));
+  check('a failed transfer of the token “moved no UNI”', (() => {
+    const out = L.computeTokenPnl({ ...tokenBase, entries: [tok('0xx1', t2, 'in', UNIT, EXCHANGE, { failed: true }), ...tokenBase.entries] });
+    return out.kind === 'ok' && out.notes.includes('1 failed transaction moved no UNI and is skipped.');
+  })());
+
+  // The price range covers only the token's own contract.
+  const range = L.pnlPriceRange({ ...tokenBase });
+  const nativeRange = L.pnlPriceRange({ ...tokenBase, asset: undefined });
+  check('the price range of a token starts from its own oldest counted transfer', range && range.fromSec <= t1 - 86_400 && range.fromSec > t1 - 86_400 - H);
+  const olderFake = tok('0xf9', nowSec - 60 * 86_400, 'in', UNIT, EXCHANGE, { contract: LOOKALIKE });
+  check('…a look-alike older transfer does not widen it', JSON.stringify(L.pnlPriceRange({ ...tokenBase, entries: [...tokenBase.entries, olderFake] })) === JSON.stringify(range));
+  check('…and without a token asset the range is the native one, as before', JSON.stringify(nativeRange) === JSON.stringify(L.pnlPriceRange(base)));
+
+  // tokenPnlAsset: only a tracked ERC-20 token on an active main network.
+  const usdcMain = { kind: 'fungible', assetId: { chainId: 'eip155:1', namespace: 'erc20', reference: UNI_CHECKSUM }, symbol: 'UNI', name: 'Uniswap', decimals: 18 };
+  const ok = L.tokenPnlAsset(usdcMain, 'eip155:1');
+  check('a mainnet ERC-20 token tracked on the active mainnet: its price id and its lowercased contract',
+    ok.status === 'ok' && ok.asset.priceId === `eip155:1/erc20:${UNI_CHECKSUM}` && ok.asset.contract === UNI && ok.asset.decimals === 18, JSON.stringify(ok));
+  const sepolia = { ...usdcMain, assetId: { ...usdcMain.assetId, chainId: 'eip155:11155111' } };
+  check('a test-network token is refused with its sentence',
+    JSON.stringify(L.tokenPnlAsset(sepolia, 'eip155:11155111')) === JSON.stringify({ status: 'refused', reason: 'Profit and loss cannot be worked out for UNI: it is not a token tracked on a main network that is active now, so it has no price (test-network tokens have no value).' }));
+  check('a mainnet token while another network is active is refused the same way', L.tokenPnlAsset(usdcMain, 'eip155:11155111').status === 'refused');
+  check('an NFT is not an ERC-20 token', L.tokenPnlAsset({ ...usdcMain, assetId: { ...usdcMain.assetId, namespace: 'erc721' } }, 'eip155:1').reason === 'Profit and loss cannot be worked out for UNI: it is not an ERC-20 token.');
+  const nameless = { id: '0xnft', timestamp: t2, confirmed: true, blockHeight: t2, direction: 'in', contract: LOOKALIKE, counterparty: EXCHANGE };
+  const withNameless = L.computeNativePnl({ ...base, entries: [nameless, ...baseEntries] });
+  check('a token entry with a contract but no symbol or amount (an NFT the indexer did not name) is a token, not an ETH transfer without an amount',
+    withNameless.kind === 'ok' && moneyEquals(withNameless.realised, usd(2500n)) && withNameless.notes.some((n) => n.startsWith('1 token transfer is in the loaded history')), JSON.stringify(withNameless.kind === 'gap' ? withNameless.reasons : withNameless.notes));
+  check('the native result for the same history is unchanged by the token entries (they are other assets there)',
+    (() => {
+      const n = L.computeNativePnl({ ...base, entries: [...tokenEntries, ...baseEntries] });
+      return n.kind === 'ok' && moneyEquals(n.realised, usd(2500n)) && n.notes.some((x) => x.startsWith('4 token transfers are in the loaded history'));
+    })());
 }
 
 // ===========================================================================
@@ -306,6 +429,17 @@ async function importMutant(from, to) {
   check('…the same input is a gap on the real module', L.computeNativePnl(noCp).kind === 'gap');
   check('mutant (entries without a counterparty treated as external) is caught', m5.computeNativePnl(noCp).kind === 'ok');
   const m6 = await importMutant("  if (count === 0) {", "  if (false) {");
+  const m7 = await importMutant('    if (e.contract.toLowerCase() !== contract) {', '    if (false) {');
+  const fake = { id: '0xf1', timestamp: t2, confirmed: true, blockHeight: t2, direction: 'in', assetSymbol: 'UNI', assetAmount: 1_000n * UNIT, assetDecimals: 6, contract: LOOKALIKE, counterparty: EXCHANGE };
+  const r7 = m7.computeTokenPnl({ ...tokenBase, entries: [fake, ...tokenBase.entries] });
+  check('mutant (a look-alike accepted as the tracked token) is caught', !(r7.kind === 'ok' && moneyEquals(r7.realised, usd(200n)) && r7.held === 75n * UNIT));
+  const m8 = await importMutant('    if (isNative(e)) {\n      otherAssets += 1;\n      continue;\n    }\n    if (e.contract === undefined) {', '    if (e.contract === undefined) {');
+  check('mutant (an old-shaped entry without a contract refused, the native ones included) is caught', m8.computeTokenPnl(tokenBase).kind === 'gap');
+  const m9 = await importMutant('    if (e.contract === undefined) {\n      // Which token moved is unknown: it may be this one under another label.\n      unidentified += 1;\n      continue;\n    }\n', '    if (e.contract === undefined) {\n      otherAssets += 1;\n      continue;\n    }\n');
+  check('mutant (a token transfer without a contract silently ignored) is caught', m9.computeTokenPnl({ ...tokenBase, entries: [{ ...fake, contract: undefined, assetSymbol: 'SOMETHING' }, ...tokenBase.entries] }).kind === 'ok');
+  const m10 = await importMutant("  if (qty > balance && mode.kind === 'token') {", "  if (false) {");
+  const r10 = m10.computeTokenPnl({ ...tokenBase, balance: 70n * UNIT });
+  check('mutant (a token shortfall assumed to be network fees) is caught', r10.kind === 'ok' && r10.assumedFees === 5n * UNIT);
   check('mutant (the old "0 entries … older ones exist" line) is caught', m6.pnlHistoryLoadedLine(0, true) === '0 entries of history loaded; older ones exist.');
 }
 

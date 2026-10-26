@@ -42,10 +42,15 @@ import type { JsonRpcTransport } from './rpc.js';
  * amount rather than an approximation.
  *
  * LIMITS this pass, stated honestly:
- *  - Token transfers (erc20/erc721/erc1155) map to entries WITHOUT an
- *    amount (token decimals/ids need per-asset rendering, a later slice);
- *    they keep the correct id, uid, timestamp, direction and the
- *    API-reported asset symbol for display.
+ *  - Token transfers (erc20/erc721/erc1155) map to entries WITHOUT a
+ *    native amount; they keep the correct id, uid, timestamp, direction,
+ *    the API-reported asset symbol for display, the exact erc20 amount in
+ *    its own decimals (assetAmount / assetDecimals) when rawContract gives
+ *    both, and the token's contract (HistoryEntry.contract, lowercased from
+ *    rawContract.address) when it is a 20-byte hex address. The symbol is
+ *    whatever the token contract calls itself; the contract is what tells a
+ *    look-alike apart. "specialnft" is not queried by default and gets no
+ *    contract here.
  *  - Failed-transaction detection is NOT available: the Transfers API
  *    reports value movements, not receipts. A reverted transaction moves
  *    nothing, but the API can still list its top-level ETH transfer as an
@@ -237,6 +242,8 @@ function decodeCursor(cursor: string): CursorState {
 }
 
 const NATIVE_CATEGORIES = new Set(['external', 'internal']);
+/** Categories whose rawContract.address names the token contract (HistoryEntry.contract). */
+const TOKEN_CATEGORIES = new Set(['erc20', 'erc721', 'erc1155']);
 const HEX_VALUE = /^0x[0-9a-fA-F]+$/;
 
 /** True for an "erc20" transfer that is really an EIP-7708 protocol log of an ETH movement. */
@@ -447,6 +454,18 @@ function mapTransfer(transfer: RawTransfer, me: string, asNative = false): Histo
       ? transfer.asset
       : undefined;
 
+  // The token's contract (rawContract.address) for a token category only:
+  // native transfers carry null there, and a converted EIP-7708 protocol log
+  // (asNative) names the system address 0xff…fe, which is not a token.
+  // Lowercased like counterparty (the API answered lowercase addresses in
+  // the recorded fixture); anything that is not exactly a 20-byte hex
+  // address is left out rather than guessed.
+  const rawContractAddress = transfer.rawContract?.address;
+  const contract =
+    !native && TOKEN_CATEGORIES.has(transfer.category) && typeof rawContractAddress === 'string'
+      ? rawContractAddress.toLowerCase()
+      : undefined;
+
   return {
     id: transfer.hash,
     uid: transfer.uniqueId ?? dedupeKey(transfer),
@@ -462,6 +481,7 @@ function mapTransfer(transfer: RawTransfer, me: string, asNative = false): Histo
       ? { assetAmount, assetDecimals }
       : {}),
     ...(typeof counterparty === 'string' && /^0x[0-9a-f]{40}$/.test(counterparty) ? { counterparty } : {}),
+    ...(contract !== undefined && /^0x[0-9a-f]{40}$/.test(contract) ? { contract } : {}),
   };
 }
 

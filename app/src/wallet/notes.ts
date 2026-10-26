@@ -590,6 +590,18 @@ export interface ActivityExportInput {
   userOpHashesFor?: (txid: string) => readonly string[];
 }
 
+/**
+ * The asset cell of a token row: the symbol the token reports, followed by
+ * its contract when the entry names one (HistoryEntry.contract) — "USDC
+ * (contract 0xa0b8…eb48 in full)" — because a symbol alone can be claimed by
+ * any contract. An entry without a contract keeps the symbol alone, exactly
+ * as before the field existed.
+ */
+export function tokenAssetCell(symbol: string, contract: string | undefined): string {
+  if (contract === undefined) return symbol;
+  return symbol === '' ? `contract ${contract}` : `${symbol} (contract ${contract})`;
+}
+
 /** The data rows (without the header), one per loaded entry, in order. */
 export function activityExportRows(input: ActivityExportInput): string[][] {
   const networkCell = `${input.networkLabel} (${input.network})`;
@@ -602,11 +614,11 @@ export function activityExportRows(input: ActivityExportInput): string[][] {
     const nothingReceived = entry.failed === true && entry.direction === 'in';
     if (entry.assetAmount !== undefined && entry.assetDecimals !== undefined) {
       amount = formatUnits(entry.assetAmount, entry.assetDecimals, entry.assetDecimals);
-      asset = entry.assetSymbol ?? '';
-    } else if (entry.assetSymbol !== undefined) {
+      asset = tokenAssetCell(entry.assetSymbol ?? '', entry.contract);
+    } else if (entry.assetSymbol !== undefined || entry.contract !== undefined) {
       // A token movement whose exact amount the provider did not supply:
       // the asset is named and the amount left empty rather than guessed.
-      asset = entry.assetSymbol;
+      asset = tokenAssetCell(entry.assetSymbol ?? '', entry.contract);
     } else if (entry.amount !== undefined) {
       amount = formatUnits(entry.amount, input.nativeDecimals, input.nativeDecimals);
       asset = input.nativeSymbol;

@@ -55,6 +55,19 @@ export interface HistoryEntry {
    * provider does not know it.
    */
   counterparty?: string;
+  /**
+   * The contract of the token this entry moved, as a lowercase 0x-prefixed
+   * 40-hex-digit address (the providers' convention for addresses they
+   * report, as for `counterparty`): the indexer's rawContract.address for an
+   * erc20 / erc721 / erc1155 transfer, or the emitting address of the
+   * Transfer log in the EVM logs fallback. Unlike `assetSymbol`, which any
+   * contract can claim for itself, this identifies the token. Absent for
+   * native-unit entries and whenever the provider does not know it (entries
+   * built before the field existed have none); a consumer that needs to know
+   * WHICH token moved must treat an absent contract as unknown, never as a
+   * match.
+   */
+  contract?: string;
 }
 
 export interface HistoryPage {

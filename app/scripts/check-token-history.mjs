@@ -372,6 +372,87 @@ console.log('check-token-history: EIP-7708 protocol logs are never tokens');
   }
 }
 
+// ---------------------------------------------------------------------------
+// HistoryEntry.contract (phase 23 item 8): every logs-fallback entry names
+// the contract that emitted its Transfer log, lowercased, and a log from
+// another contract (an endpoint ignoring the address filter) is left out
+// instead of being labelled with the tracked token's symbol and decimals.
+console.log('check-token-history: the token contract on every entry');
+{
+  check('page 1 entries name the USDC contract, lowercased',
+    page1.entries.every((e) => e.contract === USDC.toLowerCase()) && page1.entries.length === 2);
+  check('page 2 entry names the DAI contract', page2.entries[0].contract === DAI.toLowerCase());
+  const CHECKSUMMED_USDC = '0xA0b86991c6218b36c1d19D4a2e9eB0cE3606eB48';
+  // The node answers with the emitting address in checksum case (as many
+  // nodes do), the tracked address is stored in checksum case too: the
+  // entry still names the contract in lowercase.
+  const mixedCase = async (method, params) => {
+    if (method === 'eth_blockNumber') return '0x186a0';
+    if (method === 'eth_getLogs') {
+      return params[0].topics[2] === addressTopic(ME) ? [makeLog(CHECKSUMMED_USDC, 99_990, 1, OTHER, ME, '0x1e8480')] : [];
+    }
+    throw new Error(`unexpected ${method}`);
+  };
+  const mixedPage = await tokenLogsHistoryProvider({
+    rpcUrl: 'http://fake', walletAddress: ME, transport: mixedCase, windowBlocks: 9_000n, maxWindows: 1,
+    tokens: [{ address: CHECKSUMMED_USDC, symbol: 'USDC', decimals: 6 }],
+  }).getHistory(ME);
+  check('checksum-case addresses on both sides still give one lowercase contract',
+    mixedPage.entries.length === 1 && mixedPage.entries[0].contract === USDC, JSON.stringify(mixedPage.entries.map((e) => e.contract)));
+  const LOOKALIKE = '0x3333333333333333333333333333333333333333';
+  const ignoresFilter = async (method, params) => {
+    if (method === 'eth_blockNumber') return '0x186a0';
+    if (method === 'eth_getLogs') {
+      const filter = params[0];
+      const out = [];
+      // Every query, whatever its address filter, also gets a look-alike's log.
+      if (filter.topics[2] === addressTopic(ME)) out.push(makeLog(LOOKALIKE, 99_970, 2, OTHER, ME, '0x3b9aca00'));
+      if (filter.address === USDC && filter.topics[2] === addressTopic(ME)) out.push(makeLog(USDC, 99_990, 1, OTHER, ME, '0x1e8480'));
+      return out;
+    }
+    throw new Error(`unexpected ${method}`);
+  };
+  const sloppyProvider = tokenLogsHistoryProvider({
+    rpcUrl: 'http://fake', walletAddress: ME, transport: ignoresFilter, windowBlocks: 9_000n, maxWindows: 1,
+    tokens: [{ address: USDC, symbol: 'USDC', decimals: 6 }],
+  });
+  const sloppyPage = await sloppyProvider.getHistory(ME);
+  check('a log from another contract is never labelled with the tracked token (left out)',
+    sloppyPage.entries.length === 1 && sloppyPage.entries[0].contract === USDC && sloppyPage.entries[0].assetAmount === 2_000_000n,
+    JSON.stringify(sloppyPage.entries.map((e) => [e.uid, e.contract])));
+  check('…and counted in the page diagnostics', JSON.stringify(sloppyPage.omitted) === JSON.stringify({ 'log-from-another-contract': 1 }));
+  check('a page with nothing left out carries no omitted counts', page1.omitted === undefined && page2.omitted === undefined);
+
+  // Mutants from scratch copies of token-history.ts, each must be caught.
+  const { mkdirSync, readFileSync, rmSync, writeFileSync } = await import('node:fs');
+  const { dirname, join, resolve: resolvePath } = await import('node:path');
+  const { fileURLToPath, pathToFileURL } = await import('node:url');
+  const HERE = dirname(fileURLToPath(import.meta.url));
+  const MUTANT_DIR = join(HERE, `.mutants-token-history-${process.pid}`);
+  let n = 0;
+  process.on('exit', () => rmSync(MUTANT_DIR, { recursive: true, force: true }));
+  async function mutant(from, to) {
+    const src = join(HERE, '..', 'src/wallet/token-history.ts');
+    const original = readFileSync(src, 'utf8');
+    if (!original.includes(from)) throw new Error(`mutation anchor not found: ${from}`);
+    const rewritten = original.replace(from, to).replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolvePath(dirname(src), spec)).href}'`);
+    mkdirSync(MUTANT_DIR, { recursive: true });
+    n += 1;
+    const file = join(MUTANT_DIR, `m${n}-token-history.ts`);
+    writeFileSync(file, rewritten);
+    return import(pathToFileURL(file).href);
+  }
+  const run = async (mod, tp) => mod.tokenLogsHistoryProvider({
+    rpcUrl: 'http://fake', walletAddress: ME, transport: tp, windowBlocks: 9_000n, maxWindows: 1,
+    tokens: [{ address: USDC, symbol: 'USDC', decimals: 6 }],
+  }).getHistory(ME);
+  const m1 = await mutant('              contract: t.token.toLowerCase(),\n', '');
+  check('mutant (the contract dropped by the logs provider) is caught', (await run(m1, transport)).entries.every((e) => e.contract === undefined));
+  const m2 = await mutant('          const own = transfers.filter((t) => t.token.toLowerCase() === wanted);', '          const own = transfers;');
+  const m2Page = await run(m2, ignoresFilter);
+  check('mutant (another contract\'s log labelled as the tracked token) is caught', m2Page.entries.some((e) => e.contract === LOOKALIKE && e.assetSymbol === 'USDC'));
+}
+
 // Optional LIVE pass (read-only): the exact app glue (historySourceFor →
 // tokenLogsHistoryProvider → tokenLogsTransport) against the working
 // keyless mainnet default. Only eth_blockNumber and eth_getLogs are sent.
