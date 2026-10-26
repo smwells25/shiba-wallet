@@ -13595,3 +13595,84 @@ to the Chairperson at once.
       technical lines (a follow-up slice). INPUT still needed: a native
       Spanish reviewer for every draft. UNVERIFIED (device): Spanish
       layout length on the Settings, Sessions and Swap screens.
+- [x] Item 8, third slice — SHORTER CO-SIGNER CAPTIONS, AND THE ERC-20
+      SUBSCRIPTION PULL GAS MEASURED AFTER GLAMSTERDAM BY SIMULATION (commit
+      7544560; 5 files, +95 / −8; check-multisig 431 (was 425; in-suite
+      mutants still 31), check-devmode 444 (pins changed in place),
+      check-recurring 201, check-subscriptions 199 unchanged; offline
+      runner ALL GREEN in the CTO's isolated worktree on HEAD 4634404 with
+      --skip-bundle: engine 1,252, app 10,467 across 65 suites, lint 0/0,
+      tsc clean; checkout 0 / apply 0 / 5 files; the staged patch id equals
+      the verified tree's; the scan clean; the agent was cut once by the
+      session limit, re-cut its diff against 4634404 in a fresh worktree
+      (one conflict in check-devmode's caption list, where f023d98 had
+      moved two Sessions captions to t() ids — both sides kept); not seen
+      on a device; nothing sent; every chain read keyless and read-only).
+      (A) MultisigScreen's co-signer cards: under the "Co-signer N" heading
+      (still a header) the address caption is "Ethereum address"
+      (placeholder "0x…") and the weight caption "Weight" (no placeholder),
+      both still their field's labelled-by source; check-multisig gains a
+      section with five source mutants (each long caption restored, the
+      weight field's labelled-by dropped, PasteOrScan's dropped, the
+      heading's role dropped), check-devmode's PasteOrScan and grouped
+      entries expect the new strings and the "Weight" placeholder-repeat
+      mutant is still caught; two hand mutants on the real file caught.
+      FOLLOW-UP (accessibility): the Scan button now reads "Scan QR code:
+      Ethereum address" in every card without the co-signer number
+      (TalkBack reads the heading just before; VoiceOver gets no number) —
+      an optional prop on PasteOrScan at the multisig localisation pass.
+      (B) THE MEASUREMENT (scratchpad p23-item8c/pull-gas-probe.mjs, kept
+      out of the repo; it reuses subscription-keeper.mjs's dry-run
+      machinery): eth_simulateV1 of EntryPoint v0.7 handleOps against the
+      real Sepolia EntryPoint, Kernel v3.3 and permission modules, the
+      public mnemonic's undeployed Kernel deployed and granted 5 USDC / 30
+      days inside the simulation with its USDC balance by state override,
+      the smallest verificationGasLimit and callGasLimit that still succeed
+      found by bisection for pull 1 and pull 2, a merchant that never held
+      USDC and one that already holds it, a sufficient deposit and a
+      top-up during validation (forced with a 50 gwei fee; Deposited in the
+      logs), a native pull as the control; run 2026-10-26 19:47–19:50 UTC
+      at heads 12000177–12000192 on publicnode (reth 2.8.0 / Geth 1.17.9)
+      and 0xrpc.io (Geth 1.17.10), every minimum agreeing exactly between
+      the endpoints and gas used differing by at most 12 (1rpc refuses
+      eth_simulateV1 on its free plan). ERC-20 (min vGL / min cGL; gas
+      used incl. a 60,000 pVG): pull 1 to a never-holding merchant with a
+      top-up 398,731 / 147,702 (601,340 used); pull 1 to a holding merchant
+      398,731 / 45,021 (502,944); pull 1 without a top-up vGL 387,739;
+      pull 2 300,834 / 45,021 (393,989), without a top-up vGL 289,782.
+      Native control: pull 1 vGL 367,152 with a top-up (356,159 without),
+      pull 2 269,254 (258,203); handleOps used about 440k, consistent with
+      the fork entry's 429,439. PRE-FORK: the phase-13 ERC-20 pull
+      0x9fe98beb…b56b re-read on both endpoints — actualGasUsed 287,499,
+      tx gas 279,529, the signed sum 438,168 with the keeper's 120/130/105
+      padding — so an ERC-20 pull's gas USED rose after the fork while the
+      native pull's did not (an inference: no pre-fork node is left to
+      replay the identical call, the accounts differ, and the merchant's
+      prior USDC balance is unknown because history is pruned). WHAT
+      GasPolicy WOULD CHARGE: the minimum signed sum for the costliest pull
+      ≈ 398,731 + 147,702 + ~52,000 ≈ 598k; no keyless bundler can estimate
+      an account that exists only in a simulation, so the markup was
+      calibrated from the two live native payments (ZeroDev's signed vGL
+      1.83× the simulated minimum: 670,981 / 367,152 and 491,538 /
+      269,254) — applying 1.83× to vGL and 1.3–1.6× to cGL gives about
+      970k–1,020k for a first pull to a never-holding merchant and about
+      850k to a holding one, roughly 1.24M under the keeper's padding (an
+      extrapolation, not a measurement; whether the app's 40,000-gas top-up
+      headroom sat inside those signed figures is unknown). CTO DECISION:
+      SUBSCRIPTION_PULL_GAS_ALLOWANCE STAYS 1,000,000 — no measured or
+      recorded charge exceeds it (the largest recorded is still 745,173),
+      the default budget is twice the allowance per payment, and only a
+      typed budget at the minimum could trip (it already carries the
+      warning); the figures, method and extrapolation are in the
+      constant's doc comment, which says the predicted worst case sits at
+      the allowance rather than below it; revisit after ONE LIVE ERC-20
+      PULL post-fork settles the ratio (a follow-up needing USDC in a
+      Kernel and a keeper run). BUG FOUND AND FIXED IN PASSING: the keeper
+      dry run (subscription-keeper.mjs dry-run) gave the deploy + install
+      only 3,000,000 call gas, so after the fork the install ran out of
+      gas inside the simulation and every later step failed AA23 — now
+      10,000,000 with a comment; all 10 steps pass on both endpoints.
+      Artefacts in the scratchpad p23-item8c (eight probe result files,
+      the probe, the phase-13 read-back, both keeper logs). UNVERIFIED:
+      the captions on a device; the 1.83× ratio; a live ERC-20 pull after
+      the fork.
