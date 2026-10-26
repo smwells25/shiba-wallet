@@ -13828,3 +13828,108 @@ to the Chairperson at once.
       signing): both halves are now proven live through the app — the
       regular account (p22b) and the smart account (this pass) — the tally
       at the item-9 refresh.
+- [x] Item 8, the bounded broadcast's follow-ups — SPENDING LIMITS COUNT AN
+      OPEN OUTCOME, SERVER ERRORS AND DROPPED CONNECTIONS ARE OPEN OUTCOMES,
+      THE DAPP GETS THE LOCAL HASH (commit e55e5ce; 35 files incl. the new
+      app/src/wallet/broadcast-spend.ts; engine 1,252 → 1,269 (rpc.test.ts
+      +17), check-pending 313 (was 288), check-spending-policy 135 (118),
+      check-wc 339 (325), check-aa 404 (395), check-recurring 209 (201),
+      check-i18n 110 (109), check-browser 306 (305), check-pnl 136 (135),
+      check-sessions 144 with one pin changed; offline runner ALL GREEN in
+      the CTO's isolated worktree on HEAD 19bf24a with --skip-bundle: app
+      10,543 across 65 suites, lint 0/0, tsc clean; the patch was cut
+      against 4634404 and applied cleanly over item 8c; checkout 0 / apply
+      0 / 35 files; the staged patch id equals the verified tree's; the
+      scan clean; twelve hand mutants on the app and two on the engine,
+      every one caught, plus two new in-suite mutants in check-wc; not
+      seen on a device). (1) SPENDING LIMITS: a recorder registry in
+      broadcast-spend.ts (no imports), registered by spending-policy.ts
+      installSpendingRecorder beside a settled-nonce listener; the EOA
+      paths count value + fee (evmQuoteSpendInput, now also the single
+      definition behind spendingInputForQuote) right after the pending
+      record under the device-computed hash, the replacements the fee only
+      (replacementSpendingInput); the smart-account paths count inside the
+      beforeSend hook through submitWithPendingRecord's new spend argument
+      (sendAa via aaQuoteSpendInput; sendSessionCalls gains spend?, passed
+      by payRecurringPayment and payDcaSwap; submitColdAa gains spend?;
+      sendPasskeyCalls a fourth argument; submitGuardianRecovery not wired
+      — it never recorded a spend); a definite refusal releases only what
+      this attempt created and restores the staged preview check, an
+      earlier attempt's count is never released, an unknown outcome keeps
+      the count; COUNTED ONCE — writeSpend adds nothing when records with
+      that hash exist (case-insensitive), acceptance re-keys the records to
+      the hash the node or bundler returned when it differs (pinned with an
+      upper-case hash, a different hash, a bundler's own fixed hash), and
+      the existing acceptance recorders stay as the fallback when the early
+      write failed; RELEASE ON SETTLE from the facts refreshAccountPending
+      already reads (NonceSettledEvent): nothing for a lone broadcast;
+      every record of each never-includable broadcast for cancelled,
+      original-first and superseded; only the losing broadcasts' fee
+      records for a speed-up (the speed-up re-sent the original's value,
+      which stays counted); LEFT COUNTED on purpose (CTO decision,
+      conservative): the nonce-used state, "Remove from this list", and a
+      smart-account operation "most likely dropped" (a guess after 10
+      minutes). (2) OPEN OUTCOMES: rpc.ts broadcastExchange, used only for
+      the two broadcast methods, throws BroadcastUnansweredError {reason
+      server-error | connection} for a rejected fetch, an HTTP 5xx, or a
+      body that cannot be read or parsed; an HTTP 4xx and a parsed JSON-RPC
+      error throw exactly as before (CTO DECISION: a 4xx stays a definite
+      refusal — a 429 from a proxy forwarded nothing and a 400 carrying a
+      JSON-RPC error is parsed as one; unverified for ZeroDev and
+      publicnode); every other method uses the old exchange byte for byte
+      (a 502, a dropped connection and HTML on a read come back unchanged,
+      pinned); the message is one sentence ("No usable answer to <method>
+      (<phrase>; cause: <raw cause>), so whether it was accepted is
+      unknown.") so sanitizeEndpointMessage keeps it whole and sessions.ts
+      isTransportFailure's anchored "fetch failed" cannot match it;
+      BroadcastOutcomeUnknownError gains reason (default timeout, every old
+      sentence byte-identical); the title "No usable answer from the
+      network." and five sentences saying the endpoint may have accepted
+      it; isEndpointFailure refuses failover for the new name; six new
+      i18n ids (the Spanish quoting the on-screen English labels) with the
+      fixture's new list and a check-i18n rule. BEHAVIOUR CHANGES: a fetch
+      failure on eth_sendUserOperation used to remove the pending record
+      while the screen said the outcome was unknown — the record is now
+      kept; a 502 on a broadcast used to look like an endpoint failure by
+      its message (whether any broadcast runs inside the failover wrapper
+      is unverified; the name rule makes it safe either way). (3)
+      WALLETCONNECT AND THE BROWSER: wc-sent.ts openBroadcastOf (the app's
+      wrapper of the right kind with a 32-byte hash only) and sentOrOpen
+      (every other error passes through, so those requests still return to
+      the queue); the three send paths answer the dApp with the local hash
+      — EOA txid, the batch's userOpHash with the usual id and calls
+      record, the smart-account transaction waiting for the receipt by the
+      open hash and otherwise sending the existing not-included rejection —
+      in the same answerDappThenShow order, the item never re-queued; the
+      view "Submitted, outcome unknown" (or "…, dApp not notified") in the
+      warning colour with the outcome sentence and what the dApp was told
+      (English only like the rest of WcSentView — CTO accepted); the
+      browser needed no EIP-1193 change (respondSessionRequest forwards a
+      result as is, browser-bridge.ts 727–739; check-browser pins the page
+      receiving the device hash and the queue emptying). (4) WORDINGS: the
+      recurring and DCA describers return a cause; recurringAttemptLine /
+      dcaAttemptLine take it and openOutcomeParenthesis gives "the bundler
+      did not answer in time" or "the bundler answered with a server error
+      while it was being sent" (no cause or a dropped connection → the
+      original line byte for byte, the connection case adding "It is also
+      listed under Pending on this phone in Activity."); pnl.ts
+      TOKEN_PNL_UNSUPPORTED_REASON "its network is not a main network for
+      which this wallet reads CoinGecko's price history of tokens (a main
+      network with a CoinGecko asset platform mapped for it), so there is
+      no price at the time of its transfers." and the retry hint "Pull
+      down or choose it again to retry." CTO DECISIONS on the open
+      questions: one sentence for a server error and a dropped connection
+      on the general paths is acceptable (the card lines tell them apart,
+      where a user acts on it); a failed spend write never blocks the
+      broadcast (best effort, like the pending registry; the acceptance
+      recorders remain the fallback). LEFT AS IT WAS: a 2xx body with
+      neither result nor error returns undefined; the engine's bare errors
+      (the EIP-7702 set-code and guardian approveWithSig transactions) keep
+      no record and count no spend; plain session-key and ERC-7715
+      operations count no spend (as before); no docs edited (THREAT_MODEL
+      F-80 / the spending rows at the refresh). UNVERIFIED: anything on a
+      device; Expo's fetch rejection shape under Hermes (any rejection is
+      wrapped); real bundler and node 5xx bodies; whether ZeroDev ever
+      returns a userOpHash different from the device's. The agent left a
+      second clean worktree wt-p23-bcast2-base in the scratchpad (its
+      before run).
