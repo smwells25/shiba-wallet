@@ -12944,3 +12944,151 @@ to the Chairperson at once.
       ENSv2 not launched on mainnet; no ENSv1 path built; the primary-name
       read runs on mainnet read-only). Dates in the docs are UTC
       (2026-10-26 for a run on the evening of the 25th local time).
+- [x] Item 7, engine half — THE OFFICIAL BIP-39 PASSPHRASE VECTORS THROUGH
+      THE WALLET'S OWN SEED PATH (commit 0c665b3; new
+      packages/core/test/bip39-vectors.test.ts (+122; core 40 → 162) and
+      one sentence in docs/DURESS_WALLET.md closing its "no TREZOR vector is
+      tested" note (a second "(absent today, section 8.1)" note near line
+      1893 is left for the refresh); verified with the item-8 slice as ONE
+      tree in the CTO's isolated worktree on HEAD b50ddfa with
+      --skip-bundle: engine 1,236, app 10,297 across 65 suites, lint 0/0,
+      tsc clean; the combined staged patch id equals the verified tree's;
+      the scan clean — a control showed it refuses a literal vector phrase;
+      the agent's own full run had ONE failure, the unrelated chains-evm
+      ens-register.test.ts "encodes every call exactly as ethers does" at
+      7.4 s against the 5 s limit under a load average of about 140 with
+      two other runners going, which passed alone and passed in the CTO's
+      combined run). SOURCES: bitcoin/bips bip-0039.mediawiki at 0d1b892d
+      (sha256 afcbcbed…9134; lines 130–133: "The test vectors include
+      input entropy, mnemonic and seed. The passphrase "TREZOR" is used for
+      all vectors."), trezor/python-mnemonic vectors.json at b57a5ad7
+      (sha256 fa3b937b…30f8, 152,400 bytes, 12 languages × 24 vectors; the
+      agent recomputed all 288 seeds off-line as PBKDF2-SHA512(NFKD
+      mnemonic, "mnemonic" + "TREZOR", 2048) and all matched). WHAT RUNS,
+      through the wallet's own code: the 24 English vectors (8 each of 12 /
+      18 / 24 words) — entropy → mnemonic rebuilt with @scure/bip39's
+      entropyToMnemonic on the wallet's English wordlist (the wallet has no
+      entropy-to-mnemonic function of its own; createMnemonic draws its own
+      entropy), each phrase checked against a sha256 fingerprint of the
+      official text plus one fingerprint of all 24 joined, and accepted by
+      the wallet's isValidMnemonic — NO PHRASE AS A LITERAL; mnemonic +
+      "TREZOR" → the wallet's mnemonicToSeed must equal the official
+      64-byte seed (the empty passphrase a different one); HDKey.
+      fromMasterSeed of the wallet's seed = the vector's xprv (the same
+      call evm.ts and utxo.ts make); HdKeyring.fromMnemonic(…, "TREZOR")
+      derives four accounts checked against independent derivations
+      (Ethereum, Bitcoin and Dogecoin through ethers from the official xprv,
+      Solana through ed25519-hd-key from the official seed; the paths
+      literals in the test); THE FINDING — before a fullwidth check was
+      added the NFKD-skipped mutant SURVIVED (98/98 passed): every English
+      phrase and "TREZOR" are plain ASCII, so the published vectors cannot
+      prove the passphrase normalisation, which lives in @scure/bip39, not
+      the wallet; an added check derived from the spec (not a published
+      vector) requires the fullwidth "ＴＲＥＺＯＲ" to give the official seed;
+      SKIPPED: the other 11 languages (264 vectors) — the wallet accepts the
+      English wordlist only, so one test records mnemonicToSeed's refusal
+      for the nine languages @scure/bip39 has a wordlist for (the same 24
+      entropies; Russian and Turkish use other entropies and have no
+      wordlist there); the account and refusal checks carry a 20 s timeout
+      (2.2 s seen under load). MUTANTS on the real source, each restored
+      and cmp-equal: the passphrase dropped in mnemonicToSeed (96 of 122
+      fail), lower-cased (96), dropped by HdKeyring.fromMnemonic (24), NFKD
+      skipped (24 — only the fullwidth check), NFC for NFKD (24), coin type
+      60 → 61 (24), validation removed (1), 2,047 iterations (96), and the
+      control (the hand-written PBKDF2 done right) 122 pass. NOTED: the
+      secret scan accepts phrases whose entropy is one repeated byte, so
+      some vectors would have passed as literals anyway; every phrase was
+      rebuilt regardless.
+- [x] Item 8, first slice — A CONTRACT FIELD ON HistoryEntry, AND TOKEN
+      PROFIT-AND-LOSS ARITHMETIC BY EXACT CONTRACT (commit 1c27b5d; 10 files,
+      no new file; engine 1,114 on its own (chains-evm 827 → 832),
+      check-activity 295 (was 292), check-notes 216 (209), check-pnl 100
+      (64), check-token-history 59 (51); verified as one tree with item 7
+      above; the scan clean; the agent's first runner attempt failed one
+      unrelated ens.test.ts namehash test at the 5 s timeout under load,
+      with its own changes stashed mid-run — killed and re-run on the final
+      tree, green). THE FIELD (packages/core/src/history/types.ts):
+      contract?: string — the token's LOWERCASE 0x address of 40 hex
+      digits (lowercase follows counterparty and the recorded Sepolia
+      answer's rawContract.address); absent for native entries and
+      whenever the provider does not know it; the doc comment says an
+      absent contract is UNKNOWN, never a match. PRODUCERS (every
+      HistoryEntry producer checked: indexer, logs fallback, Esplora,
+      Blockbook, Solana — the last three list native coins only; the
+      smart-account copies spread the entry so the field carries): the
+      indexer provider fills it from rawContract.address for erc20 /
+      erc721 / erc1155 only, never on native records nor on a protocol log
+      turned native (that log names 0xff…fe), kept only as a 20-byte hex
+      address else left out (the recorded fixture holds no real token
+      record — the field name and shape come from the documented response
+      and that fixture); the logs fallback sets the emitting address,
+      lowercased, and — BEHAVIOUR CHANGE — a log from any contract other
+      than the queried tracked token is LEFT OUT and counted as
+      'log-from-another-contract' in the page's omitted (before, an
+      endpoint ignoring the address filter would have had it labelled with
+      the tracked token's symbol and decimals; nothing reads omitted
+      today). Old-shaped entries pinned where entries are made and used
+      (entries are not stored): an answer without rawContract.address maps
+      key for key to the old entry; the four-stream feed lists the same
+      rows in the same order with and without the field, the smart
+      account's copies keeping it (the merge rules unchanged); CSV rows
+      without a contract byte-identical; native entries without a contract
+      never block a token result. P&L (pnl.ts; native results unchanged
+      bar one note): tokenPnlAsset(token, activeEvmCaip2) accepts only an
+      ERC-20 whose id passes tokenPriceAssetId on the active main network
+      with a 20-byte contract (it trusts the caller to pass a tracked
+      token; pnl.ts cannot read storage); computeTokenPnl uses the same
+      average-cost method, price tolerance, 365-day window and gap rules
+      as the native coin, counting only entries whose contract equals the
+      token's (case ignored); a token pays no fees, so a shortfall is never
+      assumed to be fees; isNative now also requires no contract (an NFT
+      the indexer gave no name or amount used to read as an ETH transfer
+      without an amount; now a token note); CTO DECISIONS: a LOOK-ALIKE
+      (another contract with the same symbol) is an excluded-and-counted
+      NOTE, not a blocking gap — once excluded it cannot make the figure
+      wrong, and spam airdrops would otherwise block P&L for good — while
+      a token transfer with NO contract is a blocking gap whatever its
+      symbol; the exact sentences (each reason opening "Profit and loss
+      cannot be worked out for <SYM>: "): "N token transfer(s) … not part
+      of these ETH figures. Profit and loss for tokens is not offered yet:
+      this wallet reads CoinGecko's price history only for the native
+      coins of the main networks, not for tokens.", "1 token transfer does
+      not name its contract, so it cannot be told apart from the tracked
+      UNI." (and the plural), "1 transfer of its contract reports a number
+      of decimals other than the 6 this wallet has for UNI, so its amount
+      is not certain.", "the loaded history shows 5 UNI more received than
+      is held now, and network fees are not paid in UNI, so some UNI left
+      in a way the history does not list.", "this wallet does not read
+      CoinGecko's price history for tokens yet (only for the native coins
+      of the main networks), so there is no price at the time of its
+      transfers.", "1 transfer of a token from another contract calls
+      itself UNI; it is not the tracked UNI and is left out.", "N transfers
+      of the network's own coin or of other tokens are not part of these
+      UNI figures.", "Only transfers of the tracked UNI contract 0x… are
+      counted.", the average-cost method note naming that fees are paid in
+      the network's coin, "1 failed transaction moved no UNI and is
+      skipped.", the refusals "…not a token tracked on a main network that
+      is active now, so it has no price (test-network tokens have no
+      value)." / "…not an ERC-20 token."; CSV (notes.ts): the asset cell
+      "USDC (contract 0x…)" or "contract 0x…" without a symbol, no new
+      column, formula defusal kept, the counterparty column unchanged.
+      WHAT STAYS REFUSED: token P&L ON SCREEN — historyCoinIdFor maps only
+      the four native coins (COINGECKO_NATIVE_IDS), so fetchPriceHistory
+      answers 'unsupported' for a token and PortfolioViews offers native
+      coins only with its intro still true; the agent deliberately added
+      NO token price-history request (a new CoinGecko endpoint, by memory
+      /coins/{platform}/contract/{address}/market_chart/range, UNVERIFIED
+      against documentation — the next slice must read the docs and record
+      an answer first); NFTs get a contract and no P&L; specialnft is not
+      queried. MUTANTS caught: in-suite — the logs provider dropping the
+      contract, another contract's log labelled as the tracked token, a
+      look-alike accepted, an old-shaped entry refused, a contract-less
+      token transfer silently ignored, a token shortfall assumed to be
+      fees, old token CSV rows changed, the contract dropped from the asset
+      cell; by hand on the indexer provider — the contract dropped, set on
+      native records and protocol logs, not lowercased (each failing 1 of
+      33). FOLLOW-UPS: the token price history by contract and token chips
+      in the P&L panel (after reading CoinGecko's documentation); multisig
+      P&L (whose balance and history count — a decision); Activity rows
+      showing the contract or flagging a look-alike; FEATURE_UNIVERSE row
+      97 at the refresh.
