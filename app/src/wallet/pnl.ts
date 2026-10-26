@@ -1,4 +1,4 @@
-import type { HistoryEntry } from '@shiba-wallet/core';
+import type { FungibleAsset, HistoryEntry } from '@shiba-wallet/core';
 import {
   HISTORY_POINT_TOLERANCE_MS,
   nearestPricePoint,
@@ -9,7 +9,7 @@ import {
 // Explicit .ts extensions: scripts/check-pnl.mjs loads this module under
 // Node's type stripping, which resolves relative specifiers literally.
 import { formatBalanceDisplay } from './balances.ts';
-import { describeAge, staleNoteFor, PRICE_HISTORY_MAX_DAYS } from './prices.ts';
+import { describeAge, staleNoteFor, tokenPriceAssetId, PRICE_HISTORY_MAX_DAYS } from './prices.ts';
 import { ZERO_MONEY, formatMoney, moneyAdd, moneyOf, moneyReduce, moneySub, type Money } from './portfolio.ts';
 import type { SmartAccountHistoryStatus } from './smart-account-history.ts';
 
@@ -49,9 +49,18 @@ import type { SmartAccountHistoryStatus } from './smart-account-history.ts';
  *    explains) is a gap.
  *  - Unrealised profit or loss: the coins held now at today's CoinGecko
  *    price, minus their remaining cost.
- *  - Tokens: not offered. The loaded history names a token only by the
- *    symbol the indexer reports (HistoryEntry has no contract field), so a
- *    look-alike token could not be told apart from the real one.
+ *  - Tokens (computeTokenPnl, phase 23 item 8): only a token TRACKED on a
+ *    MAIN network (tokenPnlAsset), and only the entries whose
+ *    HistoryEntry.contract equals that token's exact contract. A transfer of
+ *    another contract that calls itself by the same symbol is a look-alike:
+ *    left out and counted. A token transfer that names no contract cannot be
+ *    told apart from the real one, so it is a gap, never a guess. Network
+ *    fees are paid in the native coin, never in the token, so a token's
+ *    shortfall is never assumed to be fees: it is a gap. The app does not
+ *    offer token profit and loss on screen yet: the wallet reads CoinGecko's
+ *    price history only for the four native coins (prices.ts
+ *    historyCoinIdFor), so a token's history request answers 'unsupported'
+ *    and the result is that gap.
  *
  * Exact: amounts are bigints, money is an exact fraction (portfolio.ts
  * Money), rounded to the cent only for display. Free of React Native
@@ -65,6 +74,15 @@ export interface PnlAsset {
   symbol: string;
   decimals: number;
 }
+
+/** A tracked ERC-20 token on a main network (tokenPnlAsset builds it). */
+export interface PnlTokenAsset extends PnlAsset {
+  /** The token's contract, lowercase 0x-prefixed (HistoryEntry.contract's convention). */
+  contract: string;
+}
+
+/** The input of computeTokenPnl: the same as the native one, for a token. */
+export type PnlTokenInput = Omit<PnlInput, 'asset'> & { asset: PnlTokenAsset };
 
 export type PnlPriceHistory =
   | { status: 'ok'; points: HistoricalPricePoint[]; granularity: HistoryGranularity }
@@ -135,7 +153,9 @@ export function utcDate(ms: number): string {
 }
 
 function isNative(entry: HistoryEntry): boolean {
-  return entry.assetSymbol === undefined && entry.assetAmount === undefined;
+  // A named contract makes it a token even when the indexer reported no
+  // symbol and no amount (an NFT with a null asset name, for example).
+  return entry.assetSymbol === undefined && entry.assetAmount === undefined && entry.contract === undefined;
 }
 
 function plural(n: number, one: string, many: string): string {
@@ -171,12 +191,19 @@ export function historyCutoffMs(nowMs: number): number {
 }
 
 /** Unix seconds range the price history must cover for these entries, or null when none needs a price. */
-export function pnlPriceRange(input: Pick<PnlInput, 'entries' | 'ownAddresses' | 'nowMs'>): { fromSec: number; toSec: number } | null {
+export function pnlPriceRange(
+  input: Pick<PnlInput, 'entries' | 'ownAddresses' | 'nowMs'> & { asset?: PnlAsset | PnlTokenAsset },
+): { fromSec: number; toSec: number } | null {
   const own = new Set(input.ownAddresses.map((a) => a.toLowerCase()));
   let oldest: number | null = null;
   const cutoff = historyCutoffMs(input.nowMs) / 1000;
+  // A token's range covers only the entries of its exact contract; without a
+  // token asset, the native coin's (unchanged).
+  const contract = input.asset && 'contract' in input.asset ? input.asset.contract.toLowerCase() : null;
+  const isThisAsset = (e: HistoryEntry) =>
+    contract === null ? isNative(e) : !isNative(e) && e.contract !== undefined && e.contract.toLowerCase() === contract;
   for (const e of input.entries) {
-    if (!isNative(e) || e.failed || !e.confirmed || e.timestamp === null) continue;
+    if (!isThisAsset(e) || e.failed || !e.confirmed || e.timestamp === null) continue;
     if (e.direction === 'self' || !e.counterparty || own.has(e.counterparty.toLowerCase())) continue;
     if (e.timestamp < cutoff) continue;
     if (oldest === null || e.timestamp < oldest) oldest = e.timestamp;
@@ -192,11 +219,143 @@ export function pnlPriceRange(input: Pick<PnlInput, 'entries' | 'ownAddresses' |
   return { fromSec: from, toSec: Math.ceil(nowSec / hour) * hour };
 }
 
+/** Why the native profit and loss leaves tokens out (its note on token transfers). */
+export const TOKEN_PNL_NOT_OFFERED =
+  'Profit and loss for tokens is not offered yet: this wallet reads CoinGecko’s price history only for the native ' +
+  'coins of the main networks, not for tokens.';
+
+const CONTRACT_RE = /^0x[0-9a-f]{40}$/;
+
+/**
+ * The profit-and-loss asset for a TRACKED token, or the sentence that
+ * refuses it: only an ERC-20 token whose CAIP-19 id is on the active EVM
+ * network, that network a main network (prices.ts tokenPriceAssetId, the
+ * same rule its spot price follows), with a 20-byte contract address.
+ */
+export function tokenPnlAsset(
+  token: FungibleAsset,
+  activeEvmCaip2: string,
+): { status: 'ok'; asset: PnlTokenAsset } | { status: 'refused'; reason: string } {
+  const gap = (why: string) => ({ status: 'refused' as const, reason: `Profit and loss cannot be worked out for ${token.symbol}: ${why}` });
+  if (token.assetId.namespace !== 'erc20') return gap('it is not an ERC-20 token.');
+  const contract = token.assetId.reference.toLowerCase();
+  if (!CONTRACT_RE.test(contract)) return gap('its contract address is not a 20-byte address.');
+  const priceId = tokenPriceAssetId(token, activeEvmCaip2);
+  if (priceId === null) {
+    return gap('it is not a token tracked on a main network that is active now, so it has no price (test-network tokens have no value).');
+  }
+  return { status: 'ok', asset: { priceId, symbol: token.symbol, decimals: token.decimals, contract } };
+}
+
+/** The entries one profit-and-loss run counts, and how each is valued. */
+interface PnlMode {
+  kind: 'native' | 'token';
+  /** The entries that are this asset (before the purchase / sale rules). */
+  selected: HistoryEntry[];
+  /** The exact amount of this asset an entry moved, in its base units. */
+  amountOf: (entry: HistoryEntry) => bigint | undefined;
+  /** Gap sentences (without the "cannot be worked out for X: " lead) about which entries are this asset. */
+  identityGaps: string[];
+  /** Notes about entries left out as other assets. */
+  identityNotes: string[];
+}
+
+function nativeMode(input: Pick<PnlInput, 'entries' | 'asset'>): PnlMode {
+  const sym = input.asset.symbol;
+  const native = input.entries.filter(isNative);
+  const tokenCount = input.entries.length - native.length;
+  const identityNotes: string[] = [];
+  if (tokenCount > 0) {
+    identityNotes.push(
+      `${plural(tokenCount, 'token transfer is', 'token transfers are')} in the loaded history and ${tokenCount === 1 ? 'is' : 'are'} not part of these ${sym} ` +
+        `figures. ${TOKEN_PNL_NOT_OFFERED}`,
+    );
+  }
+  return { kind: 'native', selected: native, amountOf: (e) => e.amount, identityGaps: [], identityNotes };
+}
+
+function sameSymbol(a: string | undefined, b: string): boolean {
+  return a !== undefined && a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+function tokenMode(input: Pick<PnlTokenInput, 'entries' | 'asset'>): PnlMode {
+  const { symbol: sym, decimals } = input.asset;
+  const contract = input.asset.contract.toLowerCase();
+  if (!CONTRACT_RE.test(contract)) throw new Error(`Not a token contract address: ${input.asset.contract}`);
+  const selected: HistoryEntry[] = [];
+  let lookAlike = 0;
+  let otherAssets = 0;
+  let unidentified = 0;
+  let otherDecimals = 0;
+  for (const e of input.entries) {
+    if (isNative(e)) {
+      otherAssets += 1;
+      continue;
+    }
+    if (e.contract === undefined) {
+      // Which token moved is unknown: it may be this one under another label.
+      unidentified += 1;
+      continue;
+    }
+    if (e.contract.toLowerCase() !== contract) {
+      if (sameSymbol(e.assetSymbol, sym)) lookAlike += 1;
+      else otherAssets += 1;
+      continue;
+    }
+    if (e.assetAmount !== undefined && e.assetDecimals !== decimals) {
+      otherDecimals += 1;
+      continue;
+    }
+    selected.push(e);
+  }
+  const identityGaps: string[] = [];
+  const identityNotes: string[] = [
+    `Only transfers of the tracked ${sym} contract ${contract} are counted.`,
+  ];
+  if (unidentified > 0) {
+    identityGaps.push(
+      `${plural(unidentified, 'token transfer does', 'token transfers do')} not name ${unidentified === 1 ? 'its' : 'their'} contract, so ` +
+        `${unidentified === 1 ? 'it' : 'they'} cannot be told apart from the tracked ${sym}.`,
+    );
+  }
+  if (otherDecimals > 0) {
+    identityGaps.push(
+      `${plural(otherDecimals, 'transfer', 'transfers')} of its contract ${otherDecimals === 1 ? 'reports' : 'report'} a number of decimals other ` +
+        `than the ${decimals} this wallet has for ${sym}, so ${otherDecimals === 1 ? 'its amount is' : 'their amounts are'} not certain.`,
+    );
+  }
+  if (lookAlike > 0) {
+    identityNotes.push(
+      `${plural(lookAlike, 'transfer of a token', 'transfers of tokens')} from another contract ${lookAlike === 1 ? 'calls itself' : 'call themselves'} ` +
+        `${sym}; ${lookAlike === 1 ? 'it is' : 'they are'} not the tracked ${sym} and ${lookAlike === 1 ? 'is' : 'are'} left out.`,
+    );
+  }
+  if (otherAssets > 0) {
+    identityNotes.push(
+      `${plural(otherAssets, 'transfer', 'transfers')} of the network’s own coin or of other tokens ${otherAssets === 1 ? 'is' : 'are'} not part of these ${sym} figures.`,
+    );
+  }
+  return { kind: 'token', selected, amountOf: (e) => e.assetAmount, identityGaps, identityNotes };
+}
+
 /**
  * Works out profit and loss, or the gaps that prevent it. Every gap found is
  * reported (not only the first), so the user sees everything that is missing.
  */
 export function computeNativePnl(input: PnlInput): PnlResult {
+  return computePnl(input, nativeMode(input));
+}
+
+/**
+ * Profit and loss for a tracked token (tokenPnlAsset): the same rules as the
+ * native coin's, counting only the entries of the token's exact contract, and
+ * with no assumed fees (a token pays none).
+ */
+export function computeTokenPnl(input: PnlTokenInput): PnlResult {
+  return computePnl(input, tokenMode(input));
+}
+
+function computePnl(input: PnlInput, mode: PnlMode): PnlResult {
   const sym = input.asset.symbol;
   const decimals = input.asset.decimals;
   const gap = (why: string) => `Profit and loss cannot be worked out for ${sym}: ${why}`;
@@ -230,15 +389,9 @@ export function computeNativePnl(input: PnlInput): PnlResult {
     }
   }
 
-  const native = input.entries.filter(isNative);
-  const tokenCount = input.entries.length - native.length;
-  if (tokenCount > 0) {
-    notes.push(
-      `${plural(tokenCount, 'token transfer is', 'token transfers are')} in the loaded history and ${tokenCount === 1 ? 'is' : 'are'} not part of these ${sym} ` +
-        'figures. Profit and loss for tokens is not offered: the history names a token only by the symbol the history ' +
-        'service reports, not by its contract, so a look-alike token could not be told apart from the real one.',
-    );
-  }
+  for (const why of mode.identityGaps) reasons.push(gap(why));
+  notes.push(...mode.identityNotes);
+  const amountOf = mode.amountOf;
 
   let failed = 0;
   let pending = 0;
@@ -248,7 +401,7 @@ export function computeNativePnl(input: PnlInput): PnlResult {
   let noCounterparty = 0;
   let noTime = 0;
   let tooOld = 0;
-  for (const e of native) {
+  for (const e of mode.selected) {
     if (e.failed) {
       failed += 1;
       continue;
@@ -257,11 +410,12 @@ export function computeNativePnl(input: PnlInput): PnlResult {
       pending += 1;
       continue;
     }
-    if (e.amount === undefined) {
+    const moved = amountOf(e);
+    if (moved === undefined) {
       noAmount += 1;
       continue;
     }
-    if (e.amount === 0n) continue;
+    if (moved === 0n) continue;
     if (e.direction === 'self') {
       ownTransfers += 1;
       continue;
@@ -309,7 +463,11 @@ export function computeNativePnl(input: PnlInput): PnlResult {
         `accounts) ${ownTransfers === 1 ? 'is' : 'are'} not counted as a purchase or a sale.`,
     );
   }
-  if (failed > 0) notes.push(`${plural(failed, 'failed transaction moved', 'failed transactions moved')} no coins and ${failed === 1 ? 'is' : 'are'} skipped.`);
+  if (failed > 0) {
+    notes.push(
+      `${plural(failed, 'failed transaction moved', 'failed transactions moved')} ${mode.kind === 'native' ? 'no coins' : `no ${sym}`} and ${failed === 1 ? 'is' : 'are'} skipped.`,
+    );
+  }
   if (pending > 0) notes.push(`${plural(pending, 'pending transaction is', 'pending transactions are')} not counted until confirmed.`);
 
   if (input.balance === null) reasons.push(gap('the current balance could not be read. Pull down to try again.'));
@@ -330,7 +488,9 @@ export function computeNativePnl(input: PnlInput): PnlResult {
               ? 'Show fiat values is off (Settings → Prices), so no prices are requested.'
               : input.prices.reason === 'out-of-range'
                 ? `its transactions are older than the ${PRICE_HISTORY_MAX_DAYS} days of price history CoinGecko’s free service provides.`
-                : 'CoinGecko has no price history for it.',
+                : mode.kind === 'token'
+                  ? 'this wallet does not read CoinGecko’s price history for tokens yet (only for the native coins of the main networks), so there is no price at the time of its transfers.'
+                  : 'CoinGecko has no price history for it.',
           ),
         );
         break;
@@ -374,7 +534,7 @@ export function computeNativePnl(input: PnlInput): PnlResult {
   let purchases = 0;
   let sales = 0;
   for (const { entry, price } of priced) {
-    const amount = entry.amount!;
+    const amount = amountOf(entry)!;
     const value = moneyOf(amount, decimals, price);
     if (entry.direction === 'in') {
       qty += amount;
@@ -417,6 +577,19 @@ export function computeNativePnl(input: PnlInput): PnlResult {
   }
   let assumedFees = 0n;
   let assumedFeesCost: Money = ZERO_MONEY;
+  if (qty > balance && mode.kind === 'token') {
+    // Network fees are paid in the native coin, never in a token.
+    return {
+      kind: 'gap',
+      reasons: [
+        gap(
+          `the loaded history shows ${formatBalanceDisplay(qty - balance, decimals)} ${sym} more received than is held now, and ` +
+            `network fees are not paid in ${sym}, so some ${sym} left in a way the history does not list.`,
+        ),
+      ],
+      notes,
+    };
+  }
   if (qty > balance) {
     assumedFees = qty - balance;
     assumedFeesCost = moneyScale(cost, assumedFees, qty);
@@ -438,8 +611,11 @@ export function computeNativePnl(input: PnlInput): PnlResult {
   const age = staleNoteFor(quote, input.nowMs);
   const quoteTime = quote.updatedAtMs ?? quote.fetchedAtMs;
   notes.unshift(
-    'Method: average cost. Each purchase adds coins and their cost to one pool; each sale, and each fee, removes coins at ' +
-      'the pool’s average cost.',
+    mode.kind === 'native'
+      ? 'Method: average cost. Each purchase adds coins and their cost to one pool; each sale, and each fee, removes coins at ' +
+          'the pool’s average cost.'
+      : `Method: average cost. Each purchase adds ${sym} and its cost to one pool; each sale removes ${sym} at the pool’s ` +
+          `average cost. Network fees are paid in the network’s own coin, not in ${sym}, and are not part of these figures.`,
     `Receiving ${sym} from someone else counts as buying it, and sending ${sym} to someone else counts as selling it, at ` +
       'CoinGecko’s US dollar price at that time: the wallet cannot see what you actually paid or were paid.',
     `The price at a transaction’s time is CoinGecko’s price nearest to it (${granularity === 'daily' ? 'daily' : granularity === 'hourly' ? 'hourly' : 'every 5 minutes'} for ` +

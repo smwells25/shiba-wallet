@@ -42,6 +42,13 @@ import type { JsonRpcTransport } from '@shiba-wallet/chains-evm';
  * eth_blockNumber failing on the first page is thrown, because then the
  * endpoint answered nothing at all and the screen's retryable error state
  * is the honest answer.
+ *
+ * WHICH TOKEN. Every entry names the contract that emitted its Transfer log
+ * (HistoryEntry.contract, lowercased; phase 23 item 8), which is always the
+ * tracked token's own: a log from any other contract (an endpoint that
+ * ignored the query's address filter) is left out and counted in the page's
+ * `omitted` as 'log-from-another-contract', because labelling it with the
+ * tracked token's symbol and decimals would be false.
  */
 
 export interface TrackedTokenRef {
@@ -215,6 +222,7 @@ export function tokenLogsHistoryProvider(config: TokenLogsConfig): TokenLogsHist
       // first page, where nothing has been answered yet).
       const answeredBefore = cursorRaw ? toBlock + 1n : null;
 
+      let foreignLogs = 0;
       // One windowed query per tracked token; merged newest-first. Token
       // count is user-curated and small, and each query is contract-
       // filtered per the endpoint's requirements. allSettled so that every
@@ -227,7 +235,16 @@ export function tokenLogsHistoryProvider(config: TokenLogsConfig): TokenLogsHist
             fromBlock,
             toBlock,
           });
-          return transfers.map((t): HistoryEntry => {
+          // The log's own emitting address (getErc20Transfers reads it from
+          // the log, not from the query). An endpoint that ignored the
+          // address filter could hand back another contract's Transfer
+          // logs; labelling those with this token's symbol and decimals
+          // would be false, so they are left out and counted (the page's
+          // `omitted`, reason 'log-from-another-contract').
+          const wanted = token.address.toLowerCase();
+          const own = transfers.filter((t) => t.token.toLowerCase() === wanted);
+          foreignLogs += transfers.length - own.length;
+          return own.map((t): HistoryEntry => {
             const from = t.from.toLowerCase();
             const to = t.to.toLowerCase();
             return {
@@ -243,6 +260,10 @@ export function tokenLogsHistoryProvider(config: TokenLogsConfig): TokenLogsHist
               assetSymbol: token.symbol,
               assetAmount: t.value,
               assetDecimals: token.decimals,
+              // The contract that emitted the log (equal to the tracked
+              // token's, checked above), lowercased: HistoryEntry's
+              // convention.
+              contract: t.token.toLowerCase(),
             };
           });
         }),
@@ -283,6 +304,7 @@ export function tokenLogsHistoryProvider(config: TokenLogsConfig): TokenLogsHist
       return {
         entries,
         tokenLogsCoverage: coverage,
+        ...(foreignLogs > 0 ? { omitted: { 'log-from-another-contract': foreignLogs } } : {}),
         ...(exhausted
           ? {}
           : {

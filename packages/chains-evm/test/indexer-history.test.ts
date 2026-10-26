@@ -539,3 +539,101 @@ describe('EIP-7708 protocol logs (Glamsterdam; the indexer reports them as "erc2
     );
   });
 });
+
+describe('HistoryEntry.contract (the token contract, phase 23 item 8)', () => {
+  const USDC_MAINNET = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
+
+  it('names the contract of erc20, erc721 and erc1155 entries, lowercased from rawContract.address', async () => {
+    const erc20 = transfer({
+      category: 'erc20', asset: 'USDC', uniqueId: 'c:log:1',
+      rawContract: { value: '0xf4240', address: USDC_MAINNET, decimal: '0x6' },
+    });
+    const erc721 = transfer({
+      hash: '0x' + '81'.repeat(32), category: 'erc721', asset: 'PUNK', uniqueId: 'c:log:2', value: null, blockNum: '0xf0',
+      rawContract: { value: null, address: OTHER, decimal: null },
+    });
+    const erc1155 = transfer({
+      hash: '0x' + '82'.repeat(32), category: 'erc1155', asset: null, uniqueId: 'c:log:3', value: null, blockNum: '0xe0',
+      rawContract: { value: null, address: '0x' + 'AB'.repeat(20), decimal: null },
+    });
+    const { transport } = fakeTransport((p) => (p.toAddress === ME ? { transfers: [erc20, erc721, erc1155] } : { transfers: [] }));
+    const page = await indexerHistoryProvider(transport).getHistory(ME);
+    expect(page.entries.map((e) => [e.uid, e.contract])).toEqual([
+      ['c:log:1', USDC_MAINNET.toLowerCase()],
+      ['c:log:2', OTHER.toLowerCase()],
+      ['c:log:3', '0x' + 'ab'.repeat(20)],
+    ]);
+  });
+
+  it('native entries and converted EIP-7708 protocol logs carry no contract', async () => {
+    const native = transfer({ uniqueId: 'n:external' });
+    const internal = transfer({
+      hash: '0x' + '83'.repeat(32), category: 'internal', uniqueId: 'n:internal:0', blockNum: '0xf0',
+      // An answer that (wrongly) named an address on a native record: still native, still no contract.
+      rawContract: { value: '0x04', address: OTHER, decimal: '0x12' },
+    });
+    const protocolLog = transfer({
+      hash: '0x' + '84'.repeat(32), category: 'erc20', asset: '', value: null, uniqueId: 'p:log:9', blockNum: '0xe0',
+      rawContract: { value: '0x05', address: EIP7708_TRANSFER_LOG_ADDRESS, decimal: null },
+    });
+    const { transport } = fakeTransport((p) => (p.toAddress === ME ? { transfers: [native, internal, protocolLog] } : { transfers: [] }));
+    const page = await indexerHistoryProvider(transport).getHistory(ME);
+    expect(page.entries.map((e) => [e.uid, e.amount])).toEqual([
+      ['n:external', 1_000_000_000_000_000_000n],
+      ['n:internal:0', 4n],
+      ['p:log:9', 5n],
+    ]);
+    for (const entry of page.entries) expect('contract' in entry).toBe(false);
+  });
+
+  it('an answer without rawContract.address maps to exactly the entry it mapped to before the field existed', async () => {
+    // The shape of the existing "erc20 asset amounts" answer (no address key at all).
+    const answer = {
+      hash: '0xtok', blockNum: '0x10', uniqueId: '0xtok:log:1', category: 'erc20',
+      from: '0x' + '22'.repeat(20), to: ME.toLowerCase(), value: 1.5, asset: 'USDC',
+      rawContract: { value: '0x16e360', decimal: '0x6' },
+      metadata: { blockTimestamp: '2026-09-28T00:00:00.000Z' },
+    };
+    const { transport } = fakeTransport((p) => (p.toAddress === ME ? { transfers: [answer] } : { transfers: [] }));
+    const page = await indexerHistoryProvider(transport).getHistory(ME);
+    // Every key and value, in order (an old-shaped entry: no `contract`).
+    expect(Object.entries(page.entries[0]!)).toEqual(Object.entries({
+      id: '0xtok',
+      uid: '0xtok:log:1',
+      timestamp: Math.floor(Date.parse('2026-09-28T00:00:00.000Z') / 1000),
+      confirmed: true,
+      blockHeight: 16,
+      direction: 'in',
+      assetSymbol: 'USDC',
+      assetAmount: 1_500_000n,
+      assetDecimals: 6,
+      counterparty: '0x' + '22'.repeat(20),
+    }));
+  });
+
+  it('leaves out a contract that is not a 20-byte hex address rather than guessing', async () => {
+    const odd = [null, '', 'USDC', '0x1234', '0x' + 'g'.repeat(40), '0x' + 'ab'.repeat(21)].map((address, i) =>
+      transfer({
+        hash: '0x' + (90 + i).toString(16).padStart(2, '0').repeat(32), category: 'erc20', asset: 'USDC', uniqueId: `o:log:${i}`,
+        blockNum: '0x' + (0x100 - i).toString(16), rawContract: { value: '0x01', address, decimal: '0x6' },
+      }),
+    );
+    const { transport } = fakeTransport((p) => (p.toAddress === ME ? { transfers: odd } : { transfers: [] }));
+    const page = await indexerHistoryProvider(transport).getHistory(ME);
+    expect(page.entries).toHaveLength(odd.length);
+    for (const entry of page.entries) {
+      expect('contract' in entry).toBe(false);
+      expect(entry.assetSymbol).toBe('USDC');
+    }
+  });
+
+  it('the recorded Sepolia answer (only native records and protocol logs) gains no contract anywhere', async () => {
+    const fixture = JSON.parse(
+      readFileSync(new URL('./fixtures/indexer-history/sepolia-staking-bundle-sent.json', import.meta.url), 'utf8'),
+    ) as { request: { fromAddress: string }; result: { transfers: Record<string, unknown>[] } };
+    const { transport } = fakeTransport((p) => (p.fromAddress ? { transfers: fixture.result.transfers } : { transfers: [] }));
+    const page = await indexerHistoryProvider(transport, { direction: 'sent' }).getHistory(fixture.request.fromAddress);
+    expect(page.entries).toHaveLength(2);
+    for (const entry of page.entries) expect('contract' in entry).toBe(false);
+  });
+});

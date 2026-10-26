@@ -2183,5 +2183,56 @@ installFakeNode();
   }
 }
 
+console.log('HistoryEntry.contract through the merged four-stream feed (phase 23 item 8):');
+{
+  const sah = await import('../src/wallet/smart-account-history.ts');
+  const hist = await import('../src/wallet/history.ts');
+  const SMART = KERNEL_OF_ACCOUNT_1;
+  const USDC_C = '0x1c7d4b196cb0c7b01d743fbc6116a902379c7238'; // Circle's Sepolia USDC
+  const LOOK = '0x00000000000000000000000000000000000000aa';
+  const h = (n) => '0x' + n.toString(16).padStart(64, '0');
+  const t = (hash, block, from, to, category, value, extra = {}) => ({
+    hash, blockNum: '0x' + block.toString(16), from: from.toLowerCase(), to: to?.toLowerCase() ?? null, category,
+    uniqueId: `${hash}:${category}`, asset: 'ETH', rawContract: { value: '0x' + value.toString(16), address: null, decimal: '0x12' },
+    metadata: { blockTimestamp: new Date(1_790_000_000_000 + block * 12_000).toISOString() }, ...extra,
+  });
+  const usdc = (hash, block, from, to, value, address = USDC_C, symbol = 'USDC') =>
+    t(hash, block, from, to, 'erc20', value, { uniqueId: `${hash}:log:1`, asset: symbol, rawContract: { value: '0x' + value.toString(16), address, decimal: '0x6' } });
+  const book = (withAddress) => {
+    const strip = (x) => (withAddress ? x : { ...x, rawContract: { value: x.rawContract.value, decimal: x.rawContract.decimal } });
+    return {
+      // Account 1 sends USDC to its smart account at block 100 (both sides see it) and receives a look-alike at block 80.
+      [`${ACCOUNT_1.toLowerCase()}|fromAddress`]: [[strip(usdc(h(1), 100, ACCOUNT_1, SMART, 1_000_000n))]],
+      [`${ACCOUNT_1.toLowerCase()}|toAddress`]: [[strip(usdc(h(2), 80, BURN, ACCOUNT_1, 9_000_000n, LOOK)), t(h(5), 70, BURN, ACCOUNT_1, 'external', 3n)]],
+      // The smart account pays USDC out at block 110.
+      [`${SMART.toLowerCase()}|fromAddress`]: [[strip(usdc(h(3), 110, SMART, BURN, 400_000n))]],
+      [`${SMART.toLowerCase()}|toAddress`]: [[strip(usdc(h(1), 100, ACCOUNT_1, SMART, 1_000_000n))]],
+    };
+  };
+  const run = async (withAddress) => {
+    const pages = book(withAddress);
+    const transport = async (method, [params]) => {
+      if (method !== 'alchemy_getAssetTransfers') throw new Error(`unexpected ${method}`);
+      const side = params.fromAddress ? 'fromAddress' : 'toAddress';
+      const address = (params.fromAddress ?? params.toAddress).toLowerCase();
+      return { transfers: (pages[`${address}|${side}`] ?? [[]])[0] ?? [] };
+    };
+    const feed = sah.createMergedHistoryFeed(hist.indexerHistoryStreams('https://indexer.invalid', ACCOUNT_1, SMART, transport));
+    await feed.fill();
+    return feed.take().entries;
+  };
+  const withC = await run(true);
+  const without = await run(false);
+  const shape = (list) => list.map((x) => `${x.id.slice(-2)}:${sah.isSmartAccountEntry(x) ? 'sa' : 'own'}:${x.direction}:${x.uid}`).join(',');
+  check('the merge is unchanged by the field: the same rows in the same order with and without rawContract.address',
+    shape(withC) === shape(without) && withC.length === 4, [shape(withC), shape(without)]);
+  check("…each token row names its contract, on the account's own rows and on the smart account's marked copies",
+    withC.map((x) => x.contract ?? '-').join() === `${USDC_C},${USDC_C},${LOOK},-` &&
+      sah.isSmartAccountEntry(withC[0]) && withC[0].contract === USDC_C,
+    withC.map((x) => [x.uid, x.contract]));
+  check('…and an answer without rawContract.address gives entries without the key (old-shaped)',
+    without.every((x) => !('contract' in x)));
+}
+
 console.log(`\ncheck-activity: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
