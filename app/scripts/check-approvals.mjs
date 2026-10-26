@@ -34,7 +34,7 @@ import { dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Interface, Transaction, id as ethersId, zeroPadValue, getAddress } from 'ethers';
 import { evmKeyProvider, mnemonicToSeed } from '@shiba-wallet/core';
-import { LIDO_DEPLOYMENTS, MAX_UINT256, ROCKET_POOL_DEPLOYMENTS, STAKING_SELECTORS, rocketContractAddressKey, toHex } from '@shiba-wallet/chains-evm';
+import { CCTP_DEPOSIT_FOR_BURN_SELECTOR, CCTP_V2_TESTNET, CCTP_V2_TESTNET_USDC, LIDO_DEPLOYMENTS, MAX_UINT256, ROCKET_POOL_DEPLOYMENTS, STAKING_SELECTORS, rocketContractAddressKey, toHex } from '@shiba-wallet/chains-evm';
 import {
   APPROVAL_WINDOW_BLOCKS,
   USDT_MAINNET,
@@ -87,6 +87,11 @@ import {
   ownWalletAddresses,
   searchNativeInteraction,
   pinnedStakingContracts,
+  pinnedBridgeContracts,
+  bridgeContractAt,
+  bridgeContractText,
+  bridgeApprovalText,
+  pinnedSpenderApprovalTarget,
   resolvedRocketDepositPoolAt,
   stakingContractAt,
   stakingContractText,
@@ -1253,6 +1258,105 @@ console.log('pinned staking contracts on the risk card:');
   const m4Lines = m4.computeRiskLines(await m4.gatherRiskFacts({ transport: withRegistry(OTHER_POOL), url: RPC, wallet: ME, to: POOL, data: deposit, chainCaip2: HOODI, trackedTokens: [], loadOwnMultisigs: null }));
   node.chainId = '0xaa36a7';
   check('mutant (resolved address not compared with `to`) is caught', m4Lines.some((l) => /deposit pool/.test(l.text)));
+}
+
+console.log('pinned bridge contracts on the risk card (pass p23-cctp finding 4):');
+{
+  const ARB = 'eip155:421614';
+  const TM = CCTP_V2_TESTNET.tokenMessengerV2;
+  const ARB_USDC = CCTP_V2_TESTNET_USDC[421614];
+  // The address as docs/BRIDGING.md section 17 and Circle's testnet table list it, pinned here independently.
+  check('the engine table holds Circle’s documented TokenMessengerV2 and Arbitrum Sepolia USDC',
+    TM === '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA' && ARB_USDC === '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d');
+  const all = pinnedBridgeContracts();
+  check('four pinned bridge contracts: TokenMessengerV2 on Ethereum, OP, Arbitrum and Base Sepolia, none on mainnet',
+    all.length === 4 && all.every((c) => c.address === TM && c.name === 'TokenMessengerV2') &&
+      all.map((c) => c.chain).sort().join() === ['eip155:11155111', 'eip155:11155420', 'eip155:421614', 'eip155:84532'].sort().join() && !all.some((c) => c.chain === MAINNET));
+  // A look-alike: the same first 39 hex digits, the last one changed (lower case, so ethers takes it unchecksummed).
+  const tmLookAlike = (TM.slice(0, -1) + (TM.slice(-1).toLowerCase() === 'a' ? 'b' : 'a')).toLowerCase();
+  check('bridgeContractAt: exact pair only (lower case matches; a look-alike, mainnet and a malformed address do not)',
+    bridgeContractAt(ARB, TM)?.name === 'TokenMessengerV2' && bridgeContractAt(ARB, TM.toLowerCase()) !== null &&
+      bridgeContractAt(ARB, tmLookAlike) === null && bridgeContractAt(MAINNET, TM) === null && bridgeContractAt(ARB, TM + '00') === null);
+  const BURN_LINE = `This transaction goes to Circle’s TokenMessengerV2 on Arbitrum Sepolia (${TM}), pinned by this wallet from Circle’s published test-network addresses.`;
+  check('the burn line (exact)', bridgeContractText(bridgeContractAt(ARB, TM)) === BURN_LINE);
+  const APPROVE_LINE = `This approves Circle’s TokenMessengerV2 on Arbitrum Sepolia (${TM}), pinned by this wallet from Circle’s published test-network addresses, to take USDC from this account through its token contract ${ARB_USDC}.`;
+  check('the approval line (exact)', bridgeApprovalText({ contract: ARB_USDC, symbol: 'USDC', spender: bridgeContractAt(ARB, TM) }) === APPROVE_LINE);
+
+  // The card over the fake node: every address holds code deployed 150 blocks
+  // ago (a "new contract" by the threshold), so the generic path WOULD warn.
+  node = defaultNode();
+  node.chainId = '0x66eee';
+  const OTHER_TOKEN = '0x' + '6b'.repeat(20);
+  for (const a of [TM, tmLookAlike, ARB_USDC, OTHER_TOKEN]) {
+    node.codes[a.toLowerCase()] = '0x6080604052';
+    node.deployedAt[a.toLowerCase()] = HEAD - 150n;
+  }
+  const arbKnown = approvalTokensForChain([], ARB).map((t) => ({ address: t.address, symbol: t.symbol }));
+  check('Arbitrum Sepolia USDC is among the known tokens the card is given', arbKnown.some((t) => t.address.toLowerCase() === ARB_USDC.toLowerCase()));
+  const approveTo = (spender, amount = 1_000_000n) => erc20Iface.encodeFunctionData('approve', [spender, amount]);
+  const burnData = CCTP_DEPOSIT_FOR_BURN_SELECTOR + '00'.repeat(32 * 7);
+  const generic = (lines, address) => lines.some((l) => l.text === `This transaction goes to a contract (${address}).`) || lines.some((l) => l.type === 'new-contract' || l.type === 'contract-age-unknown' || /^first-interaction/.test(l.type));
+  calls = [];
+  const burn = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: TM, data: burnData, chainCaip2: ARB, trackedTokens: arbKnown, loadOwnMultisigs: null }));
+  check('the burn: exactly one line naming Circle’s pinned TokenMessengerV2', burn.length === 1 && burn[0].text === BURN_LINE && burn[0].tone === 'notice', burn.map((l) => l.text).join(' | '));
+  check('…no "goes to a contract", no age line, no first-interaction line, no search', !generic(burn, TM) && !calls.some((c) => c.method === 'eth_getLogs'));
+  calls = [];
+  const approve = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: ARB_USDC, data: approveTo(TM), chainCaip2: ARB, trackedTokens: arbKnown, loadOwnMultisigs: null }));
+  check('the approval: the card describes the SPENDER (one line), never the USDC contract', approve.length === 1 && approve[0].text === APPROVE_LINE, approve.map((l) => l.text).join(' | '));
+  check('…no "goes to a contract", no age line, no first-transfer search about the token contract', !generic(approve, ARB_USDC) && !calls.some((c) => c.method === 'eth_getLogs'));
+  const untracked = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: ARB_USDC, data: approveTo(TM), chainCaip2: ARB, trackedTokens: [], loadOwnMultisigs: null }));
+  check('…also when the USDC is not on the tracked list (Circle’s USDC is pinned by the CCTP table)', untracked.length === 1 && untracked[0].text === APPROVE_LINE, untracked.map((l) => l.text).join(' | '));
+  const unlimited = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: ARB_USDC, data: approveTo(TM, MAX_UINT256), chainCaip2: ARB, trackedTokens: arbKnown, loadOwnMultisigs: null }));
+  check('an UNLIMITED approval to the pinned spender keeps its warning beside the spender line',
+    unlimited.some((l) => l.type === 'unlimited-approval' && l.tone === 'warning') && unlimited.some((l) => l.text === APPROVE_LINE), unlimited.map((l) => `${l.type}: ${l.text}`).join(' | '));
+  check('pinnedSpenderApprovalTarget: only exactly approve(pinned spender, x)',
+    pinnedSpenderApprovalTarget(ARB_USDC, approveTo(TM), ARB, []) !== null &&
+      pinnedSpenderApprovalTarget(ARB_USDC, approveTo(TM) + '00', ARB, []) === null &&
+      pinnedSpenderApprovalTarget(ARB_USDC, '0xa9059cbb' + approveTo(TM).slice(10), ARB, []) === null &&
+      pinnedSpenderApprovalTarget(ARB_USDC, approveTo(TM), MAINNET, []) === null);
+  // Controls: anything but the exact pinned spender on this chain keeps the generic lines.
+  const lookAlikeSpender = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: ARB_USDC, data: approveTo(tmLookAlike), chainCaip2: ARB, trackedTokens: arbKnown, loadOwnMultisigs: null }));
+  check('control: approve to a LOOK-ALIKE spender keeps the generic lines and no pinned line',
+    generic(lookAlikeSpender, ARB_USDC) && !lookAlikeSpender.some((l) => /pinned by this wallet/.test(l.text)), lookAlikeSpender.map((l) => l.text).join(' | '));
+  const otherToken = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: OTHER_TOKEN, data: approveTo(TM), chainCaip2: ARB, trackedTokens: arbKnown, loadOwnMultisigs: null }));
+  check('control: approve(TokenMessengerV2) on an unknown token keeps the generic lines', generic(otherToken, OTHER_TOKEN) && !otherToken.some((l) => /pinned by this wallet/.test(l.text)));
+  node.chainId = '0x1';
+  const onMainnet = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: TM, data: burnData, chainCaip2: MAINNET, trackedTokens: [], loadOwnMultisigs: null }));
+  check('control: the same address on mainnet keeps the generic lines', generic(onMainnet, TM) && !onMainnet.some((l) => /pinned by this wallet/.test(l.text)));
+  node.chainId = '0x66eee';
+  delete node.codes[ARB_USDC.toLowerCase()];
+  const noCode = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: ARB_USDC, data: approveTo(TM), chainCaip2: ARB, trackedTokens: arbKnown, loadOwnMultisigs: null }));
+  check('control: the token WITHOUT code keeps the no-code warning and no spender line',
+    noCode.some((l) => l.type === 'no-code-recipient-with-calldata' && l.tone === 'warning') && !noCode.some((l) => /pinned by this wallet/.test(l.text)));
+  node.codes[ARB_USDC.toLowerCase()] = '0x6080604052';
+
+  // Mutation checks on a rewritten copy of risk.ts.
+  const HERE = dirname(fileURLToPath(import.meta.url));
+  const MUTANT_DIR = join(HERE, `.mutants-approvals-bridge-${process.pid}`);
+  process.on('exit', () => rmSync(MUTANT_DIR, { recursive: true, force: true }));
+  let n = 0;
+  const importRiskMutant = async (from, to) => {
+    const relPath = 'src/wallet/risk.ts';
+    const original = readFileSync(join(HERE, '..', relPath), 'utf8');
+    if (!original.includes(from)) throw new Error(`mutation anchor not found: ${from}`);
+    const originalDir = dirname(join(HERE, '..', relPath));
+    const rewritten = original
+      .replace(from, to)
+      .replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolvePath(originalDir, spec)).href}'`);
+    mkdirSync(MUTANT_DIR, { recursive: true });
+    n += 1;
+    const file = join(MUTANT_DIR, `m${n}-risk.ts`);
+    writeFileSync(file, rewritten);
+    return import(pathToFileURL(file).href);
+  };
+  const mSpender = await importRiskMutant("    if (bridgeApprovalRef && toClass.kind === 'contract') {", '    if (false) {');
+  const mSpenderLines = mSpender.computeRiskLines(await mSpender.gatherRiskFacts({ transport, url: RPC, wallet: ME, to: ARB_USDC, data: approveTo(TM), chainCaip2: ARB, trackedTokens: arbKnown, loadOwnMultisigs: null }));
+  check('MUTANT (the approval card generic again, about the USDC contract) is caught', generic(mSpenderLines, ARB_USDC) && !mSpenderLines.some((l) => l.text === APPROVE_LINE));
+  const mChain = await importRiskMutant(
+    'return pinnedBridgeContracts().find((c) => c.chain === chainCaip2 && c.address.toLowerCase() === lower) ?? null;',
+    'return pinnedBridgeContracts().find((c) => c.address.toLowerCase() === lower) ?? null;',
+  );
+  check('MUTANT (chain not compared for a bridge contract) is caught', mChain.bridgeContractAt(MAINNET, TM) !== null && bridgeContractAt(MAINNET, TM) === null);
 }
 
 check('approximate durations', approxDuration(9000n) === 'about 30 hours' && approxDuration(72000n) === 'about 10 days' && approxDuration(1n) === 'about 1 minute' && approxDuration(64n) === 'about 13 minutes' && approxDuration(300n) === 'about 1 hour');

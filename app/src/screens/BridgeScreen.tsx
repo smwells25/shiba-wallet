@@ -3,7 +3,7 @@ import { ActivityIndicator, Alert, Linking, ScrollView, Switch, Text, TextInput,
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { httpTransport as evmHttpTransport } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
-import { spokenShortAddress } from '../a11y';
+import { spokenShortAddress, withShortAddresses } from '../a11y';
 import { Button, ImportedKeyNotice, TestNetworksOnlyCard, WarningBox, screenStyle, switchColors, useFieldLabels } from '../components';
 import { callWithFailover, getEndpoint, type NetworkEndpoint, type UsableEndpoint } from '../config/networks';
 import { readinessGate } from '../config/readiness';
@@ -51,7 +51,6 @@ import {
 } from '../wallet/aa';
 import { PREVIEW_AA_NOTE } from '../wallet/simulation';
 import {
-  BRIDGE_AMOUNT_PLACEHOLDER,
   BRIDGE_ASSETS,
   BRIDGE_INTRO,
   BRIDGE_RECORDS_NOTE,
@@ -61,6 +60,7 @@ import {
   BridgeRefusal,
   broadcastStamped,
   bridgeAmountHint,
+  bridgeAmountPlaceholder,
   bridgeApprovePromptTitle,
   bridgeAssetDecimals,
   bridgeAssetLabel,
@@ -86,6 +86,8 @@ import {
   bridgeRetryCall,
   bridgeRetryPromptTitle,
   bridgeSourceFeeLines,
+  bridgeSwitchButtonTitle,
+  bridgeSwitchTarget,
   bridgeTransferFinal,
   defaultChainTransport,
   listBridgeTransfers,
@@ -243,7 +245,7 @@ export function BridgeScreen({ navigation }: Props) {
   const theme = useTheme();
   const fieldLabel = useFieldLabels();
   const { accounts, signWith, activeAccount } = useWallet();
-  const { evmChain } = usePrefs();
+  const { evmChain, setTestNetwork } = usePrefs();
   const account = accounts.find((a) => a.chainId === EVM_CHAIN_ID);
   const caip2 = evmChain.caip2;
   const symbol = evmChain.displaySymbol;
@@ -275,6 +277,27 @@ export function BridgeScreen({ navigation }: Props) {
 
   const [aaConfig, setAaConfig] = useState<AaChainConfig | null>(null);
   const [aaEnabled, setAaEnabled] = useState(false);
+
+  // A network switch while this screen is open (the mint and delivery
+  // panels' button, or Settings pushed on top) keeps the screen mounted:
+  // the navigator is keyed on the active account only (App.tsx). The form's
+  // choices were made for the previous network, so they start over; the
+  // asset falls back to the new network's default (USDC on Base Sepolia).
+  const [formNetwork, setFormNetwork] = useState(caip2);
+  if (formNetwork !== caip2) {
+    setFormNetwork(caip2);
+    setAssetPick(null);
+    setDestination(null);
+    setProviderId(null);
+    setRecipientPick('regular');
+    setRowQuotes(null);
+    setFormError(null);
+    setAaEnabled(false);
+  }
+  /** Makes the transfer's receiving network the active one, through the preference Settings → Developer writes. */
+  const switchNetwork = (target: Parameters<typeof setTestNetwork>[0]) => {
+    setTestNetwork(target).catch((e: unknown) => Alert.alert('The network was not changed', errorText(e)));
+  };
 
   // Transfers sent from this screen (stored per wallet; wallet/bridge.ts), and which are being checked.
   const [records, setRecords] = useState<BridgeTransferRecord[]>(() => listBridgeTransfers());
@@ -351,7 +374,10 @@ export function BridgeScreen({ navigation }: Props) {
   const choiceNote = offer !== null ? bridgeChoiceNote(offer, rows.length) : null;
   const destinationLabel = offer?.destinations.find((d) => d.chainId === chosenDestination)?.label ?? '';
 
-  const url = endpoint?.url ?? null;
+  // The endpoint read for the CURRENT network only: right after a network
+  // switch the previous network's endpoint is still in state until the
+  // new one is read, and it must not be used as this network's.
+  const url = endpoint && endpoint.network.chainId === caip2 ? endpoint.url : null;
   const aaType = aaConfig ? effectiveAaAccountType(aaConfig, account?.address) : null;
   const aaOffered =
     offer !== null &&
@@ -751,6 +777,7 @@ export function BridgeScreen({ navigation }: Props) {
               signWith={signWith}
               currentEndpoint={currentEndpoint}
               balanceUrl={url}
+              onSwitchNetwork={switchNetwork}
             />
           ) : null}
           {bridgeRetryCall(r) ? (
@@ -762,6 +789,7 @@ export function BridgeScreen({ navigation }: Props) {
               explorerTxBase={evmChain.explorerTxBase}
               signWith={signWith}
               currentEndpoint={currentEndpoint}
+              onSwitchNetwork={switchNetwork}
             />
           ) : null}
         </TransferStatusCard>
@@ -1079,7 +1107,10 @@ export function BridgeScreen({ navigation }: Props) {
               {smartRecipientPossible && !smartRecipientOffered ? (
                 <Text style={[styles.hint, { color: theme.textMuted }]}>{usdcSmartRecipientUnavailable(destinationLabel)}</Text>
               ) : null}
-              <Text style={[styles.hint, { color: theme.text }]}>
+              <Text
+                accessibilityLabel={withShortAddresses(usdcRecipientNote(recipientKind, recipientKind === 'regular' ? account.address : null, destinationLabel))}
+                style={[styles.hint, { color: theme.text }]}
+              >
                 {usdcRecipientNote(recipientKind, recipientKind === 'regular' ? account.address : null, destinationLabel)}
               </Text>
             </>
@@ -1087,9 +1118,13 @@ export function BridgeScreen({ navigation }: Props) {
             aaActive && aaType === 'kernel-v3.3' ? (
               <WarningBox>{smartAccountRecipientNote(account.address, destinationLabel)}</WarningBox>
             ) : aaActive ? (
-              <Text style={[styles.hint, { color: theme.text }]}>{upgradedAccountRecipientNote(account.address, destinationLabel)}</Text>
+              <Text accessibilityLabel={withShortAddresses(upgradedAccountRecipientNote(account.address, destinationLabel))} style={[styles.hint, { color: theme.text }]}>
+                {upgradedAccountRecipientNote(account.address, destinationLabel)}
+              </Text>
             ) : (
-              <Text style={[styles.hint, { color: theme.text }]}>{regularRecipientNote(account.address, destinationLabel)}</Text>
+              <Text accessibilityLabel={withShortAddresses(regularRecipientNote(account.address, destinationLabel))} style={[styles.hint, { color: theme.text }]}>
+                {regularRecipientNote(account.address, destinationLabel)}
+              </Text>
             )
           ) : null}
         </>
@@ -1110,7 +1145,7 @@ export function BridgeScreen({ navigation }: Props) {
               setFormError(null);
             }}
             keyboardType="decimal-pad"
-            placeholder={BRIDGE_AMOUNT_PLACEHOLDER}
+            placeholder={bridgeAmountPlaceholder(asset)}
             placeholderTextColor={theme.textMuted}
           />
           {asset === 'native' ? (
@@ -1190,6 +1225,7 @@ function RetryPanel({
   explorerTxBase,
   signWith,
   currentEndpoint,
+  onSwitchNetwork,
 }: {
   record: BridgeTransferRecord;
   activeCaip2: string;
@@ -1198,6 +1234,7 @@ function RetryPanel({
   explorerTxBase: string;
   signWith: ReturnType<typeof useWallet>['signWith'];
   currentEndpoint: () => Promise<UsableEndpoint>;
+  onSwitchNetwork: (target: NonNullable<ReturnType<typeof bridgeSwitchTarget>>) => void;
 }) {
   const theme = useTheme();
   const [quote, setQuote] = useState<{ q: EvmSendQuote; url: string } | null>(null);
@@ -1205,7 +1242,7 @@ function RetryPanel({
   const [error, setError] = useState<string | null>(null);
   const blocker = bridgeRetryBlocker(activeCaip2, record);
   if (record.retryTxHash) return null;
-  if (blocker) return <Text style={[styles.hint, { color: theme.textMuted }]}>{blocker}</Text>;
+  if (blocker) return <BlockerWithSwitch text={blocker} activeCaip2={activeCaip2} record={record} onSwitchNetwork={onSwitchNetwork} />;
   const prepare = async () => {
     setError(null);
     setBusy(true);
@@ -1279,6 +1316,7 @@ function MintPanel({
   signWith,
   currentEndpoint,
   balanceUrl,
+  onSwitchNetwork,
 }: {
   record: BridgeTransferRecord;
   activeCaip2: string;
@@ -1289,6 +1327,7 @@ function MintPanel({
   currentEndpoint: () => Promise<UsableEndpoint>;
   /** The active network's endpoint, for reading the regular account's balance there (null while unknown). */
   balanceUrl: string | null;
+  onSwitchNetwork: (target: NonNullable<ReturnType<typeof bridgeSwitchTarget>>) => void;
 }) {
   const theme = useTheme();
   const [quote, setQuote] = useState<{ q: EvmSendQuote; url: string } | null>(null);
@@ -1311,7 +1350,7 @@ function MintPanel({
     };
   }, [onDestination, fromAddress, balanceUrl]);
   const blocker = bridgeMintBlocker(activeCaip2, record, balance, symbol);
-  if (blocker) return <Text style={[styles.hint, { color: theme.textMuted }]}>{blocker}</Text>;
+  if (blocker) return <BlockerWithSwitch text={blocker} activeCaip2={activeCaip2} record={record} onSwitchNetwork={onSwitchNetwork} />;
   const prepare = async () => {
     setError(null);
     setBusy(true);
@@ -1363,6 +1402,44 @@ function MintPanel({
         <Button title={`Mint on ${record.destinationLabel}`} variant="secondary" onPress={() => void prepare()} disabled={busy} />
       )}
       {error ? <WarningBox>{error}</WarningBox> : null}
+    </View>
+  );
+}
+
+/**
+ * Why the mint or delivery cannot be sent from here, spoken with short
+ * addresses, and — while the receiving network is not the active one — a
+ * button that makes it the active test network (pass p23-cctp: the panel
+ * used to say "switch … and come back to this screen", which a transfer to
+ * Base Sepolia could not follow). The switch goes through the same
+ * preference as Settings → Developer → Test network; this screen stays
+ * mounted (the navigator is keyed on the account, App.tsx), so the panel
+ * then shows the mint button itself.
+ */
+function BlockerWithSwitch({
+  text,
+  activeCaip2,
+  record,
+  onSwitchNetwork,
+}: {
+  text: string;
+  activeCaip2: string;
+  record: BridgeTransferRecord;
+  onSwitchNetwork: (target: NonNullable<ReturnType<typeof bridgeSwitchTarget>>) => void;
+}) {
+  const theme = useTheme();
+  const target = bridgeSwitchTarget(activeCaip2, record);
+  return (
+    <View style={styles.content}>
+      <Text accessibilityLabel={withShortAddresses(text)} style={[styles.hint, { color: theme.textMuted }]}>{text}</Text>
+      {target ? (
+        <Button
+          title={bridgeSwitchButtonTitle(record.destinationLabel)}
+          variant="secondary"
+          accessibilityHint={`Makes ${record.destinationLabel} the active test network, as Settings → Developer does; this screen stays open`}
+          onPress={() => onSwitchNetwork(target)}
+        />
+      ) : null}
     </View>
   );
 }

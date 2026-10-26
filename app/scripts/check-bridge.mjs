@@ -66,6 +66,15 @@ import {
 } from '@shiba-wallet/chains-evm';
 import {
   BRIDGE_AMOUNT_PLACEHOLDER,
+  BRIDGE_USDC_AMOUNT_PLACEHOLDER,
+  CCTP_FIRST_MINT_PAYMASTER_NOTE,
+  bridgeAmountPlaceholder,
+  bridgeLinkShown,
+  bridgeLiveStatusText,
+  bridgeSwitchButtonTitle,
+  bridgeSwitchSentence,
+  bridgeSwitchTarget,
+  cctpFirstMintPaymasterNote,
   BRIDGE_CHOICE_NOTE,
   BRIDGE_FEATURE,
   BRIDGE_SINGLE_PROVIDER_NOTE,
@@ -170,6 +179,7 @@ import { featureReadiness, isFeatureAllowed } from '../src/config/readiness.ts';
 import { EVM_SEPOLIA, evmProfileByCaip2, setCustomEvmProfiles } from '../src/config/evm-chain.ts';
 import { MULTISIG_ALLOWED_ROUTES, WATCH_ONLY_ALLOWED_ROUTES, multisigRouteRefusal, watchOnlyRouteRefusal } from '../src/wallet/watch-only.ts';
 import { KERNEL_ACCOUNT_0, OWNER_0, TEST_MNEMONIC, decodeKernelExecute, fakeBundler, fakeKernelNode } from './fakes-kernel.mjs';
+import { spokenShortAddress, withShortAddresses } from '../src/a11y.ts';
 
 let passed = 0;
 let failed = 0;
@@ -902,7 +912,7 @@ function packetSentLog(src, dst, guid = GUID) {
   const valued = { ...cachedRec, status: { ...st, destinationCalls: [{ ...st.destinationCalls[0], value: 1n }] } };
   check('a retry call with a value is not offered', bridgeRetryCall(valued) === null);
   check('retry from another active network: the switch sentence (exact)',
-    bridgeRetryBlocker(caip(SEPOLIA), cachedRec) === 'Anyone can send this delivery transaction on OP Sepolia, paying the gas there. To send it from this wallet, switch to OP Sepolia (Settings → Developer) and come back to this screen; this transfer stays listed here.' &&
+    bridgeRetryBlocker(caip(SEPOLIA), cachedRec) === 'Anyone can send this delivery transaction on OP Sepolia, paying the gas there. To send it from this wallet, make OP Sepolia the active network with the button below (the same choice as Settings → Developer → Test network); this screen stays open and this transfer stays listed here.' &&
       bridgeRetryBlocker(caip(OP), cachedRec) === null);
   check('the retry prompt title (exact)', bridgeRetryPromptTitle(cachedRec) === 'Deliver bridged test ETH waiting in Stargate’s pool on OP Sepolia');
   const rq = await prepareBridgeRetry(ACTIVE_URL(OP), EOA, cachedRec);
@@ -1333,7 +1343,8 @@ console.log('check-bridge: the screen, the route gates, Home and the navigator (
   check('App.tsx registers Bridge with the title "Bridge (test networks)"; navigation.ts lists it',
     app.includes("<Stack.Screen name=\"Bridge\" component={BridgeScreen} options={{ title: 'Bridge (test networks)' }} />") && /\n  Bridge: undefined;/.test(nav));
   check('Home: the Bridge link only where readiness allows and a provider serves the network',
-    home.includes("isFeatureAllowed('bridge', evmChain.caip2) && bridgeOfferFor(evmChain.caip2).destinations.length > 0\n            ? cardLink('bridge', 'Bridge', () => navigation.navigate('Bridge'), 'Opens bridging between test networks')"));
+    home.includes("bridgeLinkShown(evmChain.caip2)\n            ? cardLink('bridge', 'Bridge', () => navigation.navigate('Bridge'), 'Opens bridging between test networks')") &&
+      home.includes("import { bridgeLinkShown } from '../wallet/bridge';") && !home.includes('bridgeOfferFor('));
 }
 
 // ---------------------------------------------------------------------------
@@ -1563,7 +1574,7 @@ console.log('check-bridge: the emulator pass p21b findings (provider choice, spo
 
   // (9) The placeholder cannot be mistaken for a value.
   check('finding 9: the amount placeholder is a worded example (exact), the step hint unchanged',
-    BRIDGE_AMOUNT_PLACEHOLDER === 'Amount, for example 0.0002' && screen.includes('placeholder={BRIDGE_AMOUNT_PLACEHOLDER}') && !screen.includes('placeholder="0.0002"') &&
+    BRIDGE_AMOUNT_PLACEHOLDER === 'Amount, for example 0.0002' && screen.includes('placeholder={bridgeAmountPlaceholder(asset)}') && !screen.includes('placeholder="0.0002"') &&
       screen.includes('Stargate moves {symbol} in steps of 0.000001; an amount with more decimal places is refused, not rounded.'));
 }
 
@@ -1791,7 +1802,7 @@ let planU;
     ].join('\n'), m.pinnedSummary.join('\n'));
   check('the pinned-contract line (exact)',
     m.pinnedPool === cctpPinnedContractLine(TM, 'Base Sepolia') &&
-      m.pinnedPool === `The burn goes to Circle’s TokenMessengerV2 on Base Sepolia (${TM}), pinned by this wallet from Circle’s published test-network addresses and checked on-chain on 2026-10-25. The risk card below does not know Circle’s contracts by name.`);
+      m.pinnedPool === `The burn goes to Circle’s TokenMessengerV2 on Base Sepolia (${TM}), pinned by this wallet from Circle’s published test-network addresses and checked on-chain on 2026-10-25. The risk card below names it too.`);
   check('the recipient line, the mint step and the time lines (exact)',
     m.recipientLines.join() === usdcRecipientNote('regular', EOA, 'Arbitrum Sepolia') &&
       usdcRecipientNote('regular', EOA, 'Arbitrum Sepolia') === `The USDC is minted to your regular account ${EOA} on Arbitrum Sepolia, the same address as on this network.` &&
@@ -1931,7 +1942,7 @@ console.log('check-bridge: CCTP tracking — burned, attested, the Mint button, 
       cctpExpirySentence({ expirationBlock: 9_876_543n }, 'Base Sepolia') === 'The attested message expires after block 9876543. After that Circle’s contract refuses it until Circle re-attests it, which Circle’s technical guide says can be requested at any time; this wallet does not request it.' &&
       cctpExpirySentence(null, 'Base Sepolia') === 'Circle’s attested message is valid until it is used, unless it carries an expiration block: Circle’s technical guide says an expired message must be re-attested by Circle (possible at any time) before it can be minted.');
   check('Mint from another active network: the switch sentence, that anyone can send it, and the expiry (exact)',
-    bridgeMintBlocker(caip(BASE), findRec(), null) === `Anyone with test ETH on Arbitrum Sepolia can send this mint transaction, and the USDC still goes only to ${EOA}. ${expiry0} To send it from this wallet, switch to Arbitrum Sepolia (Settings → Developer) and come back to this screen; this transfer stays listed here.`,
+    bridgeMintBlocker(caip(BASE), findRec(), null) === `Anyone with test ETH on Arbitrum Sepolia can send this mint transaction, and the USDC still goes only to ${EOA}. ${expiry0} To send it from this wallet, make Arbitrum Sepolia the active network with the button below (the same choice as Settings → Developer → Test network); this screen stays open and this transfer stays listed here.`,
     bridgeMintBlocker(caip(BASE), findRec(), null));
   check('Mint on the receiving network with no coin there: the sentence (exact); with some coin, or not read yet: offered',
     bridgeMintBlocker(caip(ARB), findRec(), 0n) === `Your regular account holds no test ETH on Arbitrum Sepolia to pay for the mint transaction. Anyone with test ETH there can send it, and the USDC still goes only to ${EOA}. ${expiry0}` &&
@@ -1946,6 +1957,44 @@ console.log('check-bridge: CCTP tracking — burned, attested, the Mint button, 
   check('no mint call for a LayerZero transfer, and none to send → refused in plain words',
     bridgeMintCall({ ...findRec(), providerId: LAYERZERO_OFT_PROVIDER_ID }) === null &&
       (await rejection(() => prepareBridgeMint(ACTIVE_URL(ARB), EOA, { ...findRec(), status: null })))?.message === 'There is no mint transaction to send for this transfer.');
+  // Pass p23-cctp (TalkBack): an idle poll must not re-announce the status.
+  // A simulated live region announces whenever the text it is given differs
+  // from the last one (Android's live regions speak a content change).
+  const liveSim = () => {
+    let last = null;
+    let announcements = 0;
+    return {
+      set(text) {
+        if (last !== null && text !== last) announcements += 1;
+        last = text;
+      },
+      get announcements() {
+        return announcements;
+      },
+    };
+  };
+  const waiting = { ...findRec(), status: { state: 'in-flight', detail: 'x', onChain: { status: 'in-flight' } } };
+  const snapshots = [waiting, { ...waiting, checkedAt: 1 }];
+  for (let tick = 1; tick <= 3; tick += 1) {
+    const stIdle = await trackBridgeTransfer(findRec(), readers);
+    updateBridgeTransfer(rec.id, trackedPatch(findRec(), stIdle, 1_792_000_100_000 + tick * BRIDGE_TRACK_INTERVAL_MS));
+    await bridgeTransfersWritten();
+    snapshots.push(findRec());
+  }
+  const sim = liveSim();
+  for (const r of snapshots) sim.set(bridgeLiveStatusText(r));
+  check('pass p23-cctp (fake ticks): three idle polls after the attestation change the check time but not the live-region text; the one status change is announced once',
+    new Set(snapshots.slice(2).map((r) => r.checkedAt)).size === 3 && sim.announcements === 1 &&
+      bridgeLiveStatusText(waiting) === 'Waiting for Circle’s attestation' && bridgeLiveStatusText(findRec()) === 'Attested: waiting for the mint on Arbitrum Sepolia',
+    `${sim.announcements} announcements`);
+  const mLive = await bridgeMutant(
+    '  return bridgeStatusHeading(record.status, record.destinationLabel, record.providerId);\n}',
+    '  return `${bridgeStatusHeading(record.status, record.destinationLabel, record.providerId)} (checked ${(record as { checkedAt?: number }).checkedAt})`;\n}',
+  );
+  const simM = liveSim();
+  for (const r of snapshots) simM.set(mLive.bridgeLiveStatusText(r));
+  check('MUTANT (the live-region text changes on every poll) is caught: it would be announced on each idle tick', simM.announcements > 1, `${simM.announcements}`);
+
   // 4. A restart: the stored attested message is used without asking Circle.
   await resetBridgeTransfers();
   await loadBridgeTransfers(store);
@@ -2193,6 +2242,119 @@ console.log('check-bridge: mutation checks');
   const r17 = await rejection(() => m17.quoteBridge(quoteRequest({ recipient: KERNEL_ACCOUNT_0, recipientKind: 'smart-account' })));
   check('MUTANT (test ETH to the smart account allowed) is caught', r17?.message !== BRIDGE_NATIVE_SMART_RECIPIENT_REFUSAL, r17?.message);
   for (const mod of [m6, m10, m11, m12, m13, m14, m15, m16, m17]) await mod.resetBridgeTransfers();
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-bridge: the emulator pass p23-cctp findings (the Home link, the network switch, the USDC placeholder, the paymaster sentence, the live region, short addresses)');
+// ---------------------------------------------------------------------------
+{
+  resetChains();
+  await resetBridgeTransfers();
+  const screen = source('src/screens/BridgeScreen.tsx');
+  const views = source('src/screens/BridgeViews.tsx');
+  const appSrc = source('App.tsx');
+  const settings = source('src/screens/SettingsScreen.tsx');
+
+  // (1) The Home link: any asset with a destination, not test ETH alone.
+  fetchLog = [];
+  check('finding 1: the Bridge link shows on Ethereum, Arbitrum, OP and Base Sepolia',
+    [SEPOLIA, ARB, OP, BASE].every((id) => bridgeLinkShown(caip(id))));
+  check('…on Base Sepolia because USDC has destinations there although test ETH has none (no Stargate pool)',
+    bridgeOfferFor(caip(BASE)).destinations.length === 0 && bridgeOfferFor(caip(BASE), 'usdc').destinations.length === 3);
+  const lineaMain = {
+    ...EVM_SEPOLIA, caip2: 'eip155:59144', chainIdDecimal: '59144', label: 'Linea', testnet: false, kernelV33Verified: false,
+    custom: { rpcUrl: 'https://rpc.linea.example', nativeSymbol: 'ETH', explorerBase: null, blockTimeMs: null, testnetRequested: false },
+  };
+  const lineaTest = {
+    ...EVM_SEPOLIA, caip2: 'eip155:59141', chainIdDecimal: '59141', label: 'Linea Sepolia', testnet: true, kernelV33Verified: false,
+    custom: { rpcUrl: 'https://rpc.linea-sepolia.example', nativeSymbol: 'ETH', explorerBase: null, blockTimeMs: null, testnetRequested: true },
+  };
+  setCustomEvmProfiles([lineaMain, lineaTest]);
+  check('…hidden, as before, on Hoodi, on mainnet, on a custom main network and on a custom test network, with no request',
+    !bridgeLinkShown(caip(HOODI)) && !bridgeLinkShown('eip155:1') && !bridgeLinkShown('eip155:59144') && !bridgeLinkShown('eip155:59141') && fetchLog.length === 0);
+  setCustomEvmProfiles([]);
+  check('…and the Bridge screen opens on USDC on Base Sepolia (test ETH elsewhere)',
+    defaultBridgeAsset(caip(BASE)) === 'usdc' && defaultBridgeAsset(caip(SEPOLIA)) === 'native' && defaultBridgeAsset(caip(ARB)) === 'native' && defaultBridgeAsset(caip(OP)) === 'native');
+  const mLink = await bridgeMutant(
+    '  return BRIDGE_ASSETS.some((asset) => bridgeOfferFor(caip2, asset).destinations.length > 0);',
+    '  return bridgeOfferFor(caip2).destinations.length > 0;',
+  );
+  check('MUTANT (the link keyed on test ETH alone, as before) is caught: hidden on Base Sepolia', mLink.bridgeLinkShown(caip(BASE)) === false && bridgeLinkShown(caip(BASE)) === true);
+
+  // (1, second part) The switch button on the mint and delivery panels.
+  check('the switch target: the receiving network while another is active; none on it, and none for a network Settings does not offer',
+    bridgeSwitchTarget(caip(ARB), { destinationCaip2: caip(BASE) }) === 'eip155:84532' &&
+      bridgeSwitchTarget(caip(BASE), { destinationCaip2: caip(BASE) }) === null &&
+      bridgeSwitchTarget(caip(ARB), { destinationCaip2: 'eip155:1' }) === null &&
+      bridgeSwitchTarget(caip(ARB), { destinationCaip2: 'eip155:59141' }) === null);
+  check('the switch sentence and the button title (exact)',
+    bridgeSwitchSentence('Base Sepolia') === 'To send it from this wallet, make Base Sepolia the active network with the button below (the same choice as Settings → Developer → Test network); this screen stays open and this transfer stays listed here.' &&
+      bridgeSwitchButtonTitle('Base Sepolia') === 'Switch to Base Sepolia');
+  check('the screen switches through the same preference Settings → Developer writes (PrefsContext setTestNetwork)',
+    screen.includes('const { evmChain, setTestNetwork } = usePrefs();') && screen.includes('setTestNetwork(target).catch(') &&
+      settings.includes('onPress={() => void setTestNetwork(choice.value)}'));
+  check('the button sits beside both the mint and the delivery sentence, only when a switch target exists',
+    (screen.match(/<BlockerWithSwitch text=\{blocker\} activeCaip2=\{activeCaip2\} record=\{record\} onSwitchNetwork=\{onSwitchNetwork\} \/>/g) ?? []).length === 2 &&
+      screen.includes('const target = bridgeSwitchTarget(activeCaip2, record);') && screen.includes('{target ? (') && screen.includes('onPress={() => onSwitchNetwork(target)}'));
+  check('the screen stays mounted on a switch: the navigator is keyed on the active account only (App.tsx)',
+    appSrc.includes('<NavigationContainer key={`account-${activeAccount?.index ?? 0}`} theme={navTheme}>') && (appSrc.match(/<NavigationContainer /g) ?? []).length === 1);
+  check('after a switch the form starts over and the previous network’s endpoint is not used as the new one’s',
+    /if \(formNetwork !== caip2\) \{\n\s+setFormNetwork\(caip2\);\n\s+setAssetPick\(null\);\n\s+setDestination\(null\);\n\s+setProviderId\(null\);/.test(screen) &&
+      screen.includes('const url = endpoint && endpoint.network.chainId === caip2 ? endpoint.url : null;'));
+
+  // (2) The USDC placeholder.
+  check('finding 2: the amount placeholder follows the asset (exact)',
+    bridgeAmountPlaceholder('usdc') === 'Amount, for example 1' && BRIDGE_USDC_AMOUNT_PLACEHOLDER === 'Amount, for example 1' &&
+      bridgeAmountPlaceholder('native') === BRIDGE_AMOUNT_PLACEHOLDER);
+
+  // (3) The paymaster sentence only where it applies.
+  const engine = createCctpV2Provider();
+  const route = engine.supportedRoutes().find((r) => r.sourceChainId === BASE && r.destinationChainId === ARB);
+  const eq = await engine.quote({ route, amount: USDC_AMOUNT, sender: EOA, recipient: EOA, nativeSymbol: 'test ETH' });
+  check('the wallet’s copy of the adapter’s paymaster note equals it word for word (so the filter cannot drift)', eq.notes.includes(CCTP_FIRST_MINT_PAYMASTER_NOTE));
+  const paymasterNotes = (plan) => bridgeConfirmModel(plan).notes.filter((n) => n.startsWith("Circle's USDC fee paymaster"));
+  fundUsdc(BASE, EOA, 5_000_000n);
+  const arbBalanceReads = () => chains.get(ARB).calls.filter((c) => c.method === 'eth_call' && same(c.params[0].to, CCTP_V2_TESTNET_USDC[ARB]) && c.params[0].data === '0x70a08231' + '0'.repeat(24) + EOA.slice(2).toLowerCase());
+  const planZero = await quoteBridge(cctpRequest());
+  check('finding 3: the recipient’s USDC on the RECEIVING network is read once at the quote (balanceOf on Arbitrum Sepolia’s USDC)',
+    planZero.recipientDestinationUsdc === 'zero' && arbBalanceReads().length === 1);
+  check('…holding none: the sentence is shown once, as the adapter words it', paymasterNotes(planZero).length === 1 && paymasterNotes(planZero)[0] === CCTP_FIRST_MINT_PAYMASTER_NOTE);
+  fundUsdc(ARB, EOA, 1n);
+  const planHeld = await quoteBridge(cctpRequest());
+  check('…holding some USDC there: no paymaster sentence', planHeld.recipientDestinationUsdc === 'held' && paymasterNotes(planHeld).length === 0, JSON.stringify(bridgeConfirmModel(planHeld).notes));
+  const arbDefault = defaultChainTransport(ARB);
+  const failingArb = (method, params) =>
+    method === 'eth_call' && same(params[0].to, CCTP_V2_TESTNET_USDC[ARB]) ? Promise.reject(new Error('down')) : arbDefault(method, params);
+  const planUnknown = await quoteBridge(cctpRequest({ readers: { transportFor: (id) => (id === ARB ? failingArb : readersFor(BASE).transportFor(id)) } }));
+  check('…unreadable: the sentence with "could not be read" (exact)',
+    planUnknown.recipientDestinationUsdc === 'unknown' &&
+      paymasterNotes(planUnknown).join() === `${CCTP_FIRST_MINT_PAYMASTER_NOTE} Whether the recipient holds USDC on Arbitrum Sepolia could not be read just now.` &&
+      cctpFirstMintPaymasterNote(undefined, 'Arbitrum Sepolia') === paymasterNotes(planUnknown)[0]);
+  check('…test ETH: nothing read, no paymaster sentence', planA.recipientDestinationUsdc === null && paymasterNotes(planA).length === 0);
+  const mPay = await bridgeMutant(
+    '  const paymaster = cctpFirstMintPaymasterNote(plan.recipientDestinationUsdc, plan.destinationLabel);',
+    '  const paymaster = CCTP_FIRST_MINT_PAYMASTER_NOTE;',
+  );
+  check('MUTANT (the sentence shown unconditionally, as before) is caught', mPay.bridgeConfirmModel(planHeld).notes.includes(CCTP_FIRST_MINT_PAYMASTER_NOTE));
+
+  // (5) The live region and the short addresses.
+  const liveRegionOk = (src) =>
+    /<Text accessibilityLiveRegion="polite"[^>]*>\s*\{liveStatus\}\s*<\/Text>/.test(src) &&
+    (src.match(/accessibilityLiveRegion=/g) ?? []).length === 1 &&
+    src.includes('const liveStatus = bridgeLiveStatusText(record);') &&
+    src.includes("{checking ? <Text style={[styles.body, { color: theme.textMuted }]}>(checking…)</Text> : null}");
+  check('finding 5: the tracking card’s live region holds the status alone; "(checking…)" is a separate, non-live Text', liveRegionOk(views));
+  const mutantViews = views.replace('          {liveStatus}\n', "          {liveStatus}\n          {checking ? ' (checking…)' : ''}\n");
+  check('MUTANT (the checking mark back inside the live region) is caught by the source pin', mutantViews !== views && !liveRegionOk(mutantViews));
+  const spokenNote = withShortAddresses(usdcRecipientNote('regular', EOA, 'Base Sepolia'));
+  check('the recipient sentence is spoken with the short address (the visible text keeps the full one)',
+    spokenNote.includes(spokenShortAddress(EOA)) && !spokenNote.includes(EOA) && usdcRecipientNote('regular', EOA, 'Base Sepolia').includes(EOA) &&
+      screen.includes('accessibilityLabel={withShortAddresses(usdcRecipientNote(recipientKind, recipientKind === \'regular\' ? account.address : null, destinationLabel))}') &&
+      screen.includes('accessibilityLabel={withShortAddresses(regularRecipientNote(account.address, destinationLabel))}') &&
+      screen.includes('accessibilityLabel={withShortAddresses(upgradedAccountRecipientNote(account.address, destinationLabel))}') &&
+      screen.includes('<Text accessibilityLabel={withShortAddresses(text)} style={[styles.hint, { color: theme.textMuted }]}>{text}</Text>'));
+  check('the transfer record’s line is spoken with the short address', views.includes('<Text accessibilityLabel={withShortAddresses(through)} style={[styles.body, { color: theme.textMuted }]}>'));
+  for (const mod of [mLink, mPay]) await mod.resetBridgeTransfers();
 }
 
 console.log(`\ncheck-bridge: ${passed} passed, ${failed} failed (${mutantCount} mutants)`);
