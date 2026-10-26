@@ -3,6 +3,7 @@ import { AppState, StyleSheet, Switch, Text, View } from 'react-native';
 import { NavigationContainerRefContext, useFocusEffect, type NavigationContainerRef } from '@react-navigation/native';
 import type { RootStackParamList } from '../navigation';
 import { useTheme } from '../theme';
+import { useI18n } from '../i18n/useI18n';
 import { switchColors } from '../components';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
@@ -251,6 +252,9 @@ export function NotificationScheduler() {
  */
 export function NotificationSettingsSection() {
   const theme = useTheme();
+  // The section's sentences through the string table (phase 23 item 8);
+  // a status carrying a technical detail stays as written.
+  const { localize } = useI18n();
   const { notifications, setNotifications } = usePrefs();
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<NotificationsStatus | null>(() => appNotifications().status());
@@ -302,12 +306,12 @@ export function NotificationSettingsSection() {
   return (
     <View style={styles.block}>
       <Text accessibilityRole="header" style={[styles.subTitle, { color: theme.text }]}>
-        {NOTIFICATIONS_SECTION_TITLE}
+        {localize(NOTIFICATIONS_SECTION_TITLE)}
       </Text>
       <View style={styles.toggleRow}>
-        <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text }]}>{NOTIFICATIONS_SWITCH_LABEL}</Text>
+        <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text }]}>{localize(NOTIFICATIONS_SWITCH_LABEL)}</Text>
         <Switch {...switchColors(theme)}
-          accessibilityLabel={NOTIFICATIONS_SWITCH_LABEL}
+          accessibilityLabel={localize(NOTIFICATIONS_SWITCH_LABEL)}
           accessibilityRole="switch"
           accessibilityState={{ checked: notifications, busy }}
           value={notifications}
@@ -315,10 +319,10 @@ export function NotificationSettingsSection() {
           onValueChange={(v) => void onToggle(v)}
         />
       </View>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{NOTIFICATIONS_WHAT_NOTE}</Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{NOTIFICATIONS_PRIVACY_NOTE}</Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{NOTIFICATIONS_LIMITS_NOTE}</Text>
-      <Text style={[styles.hint, { color: bad ? theme.danger : theme.textMuted }]}>{describeNotificationsStatus(shown)}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(NOTIFICATIONS_WHAT_NOTE)}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(NOTIFICATIONS_PRIVACY_NOTE)}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(NOTIFICATIONS_LIMITS_NOTE)}</Text>
+      <Text style={[styles.hint, { color: bad ? theme.danger : theme.textMuted }]}>{localize(describeNotificationsStatus(shown))}</Text>
     </View>
   );
 }

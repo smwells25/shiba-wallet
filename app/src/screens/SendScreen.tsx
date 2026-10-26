@@ -1744,8 +1744,8 @@ export function SendScreen({ route, navigation }: Props) {
   if (phase === 'success' && aaResult) {
     return (
       <ScrollView key="send-aa-success" style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
-        <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}>Sent to bundler ✓</Text>
-        <Text style={[styles.label, { color: theme.textMuted }]}>UserOperation hash</Text>
+        <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}><T>Sent to bundler ✓</T></Text>
+        <Text style={[styles.label, { color: theme.textMuted }]}><T>UserOperation hash</T></Text>
         <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <Text selectable style={[styles.monoText, { color: theme.text }]}>
             {aaResult.userOpHash}
@@ -1755,14 +1755,16 @@ export function SendScreen({ route, navigation }: Props) {
           <View style={styles.center}>
             <ActivityIndicator size="large" color={theme.accent} />
             <Text style={[styles.hint, { color: theme.textMuted }]}>
-              Bundling… waiting for the UserOperation receipt.
+              <T>Bundling… waiting for the UserOperation receipt.</T>
             </Text>
           </View>
         ) : null}
         {aaResult.receiptState === 'timeout' ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
+            <T>
             No receipt yet. The operation may still be included — keep the
             UserOperation hash above to look it up later.
+            </T>
           </Text>
         ) : null}
         {aaResult.receiptState === 'found' ? (
@@ -1774,7 +1776,7 @@ export function SendScreen({ route, navigation }: Props) {
               </WarningBox>
             ) : (
               <Text style={[styles.simulationOk, { color: theme.success }]}>
-                Included on-chain{aaResult.success === true ? ' — succeeded.' : '.'}
+                {aaResult.success === true ? tx('Included on-chain — succeeded.') : tx('Included on-chain.')}
               </Text>
             )}
             {quote?.kind === 'aa' && quote.tokenGas && aaResult.tokenGasCharge !== undefined ? (
@@ -1784,7 +1786,7 @@ export function SendScreen({ route, navigation }: Props) {
             ) : null}
             {aaResult.txHash ? (
               <>
-                <Text style={[styles.label, { color: theme.textMuted }]}>Transaction</Text>
+                <Text style={[styles.label, { color: theme.textMuted }]}><T>Transaction</T></Text>
                 <View
                   style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}
                 >
@@ -1804,9 +1806,11 @@ export function SendScreen({ route, navigation }: Props) {
               </>
             ) : (
               <Text style={[styles.hint, { color: theme.textMuted }]}>
+                <T>
                 The bundler&apos;s receipt did not include a recognizable
                 transaction hash; look the UserOperation hash up in an
                 ERC-4337 explorer you trust.
+                </T>
               </Text>
             )}
           </>
@@ -1879,7 +1883,7 @@ export function SendScreen({ route, navigation }: Props) {
 
         <View style={[styles.aaTag, { borderColor: theme.accent }]}>
           <Text style={[styles.aaTagText, { color: theme.accent }]}>
-            EXPERIMENTAL · ERC-4337 smart account · {aaAccountTypeLabel(quote.accountType)}
+            {t('send.aa.confirm.tag', { type: localize(aaAccountTypeLabel(quote.accountType)) })}
           </Text>
         </View>
 
@@ -1897,19 +1901,15 @@ export function SendScreen({ route, navigation }: Props) {
             <Row label="Token contract" value={quote.token.contract} mono theme={theme} />
             {quote.tokenSpend ? (
               <Row
-                label={`Smart account ${quote.token.symbol} balance`}
+                label={t('send.aa.row.smartBalance', { symbol: quote.token.symbol })}
                 value={`${exact(quote.tokenSpend.balance, quote.token.decimals)} ${quote.token.symbol}`}
                 theme={theme}
               />
             ) : null}
             <Text style={[styles.hint, { color: theme.textMuted }]}>
               {quote.tokenGas && tgLines
-                ? `One transfer call executed by the smart account: it sends its own ${quote.token.symbol}, ` +
-                  `so no approval is needed. The network fee is paid in ${quote.tokenGas.symbol} through ` +
-                  `${tgLines.throughPhrase} (see below).`
-                : `One transfer call executed by the smart account: it sends its own ${quote.token.symbol}, ` +
-                  `so no approval is needed. Gas is paid in ${evmChain.displaySymbol} by the smart account ` +
-                  '(or the paymaster, when sponsored).'}
+                ? t('send.aa.token.noteTokenGas', { symbol: quote.token.symbol, feeSymbol: quote.tokenGas.symbol, through: tgLines.throughPhrase })
+                : t('send.aa.token.note', { symbol: quote.token.symbol, native: evmChain.displaySymbol })}
             </Text>
           </>
         ) : (
@@ -1935,7 +1935,7 @@ export function SendScreen({ route, navigation }: Props) {
           <Row
             label="Signer"
             value="This phone's passkey (platform prompt follows)"
-            sub={`An additional signer on this smart account; your recovery phrase is not used. Owner account: ${fromName}`}
+            sub={t('send.aa.passkey.sub', { name: fromName })}
             theme={theme}
           />
         ) : (
@@ -1954,7 +1954,7 @@ export function SendScreen({ route, navigation }: Props) {
           theme={theme}
         />
         <Row
-          label={`Smart account ${evmChain.displaySymbol} balance`}
+          label={t('send.aa.row.smartBalance', { symbol: evmChain.displaySymbol })}
           value={`${exact(quote.senderBalance, nativeDecimals)} ${evmChain.displaySymbol}`}
           theme={theme}
         />
@@ -1969,7 +1969,7 @@ export function SendScreen({ route, navigation }: Props) {
         )}
         {!quote.deployed && quote.accountType === 'kernel-v3.3' ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            {kernelDeploymentNote(aaConfig?.bundlerUrl ?? null)}
+            {localize(kernelDeploymentNote(aaConfig?.bundlerUrl ?? null))}
           </Text>
         ) : null}
         {quote.tokenGas && tgLines ? (
@@ -1989,7 +1989,7 @@ export function SendScreen({ route, navigation }: Props) {
             ))}
             {quote.token && quote.token.contract.toLowerCase() === quote.tokenGas.token.toLowerCase() ? (
               <Row
-                label={`Total ${quote.tokenGas.symbol} (worst case)`}
+                label={t('send.aa.row.totalOfWorst', { symbol: quote.tokenGas.symbol })}
                 value={
                   `${exact(quote.token.amount + quote.tokenGas.maxTokenCharge, quote.tokenGas.decimals)} ${quote.tokenGas.symbol}`
                 }
@@ -1997,7 +1997,7 @@ export function SendScreen({ route, navigation }: Props) {
               />
             ) : !quote.token ? (
               <Row
-                label={`Total ${evmChain.displaySymbol}`}
+                label={t('send.aa.row.totalOf', { symbol: evmChain.displaySymbol })}
                 value={`${exact(quote.total, nativeDecimals)} ${evmChain.displaySymbol}`}
                 sub={fiatOf(nativePriceId, quote.total, nativeDecimals)}
                 theme={theme}
@@ -2018,15 +2018,14 @@ export function SendScreen({ route, navigation }: Props) {
             />
             <Text style={[styles.hint, { color: theme.textMuted }]}>
               {quote.sponsored
-                ? 'An ERC-7677 paymaster sponsors this operation\u2019s gas: the ' +
-                  'smart account pays only the amount. The paymaster may still ' +
-                  'decline at send time; that shows up as a bundler error, not a charge.'
-                : `Worst case at ${exact(quote.maxFeePerGas, 9)} gwei max fee \u00d7 ` +
-                  `${(quote.callGasLimit + quote.verificationGasLimit + quote.preVerificationGas).toString()} ` +
-                  'gas (bundler eth_estimateUserOperationGas).' +
+                ? t('send.aa.sponsoredNote')
+                : t('send.aa.worstCase', {
+                    gwei: exact(quote.maxFeePerGas, 9),
+                    gas: (quote.callGasLimit + quote.verificationGasLimit + quote.preVerificationGas).toString(),
+                  }) +
                   // With an EntryPoint deposit the deposit pays first:
                   // AaDepositNote below says so instead of this sentence.
-                  (quote.deposit !== undefined && quote.deposit > 0n ? '' : ` ${AA_SELF_PAID_FEE_SENTENCE}`)}
+                  (quote.deposit !== undefined && quote.deposit > 0n ? '' : ` ${localize(AA_SELF_PAID_FEE_SENTENCE)}`)}
             </Text>
             <AaDepositNote
               fee={quote.fee}
@@ -2035,7 +2034,7 @@ export function SendScreen({ route, navigation }: Props) {
               symbol={evmChain.displaySymbol}
             />
             <Row
-              label={quote.token ? `Total ${evmChain.displaySymbol} (worst case)` : 'Total (worst case)'}
+              label={quote.token ? t('send.aa.row.totalOfWorst', { symbol: evmChain.displaySymbol }) : 'Total (worst case)'}
               value={`${exact(quote.total, nativeDecimals)} ${evmChain.displaySymbol}`}
               sub={fiatOf(nativePriceId, quote.total, nativeDecimals)}
               theme={theme}
@@ -2064,7 +2063,7 @@ export function SendScreen({ route, navigation }: Props) {
           <Text style={[styles.hint, { color: theme.textMuted }]}>{tgLines.estimateSentence}</Text>
         ) : (
           <Text style={[styles.simulationOk, { color: theme.success }]}>
-            Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).
+            <T>Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).</T>
           </Text>
         )}
 
@@ -2072,7 +2071,7 @@ export function SendScreen({ route, navigation }: Props) {
           <View style={styles.center}>
             <ActivityIndicator size="large" color={theme.accent} />
             <Text style={[styles.hint, { color: theme.textMuted }]}>
-              Signing and submitting to the bundler…
+              <T>Signing and submitting to the bundler…</T>
             </Text>
           </View>
         ) : (
@@ -2080,8 +2079,8 @@ export function SendScreen({ route, navigation }: Props) {
             <Button
               title={
                 quote.passkey
-                  ? `Sign with passkey and send ${quote.token ? quote.token.symbol : symbol}`
-                  : `Send ${quote.token ? quote.token.symbol : symbol} from smart account`
+                  ? t('send.aa.button.passkey', { symbol: quote.token ? quote.token.symbol : symbol })
+                  : t('send.aa.button.send', { symbol: quote.token ? quote.token.symbol : symbol })
               }
               onPress={() => void onSend()}
             />

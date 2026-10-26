@@ -1627,12 +1627,14 @@ console.log('\n== Hoodi and OP Sepolia profiles (phase 18) ==');
   const { EVM_MAINNET: MAIN } = await import('../src/config/evm-chain.ts');
   const settingsSrc = read('../src/screens/SettingsScreen.tsx');
   check('Settings WalletConnect blurb names every profile (built from the table)',
-    settingsSrc.includes('(${EVM_MAINNET.label} mainnet, or ${testNetworkLabelsOr()} while test mode is on)') &&
+    // Phase 23 item 8: the sentence comes from the string table, its English unchanged.
+    settingsSrc.includes("t('settings.wc.intro', { mainnet: EVM_MAINNET.label, testNetworks: testNetworkLabelsOr() })") &&
+      EN_TABLE['settings.wc.intro'] === 'Lets external dApps connect to this wallet on the active EVM chain ({mainnet} mainnet, or {testNetworks} while test mode is on).' &&
       !settingsSrc.includes('(Ethereum mainnet, or Sepolia while test mode is on)') &&
       `${MAIN.label} mainnet, or ${testNetworkLabelsOr()} while test mode is on` ===
         'Ethereum mainnet, or Ethereum Sepolia, Base Sepolia, Arbitrum Sepolia, Hoodi or OP Sepolia while test mode is on');
   check('Settings Backup text: no "every account in the list above" claim while watch-only addresses or multisigs are listed',
-    settingsSrc.includes("{!keylessListed\n              ? 'One recovery phrase backs up ALL of your accounts") &&
+    settingsSrc.includes("{!keylessListed\n              ? tx('One recovery phrase backs up ALL of your accounts") &&
       settingsSrc.includes('const keylessListed = watchOnlyAccounts.length > 0 || multisigAccounts.length > 0;') &&
       settingsSrc.includes('that this wallet holds a key for') &&
       settingsSrc.includes('Watch-only addresses have no key in this wallet, so the recovery phrase does not back them up'));
@@ -1913,7 +1915,9 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
       ['components/AccountsSection.tsx', "fieldLabel('new-account-name', 'New account name (optional)')"],
       ['components/AccountsSection.tsx', "fieldLabel('watch-address', 'Ethereum address to watch')"],
       ['components/AccountsSection.tsx', "fieldLabel('watch-name', 'Name for the watched address')"],
-      ['screens/SettingsScreen.tsx', 'fieldLabel(\'endpoint-url\', `${network.label} endpoint URL`)'],
+      // Phase 23 item 8: the caption through the string table (its English
+      // "{network} endpoint URL" unchanged, scripts/check-i18n.mjs).
+      ['screens/SettingsScreen.tsx', "fieldLabel('endpoint-url', t('settings.endpoint.urlCaption', { network: network.label }))"],
       ['screens/TokensScreen.tsx', "fieldLabel('token-contract', 'Token contract address')"],
       ['screens/TokensScreen.tsx', "fieldLabel('token-symbol', 'Token symbol')"],
       ['screens/TokensScreen.tsx', "fieldLabel('token-name', 'Token name (optional)')"],
@@ -1958,8 +1962,9 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
       ['screens/InheritanceScreen.tsx', 'fieldLabel(`heir-${i}-label`, `Heir ${i + 1} label (optional)`)'],
       ['screens/InheritanceScreen.tsx', 'fieldLabel(`heir-${i}-weight`, `Heir ${i + 1} weight`)'],
       ['screens/MultisigScreen.tsx', 'fieldLabel(`cosigner-${i}-weight`, `Co-signer ${i + 1} weight`)'],
-      ['screens/SessionsScreen.tsx', 'fieldLabel(`call-${i}-function`, `Call ${i + 1}: function (optional)`)'],
-      ['screens/SessionsScreen.tsx', 'fieldLabel(`call-${i}-cap`, `Call ${i + 1}: most ${symbol} per call`)'],
+      // Phase 23 item 8: the two captions through the string table, English unchanged.
+      ['screens/SessionsScreen.tsx', "fieldLabel(`call-${i}-function`, t('sessions.call.function', { n: i + 1 }))"],
+      ['screens/SessionsScreen.tsx', "fieldLabel(`call-${i}-cap`, t('sessions.call.cap', { n: i + 1, symbol }))"],
     ];
     check('…the grouped guardian / heir / co-signer label-and-weight fields and the session-call function and cap fields have visible labels (source)',
       grouped.every(([f, call]) => {
@@ -2109,7 +2114,7 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
       check('…mutant caught (phase 22): a Settings field() whose placeholder repeats its label',
         placeholderProblems(withFile('screens/SettingsScreen.tsx', "{field('rpcUrl', 'RPC endpoint (https)', 'https://…', 'url')}", "{field('rpcUrl', 'RPC endpoint (https)', 'RPC endpoint (https)', 'url')}")).length === 1);
       check('…mutant caught (phase 22): an AaField whose placeholder repeats its label',
-        placeholderProblems(withFile('screens/SettingsScreen.tsx', 'placeholder="32-character id from dashboard.reown.com"', 'placeholder="Reown / WalletConnect project id"')).length === 1);
+        placeholderProblems(withFile('screens/SettingsScreen.tsx', "placeholder={tx('32-character id from dashboard.reown.com')}", "placeholder={tx('Reown / WalletConnect project id')}")).length === 1);
       // The localised Activity note field (the polish follow-up): its caption
       // is a literal, its placeholder goes through tx(); both sides are read.
       const activity = files.find((x) => x.f === 'screens/ActivityScreen.tsx').src;
@@ -2190,9 +2195,9 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
   check('p20d finding 5: every Text drawn in capitals by textTransform carries an accessibilityLabel in its own case (allow-list empty)',
     upperProblems(files).length === 0 && upperCount >= 25, `${upperCount} texts; problems: ${upperProblems(files).join(', ')}`);
   check('…the 0x API key label (and every Account Abstraction field label) is spoken "0x API key", not "0X API KEY" (source)',
-    files.find((x) => x.f === 'screens/SettingsScreen.tsx').src.includes("<Text accessibilityLabel={label} {...fieldLabel('aa', label).label} style={[styles.aaFieldLabel, { color: theme.textMuted }]}>{label}</Text>"));
+    files.find((x) => x.f === 'screens/SettingsScreen.tsx').src.includes("<Text accessibilityLabel={localize(label)} {...fieldLabel('aa', label).label} style={[styles.aaFieldLabel, { color: theme.textMuted }]}>{localize(label)}</Text>"));
   check('…mutant caught: the AA field label without its spoken label',
-    upperProblems(files.map((x) => (x.f === 'screens/SettingsScreen.tsx' ? { ...x, src: x.src.replace("<Text accessibilityLabel={label} {...fieldLabel('aa', label).label}", "<Text {...fieldLabel('aa', label).label}") } : x))).length === 1);
+    upperProblems(files.map((x) => (x.f === 'screens/SettingsScreen.tsx' ? { ...x, src: x.src.replace("<Text accessibilityLabel={localize(label)} {...fieldLabel('aa', label).label}", "<Text {...fieldLabel('aa', label).label}") } : x))).length === 1);
 
   // (2) Section titles are headings: every Text drawn with a title style
   // carries accessibilityRole="header" (or is hidden because the screen's
@@ -2224,13 +2229,14 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
   // the PIN-cost card) was not a heading while its neighbours were; it and
   // "Test network" are sub-headings now (drawn in the toggle-label style,
   // which the title-style scan above does not cover).
+  // Phase 23 item 8: both through the string table (<T>), English unchanged.
   const devSubHeadings = (src) =>
-    src.includes('<Text accessibilityRole="header" style={[styles.toggleLabel, { color: theme.text }]}>Networks you added</Text>') &&
-    src.includes('<Text accessibilityRole="header" style={[styles.toggleLabel, { color: theme.text }]}>Test network</Text>');
+    src.includes('<Text accessibilityRole="header" style={[styles.toggleLabel, { color: theme.text }]}><T>Networks you added</T></Text>') &&
+    src.includes('<Text accessibilityRole="header" style={[styles.toggleLabel, { color: theme.text }]}><T>Test network</T></Text>');
   const settingsSrcForHeadings = files.find((x) => x.f === 'screens/SettingsScreen.tsx').src;
   check('p22a finding 4: Settings → Developer\'s "Test network" and "Networks you added" are headings (source)', devSubHeadings(settingsSrcForHeadings));
   check('…mutant caught: "Networks you added" without the heading role',
-    !devSubHeadings(settingsSrcForHeadings.replace('<Text accessibilityRole="header" style={[styles.toggleLabel, { color: theme.text }]}>Networks you added', '<Text style={[styles.toggleLabel, { color: theme.text }]}>Networks you added')));
+    !devSubHeadings(settingsSrcForHeadings.replace('<Text accessibilityRole="header" style={[styles.toggleLabel, { color: theme.text }]}><T>Networks you added', '<Text style={[styles.toggleLabel, { color: theme.text }]}><T>Networks you added')));
 
   // (14) Every Switch takes its colours from switchColors(theme): the off
   // track is the palette's controlBorder, not the platform default that
@@ -2295,9 +2301,13 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
 
   // (11) Settings' Edit buttons name what they edit.
   check('finding 11: the AA-field Edit button is spoken "Edit the <field>", so the 0x key reads "Edit the 0x API key" (source)',
-    settings.includes('accessibilityLabel={`Edit the ${label}`}') && settings.includes('label="0x API key"') &&
-      settings.includes('accessibilityLabel={`Edit the ${network.label} endpoint`}') &&
-      settings.includes('accessibilityLabel={`Edit the ${network.label} Blockbook endpoint`}'));
+    // Phase 23 item 8: the three labels come from the string table; their
+    // English is the earlier text (scripts/check-i18n.mjs pins the entries).
+    settings.includes("accessibilityLabel={t('settings.field.editLabel', { what: localize(label) })}") && settings.includes('label="0x API key"') &&
+      settings.includes("accessibilityLabel={t('settings.endpoint.editLabel', { network: network.label })}") &&
+      settings.includes("accessibilityLabel={t('settings.blockbook.editLabel', { network: network.label })}") &&
+      EN_TABLE['settings.field.editLabel'] === 'Edit the {what}' && EN_TABLE['settings.endpoint.editLabel'] === 'Edit the {network} endpoint' &&
+      EN_TABLE['settings.blockbook.editLabel'] === 'Edit the {network} Blockbook endpoint');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

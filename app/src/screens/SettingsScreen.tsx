@@ -7,7 +7,7 @@ import { allowScreenCaptureAsync, preventScreenCaptureAsync } from 'expo-screen-
 import { Button, WarningBox, WordGrid, screenStyle, switchColors, useFieldLabels } from '../components';
 import { T } from '../i18n/T';
 import { useI18n } from '../i18n/useI18n';
-import { LANGUAGE_CHOICES, type LanguageChoice, type StringId } from '../i18n/index';
+import { LANGUAGE_CHOICES, localize, t, tx, type LanguageChoice, type StringId } from '../i18n/index';
 import { appLanguage } from '../i18n/app-language';
 import {
   readinessEnforcementText,
@@ -260,7 +260,7 @@ const KERNEL_VERIFIED_CHAINS_TEXT = (() => {
  * from config/endpoint-url.ts.
  */
 function ignoredUrlStatus(reason: string, removeHint: string): string {
-  return `A saved URL is not used: ${reason} ${removeHint}`;
+  return t('settings.ignoredUrl', { reason: localize(reason), hint: removeHint });
 }
 
 /**
@@ -301,7 +301,7 @@ function EndpointRow({
       setEditing(false);
       onChanged();
     } catch (e) {
-      Alert.alert('Invalid endpoint', e instanceof Error ? e.message : 'Could not save.');
+      Alert.alert(tx('Invalid endpoint'), e instanceof Error ? localize(e.message) : tx('Could not save.'));
     }
   };
 
@@ -321,9 +321,9 @@ function EndpointRow({
       </View>
       {editing ? (
         <View style={styles.endpointEditor}>
-          <Text {...fieldLabel('endpoint-url', `${network.label} endpoint URL`).label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel('endpoint-url', `${network.label} endpoint URL`).text}</Text>
+          <Text {...fieldLabel('endpoint-url', t('settings.endpoint.urlCaption', { network: network.label })).label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel('endpoint-url', t('settings.endpoint.urlCaption', { network: network.label })).text}</Text>
           <TextInput
-            {...fieldLabel('endpoint-url', `${network.label} endpoint URL`).input}
+            {...fieldLabel('endpoint-url', t('settings.endpoint.urlCaption', { network: network.label })).input}
             value={draft}
             onChangeText={setDraft}
             placeholder="https://…"
@@ -351,7 +351,7 @@ function EndpointRow({
               variant="secondary"
               onPress={() =>
                 isOverride || endpoint.ignoredReason !== undefined
-                  ? confirmClear(`custom ${network.label} endpoint`, () => void reset())
+                  ? confirmClear(t('settings.clear.customEndpoint', { network: network.label }), () => void reset())
                   : void reset()
               }
             />
@@ -360,7 +360,7 @@ function EndpointRow({
       ) : (
         <View style={styles.endpointEditor}>
           <Text style={[styles.endpointUrl, { color: theme.textMuted }]} numberOfLines={2}>
-            {url ?? 'Not configured'}
+            {url ?? tx('Not configured')}
           </Text>
           {!url && network.note ? (
             <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{network.note}</Text>
@@ -369,14 +369,14 @@ function EndpointRow({
             <Text style={[styles.endpointNote, { color: theme.warningText }]}>
               {ignoredUrlStatus(
                 endpoint.ignoredReason,
-                'The default endpoint is used instead; Edit, then Reset to default, removes it.',
+                tx('The default endpoint is used instead; Edit, then Reset to default, removes it.'),
               )}
             </Text>
           ) : null}
           {fallbackNote ? (
             <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{fallbackNote}</Text>
           ) : null}
-          <Button title="Edit" variant="secondary" accessibilityLabel={`Edit the ${network.label} endpoint`} onPress={beginEdit} />
+          <Button title="Edit" variant="secondary" accessibilityLabel={t('settings.endpoint.editLabel', { network: network.label })} onPress={beginEdit} />
         </View>
       )}
     </View>
@@ -427,7 +427,7 @@ function BlockbookRow({
     setVerifying(true);
     try {
       if (!walletAddress) {
-        throw new Error('No wallet address is available to verify the endpoint with.');
+        throw new Error(tx('No wallet address is available to verify the endpoint with.'));
       }
       await setBlockbookEndpoint(network.chainId, urlDraft, keyDraft, walletAddress);
       setEditing(false);
@@ -435,8 +435,8 @@ function BlockbookRow({
       onChanged();
     } catch (e) {
       Alert.alert(
-        'Not saved — verification failed',
-        e instanceof Error ? e.message : 'Verification failed.',
+        tx('Not saved — verification failed'),
+        e instanceof Error ? localize(e.message) : tx('Verification failed.'),
       );
     } finally {
       setVerifying(false);
@@ -455,12 +455,12 @@ function BlockbookRow({
       <View style={styles.endpointHeader}>
         <Text style={[styles.endpointLabel, { color: theme.text }]}>{network.label}</Text>
         <Text style={[styles.endpointTag, { color: theme.textMuted }]}>
-          {config?.url ? 'blockbook' : 'not set'}
+          {config?.url ? 'blockbook' : tx('not set')}
         </Text>
       </View>
       {editing ? (
         <View style={styles.endpointEditor}>
-          <Text accessibilityLabel="Blockbook base URL" {...fieldLabel('blockbook-url', 'Blockbook base URL').label} style={[styles.aaFieldLabel, { color: theme.textMuted }]}>Blockbook base URL</Text>
+          <Text accessibilityLabel={tx('Blockbook base URL')} {...fieldLabel('blockbook-url', 'Blockbook base URL').label} style={[styles.aaFieldLabel, { color: theme.textMuted }]}><T>Blockbook base URL</T></Text>
           <TextInput
             {...fieldLabel('blockbook-url', 'Blockbook base URL').input}
             value={urlDraft}
@@ -475,14 +475,14 @@ function BlockbookRow({
               { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.background },
             ]}
           />
-          <Text accessibilityLabel="API key (optional)" {...fieldLabel('blockbook-key', 'API key (optional)').label} style={[styles.aaFieldLabel, { color: theme.textMuted }]}>
-            API key (optional)
+          <Text accessibilityLabel={tx('API key (optional)')} {...fieldLabel('blockbook-key', 'API key (optional)').label} style={[styles.aaFieldLabel, { color: theme.textMuted }]}>
+            <T>API key (optional)</T>
           </Text>
           <TextInput
             {...fieldLabel('blockbook-key', 'API key (optional)').input}
             value={keyDraft}
             onChangeText={setKeyDraft}
-            placeholder="Provider API key, if required"
+            placeholder={tx('Provider API key, if required')}
             placeholderTextColor={theme.textMuted}
             autoCapitalize="none"
             autoCorrect={false}
@@ -492,14 +492,11 @@ function BlockbookRow({
             ]}
           />
           <Text style={[styles.endpointNote, { color: theme.textMuted }]}>
-            The key is stored only on this device and sent only to this
-            host, as the &quot;{BLOCKBOOK_API_KEY_HEADER}&quot; request header (the
-            header NOWNodes uses). Saving verifies the endpoint first with
-            a UTXO query for your own {network.symbol} address.
+            {t('settings.blockbook.keyNote', { header: BLOCKBOOK_API_KEY_HEADER, symbol: network.symbol })}
           </Text>
           {verifying ? (
             <Text style={[styles.aaStatus, { color: theme.textMuted }]}>
-              Verifying before saving…
+              <T>Verifying before saving…</T>
             </Text>
           ) : (
             <View style={styles.endpointButtons}>
@@ -516,29 +513,28 @@ function BlockbookRow({
       ) : (
         <View style={styles.endpointEditor}>
           <Text style={[styles.endpointUrl, { color: theme.textMuted }]} numberOfLines={2}>
-            {config?.url ?? 'Not configured'}
+            {config?.url ?? tx('Not configured')}
           </Text>
           {config?.url ? (
             <Text style={[styles.aaVerified, { color: theme.success }]}>
-              Verified ✓ — /api/v2/utxo answered for your address (checked{' '}
-              {localDateLabel(config.verifiedAt)}).{' '}
-              {config.apiKey ? 'API key set.' : 'No API key.'}
+              {t('settings.blockbook.verified', { date: localDateLabel(config.verifiedAt) })}{' '}
+              {config.apiKey ? tx('API key set.') : tx('No API key.')}
             </Text>
           ) : config?.ignoredUrlReason ? (
             <Text style={[styles.endpointNote, { color: theme.warningText }]}>
-              {ignoredUrlStatus(config.ignoredUrlReason, 'Clear removes it.')}
+              {ignoredUrlStatus(config.ignoredUrlReason, tx('Clear removes it.'))}
             </Text>
           ) : network.note ? (
             <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{network.note}</Text>
           ) : null}
           <View style={styles.endpointButtons}>
-            <Button title="Edit" variant="secondary" accessibilityLabel={`Edit the ${network.label} Blockbook endpoint`} onPress={beginEdit} style={styles.endpointButton} />
+            <Button title="Edit" variant="secondary" accessibilityLabel={t('settings.blockbook.editLabel', { network: network.label })} onPress={beginEdit} style={styles.endpointButton} />
             {config?.url || config?.ignoredUrlReason ? (
               <Button
                 title="Clear"
                 variant="secondary"
-                accessibilityLabel={`Clear the ${network.label} Blockbook endpoint`}
-                onPress={() => confirmClear(`${network.label} Blockbook endpoint and API key`, () => void clear())}
+                accessibilityLabel={t('settings.blockbook.clearLabel', { network: network.label })}
+                onPress={() => confirmClear(t('settings.clear.blockbook', { network: network.label }), () => void clear())}
                 style={styles.endpointButton}
               />
             ) : null}
@@ -617,11 +613,11 @@ function ReadinessRow({
  */
 function confirmClear(what: string, onConfirm: () => void) {
   Alert.alert(
-    `Clear the ${what}?`,
-    'It is removed from this phone. To use it again you will need to paste it and verify it again.',
+    t('settings.clear.title', { what }),
+    tx('It is removed from this phone. To use it again you will need to paste it and verify it again.'),
     [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Clear', style: 'destructive', onPress: onConfirm },
+      { text: tx('Cancel'), style: 'cancel' },
+      { text: tx('Clear'), style: 'destructive', onPress: onConfirm },
     ],
   );
 }
@@ -702,8 +698,8 @@ function AaField({
       setEditing(false);
     } catch (e) {
       Alert.alert(
-        'Not saved — verification failed',
-        e instanceof Error ? e.message : 'Verification failed.',
+        tx('Not saved — verification failed'),
+        e instanceof Error ? localize(e.message) : tx('Verification failed.'),
       );
     } finally {
       setVerifying(false);
@@ -712,14 +708,14 @@ function AaField({
 
   return (
     <View style={styles.aaField}>
-      <Text accessibilityLabel={label} {...fieldLabel('aa', label).label} style={[styles.aaFieldLabel, { color: theme.textMuted }]}>{label}</Text>
+      <Text accessibilityLabel={localize(label)} {...fieldLabel('aa', label).label} style={[styles.aaFieldLabel, { color: theme.textMuted }]}>{localize(label)}</Text>
       {editing ? (
         <View style={styles.endpointEditor}>
           <TextInput
             {...fieldLabel('aa', label).input}
             value={draft}
             onChangeText={setDraft}
-            placeholder={placeholder}
+            placeholder={localize(placeholder)}
             placeholderTextColor={theme.textMuted}
             autoCapitalize="none"
             autoCorrect={false}
@@ -729,11 +725,11 @@ function AaField({
             ]}
           />
           {prefill && draft === prefill && prefillNote ? (
-            <Text style={[styles.aaVerified, { color: theme.textMuted }]}>{prefillNote}</Text>
+            <Text style={[styles.aaVerified, { color: theme.textMuted }]}>{localize(prefillNote)}</Text>
           ) : null}
           {verifying ? (
             <Text style={[styles.aaStatus, { color: theme.textMuted }]}>
-              Verifying before saving…
+              <T>Verifying before saving…</T>
             </Text>
           ) : (
             <View style={styles.endpointButtons}>
@@ -750,14 +746,14 @@ function AaField({
       ) : (
         <View style={styles.endpointEditor}>
           <Text style={[styles.endpointUrl, { color: theme.textMuted }]} numberOfLines={2}>
-            {value ? maskUrlForDisplay(value) : 'Not configured'}
+            {value ? maskUrlForDisplay(value) : tx('Not configured')}
           </Text>
           {value && statusLine ? (
-            <Text style={[styles.aaVerified, { color: theme.success }]}>{statusLine}</Text>
+            <Text style={[styles.aaVerified, { color: theme.success }]}>{localize(statusLine)}</Text>
           ) : null}
           {!value && ignoredReason ? (
             <Text style={[styles.aaVerified, { color: theme.warningText }]}>
-              {ignoredUrlStatus(ignoredReason, 'Clear removes it.')}
+              {ignoredUrlStatus(ignoredReason, tx('Clear removes it.'))}
             </Text>
           ) : null}
           <View style={styles.endpointButtons}>
@@ -765,7 +761,7 @@ function AaField({
               title="Edit"
               variant="secondary"
               // "Edit the 0x API key", not a bare "Edit" (pass p20c finding 11).
-              accessibilityLabel={`Edit the ${label}`}
+              accessibilityLabel={t('settings.field.editLabel', { what: localize(label) })}
               disabled={locked}
               onPress={() => {
                 // Start from the stored value, else the pinned prefill
@@ -779,14 +775,14 @@ function AaField({
               <Button
                 title={clearControl?.label ?? 'Clear'}
                 variant="secondary"
-                accessibilityLabel={clearControl?.accessibilityLabel ?? `Clear ${label}`}
+                accessibilityLabel={clearControl?.accessibilityLabel ?? t('settings.field.clearLabel', { what: localize(label) })}
                 onPress={() =>
                   clearControl
-                    ? Alert.alert(clearControl.confirmTitle, clearControl.confirmMessage, [
-                        { text: 'Cancel', style: 'cancel' },
+                    ? Alert.alert(localize(clearControl.confirmTitle), localize(clearControl.confirmMessage), [
+                        { text: tx('Cancel'), style: 'cancel' },
                         { text: clearControl.label, onPress: () => void onClear() },
                       ])
-                    : confirmClear(label, () => void onClear())
+                    : confirmClear(localize(label), () => void onClear())
                 }
                 style={styles.endpointButton}
               />
@@ -853,15 +849,15 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
         <Text style={[styles.endpointLabel, { color: theme.text }]}>{network.label}</Text>
         <Text style={[styles.endpointTag, { color: theme.textMuted }]}>
           {!anyTypeAllowed
-            ? 'test networks only'
+            ? tx('test networks only')
             : config && config.bundlerUrl && config.factory
-              ? `ready · ${aaAccountTypeLabel(config.accountType)}`
-              : 'incomplete'}
+              ? t('settings.aa.ready', { type: localize(aaAccountTypeLabel(config.accountType)) })
+              : tx('incomplete')}
         </Text>
       </View>
       {typeGate ? (
         <Text style={[styles.endpointNote, { color: theme.warningText }]}>
-          {typeGate.feature.reason} {typeGate.hint}
+          {localize(typeGate.feature.reason)} {localize(typeGate.hint)}
         </Text>
       ) : null}
       <AaField
@@ -872,7 +868,7 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
         locked={!anyTypeAllowed}
         statusLine={
           config?.bundlerUrl
-            ? bundlerVerifiedLine(config, network.label, shortDate(config.bundlerVerifiedAt))
+            ? localize(bundlerVerifiedLine(config, network.label, shortDate(config.bundlerVerifiedAt)))
             : null
         }
         onSave={async (draft) => {
@@ -884,7 +880,7 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
           reload();
         }}
       />
-      <Text accessibilityLabel="Smart-account type" style={[styles.aaFieldLabel, { color: theme.textMuted }]}>Smart-account type</Text>
+      <Text accessibilityLabel={tx('Smart-account type')} style={[styles.aaFieldLabel, { color: theme.textMuted }]}><T>Smart-account type</T></Text>
       <View style={styles.endpointButtons}>
         {AA_ACCOUNT_TYPES.map((t) => (
           <Button
@@ -899,30 +895,29 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
       </View>
       {type === 'kernel-v3.3' ? (
         <Text style={[styles.endpointNote, { color: theme.textMuted }]}>
+          <T>
           Kernel v3.3 is an ERC-7579 modular account with this account&apos;s key as
           its owner (ECDSA validator). It supports message signing for dApps
-          (ERC-1271; ERC-6492 before it is deployed). {kernelDeploymentNote(config?.bundlerUrl ?? null)}
+          (ERC-1271; ERC-6492 before it is deployed).
+          </T>{' '}{localize(kernelDeploymentNote(config?.bundlerUrl ?? null))}
         </Text>
       ) : (
         <Text style={[styles.endpointNote, { color: theme.textMuted }]}>
-          SimpleAccount (the eth-infinitism v0.7 sample) sends and batches calls,
+          <T>SimpleAccount (the eth-infinitism v0.7 sample) sends and batches calls,
           but it has no ERC-1271 support, so it cannot sign messages or logins
-          for dApps.
+          for dApps.</T>
         </Text>
       )}
       {config && config.eip7702Owners.length > 0 ? (
         <Text style={[styles.endpointNote, { color: theme.textMuted }]}>
-          {config.eip7702Owners.length === 1 ? 'One account uses' : `${config.eip7702Owners.length} accounts use`}{' '}
-          its own address as the smart account on this network (EIP-7702, Kernel v3.3; see
-          Upgrade this account). Those accounts need only the bundler; the type below applies to
-          every other account.
+          {config.eip7702Owners.length === 1
+            ? t('settings.aa.7702owners.one')
+            : t('settings.aa.7702owners', { count: config.eip7702Owners.length })}
         </Text>
       ) : null}
       {otherTypeStored ? (
         <Text style={[styles.endpointNote, { color: theme.warningText }]}>
-          This network is currently set up as {aaAccountTypeLabel(otherTypeStored)}. Saving a{' '}
-          {aaAccountTypeLabel(type)} factory replaces that setup (a different smart-account
-          address; funds at the old one stay there).
+          {t('settings.aa.otherType', { current: localize(aaAccountTypeLabel(otherTypeStored)), next: localize(aaAccountTypeLabel(type)) })}
         </Text>
       ) : null}
       {type === 'kernel-v3.3' && aaKernelPrefillFor(network.chainId) === null ? (
@@ -938,29 +933,25 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
           value={storedForType?.factory ?? null}
           locked={kernelGate !== null}
           prefill={aaKernelPrefillFor(network.chainId)}
-          prefillNote={
-            `Pinned Kernel v3.3 deployment from the wallet engine (the same addresses on ` +
-            `${KERNEL_VERIFIED_CHAINS_TEXT}, each checked on-chain): implementation ${KERNEL_PREFILL.implementation}, meta ` +
-            `factory ${KERNEL_PREFILL.metaFactory}, ECDSA validator ` +
-            `${KERNEL_PREFILL.ecdsaValidator}. Saving re-runs the full on-chain ` +
-            'verification through your RPC endpoint.'
-          }
+          prefillNote={t('settings.aa.kernelPrefill', {
+            chains: KERNEL_VERIFIED_CHAINS_TEXT,
+            implementation: KERNEL_PREFILL.implementation,
+            metaFactory: KERNEL_PREFILL.metaFactory,
+            validator: KERNEL_PREFILL.ecdsaValidator,
+          })}
           statusLine={
             storedForType
-              ? `Verified ✓ — factory, implementation ${
-                  storedForType.factoryImplementation ?? 'unknown'
-                }, meta factory and ECDSA validator have code; entrypoint() is v0.7; ` +
-                `accountId() is ${storedForType.kernelAccountId ?? 'unknown'}; the meta factory ` +
-                `approves the factory (checked ${shortDate(storedForType.factoryVerifiedAt)})`
+              ? t('settings.aa.kernelVerified', {
+                  implementation: storedForType.factoryImplementation ?? tx('unknown'),
+                  accountId: storedForType.kernelAccountId ?? tx('unknown'),
+                  date: shortDate(storedForType.factoryVerifiedAt),
+                })
               : null
           }
           onSave={async (draft) => {
             const endpoint = await getEndpoint(network.chainId);
             if (!endpoint?.url) {
-              throw new Error(
-                `No ${network.label} RPC endpoint is configured; the Kernel deployment is ` +
-                  'verified on-chain through it. Configure the endpoint above first.',
-              );
+              throw new Error(t('settings.aa.kernelNoEndpoint', { network: network.label }));
             }
             await setAaKernelFactory(network.chainId, draft, endpoint.url);
             reload();
@@ -980,27 +971,21 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
           prefill={simplePrefill?.factory ?? null}
           prefillNote={
             simplePrefill
-              ? `Pinned Sepolia default (verified on-chain 2026-09-27; implementation ` +
-                `${simplePrefill.implementation}, EntryPoint v0.7 ${simplePrefill.entryPoint}). ` +
-                'Saving re-runs the full on-chain verification through your RPC endpoint.'
+              ? t('settings.aa.simplePrefill', { implementation: simplePrefill.implementation, entryPoint: simplePrefill.entryPoint })
               : null
           }
           statusLine={
             storedForType
-              ? `Verified ✓ — has code; implementation ${
-                  storedForType.factoryImplementation ?? 'unknown'
-                } has code and its entryPoint() is v0.7 (checked ${shortDate(
-                  storedForType.factoryVerifiedAt,
-                )})`
+              ? t('settings.aa.simpleVerified', {
+                  implementation: storedForType.factoryImplementation ?? tx('unknown'),
+                  date: shortDate(storedForType.factoryVerifiedAt),
+                })
               : null
           }
           onSave={async (draft) => {
             const endpoint = await getEndpoint(network.chainId);
             if (!endpoint?.url) {
-              throw new Error(
-                `No ${network.label} RPC endpoint is configured; the factory is ` +
-                  'verified on-chain through it. Configure the endpoint above first.',
-              );
+              throw new Error(t('settings.aa.factoryNoEndpoint', { network: network.label }));
             }
             await setAaFactory(network.chainId, draft, endpoint.url);
             reload();
@@ -1019,9 +1004,7 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
         locked={paymasterGate !== null}
         statusLine={
           config?.paymasterUrl
-            ? `Verified ✓ — answers pm_getPaymasterStubData (checked ${shortDate(
-                config.paymasterVerifiedAt,
-              )}). Gas on smart-account sends is sponsored.`
+            ? t('settings.aa.paymasterVerified', { date: shortDate(config.paymasterVerifiedAt) })
             : null
         }
         onSave={async (draft) => {
@@ -1041,7 +1024,7 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
           locked={paymasterGate !== null}
           statusLine={
             config?.paymasterContext
-              ? 'Sent verbatim to the paymaster with each sponsorship request.'
+              ? tx('Sent verbatim to the paymaster with each sponsorship request.')
               : null
           }
           onSave={async (draft) => {
@@ -1054,7 +1037,7 @@ function AaChainRow({ network }: { network: NetworkDefault }) {
             try {
               await setAaPaymaster(network.chainId, config.paymasterUrl!, '');
             } catch (e) {
-              Alert.alert('Not saved', e instanceof Error ? e.message : String(e));
+              Alert.alert(tx('Not saved'), e instanceof Error ? localize(e.message) : String(e));
             }
             reload();
           }}
@@ -1094,7 +1077,7 @@ function IndexerChainRow({
       <View style={styles.endpointHeader}>
         <Text style={[styles.endpointLabel, { color: theme.text }]}>{network.label}</Text>
         <Text style={[styles.endpointTag, { color: theme.textMuted }]}>
-          {config?.url ? 'ready' : 'not set'}
+          {config?.url ? tx('ready') : tx('not set')}
         </Text>
       </View>
       <AaField
@@ -1104,13 +1087,12 @@ function IndexerChainRow({
         ignoredReason={config?.ignoredUrlReason ?? null}
         statusLine={
           config?.url
-            ? `Verified ✓ — chain id matches and alchemy_getAssetTransfers ` +
-              `answered with a well-formed response (checked ${shortDate(config.verifiedAt)})`
+            ? t('settings.indexer.verified', { date: shortDate(config.verifiedAt) })
             : null
         }
         onSave={async (draft) => {
           if (!walletAddress) {
-            throw new Error('No wallet address is available to verify the endpoint with.');
+            throw new Error(tx('No wallet address is available to verify the endpoint with.'));
           }
           await setIndexerUrl(network.chainId, draft, walletAddress);
           reload();
@@ -1155,7 +1137,7 @@ function NftIndexerChainRow({
       <View style={styles.endpointHeader}>
         <Text style={[styles.endpointLabel, { color: theme.text }]}>{network.label}</Text>
         <Text style={[styles.endpointTag, { color: theme.textMuted }]}>
-          {config?.url ? 'ready' : 'not set'}
+          {config?.url ? tx('ready') : tx('not set')}
         </Text>
       </View>
       <AaField
@@ -1165,21 +1147,16 @@ function NftIndexerChainRow({
         ignoredReason={config?.ignoredUrlReason ?? null}
         statusLine={
           config?.url
-            ? `Verified ✓ — getNFTsForOwner answered and its block ${
-                config.verifiedBlock ?? '?'
-              } matches ${network.label} (checked ${shortDate(config.verifiedAt)})`
+            ? t('settings.nftIndexer.verified', { block: config.verifiedBlock ?? '?', network: network.label, date: shortDate(config.verifiedAt) })
             : null
         }
         onSave={async (draft) => {
           if (!walletAddress) {
-            throw new Error('No wallet address is available to verify the endpoint with.');
+            throw new Error(tx('No wallet address is available to verify the endpoint with.'));
           }
           const endpoint = await getEndpoint(network.chainId);
           if (!endpoint?.url) {
-            throw new Error(
-              `No ${network.label} RPC endpoint is configured; the indexer's network is ` +
-                'confirmed through it. Configure the endpoint above first.',
-            );
+            throw new Error(t('settings.nftIndexer.noEndpoint', { network: network.label }));
           }
           await setNftIndexerUrl(network.chainId, draft, walletAddress, endpoint.url, {
             chainLabel: network.label,
@@ -1212,25 +1189,13 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
  * have no code there). The custom-network wording below would wrongly say
  * "has not checked".
  */
-const BUILT_IN_NO_KERNEL_NOTE = (label: string) =>
-  `No Kernel v3.3 factory is pre-filled on ${label}: the wallet checked this network and found the Kernel v3.3 ` +
-  'factory and implementation have no code there, so smart-account features are not available on it. If a ' +
-  'deployment appears later, paste the KernelFactory address; saving checks it on-chain and nothing is saved if ' +
-  'any check fails.';
+const BUILT_IN_NO_KERNEL_NOTE = (label: string) => t('settings.aa.builtInNoKernel', { network: label });
 
 function kernelPrefillAbsentNote(caip2: string): string {
   const profile = evmProfileByCaip2(caip2);
   if (profile && !isCustomNetworkId(caip2) && !profile.kernelV33Verified) return BUILT_IN_NO_KERNEL_NOTE(profile.label);
-  return CUSTOM_NETWORK_KERNEL_NOTE;
+  return t('settings.aa.customNoKernel');
 }
-
-const CUSTOM_NETWORK_KERNEL_NOTE =
-  'No Kernel v3.3 factory is pre-filled on this network: the wallet has not checked the deployment here. Paste ' +
-  'the KernelFactory address if Kernel v3.3 is deployed on this network; saving checks on-chain, through your RPC ' +
-  'endpoint, that the factory, implementation, meta factory and ECDSA validator have code, that the factory uses ' +
-  'the pinned implementation, that entrypoint() is v0.7, that accountId() is the expected version, that the ' +
-  'meta factory approves the factory and that the validator reports itself as a validator module. Nothing is saved ' +
-  'if any check fails.';
 
 /** The empty Add form (decimals start at 18, the only value accepted). */
 const EMPTY_CUSTOM_FORM = {
@@ -1283,12 +1248,14 @@ function CustomNetworksSection({
 
   const field = (key: keyof typeof EMPTY_CUSTOM_FORM, label: string, placeholder: string, keyboard: 'default' | 'url' | 'number-pad' = 'default') => (
     <View style={styles.aaField}>
-      <Text accessibilityLabel={label} {...fieldLabel(`custom-${String(key)}`, label).label} style={[styles.aaFieldLabel, { color: theme.textMuted }]}>{label}</Text>
+      <Text accessibilityLabel={localize(label)} {...fieldLabel(`custom-${String(key)}`, label).label} style={[styles.aaFieldLabel, { color: theme.textMuted }]}>{localize(label)}</Text>
       <TextInput
         {...fieldLabel(`custom-${String(key)}`, label).input}
         value={String(form[key])}
         onChangeText={(text) => setForm((f) => ({ ...f, [key]: text }))}
-        placeholder={placeholder}
+        // "For example …" (the name, chain id and symbol examples) through
+        // its template; the example itself stays as written.
+        placeholder={/^For example (.+)$/.test(placeholder) ? t('settings.custom.forExample', { example: /^For example (.+)$/.exec(placeholder)![1] }) : placeholder}
         placeholderTextColor={theme.textMuted}
         autoCapitalize="none"
         autoCorrect={false}
@@ -1307,13 +1274,17 @@ function CustomNetworksSection({
       setAdding(false);
       reload();
       Alert.alert(
-        'Network added',
-        `${record.name} (chain id ${record.chainId}) answered as that chain, and its newest block (block ` +
-          `${verification.headNumber.toString()}) was ${Math.max(0, Math.round(verification.headAgeSeconds))} s old. ` +
-          `${blockTimeLine(record.blockTimeMs)} Choose it under “Networks you added” to use it.`,
+        tx('Network added'),
+        t('settings.custom.added', {
+          name: record.name,
+          chainId: record.chainId,
+          block: verification.headNumber.toString(),
+          seconds: Math.max(0, Math.round(verification.headAgeSeconds)),
+          blockTime: blockTimeLine(record.blockTimeMs),
+        }),
       );
     } catch (e) {
-      setFormError(e instanceof Error ? e.message : String(e));
+      setFormError(e instanceof Error ? localize(e.message) : String(e));
     } finally {
       setVerifying(false);
     }
@@ -1322,10 +1293,10 @@ function CustomNetworksSection({
   const remove = (record: CustomNetworkRecord) => {
     const caip2 = `eip155:${record.chainId}`;
     const active = choice === caip2;
-    Alert.alert('Remove this network?', removalConfirmationText(record.name, record.chainId, active), [
-      { text: 'Cancel', style: 'cancel' },
+    Alert.alert(tx('Remove this network?'), removalConfirmationText(record.name, record.chainId, active), [
+      { text: tx('Cancel'), style: 'cancel' },
       {
-        text: 'Remove',
+        text: tx('Remove'),
         style: 'destructive',
         onPress: () => {
           void (async () => {
@@ -1337,7 +1308,7 @@ function CustomNetworksSection({
               if (scopes.damaged || scopes.scopes.some((x) => x.scope.chain === caip2)) {
                 const auth = await requireLocalAuth('Remove the network and its spending limits');
                 if (!auth.ok) {
-                  Alert.alert('Nothing was removed', auth.message);
+                  Alert.alert(tx('Nothing was removed'), auth.message);
                   return;
                 }
               }
@@ -1346,11 +1317,11 @@ function CustomNetworksSection({
               if (active) await onChoose(null);
               const report = await removeCustomNetwork(caip2);
               Alert.alert(
-                report.networkRemoved ? 'Network removed' : 'Network not removed',
+                report.networkRemoved ? tx('Network removed') : tx('Network not removed'),
                 describeRemoval(record.name, { ...report, switchedToMainnet: report.switchedToMainnet || active }),
               );
             } catch (e) {
-              Alert.alert('Nothing was removed', e instanceof Error ? e.message : String(e));
+              Alert.alert(tx('Nothing was removed'), e instanceof Error ? e.message : String(e));
             } finally {
               setBusy(null);
               reload();
@@ -1363,18 +1334,16 @@ function CustomNetworksSection({
 
   const reset = () => {
     Alert.alert(
-      'Reset custom networks?',
-      'The list of networks you added is replaced by an empty one. Tokens, contacts and settings saved for those ' +
-        'networks stay on this phone unused and come back if you add the same chain id again. If one of them is ' +
-        'active, the wallet switches back to Ethereum mainnet.',
+      tx('Reset custom networks?'),
+      t('settings.custom.resetBody'),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: tx('Cancel'), style: 'cancel' },
         {
-          text: 'Reset',
+          text: tx('Reset'),
           style: 'destructive',
           onPress: () => {
             void resetCustomNetworks().then(reload, (e: unknown) =>
-              Alert.alert('Not reset', e instanceof Error ? e.message : String(e)),
+              Alert.alert(tx('Not reset'), e instanceof Error ? e.message : String(e)),
             );
           },
         },
@@ -1386,12 +1355,12 @@ function CustomNetworksSection({
     <View style={styles.section}>
       {/* A sub-heading (pass p22a finding 4), like "Test network" above it
           and the Notifications sub-heading in Privacy. */}
-      <Text accessibilityRole="header" style={[styles.toggleLabel, { color: theme.text }]}>Networks you added</Text>
+      <Text accessibilityRole="header" style={[styles.toggleLabel, { color: theme.text }]}><T>Networks you added</T></Text>
       {customNetworks.length > 0 ? (
         <View style={styles.choiceChips}>
           {customNetworks.map((p) => {
             const selected = choice === p.caip2;
-            const label = `${p.label}${p.testnet ? ' (test)' : ''}`;
+            const label = p.testnet ? t('settings.custom.chipTest', { label: p.label }) : p.label;
             return (
               <Button
                 key={p.caip2}
@@ -1407,10 +1376,10 @@ function CustomNetworksSection({
         </View>
       ) : null}
       <Text style={[styles.hint, { color: theme.textMuted }]}>
-        Add any EVM network by its chain id and an RPC endpoint. The wallet checks before saving that the endpoint
+        <T>Add any EVM network by its chain id and an RPC endpoint. The wallet checks before saving that the endpoint
         answers as that chain id and that its newest block is recent. A network you add is treated as a MAIN
         network — its funds may be real — unless you mark it as one of the well-known public test networks. Your
-        addresses are the same on every EVM network.
+        addresses are the same on every EVM network.</T>
       </Text>
       {supersededCustomNetworks().map((entry) => (
         <WarningBox key={`superseded-${entry.chainId}`}>{supersededCustomNetworkNote(entry)}</WarningBox>
@@ -1427,16 +1396,21 @@ function CustomNetworksSection({
           <View key={r.chainId} style={[styles.endpointRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
             <View style={styles.endpointHeader}>
               <Text style={[styles.endpointLabel, { color: theme.text }]}>{r.name}</Text>
-              <Text style={[styles.endpointTag, { color: theme.textMuted }]}>chain id {r.chainId}</Text>
+              <Text style={[styles.endpointTag, { color: theme.textMuted }]}>{t('settings.custom.chainId', { chainId: r.chainId })}</Text>
             </View>
             <Text style={[styles.endpointNote, { color: profile?.testnet ? theme.testnetFill : theme.warningText }]}>
               {profile?.testnet
-                ? `Treated as a TEST network (${r.nativeSymbol} here has no value).`
-                : 'Treated as a MAIN network: its funds may be real. Smart-account features are switched off here.'}
+                ? t('settings.custom.treatedTest', { symbol: r.nativeSymbol })
+                : tx('Treated as a MAIN network: its funds may be real. Smart-account features are switched off here.')}
             </Text>
             <Text style={[styles.endpointNote, { color: theme.textMuted }]}>
-              {`Coin: ${r.nativeSymbol}, ${r.nativeDecimals} decimals (the symbol is your word). RPC endpoint: ${maskUrlForDisplay(r.rpcUrl)}. ` +
-                `Explorer: ${r.explorerUrl ?? 'none'}. Verified and added ${localDateLabel(r.addedAt)}.`}
+              {t('settings.custom.facts', {
+                symbol: r.nativeSymbol,
+                decimals: r.nativeDecimals,
+                rpc: maskUrlForDisplay(r.rpcUrl),
+                explorer: r.explorerUrl ?? tx('none'),
+                date: localDateLabel(r.addedAt),
+              })}
             </Text>
             <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{blockTimeLine(r.blockTimeMs)}</Text>
             <Button
@@ -1454,13 +1428,13 @@ function CustomNetworksSection({
           {field('chainId', 'Chain id (decimal)', CUSTOM_NETWORK_CHAIN_ID_PLACEHOLDER, 'number-pad')}
           {field('rpcUrl', 'RPC endpoint (https)', 'https://…', 'url')}
           {field('nativeSymbol', 'Coin symbol', 'For example ETH')}
-          <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{NATIVE_SYMBOL_NOTE}</Text>
+          <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{localize(NATIVE_SYMBOL_NOTE)}</Text>
           {field('nativeDecimals', 'Coin decimals', '18', 'number-pad')}
           {field('explorerUrl', 'Block explorer (https, optional)', 'https://…', 'url')}
           <View style={styles.toggleRow}>
-            <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, styles.readinessTitle, { color: theme.text }]}>This is a test network</Text>
+            <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, styles.readinessTitle, { color: theme.text }]}><T>This is a test network</T></Text>
             <Switch {...switchColors(theme)}
-              accessibilityLabel="This is a test network"
+              accessibilityLabel={tx('This is a test network')}
               accessibilityRole="switch"
               accessibilityState={{ checked: form.testnet }}
               value={form.testnet}
@@ -1613,7 +1587,7 @@ function AppPinSection() {
     }
     const phrase = await revealMnemonic();
     if (!phrase) {
-      end('The recovery phrase could not be opened. Nothing was changed.', true);
+      end(tx('The recovery phrase could not be opened. Nothing was changed.'), true);
       return null;
     }
     return phrase;
@@ -1663,7 +1637,7 @@ function AppPinSection() {
         end(copy.results.off, false);
       } else if (flow === 'duress-add') {
         const phrase = held.current.phrase;
-        if (!phrase) throw new Error('The recovery phrase is no longer open. Nothing was changed.');
+        if (!phrase) throw new Error(tx('The recovery phrase is no longer open. Nothing was changed.'));
         await addDuressPin(current!, next!, phrase);
         end(copy.results.duressSet, false);
       } else if (flow === 'duress-change') {
@@ -1729,9 +1703,9 @@ function AppPinSection() {
     } else if (flow === 'pin-off' || flow === 'duress-remove') {
       const title = flow === 'pin-off' ? copy.removeTitle : copy.removeDuressTitle;
       const body = flow === 'duress-remove' ? copy.removeDuressBody : duressSet ? copy.removeWithDuressBody : copy.removeBody;
-      Alert.alert(title, body, [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Continue', style: 'destructive', onPress: () => setStep({ kind: 'pad', flow, stage: 'current' }) },
+      Alert.alert(localizeText(title), localizeText(body), [
+        { text: tx('Cancel'), style: 'cancel' },
+        { text: tx('Continue'), style: 'destructive', onPress: () => setStep({ kind: 'pad', flow, stage: 'current' }) },
       ]);
     } else if (lockKind === 'phr') {
       // Changing a passphrase: the phrase is opened to refuse a new one built
@@ -1777,7 +1751,7 @@ function AppPinSection() {
       </View>
       {!appPinOn && !busy ? (
         <>
-          <Text style={[styles.hint, { color: theme.text }]}>{APP_LOCK_KIND_CHOICE_LABEL}</Text>
+          <Text style={[styles.hint, { color: theme.text }]}>{localizeText(APP_LOCK_KIND_CHOICE_LABEL)}</Text>
           <View style={styles.endpointButtons}>
             {LOCK_KINDS.map((k) => (
               <Button
@@ -1792,18 +1766,18 @@ function AppPinSection() {
           </View>
         </>
       ) : null}
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{appPinOn ? copy.onStatus : APP_LOCK_OFF_STATUS}</Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{copy.whatNote}</Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{copy.limitsNote}</Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{LOCK_STRENGTH_NOTE}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{localizeText(appPinOn ? copy.onStatus : APP_LOCK_OFF_STATUS)}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{localizeText(copy.whatNote)}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{localizeText(copy.limitsNote)}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{localizeText(LOCK_STRENGTH_NOTE)}</Text>
       {shownKind === 'phr' ? (
         <>
-          <Text style={[styles.hint, { color: theme.textMuted }]}>{PASSPHRASE_ADVICE}</Text>
-          <Text style={[styles.hint, { color: theme.textMuted }]}>{PASSPHRASE_KEYBOARD_NOTE}</Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{localizeText(PASSPHRASE_ADVICE)}</Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{localizeText(PASSPHRASE_KEYBOARD_NOTE)}</Text>
         </>
       ) : null}
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{copy.costsNote}</Text>
-      {!appPinOn ? <Text style={[styles.hint, { color: theme.textMuted }]}>{APP_LOCK_BACKUP_NOTE}</Text> : null}
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{localizeText(copy.costsNote)}</Text>
+      {!appPinOn ? <Text style={[styles.hint, { color: theme.textMuted }]}>{localizeText(APP_LOCK_BACKUP_NOTE)}</Text> : null}
       {appPinOn && !busy ? (
         <View style={styles.endpointButtons}>
           <Button title={copy.changeButton} variant="secondary" onPress={() => start('pin-change')} style={styles.endpointButton} />
@@ -1811,15 +1785,15 @@ function AppPinSection() {
         </View>
       ) : null}
 
-      <Text accessibilityRole="header" style={[styles.subTitle, { color: theme.text }]}>{copy.duressTitle}</Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{copy.duressExplanation}</Text>
+      <Text accessibilityRole="header" style={[styles.subTitle, { color: theme.text }]}>{localizeText(copy.duressTitle)}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{localizeText(copy.duressExplanation)}</Text>
       <WarningBox>{copy.duressHonestClaim}</WarningBox>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{DURESS_FUNDING_NOTE}</Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{copy.duressBackupNote}</Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{LOCK_SAME_KIND_NOTE}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{localizeText(DURESS_FUNDING_NOTE)}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{localizeText(copy.duressBackupNote)}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{localizeText(LOCK_SAME_KIND_NOTE)}</Text>
       {appPinOn ? (
         <>
-          <Text style={[styles.hint, { color: theme.text }]}>{duressSet ? copy.duressSetStatus : copy.duressNotSetStatus}</Text>
+          <Text style={[styles.hint, { color: theme.text }]}>{localizeText(duressSet ? copy.duressSetStatus : copy.duressNotSetStatus)}</Text>
           {!busy ? (
             duressSet ? (
               <View style={styles.endpointButtons}>
@@ -1832,16 +1806,16 @@ function AppPinSection() {
           ) : null}
         </>
       ) : (
-        <Text style={[styles.hint, { color: theme.textMuted }]}>{copy.duressNeeds}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{localizeText(copy.duressNeeds)}</Text>
       )}
 
       {step.kind === 'backup' ? (
         <View style={styles.endpointEditor}>
           <Text style={[styles.hint, { color: theme.text }]}>
-            {`Type ${backupCheckLabel(step.positions)} of your recovery phrase, from your written backup.`}
+            {t('settings.appLock.typeWords', { words: backupCheckLabel(step.positions) })}
           </Text>
           {step.positions.map((p, i) => {
-            const f = fieldLabel(`backup-word-${i}`, `Word ${p + 1} of your recovery phrase`);
+            const f = fieldLabel(`backup-word-${i}`, t('settings.appLock.wordCaption', { n: p + 1 }));
             return (
               <View key={`w-${p}`} style={styles.endpointEditor}>
                 <Text {...f.label} style={[styles.hint, { color: theme.textMuted }]}>{f.text}</Text>
@@ -1862,7 +1836,7 @@ function AppPinSection() {
           })}
           <View style={styles.endpointButtons}>
             <Button title="Check" onPress={submitBackupWords} style={styles.endpointButton} />
-            <Button title="Cancel" variant="secondary" onPress={() => end('Nothing was changed.', false)} style={styles.endpointButton} />
+            <Button title="Cancel" variant="secondary" onPress={() => end(tx('Nothing was changed.'), false)} style={styles.endpointButton} />
           </View>
         </View>
       ) : null}
@@ -1873,12 +1847,12 @@ function AppPinSection() {
           ) : (
             <PinPad key={`${step.flow}-${step.stage}`} prompt={padPrompt(step)} onComplete={onPad} />
           )}
-          {settingPassphrase ? <Text style={[styles.hint, { color: theme.textMuted }]}>{PASSPHRASE_NO_COPY_NOTE}</Text> : null}
-          <Button title="Cancel" variant="secondary" onPress={() => end('Nothing was changed.', false)} />
+          {settingPassphrase ? <Text style={[styles.hint, { color: theme.textMuted }]}>{localizeText(PASSPHRASE_NO_COPY_NOTE)}</Text> : null}
+          <Button title="Cancel" variant="secondary" onPress={() => end(tx('Nothing was changed.'), false)} />
         </View>
       ) : null}
       {result ? (
-        <Text accessibilityLiveRegion="polite" style={[styles.hint, { color: result.error ? theme.danger : theme.textMuted }]}>{result.text}</Text>
+        <Text accessibilityLiveRegion="polite" style={[styles.hint, { color: result.error ? theme.danger : theme.textMuted }]}>{localizeText(result.text)}</Text>
       ) : null}
     </View>
   );
@@ -2112,10 +2086,10 @@ export function SettingsScreen({ navigation, route }: Props) {
 
   const onProtect = () => {
     // PROTECT_CONFIRM_MESSAGE, extended when imported keys move too.
-    Alert.alert(PROTECT_CONFIRM_TITLE, protectConfirmMessage(protection), [
-      { text: 'Cancel', style: 'cancel' },
+    Alert.alert(localize(PROTECT_CONFIRM_TITLE), localize(protectConfirmMessage(protection)), [
+      { text: tx('Cancel'), style: 'cancel' },
       {
-        text: 'Protect',
+        text: tx('Protect'),
         onPress: async () => {
           setProtecting(true);
           try {
@@ -2124,7 +2098,7 @@ export function SettingsScreen({ navigation, route }: Props) {
               detail: e instanceof Error ? e.message : null,
             }));
             const { title, message } = describeUpgradeOutcome(result);
-            Alert.alert(title, message);
+            Alert.alert(localize(title), localize(message));
           } finally {
             setProtecting(false);
             reloadProtection();
@@ -2136,12 +2110,12 @@ export function SettingsScreen({ navigation, route }: Props) {
 
   const onReveal = () => {
     Alert.alert(
-      'Show recovery phrase?',
-      'Make sure no one can see your screen. Anyone who sees these words can steal the funds of every account in this wallet.',
+      tx('Show recovery phrase?'),
+      tx('Make sure no one can see your screen. Anyone who sees these words can steal the funds of every account in this wallet.'),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: tx('Cancel'), style: 'cancel' },
         {
-          text: 'Show it',
+          text: tx('Show it'),
           style: 'destructive',
           onPress: async () => {
             // Biometric gate (task 7): revealing the seed requires local
@@ -2152,7 +2126,7 @@ export function SettingsScreen({ navigation, route }: Props) {
             // active, so the one prompt opens what is actually shown.
             const auth = await requireLocalAuth('Reveal recovery phrase', { kind: 'phrase' });
             if (!auth.ok) {
-              Alert.alert('Not revealed', auth.message);
+              Alert.alert(tx('Not revealed'), auth.message);
               return;
             }
             const mnemonic = await revealMnemonic();
@@ -2165,7 +2139,7 @@ export function SettingsScreen({ navigation, route }: Props) {
               const status = await storageProtection();
               setProtection(status);
               const { title, message } = describeRevealFailure(status);
-              Alert.alert(title, message);
+              Alert.alert(localize(title), localize(message));
             }
           },
         },
@@ -2187,14 +2161,12 @@ export function SettingsScreen({ navigation, route }: Props) {
           return;
         }
         Alert.alert(
-          'Export your recovery records first?',
-          `This device holds ${entries.length} recovery record(s). They contain no secrets, but a wallet ` +
-            'restored from a recovery phrase needs them to find accounts whose owner changed. Wiping deletes ' +
-            'them from this device (nothing on-chain changes: guardians stay installed).',
+          tx('Export your recovery records first?'),
+          t('settings.wipe.exportBody', { count: entries.length }),
           [
-            { text: 'Cancel', style: 'cancel' },
+            { text: tx('Cancel'), style: 'cancel' },
             {
-              text: 'Export',
+              text: tx('Export'),
               onPress: () => {
                 Share.share({ message: text, title: 'Recovery records' }).then(
                   () => confirmWipe(),
@@ -2202,7 +2174,7 @@ export function SettingsScreen({ navigation, route }: Props) {
                 );
               },
             },
-            { text: 'Continue without exporting', style: 'destructive', onPress: confirmWipe },
+            { text: tx('Continue without exporting'), style: 'destructive', onPress: confirmWipe },
           ],
         );
       },
@@ -2213,31 +2185,23 @@ export function SettingsScreen({ navigation, route }: Props) {
   const confirmWipe = () => {
     // Double confirmation: wiping is irreversible without the paper backup.
     Alert.alert(
-      'Wipe wallet?',
-      (importedAccounts.length > 0
-        ? `This also deletes the private keys of your imported accounts (${importedNames}). Your recovery ` +
-          'phrase cannot bring them back: they are lost unless you kept each private key yourself. '
-        : '') +
-      'This deletes the recovery phrase from this device. The app returns to onboarding. Session ' +
-        'keys and the session list are deleted too, but sessions granted on-chain stay active until ' +
-        'they expire — revoke them first (Settings → Session keys) if you still can. Recovery records ' +
-        'and recovered-account links are deleted from this device; guardians stay installed on-chain. ' +
-        'Passkey details are deleted from this device too, but an installed passkey stays installed in ' +
-        'your smart account — remove it first (Settings → Passkey) if you no longer want it.' +
-        (appPinOn ? ` ${wipeWithLockNote(settingsLockKind)}` : ''),
+      tx('Wipe wallet?'),
+      (importedAccounts.length > 0 ? `${t('settings.wipe.imported', { names: importedNames })} ` : '') +
+        t('settings.wipe.body') +
+        (appPinOn ? ` ${localize(wipeWithLockNote(settingsLockKind))}` : ''),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: tx('Cancel'), style: 'cancel' },
         {
-          text: 'Continue',
+          text: tx('Continue'),
           style: 'destructive',
           onPress: () => {
             Alert.alert(
-              'Are you absolutely sure?',
-              'Without your written recovery phrase, the funds controlled by this wallet will be unrecoverable by anyone, forever.',
+              tx('Are you absolutely sure?'),
+              tx('Without your written recovery phrase, the funds controlled by this wallet will be unrecoverable by anyone, forever.'),
               [
-                { text: 'Keep my wallet', style: 'cancel' },
+                { text: tx('Keep my wallet'), style: 'cancel' },
                 {
-                  text: 'Wipe wallet',
+                  text: tx('Wipe wallet'),
                   style: 'destructive',
                   onPress: async () => {
                     setRevealed(null);
@@ -2272,42 +2236,35 @@ export function SettingsScreen({ navigation, route }: Props) {
                 (listed read-only since phase 18) have no key of their own
                 (2026-10-11 re-check, finding 7). */}
             {!keylessListed
-              ? 'One recovery phrase backs up ALL of your accounts — every account in the list above, including hidden ones, on every chain.'
-              : 'One recovery phrase backs up every account in the list above that this wallet holds a key for, including hidden ones, on every chain.'}
+              ? tx('One recovery phrase backs up ALL of your accounts — every account in the list above, including hidden ones, on every chain.')
+              : tx('One recovery phrase backs up every account in the list above that this wallet holds a key for, including hidden ones, on every chain.')}
           </Text>
         ) : (
           <>
             <Text style={[styles.hint, { color: theme.textMuted }]}>
-              One recovery phrase backs up every account in the list above
-              that comes from it, including hidden ones, on every chain.
+              <T>One recovery phrase backs up every account in the list above
+              that comes from it, including hidden ones, on every chain.</T>
             </Text>
             <WarningBox>
-              {`It does NOT back up your imported accounts (${importedNames}). Each one is lost with this ` +
-                'phone unless you keep its private key yourself: use Show private key in the list above to ' +
-                'make a copy.'}
+              {t('settings.backup.importedNotBackedUp', { names: importedNames })}
             </WarningBox>
           </>
         )}
         {watchOnlyAccounts.length > 0 ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            Watch-only addresses have no key in this wallet, so the recovery phrase does not back them up and
-            is not needed for them: to watch one again on another phone, add its address again.
+            <T>Watch-only addresses have no key in this wallet, so the recovery phrase does not back them up and
+            is not needed for them: to watch one again on another phone, add its address again.</T>
           </Text>
         ) : null}
         {multisigAccounts.length > 0 ? (
-          <Text style={[styles.hint, { color: theme.textMuted }]}>{MULTISIG_LIST_HINT}</Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(MULTISIG_LIST_HINT)}</Text>
         ) : null}
         {revealed ? (
           <View style={styles.revealBlock}>
             <WarningBox>
               {importedAccounts.length === 0
-                ? 'Never share these words. They control every account in this wallet, not just the ' +
-                  'active one. Shiba Wallet support will never ask for them. Hide them again as soon as ' +
-                  'you are done.'
-                : 'Never share these words. They control every account in this wallet that comes from ' +
-                  'them, not just the active one. Shiba Wallet support will never ask for them. Hide ' +
-                  `them again as soon as you are done. They do not restore your imported accounts ` +
-                  `(${importedNames}).`}
+                ? t('settings.reveal.warning')
+                : t('settings.reveal.warningImported', { names: importedNames })}
             </WarningBox>
             <WordGrid words={revealed.split(' ')} />
             {/*
@@ -2323,9 +2280,9 @@ export function SettingsScreen({ navigation, route }: Props) {
               clipboard.
             */}
             <Text style={[styles.hint, { color: theme.textMuted }]}>
-              These words are shown only — there is deliberately no copy
+              <T>These words are shown only — there is deliberately no copy
               button, because anything on the clipboard can be read by
-              other apps. Write them down on paper.
+              other apps. Write them down on paper.</T>
             </Text>
             <Button title="Hide recovery phrase" variant="secondary" onPress={() => setRevealed(null)} />
           </View>
@@ -2342,13 +2299,13 @@ export function SettingsScreen({ navigation, route }: Props) {
           {protectionView.warning ? (
             <WarningBox>{protectionView.text}</WarningBox>
           ) : (
-            <Text style={[styles.hint, { color: theme.textMuted }]}>{protectionView.text}</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(protectionView.text)}</Text>
           )}
           {protectionView.note ? (
-            <Text style={[styles.hint, { color: theme.textMuted }]}>{protectionView.note}</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(protectionView.note)}</Text>
           ) : null}
           {protectionView.importedNote ? (
-            <Text style={[styles.hint, { color: theme.textMuted }]}>{protectionView.importedNote}</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(protectionView.importedNote)}</Text>
           ) : null}
           {protectionView.showProtectButton ? (
             <Button
@@ -2483,9 +2440,9 @@ export function SettingsScreen({ navigation, route }: Props) {
       <View style={styles.section}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Prices</T></Text>
         <View style={styles.toggleRow}>
-          <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text }]}>Show fiat values (USD)</Text>
+          <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text }]}><T>Show fiat values (USD)</T></Text>
           <Switch {...switchColors(theme)}
-            accessibilityLabel="Show fiat values (USD)"
+            accessibilityLabel={tx('Show fiat values (USD)')}
             accessibilityRole="switch"
             accessibilityState={{ checked: showFiat }}
             value={showFiat}
@@ -2493,34 +2450,32 @@ export function SettingsScreen({ navigation, route }: Props) {
           />
         </View>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Shows an approximate US-dollar value next to balances and on the
+          <T>Shows an approximate US-dollar value next to balances and on the
           send and swap confirmation screens. Prices are fetched from
           CoinGecko (api.coingecko.com), which sees your IP address and
           which assets are being priced — never your addresses or balances.
           Turning this off stops all price requests. Prices are indicative
           only; the exact crypto amount is always the one that counts, and
-          test-network assets are never priced.
+          test-network assets are never priced.</T>
         </Text>
         {showFiat ? (
           <>
             <Text style={[styles.hint, { color: theme.textMuted }]}>
-              Optional: a free CoinGecko Demo API key (from your CoinGecko
+              <T>Optional: a free CoinGecko Demo API key (from your CoinGecko
               developer dashboard) gives a higher rate limit than keyless
               requests. It is stored only on this device and sent only to
               api.coingecko.com. Saving runs one live price request with the
               key first, and nothing is saved if it fails. CoinGecko does not
               offer a way to confirm a Demo key is genuine, so a pass means
-              the request with the key worked.
+              the request with the key worked.</T>
             </Text>
             <AaField
               label="CoinGecko Demo API key (optional)"
-              placeholder="Demo API key from CoinGecko"
+              placeholder={tx('Demo API key from CoinGecko')}
               value={priceConfig?.demoApiKey ?? null}
               statusLine={
                 priceConfig?.demoApiKey
-                  ? `Checked ✓ — a live price request with this key succeeded (${
-                      localDateLabel(priceConfig.verifiedAt)
-                    })`
+                  ? t('settings.prices.keyChecked', { date: localDateLabel(priceConfig.verifiedAt) })
                   : null
               }
               onSave={async (draft) => {
@@ -2539,6 +2494,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       <View style={styles.section} onLayout={(e) => onSectionLayout('network-endpoints', e.nativeEvent.layout.y)}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Network endpoints</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
+          <T>
           Where balances are fetched from and where transactions are
           broadcast. Endpoint URLs are public configuration; Dogecoin&apos;s
           Blockbook endpoint may additionally need a provider API key,
@@ -2546,8 +2502,9 @@ export function SettingsScreen({ navigation, route }: Props) {
           Balances refresh with the new endpoint on the next
           pull-to-refresh. Without a custom endpoint, each chain uses the
           first of its built-in public defaults that answers; if that one
-          stops answering, the next is tried automatically.{' '}
-          {INSECURE_ENDPOINT_MESSAGE}
+          stops answering, the next is tried automatically.
+          </T>{' '}
+          {localize(INSECURE_ENDPOINT_MESSAGE)}
         </Text>
         {endpoints.map((endpoint) =>
           endpoint.network.kind === 'blockbook' ? (
@@ -2574,13 +2531,15 @@ export function SettingsScreen({ navigation, route }: Props) {
           <T>Ethereum history indexer</T>
         </Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
+          <T>
           Transaction history on the Activity screen needs an indexer: a
           standard JSON-RPC endpoint cannot list transactions by address.
           Paste an endpoint that serves the Transfers API
           (alchemy_getAssetTransfers). The URL usually contains your own
           API key — it is stored only on this device and sent only to the
           endpoint itself. Saving verifies the endpoint first and refuses
-          URLs for the wrong chain. {INSECURE_ENDPOINT_MESSAGE}
+          URLs for the wrong chain.
+          </T>{' '}{localize(INSECURE_ENDPOINT_MESSAGE)}
         </Text>
         {evmEndpoints.map((e) => (
           <IndexerChainRow
@@ -2596,6 +2555,7 @@ export function SettingsScreen({ navigation, route }: Props) {
       <View style={styles.section} onLayout={(e) => onSectionLayout('nft-indexer', e.nativeEvent.layout.y)}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>NFT indexer</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
+          <T>
           The NFTs screen needs an indexer that lists the NFTs an address
           owns (ERC-721 and ERC-1155). Paste the base URL of an endpoint that
           serves Alchemy&apos;s NFT API v3 — it looks like
@@ -2606,7 +2566,8 @@ export function SettingsScreen({ navigation, route }: Props) {
           indexer answers and that it is indexing this network. NFT images
           load from the indexer&apos;s image cache when possible, otherwise
           from the NFT&apos;s own host or the public ipfs.io gateway, which
-          see your IP address. {INSECURE_ENDPOINT_MESSAGE}
+          see your IP address.
+          </T>{' '}{localize(INSECURE_ENDPOINT_MESSAGE)}
         </Text>
         {evmEndpoints.map((e) => (
           <NftIndexerChainRow
@@ -2639,12 +2600,13 @@ export function SettingsScreen({ navigation, route }: Props) {
           <T>Account Abstraction (experimental)</T>
         </Text>
         <Text style={[styles.hint, { color: theme.warningText }]}>
-          Smart accounts, their modules and gas sponsorship are limited to test networks (see
+          <T>Smart accounts, their modules and gas sponsorship are limited to test networks (see
           Mainnet readiness above): on a main network these settings cannot be saved and the
           smart-account options do not appear on the Send, Swap and WalletConnect screens.
-          Clearing a setting saved earlier still works.
+          Clearing a setting saved earlier still works.</T>
         </Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
+          <T>
           Optional ERC-4337 setup per EVM chain: a bundler endpoint, a
           smart-account type (Kernel v3.3 or SimpleAccount) and its factory.
           Everything is verified before saving — the bundler must answer
@@ -2654,7 +2616,8 @@ export function SettingsScreen({ navigation, route }: Props) {
           an experimental &quot;from smart account&quot; toggle (token sends and swaps
           run as one atomic batch), and WalletConnect can connect dApps to
           the smart account. Off by default; nothing changes for regular
-          sends. {INSECURE_ENDPOINT_MESSAGE}
+          sends.
+          </T>{' '}{localize(INSECURE_ENDPOINT_MESSAGE)}
         </Text>
         {evmEndpoints.map((e) => (
           <AaChainRow key={e.network.chainId} network={e.network} />
@@ -2666,10 +2629,10 @@ export function SettingsScreen({ navigation, route }: Props) {
           <T>Upgrade this account (EIP-7702)</T>
         </Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Turns the active account into a Kernel v3.3 smart account at the same
+          <T>Turns the active account into a Kernel v3.3 smart account at the same
           address, on the active network, and shows its current status. You can
           undo it at any time. The wallet only ever delegates to the pinned
-          Kernel v3.3 contract and never signs an account delegation for a dApp.
+          Kernel v3.3 contract and never signs an account delegation for a dApp.</T>
         </Text>
         <Button
           title="Upgrade this account"
@@ -2681,11 +2644,11 @@ export function SettingsScreen({ navigation, route }: Props) {
       <View style={styles.section}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Session keys</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Let a separate key on this device (or a dApp, over WalletConnect) make only the calls you
+          <T>Let a separate key on this device (or a dApp, over WalletConnect) make only the calls you
           list, until a deadline you choose. Your Kernel account enforces the limits on-chain, and you
           can revoke a session at any time. Needs a deployed Kernel v3.3 smart account or an upgraded
           account. Sessions and their keys are not part of the recovery phrase: they do not survive a
-          wipe or a restore, so revoke them before wiping.
+          wipe or a restore, so revoke them before wiping.</T>
         </Text>
         <Button
           title="Sessions"
@@ -2697,11 +2660,11 @@ export function SettingsScreen({ navigation, route }: Props) {
       <View style={styles.section}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Guardians (social recovery)</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Let people you choose replace the key of your deployed Kernel smart account if you lose your
+          <T>Let people you choose replace the key of your deployed Kernel smart account if you lose your
           recovery phrase. This is a trade-off, not a safety guarantee: enough guardians together could
           also take the account, and guardians can sign messages as the account from the moment they are
           installed (with no delay and no veto). Not available for an account upgraded with EIP-7702. The
-          guardian modules have no published audit of their deployed versions.
+          guardian modules have no published audit of their deployed versions.</T>
         </Text>
         <Button
           title="Guardians for this account"
@@ -2727,10 +2690,10 @@ export function SettingsScreen({ navigation, route }: Props) {
 
       <View style={styles.section}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Passkey (device biometrics signer)</T></Text>
-        <Text style={[styles.hint, { color: theme.textMuted }]}>{PASSKEY_EXPLANATION}</Text>
-        <Text style={[styles.hint, { color: theme.textMuted }]}>{PASSKEY_SELF_CALL_RISK}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(PASSKEY_EXPLANATION)}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(PASSKEY_SELF_CALL_RISK)}</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Needs a deployed Kernel v3.3 smart account (not an EIP-7702 upgrade). {PASSKEY_AUDIT_NOTE}
+          <T>Needs a deployed Kernel v3.3 smart account (not an EIP-7702 upgrade).</T> {localize(PASSKEY_AUDIT_NOTE)}
         </Text>
         {(() => {
           const gate = passkeyGateNow();
@@ -2742,16 +2705,18 @@ export function SettingsScreen({ navigation, route }: Props) {
       <View style={styles.section}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>WalletConnect</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          {`Lets external dApps connect to this wallet on the active EVM chain (${EVM_MAINNET.label} mainnet, or ${testNetworkLabelsOr()} while test mode is on). `}
+          {`${t('settings.wc.intro', { mainnet: EVM_MAINNET.label, testNetworks: testNetworkLabelsOr() })} `}
+          <T>
           Requires a relay project id — create one for free at
           dashboard.reown.com. The id is public app configuration, not a
           secret; no account or personal data from this wallet is involved.
           If a connection was already opened this session, a changed id
           takes effect after the app restarts.
+          </T>
         </Text>
         <AaField
           label="Reown / WalletConnect project id"
-          placeholder="32-character id from dashboard.reown.com"
+          placeholder={tx('32-character id from dashboard.reown.com')}
           value={wcProject?.projectId ?? null}
           statusLine={wcProjectIdStatusLine(wcProject)}
           saveLabel="Save"
@@ -2783,26 +2748,26 @@ export function SettingsScreen({ navigation, route }: Props) {
       <View style={styles.section}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Apps (in-app browser)</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          A short, fixed list of apps that open inside the wallet, on test networks only. They connect through the same
+          <T>A short, fixed list of apps that open inside the wallet, on test networks only. They connect through the same
           approval sheet as WalletConnect. Their connections are listed on the Connected apps screen (open it with the
           &quot;Connected apps&quot; button in the WalletConnect section above, or with &quot;Manage connections&quot; in
-          Apps), and a site that is open can be disconnected from the Connection button on its browser bar.
+          Apps), and a site that is open can be disconnected from the Connection button on its browser bar.</T>
         </Text>
         <Button title="Open Apps" variant="secondary" onPress={() => navigation.navigate('Apps')} />
       </View>
 
       <View style={styles.section}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Multi-signature accounts</T></Text>
-        <Text style={[styles.hint, { color: theme.textMuted }]}>{MULTISIG_SETTINGS_BLURB}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(MULTISIG_SETTINGS_BLURB)}</Text>
         <Button title="Multi-signature accounts" variant="secondary" onPress={() => navigation.navigate('Multisig')} />
       </View>
 
       <View style={styles.section}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Contacts</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Named addresses for each chain, picked from the Send screen. A name
+          <T>Named addresses for each chain, picked from the Send screen. A name
           is shown only for an exact address match, always with the full
-          address; look-alike addresses get a warning instead.
+          address; look-alike addresses get a warning instead.</T>
         </Text>
         <Button
           title="Manage contacts"
@@ -2814,9 +2779,9 @@ export function SettingsScreen({ navigation, route }: Props) {
       <View style={styles.section}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Prove address ownership</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Sign a challenge you were given (or your own statement) with this account or its smart
+          <T>Sign a challenge you were given (or your own statement) with this account or its smart
           account, and share a proof anyone can check. Website logins are not signed here — they go
-          through WalletConnect.
+          through WalletConnect.</T>
         </Text>
         <Button
           title="Prove ownership"
@@ -2828,10 +2793,9 @@ export function SettingsScreen({ navigation, route }: Props) {
       <View style={styles.section}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Tokens</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Track ERC-20 tokens on the Home screen: balances, and sending
-          them. {settingsTokensFeeSentence()} Each network has its own list
-          ({evmChain.label} now), and Find my tokens lists what your address
-          holds when a history indexer is configured.
+          <T>Track ERC-20 tokens on the Home screen: balances, and sending them.</T>{' '}
+          {localize(settingsTokensFeeSentence())}{' '}
+          {t('settings.tokens.perNetwork', { network: evmChain.label })}
         </Text>
         <Button
           title="Manage tokens"
@@ -2842,8 +2806,8 @@ export function SettingsScreen({ navigation, route }: Props) {
 
       <View style={styles.section}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>{SPENDING_SECTION_TITLE}</T></Text>
-        <Text style={[styles.hint, { color: theme.textMuted }]}>{SPENDING_SETTINGS_HINT}</Text>
-        <Text style={[styles.hint, { color: theme.textMuted }]}>{SPENDING_HONESTY_SENTENCE}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(SPENDING_SETTINGS_HINT)}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(SPENDING_HONESTY_SENTENCE)}</Text>
         <Button
           title="Spending limits"
           variant="secondary"
@@ -2854,9 +2818,9 @@ export function SettingsScreen({ navigation, route }: Props) {
       <View style={styles.section}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Token approvals</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          See which contracts may move your tracked tokens and NFT collections
+          <T>See which contracts may move your tracked tokens and NFT collections
           without asking you again, and revoke them. Revoking is an ordinary
-          transaction with a normal network fee.
+          transaction with a normal network fee.</T>
         </Text>
         <Button
           title="Token approvals"
@@ -2868,29 +2832,27 @@ export function SettingsScreen({ navigation, route }: Props) {
       <View style={styles.section}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Swaps</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Swapping (the Swap link on the Home screen) is priced by the 0x
+          <T>Swapping (the Swap link on the Home screen) is priced by the 0x
           aggregator and needs your own API key — create one for free at
           dashboard.0x.org. The key is stored only on this device and sent
           only to api.0x.org with quote requests; it is never bundled or
           committed anywhere. Saving verifies the key first with one live
           quote request (nothing is traded), and a rejected key is not
-          saved. The feature stays off until a key is saved here.
+          saved. The feature stays off until a key is saved here.</T>
         </Text>
         <AaField
           label="0x API key"
-          placeholder="API key from dashboard.0x.org"
+          placeholder={tx('API key from dashboard.0x.org')}
           value={swapConfig?.apiKey ?? null}
           statusLine={
             swapConfig?.apiKey
-              ? `Verified ✓ — a live quote request succeeded (checked ${
-                  localDateLabel(swapConfig.verifiedAt)
-                })`
+              ? t('settings.swaps.keyVerified', { date: localDateLabel(swapConfig.verifiedAt) })
               : null
           }
           onSave={async (draft) => {
             const taker = accounts.find((a) => a.chainId === EVM_CHAIN_ID)?.address;
             if (!taker) {
-              throw new Error('No Ethereum address is available to verify the key with.');
+              throw new Error(tx('No Ethereum address is available to verify the key with.'));
             }
             await setSwapApiKey(draft, taker);
             reloadSwapConfig();
@@ -2904,10 +2866,10 @@ export function SettingsScreen({ navigation, route }: Props) {
 
       <View style={styles.section}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Developer</T></Text>
-        <Text accessibilityRole="header" style={[styles.toggleLabel, { color: theme.text }]}>Test network</Text>
+        <Text accessibilityRole="header" style={[styles.toggleLabel, { color: theme.text }]}><T>Test network</T></Text>
         <View style={styles.choiceChips}>
           {[
-            { label: 'Off (mainnet)', value: null },
+            { label: tx('Off (mainnet)'), value: null },
             ...EVM_TEST_PROFILES.map((p) => ({ label: p.label, value: p.caip2 as TestNetworkId })),
           ].map((choice) => (
             <Button
@@ -2926,35 +2888,27 @@ export function SettingsScreen({ navigation, route }: Props) {
             may be a MAIN network, and must never be called test mode. */}
         {evmChain.testnet ? (
           <Text style={[styles.hint, { color: theme.testnetFill }]}>
-            Test mode is ON ({evmChain.label}). Your addresses are the same on
-            {' '}{evmChain.label} as on mainnet — but anything sent here is{' '}
-            {evmChain.displaySymbol} with no value.
+            {t('settings.dev.testModeOn', { network: evmChain.label, symbol: evmChain.displaySymbol })}
           </Text>
         ) : null}
         {evmChain.custom && !evmChain.testnet ? (
           <WarningBox>
-            {`${evmChain.label} is a network you added and is treated as a MAIN network: amounts here may be real ` +
-              'funds. Smart-account features are switched off on it, as on Ethereum mainnet.'}
+            {t('settings.dev.customMain', { network: evmChain.label })}
           </WarningBox>
         ) : null}
         {evmChain.custom ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            {customNetworkNote(evmChain, { smartAccountRefusal: readinessRefusal('kernel-smart-account') })}
+            {localize(customNetworkNote(evmChain, { smartAccountRefusal: readinessRefusal('kernel-smart-account') }))}
           </Text>
         ) : null}
         {evmChain.l1DataFee ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            {evmChain.label} is a layer-2 network: every transaction also pays a
-            layer 1 data fee for publishing its data on Ethereum. Send confirm
-            screens show it as a separate line — the network&apos;s fee-oracle
-            estimate plus 50% headroom, because this fee cannot be capped — and
-            include it in the max network fee, the total and Max. Smart-account
-            sends pay it through the bundler&apos;s gas estimate instead.
-            {evmChain.swapsOffered ? '' : ` Swaps are not offered here (0x does not support ${evmChain.label}).`}
+            {t('settings.dev.l2Note', { network: evmChain.label })}
+            {evmChain.swapsOffered ? '' : ` ${t('settings.dev.noSwaps', { network: evmChain.label })}`}
           </Text>
         ) : null}
         {evmChain.l1CostInGas ? (
-          <Text style={[styles.hint, { color: theme.textMuted }]}>{l1CostInGasNote(evmChain)}</Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(l1CostInGasNote(evmChain))}</Text>
         ) : null}
         {/* Test networks only (readiness isTestNetwork): never rendered on
             mainnet or on a network the user added as a main network. */}
@@ -2962,17 +2916,17 @@ export function SettingsScreen({ navigation, route }: Props) {
           <>
             <View style={styles.toggleRow}>
               <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text, flexShrink: 1, marginRight: 12 }]}>
-                {MINIMUM_FEE_REHEARSAL_SWITCH_LABEL}
+                {localize(MINIMUM_FEE_REHEARSAL_SWITCH_LABEL)}
               </Text>
               <Switch {...switchColors(theme)}
-                accessibilityLabel={MINIMUM_FEE_REHEARSAL_SWITCH_LABEL}
+                accessibilityLabel={localize(MINIMUM_FEE_REHEARSAL_SWITCH_LABEL)}
                 accessibilityRole="switch"
                 accessibilityState={{ checked: minimumFeeArmed }}
                 value={minimumFeeArmed}
                 onValueChange={(v) => void setMinimumFeeRehearsal(evmChain.caip2, v)}
               />
             </View>
-            <Text style={[styles.hint, { color: theme.textMuted }]}>{MINIMUM_FEE_REHEARSAL_HINT}</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(MINIMUM_FEE_REHEARSAL_HINT)}</Text>
           </>
         ) : null}
         {/* The PIN hashing cost (pass p21f): test networks only, like the
@@ -2984,16 +2938,16 @@ export function SettingsScreen({ navigation, route }: Props) {
       <View style={styles.section}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Danger zone</T></Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Wiping removes the recovery phrase from this device&apos;s secure
+          <T>Wiping removes the recovery phrase from this device&apos;s secure
           storage. Your written backup remains the only way to restore the
-          wallet.
+          wallet.</T>
         </Text>
         <Button title="Wipe wallet from this device" variant="destructive" onPress={onWipe} />
       </View>
 
       <Text style={[styles.about, { color: theme.textMuted }]}>
-        Shiba Wallet is non-custodial: keys are generated, stored and used
-        only on this device.
+        <T>Shiba Wallet is non-custodial: keys are generated, stored and used
+        only on this device.</T>
       </Text>
     </ScrollView>
   );

@@ -1799,8 +1799,10 @@ await (async () => {
     for (const f of ['../src/screens/SendScreen.tsx', '../src/screens/SwapScreen.tsx', '../src/screens/GuardiansScreen.tsx', '../src/screens/OwnerRotationScreen.tsx', '../src/screens/PasskeyScreen.tsx', '../src/screens/SessionsScreen.tsx', '../src/components/WcApprovalSheet.tsx']) {
       check(`${f.split('/').pop()}: the confirm shows the EntryPoint deposit (AaDepositNote)`, /<AaDepositNote\b/.test(read(f)));
     }
+    // Phase 23 item 8: the sentence is shown through the string table
+    // (localize), its English unchanged (scripts/check-i18n.mjs).
     check('Send confirm: the plain "own balance" sentence only when there is no deposit',
-      /quote\.deposit !== undefined && quote\.deposit > 0n \? '' : ` \$\{AA_SELF_PAID_FEE_SENTENCE\}`/.test(send) && !/The smart account pays ' \+\s*'its own gas from its own balance\.'/.test(send));
+      /quote\.deposit !== undefined && quote\.deposit > 0n \? '' : ` \$\{localize\(AA_SELF_PAID_FEE_SENTENCE\)\}`/.test(send) && !/The smart account pays ' \+\s*'its own gas from its own balance\.'/.test(send));
   }
 
   // After a failed smart-account submission no screen may keep a confirm

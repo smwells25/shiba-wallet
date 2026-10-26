@@ -57,6 +57,7 @@ import {
   toHex,
 } from '@shiba-wallet/chains-evm';
 import { ethers } from 'ethers';
+import { en as EN_TABLE } from '../src/i18n/en.ts';
 import { createAaClient } from '../src/wallet/aa.ts';
 import {
   DCA_SOURCE,
@@ -853,7 +854,8 @@ console.log('check-dca: the screen (source)');
       /runDcaSwap\(\{[\s\S]{0,200}plan: \(\) => activeEvmNodeRunner\(\(node\) => planDcaSwap\(\{ node, record \}\), \{ isFailure: isRecurringNodeFailure \}\),[\s\S]{0,40}confirm: \(plan\) => \{[\s\S]{0,120}return confirmSwapDialog\(plan\);[\s\S]{0,80}\},\s*pay: \(plan\) => \{[\s\S]{0,80}return quoteOnNode\(\(b\) => payDcaSwap\(\{ bundle: b, plan, vault: sessionKeyVault \}\)\)/.test(screen));
   const dialog = body(screen, 'const confirmSwapDialog =', 'const onSwapNow =');
   check('the dialog resolves true only from "Swap now"; Cancel and dismiss resolve false (source)',
-    /text: 'Cancel', style: 'cancel', onPress: \(\) => resolve\(false\)/.test(dialog) && /text: 'Swap now', onPress: \(\) => resolve\(true\)/.test(dialog) &&
+    // Phase 23 item 8: the button words through the string table (tx).
+    /text: tx\('Cancel'\), style: 'cancel', onPress: \(\) => resolve\(false\)/.test(dialog) && /text: tx\('Swap now'\), onPress: \(\) => resolve\(true\)/.test(dialog) &&
       /onDismiss: \(\) => resolve\(false\)/.test(dialog) && (dialog.match(/resolve\(true\)/g) ?? []).length === 1);
   const onSwap = code(body(screen, 'const onSwapNow = async', 'const onShowKey = async'));
   check('a swap never opens the recovery phrase or the owner key (source)', onSwap.length > 200 && !/requireLocalAuth|signWith/.test(onSwap));
@@ -965,7 +967,9 @@ console.log('check-dca: pass p20c findings 8 and 17 (the refusal announced once;
       (ss.match(/\{formError \? <WarningBox announce>\{formError\}<\/WarningBox> : null\}/g) ?? []).length === 2 &&
       !ss.includes('{formError ? <WarningBox>{formError}</WarningBox> : null}'));
   check('p20d finding 6: the "New recurring swap" hint names the network\'s coin (displaySymbol), not a hard-coded "test ETH" (source)',
-    ss.includes('accessibilityHint={`Swap a fixed amount of ${symbol} for USDC once per period, each swap after you confirm it.`}') &&
+    // Phase 23 item 8: the hint comes from the string table with the coin as a parameter.
+    ss.includes("accessibilityHint={t('sessions.dca.hint', { symbol })}") &&
+      EN_TABLE['sessions.dca.hint'] === 'Swap a fixed amount of {symbol} for USDC once per period, each swap after you confirm it.' &&
       !ss.includes('Swap a fixed amount of test ETH'));
   const comp = src('../src/components.tsx');
   // Pass p20d finding 2: the focus is no longer sent at commit time (it

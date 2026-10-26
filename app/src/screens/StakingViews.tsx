@@ -3,6 +3,9 @@ import { Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-nati
 import { httpTransport as evmHttpTransport, type StakeOutcomePreview } from '@shiba-wallet/chains-evm';
 import type { Theme } from '../theme';
 import { WarningBox } from '../components';
+import { T } from '../i18n/T';
+import { useI18n } from '../i18n/useI18n';
+import { t, tx } from '../i18n/index';
 import { spokenSiteName, spokenTokenName, withShortAddresses } from '../a11y';
 import { stakingTokenName } from '../wallet/tokens';
 import { formatUnits } from '../wallet/balances';
@@ -36,13 +39,13 @@ export function NetworkBadge({ label, testnet, theme }: { label: string; testnet
   if (testnet) {
     return (
       <View style={[styles.badge, { backgroundColor: theme.testnetFill, borderColor: theme.testnetFill }]}>
-        <Text style={[styles.badgeText, { color: theme.onTestnetFill }]}>{label} TESTNET — test funds only</Text>
+        <Text style={[styles.badgeText, { color: theme.onTestnetFill }]}>{t('send.badge.testnet', { label })}</Text>
       </View>
     );
   }
   return (
     <View style={[styles.badge, { backgroundColor: theme.dangerSurface, borderColor: theme.danger }]}>
-      <Text style={[styles.badgeText, { color: theme.danger }]}>{label} Mainnet — real funds</Text>
+      <Text style={[styles.badgeText, { color: theme.danger }]}>{t('send.badge.mainnet', { label })}</Text>
     </View>
   );
 }
@@ -63,12 +66,15 @@ export function Row({
   spoken?: string;
   theme: Theme;
 }) {
+  // A label, value or note that is an English table entry is shown in the
+  // chosen language (phase 23 item 8); amounts and addresses pass unchanged.
+  const { localize } = useI18n();
   return (
     <View
       style={[styles.row, { borderColor: theme.border }]}
       {...(spoken !== undefined ? { accessible: true, accessibilityLabel: spoken } : {})}
     >
-      <Text accessibilityLabel={label} style={[styles.rowLabel, { color: theme.textMuted }]}>{label}</Text>
+      <Text accessibilityLabel={localize(label)} style={[styles.rowLabel, { color: theme.textMuted }]}>{localize(label)}</Text>
       {/* With a spoken label the row is ONE element. The amount stays
           selectable for sight, but a selectable Text is its own focusable,
           long-clickable node on Android, so TalkBack stopped on it a second
@@ -80,9 +86,9 @@ export function Row({
         {...(spoken !== undefined ? { importantForAccessibility: 'no' as const, accessibilityElementsHidden: true } : {})}
         style={[styles.rowValue, { color: theme.text }, monoFont ? { fontFamily: mono, fontSize: 13 } : null]}
       >
-        {value}
+        {localize(value)}
       </Text>
-      {sub ? <Text style={[styles.rowSub, { color: theme.textMuted }]}>{sub}</Text> : null}
+      {sub ? <Text style={[styles.rowSub, { color: theme.textMuted }]}>{localize(sub)}</Text> : null}
     </View>
   );
 }
@@ -100,12 +106,12 @@ export function QuotedStatementCard({ statement, theme }: { statement: QuotedSta
       {/* Spoken with the site's name, not the raw URL (pass p20c finding 6). */}
       <Pressable
         accessibilityRole="link"
-        accessibilityLabel={`Source: ${statement.source}, read ${statement.read}. ${spokenSiteName(statement.url)}`}
-        accessibilityHint="Opens the source in the browser"
+        accessibilityLabel={`${t('staking.source', { source: statement.source, read: statement.read })} ${spokenSiteName(statement.url)}`}
+        accessibilityHint={tx('Opens the source in the browser')}
         onPress={() => void Linking.openURL(statement.url)}
       >
         <Text style={[styles.hint, { color: theme.accent }]}>
-          Source: {statement.source}, read {statement.read}. {statement.url}
+          {t('staking.source', { source: statement.source, read: statement.read })} {statement.url}
         </Text>
       </Pressable>
     </View>
@@ -148,7 +154,7 @@ export function StakingBalancesCard({
   }
   return (
     <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-      <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>Your staking balances</Text>
+      <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}><T>Your staking balances</T></Text>
       <Text selectable accessibilityLabel={withShortAddresses(holderLine)} style={[styles.hint, { color: theme.textMuted }]}>
         {holderLine}
       </Text>
@@ -157,12 +163,12 @@ export function StakingBalancesCard({
       ))}
       {balances.rethLock?.locked ? (
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Rocket Pool blocks moving or redeeming this account’s rETH until block {String(balances.rethLock.unlockBlock)}.
+          {t('staking.rethLocked', { block: String(balances.rethLock.unlockBlock) })}
         </Text>
       ) : null}
       {balances.requests.length > 0 ? (
         <>
-          <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>Lido withdrawal requests</Text>
+          <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}><T>Lido withdrawal requests</T></Text>
           {balances.requests.map((r) => (
             <Row
               key={String(r.requestId)}
@@ -214,9 +220,9 @@ export function StakeOutcomeCard({ url, plan, theme, nativeSymbol }: { url: stri
           {line}
         </Text>
       ))}
-      {preview === null && url ? <Text style={[styles.hint, { color: theme.textMuted }]}>Simulating the outcome…</Text> : null}
+      {preview === null && url ? <Text style={[styles.hint, { color: theme.textMuted }]}><T>Simulating the outcome…</T></Text> : null}
       {preview === 'unavailable' || !url ? (
-        <Text style={[styles.hint, { color: theme.textMuted }]}>The outcome simulation is not available from this endpoint right now.</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}><T>The outcome simulation is not available from this endpoint right now.</T></Text>
       ) : null}
       {preview && preview !== 'unavailable' ? (
         preview.ok ? (
@@ -228,12 +234,12 @@ export function StakeOutcomeCard({ url, plan, theme, nativeSymbol }: { url: stri
             ))}
             {preview.skippedLogs > 0 ? (
               <Text style={[styles.hint, { color: theme.textMuted }]}>
-                {preview.skippedLogs} event{preview.skippedLogs === 1 ? '' : 's'} could not be read, so this may be incomplete.
+                {preview.skippedLogs === 1 ? tx('1 event could not be read, so this may be incomplete.') : t('staking.skippedLogs', { count: preview.skippedLogs })}
               </Text>
             ) : null}
           </>
         ) : (
-          <WarningBox>The simulation of these calls failed{preview.revertReason ? `: ${preview.revertReason}` : ''}.</WarningBox>
+          <WarningBox>{preview.revertReason ? t('staking.simulation.failedReason', { reason: preview.revertReason }) : tx('The simulation of these calls failed.')}</WarningBox>
         )
       ) : null}
       {plan.rebasing ? <Text style={[styles.hint, { color: theme.textMuted }]}>{STETH_REBASING_NOTE}</Text> : null}

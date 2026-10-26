@@ -479,7 +479,9 @@ async function slowAttempts(pin) {
     gate.includes('if (!outcome.ok) return outcome.countdown ? { countdown: outcome.countdown } : outcome.message;') &&
       gate.includes('const line = countdown ? pinCountdownText(countdown, clock) : message;') &&
       /setInterval\(\(\) => \{\s*const t = Date\.now\(\);\s*setClock\(t\);\s*if \(t >= countdown\.until\) clearInterval\(timer\);\s*\}, PIN_COUNTDOWN_TICK_MS\);/.test(gate) &&
-      gate.includes('export const PIN_COUNTDOWN_TICK_MS = 1000;') && gate.includes('{line ?? \'\'}'));
+      // Phase 23 item 8: the line goes through the string table (a refusal
+      // that is a table entry is shown in the chosen language).
+      gate.includes('export const PIN_COUNTDOWN_TICK_MS = 1000;') && gate.includes("{line === null ? '' : localize(line)}"));
   check('LockGate: a screen reader hears the wait when it starts and when it ends, not every second (live region off while it ticks)',
     gate.includes("const ticking = countdown !== null && clock !== countdownFrom && clock < countdown.until;") &&
       gate.includes("accessibilityLiveRegion={ticking ? 'none' : 'polite'}"));
@@ -1045,13 +1047,14 @@ function prefsRule(dm) {
       !read('wallet/WalletContext.tsx').includes("'The PIN could not be checked. Try again.'"));
   const settingsLockNotes = (src) =>
     src.includes('const settingsLockKind = React.useSyncExternalStore(appLockKind.subscribe, appLockKind.get);') &&
-    src.includes("(appPinOn ? ` ${wipeWithLockNote(settingsLockKind)}` : '')") &&
+    // Phase 23 item 8: shown through the string table (localize), English unchanged.
+    src.includes("(appPinOn ? ` ${localize(wipeWithLockNote(settingsLockKind))}` : '')") &&
     src.includes("<T>{settingsLockKind === 'phr' ? AUTO_LOCK_WITH_PASSPHRASE_NOTE : AUTO_LOCK_WITH_PIN_NOTE}</T>") &&
     src.includes("<T>{settingsLockKind === 'phr' ? SCREEN_PROTECTION_WITH_PASSPHRASE_NOTE : SCREEN_PROTECTION_WITH_PIN_NOTE}</T>") &&
     !/WIPE_WITH_PIN_NOTE|\{AUTO_LOCK_WITH_PIN_NOTE\}|\{SCREEN_PROTECTION_WITH_PIN_NOTE\}|\{NOTIFICATIONS_OFF_WITH_PIN\}/.test(src);
   check('Settings: the wipe note, the auto-lock note and the screen-protection note follow the lock\'s kind (source)', settingsLockNotes(settings));
   check('mutant caught (polish): the wipe dialog keeps the PIN note whatever the kind',
-    !settingsLockNotes(settings.replace('${wipeWithLockNote(settingsLockKind)}', '${WIPE_WITH_PIN_NOTE}')));
+    !settingsLockNotes(settings.replace('${localize(wipeWithLockNote(settingsLockKind))}', '${localize(WIPE_WITH_PIN_NOTE)}')));
   check('Settings: turning the PIN on first switches notifications off and clears what was scheduled or shown',
     /await setNotifications\(false\)[\s\S]{0,120}await appNotifications\(\)\.disable\(\)[\s\S]{0,80}await turnOnAppPin\(next!, chosenKind\)/.test(settings));
   check('Settings: auto-lock "Off" is not offered while the PIN is on', /AUTO_LOCK_CHOICES\.map\(\(choice\) =>\s*\/\/[^\n]*\n\s*appPinOn && choice\.ms === null \? null : \(/.test(settings));
@@ -1113,7 +1116,8 @@ console.log('check-duress: the honest claim on the duress screens (section 4.3)'
   const settings = read('screens/SettingsScreen.tsx');
   check('Settings renders the claim in the duress section, with the funding and the backup notes',
     // The claim and the backup note of the lock's kind (duress.ts LOCK_COPY; the PIN's are the constants).
-    settings.includes('<WarningBox>{copy.duressHonestClaim}</WarningBox>') && settings.includes('{DURESS_FUNDING_NOTE}') && settings.includes('{copy.duressBackupNote}') &&
+    // Phase 23 item 8: the notes through the string table (localizeText), English unchanged.
+    settings.includes('<WarningBox>{copy.duressHonestClaim}</WarningBox>') && settings.includes('{localizeText(DURESS_FUNDING_NOTE)}') && settings.includes('{localizeText(copy.duressBackupNote)}') &&
       duressMod.LOCK_COPY.pin.duressHonestClaim === duressMod.DURESS_HONEST_CLAIM && duressMod.LOCK_COPY.pin.duressBackupNote === duressMod.DURESS_BACKUP_NOTE);
   check('the backup check: two distinct positions, uniformly chosen, and the typed words compared case-insensitively',
     (() => {

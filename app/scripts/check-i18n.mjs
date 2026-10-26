@@ -65,10 +65,30 @@ import * as as from '../src/wallet/activity-sentences.ts';
 import { LOAD_MORE_RETRY_FOOTER } from '../src/wallet/history-controller.ts';
 import { NOTE_PRIVACY_LINE } from '../src/wallet/notes.ts';
 import { RECORDS_BACKUP_SECTION_TITLE } from '../src/wallet/records-backup.ts';
+import * as rbk from '../src/wallet/records-backup.ts';
+import * as sessionsMod from '../src/wallet/sessions.ts';
+import * as subsMod from '../src/wallet/subscriptions.ts';
+import * as recMod from '../src/wallet/recurring.ts';
+import * as dcaMod from '../src/wallet/dca.ts';
+import * as coldAa from '../src/wallet/cold-aa.ts';
+import * as bcast from '../src/wallet/broadcast-outcome.ts';
 import { SEND_RECIPIENT_NAMES_HINT, sendRecipientPlaceholder } from '../src/wallet/ens-names.ts';
 import { AUTO_LOCK_CHOICES } from '../src/config/prefs.ts';
 import { formatBalanceDisplay } from '../src/wallet/balances.ts';
 import { activityRowSpokenLead, sendLinkHint, spokenLinkText } from '../src/a11y.ts';
+// Phase 23 item 8 (the second pass): the modules whose sentences Settings,
+// Send and Staking now show through the string table.
+import * as cnets from '../src/wallet/custom-networks.ts';
+import { INSECURE_ENDPOINT_MESSAGE } from '../src/config/endpoint-url.ts';
+import * as passkeys from '../src/wallet/passkeys.ts';
+import { MULTISIG_SETTINGS_BLURB } from '../src/wallet/multisig.ts';
+import { SPENDING_HONESTY_SENTENCE, SPENDING_SETTINGS_HINT } from '../src/wallet/spending-policy.ts';
+import { MINIMUM_FEE_REHEARSAL_HINT, MINIMUM_FEE_REHEARSAL_SWITCH_LABEL } from '../src/wallet/send.ts';
+import * as ppc from '../src/wallet/phrase-protection-copy.ts';
+import * as wcm from '../src/wallet/walletconnect.ts';
+import * as pinm from '../src/wallet/pin.ts';
+import * as ikeys from '../src/wallet/imported-keys.ts';
+import { MULTISIG_ACCOUNTS_LIST_HINT } from '../src/wallet/multisig.ts';
 
 let passed = 0;
 let failed = 0;
@@ -262,6 +282,28 @@ function fixtureProblems(table, fixture) {
     'send.token.intro': [`Sending ${'USDC'} (ERC-20 token, contract ${'0x1c7D4B19…'}${'7c3DE57238'}) from${' your smart account'}.`, I.t('send.token.intro', { symbol: 'USDC', contract: '0x1c7D4B19…7c3DE57238', from: I.t('send.token.fromSmart') })],
     'send.utxo.feeRate.one': [`${5} sat/vB (target: ${1} block${''})`, I.t('send.utxo.feeRate.one', { rate: 5 })],
     'send.utxo.feeRate': [`${5} sat/vB (target: ${6} block${'s'})`, I.t('send.utxo.feeRate', { rate: 5, blocks: 6 })],
+    // Phase 23 item 8 (the second pass): the not-succeeded branch of the
+    // smart-account receipt line, as Send and Staking built it.
+    'send.aa.included': [`Included on-chain${false ? ' — succeeded.' : '.'}`, en['send.aa.included']],
+    // Settings → Account Abstraction: the EIP-7702 owners sentence (ternary
+    // + {' '} + the JSX text), and a custom network's chip label.
+    'settings.aa.7702owners.one': [`${'One account uses'}${' '}its own address as the smart account on this network (EIP-7702, Kernel v3.3; see Upgrade this account). Those accounts need only the bundler; the type below applies to every other account.`, en['settings.aa.7702owners.one']],
+    'settings.aa.7702owners': [`${`${2} accounts use`}${' '}its own address as the smart account on this network (EIP-7702, Kernel v3.3; see Upgrade this account). Those accounts need only the bundler; the type below applies to every other account.`, I.t('settings.aa.7702owners', { count: 2 })],
+    'settings.custom.chipTest': [`${'Hoodi'}${true ? ' (test)' : ''}`, I.t('settings.custom.chipTest', { label: 'Hoodi' })],
+    // Staking: the skipped-events line and the simulation failure, by branch.
+    'staking.skippedLog': [`${1} event${1 === 1 ? '' : 's'} could not be read, so this may be incomplete.`, en['staking.skippedLog']],
+    'staking.skippedLogs': [`${3} event${3 === 1 ? '' : 's'} could not be read, so this may be incomplete.`, I.t('staking.skippedLogs', { count: 3 })],
+    'staking.simulation.failedPlain': [`The simulation of these calls failed${'' ? `: ${''}` : ''}.`, en['staking.simulation.failedPlain']],
+    'staking.simulation.failedReason': [`The simulation of these calls failed${'boom' ? `: ${'boom'}` : ''}.`, I.t('staking.simulation.failedReason', { reason: 'boom' })],
+    // Sessions: the smart account's balance line, without and with a deposit.
+    'sessions.balance': [`The smart account holds ${'0.5'} ${'test ETH'}` + (false ? 'x' : '') + ' (read just now).', I.t('sessions.balance', { balance: '0.5', symbol: 'test ETH' })],
+    // Swap: a call row's label and note, by branch.
+    'swap.aa.callApprove': [`Call ${1} of ${2}${true && 1 === 1 ? ' — approve' : ' — swap'}`, I.t('swap.aa.callApprove', { n: 1, count: 2 })],
+    'swap.aa.callSwap': [`Call ${2} of ${2}${false ? ' — approve' : ' — swap'}`, I.t('swap.aa.callSwap', { n: 2, count: 2 })],
+    'swap.aa.calldata': [`${68} bytes of calldata${0n > 0n ? 'x' : ''}`, I.t('swap.aa.calldata', { bytes: 68 })],
+    'swap.aa.calldataValue': [`${4} bytes of calldata${1n > 0n ? `, value ${'0.1'} ${'test ETH'}` : ''}`, I.t('swap.aa.calldataValue', { bytes: 4, value: '0.1', symbol: 'test ETH' })],
+    'sessions.balance.withDeposit': [`The smart account holds ${'0.5'} ${'test ETH'}` + (true ? ` plus an EntryPoint deposit of ${'0.01'} ${'test ETH'}` : '') + ' (read just now).',
+      I.t('sessions.balance.withDeposit', { balance: '0.5', deposit: '0.01', symbol: 'test ETH' })],
   };
   const bad = Object.entries(old).filter(([, [a, b]]) => a !== b).map(([id, [a, b]]) => `${id}: ${a} ≠ ${b}`);
   check(`the ${Object.keys(old).length} composites assemble to exactly the old text`, bad.length === 0, bad.join('; '));
@@ -324,6 +366,104 @@ const CONSTANTS = {
   'send.recipient.namesHint': SEND_RECIPIENT_NAMES_HINT,
   'send.recipient.placeholder.names': sendRecipientPlaceholder({ namesOffered: true, ethereum: true, symbol: 'ETH' }),
   'settings.autoLock.off': AUTO_LOCK_CHOICES[0].label, 'settings.autoLock.1min': AUTO_LOCK_CHOICES[1].label, 'settings.autoLock.5min': AUTO_LOCK_CHOICES[2].label,
+  // Phase 23 item 8 (the second pass): the smart-account confirm's module
+  // labels and notes, shown through the Row / WarningBox sinks or localize.
+  'aa.fee.selfPaid': aa.AA_SELF_PAID_FEE_SENTENCE, 'aa.deposit.row': aa.AA_DEPOSIT_ROW_LABEL, 'aa.deposit.note': aa.AA_DEPOSIT_NOTE,
+  'aa.kernelNote.alchemy': aa.KERNEL_BUNDLER_NOTE, 'aa.kernelNote.neutral': aa.KERNEL_DEPLOYMENT_NEUTRAL_NOTE, 'aa.kernelNote.noBundler': aa.KERNEL_DEPLOYMENT_NO_BUNDLER_NOTE,
+  'aa.sender.multisig': aa.aaSenderLabel({ accountType: 'kernel-multisig' }), 'aa.sender.7702': aa.aaSenderLabel({ eip7702: { delegate: '0x' } }),
+  'aa.sender.recovered': aa.aaSenderLabel({ recovered: true }), 'aa.sender.smart': aa.aaSenderLabel({}),
+  'aa.accountType.kernel7702': aa.aaAccountTypeLabel('kernel-7702'), 'aa.accountType.multisig': aa.aaAccountTypeLabel('kernel-multisig'),
+  'aa.accountType.kernel': aa.aaAccountTypeLabel('kernel-v3.3'), 'aa.accountType.simple': aa.aaAccountTypeLabel('simple'),
+  'settings.custom.symbolNote': cnets.NATIVE_SYMBOL_NOTE, 'settings.custom.readOnly': cnets.CUSTOM_NETWORKS_READ_ONLY_MESSAGE,
+  'settings.insecureEndpoint': INSECURE_ENDPOINT_MESSAGE,
+  'settings.passkey.explanation': passkeys.PASSKEY_EXPLANATION, 'settings.passkey.risk': passkeys.PASSKEY_SELF_CALL_RISK, 'settings.passkey.audit': passkeys.PASSKEY_AUDIT_NOTE,
+  'settings.multisig.listHint': wo.MULTISIG_LIST_HINT, 'settings.multisig.blurb': MULTISIG_SETTINGS_BLURB,
+  'settings.spending.hint': SPENDING_SETTINGS_HINT, 'settings.spending.honesty': SPENDING_HONESTY_SENTENCE,
+  'settings.dev.minFee.switch': MINIMUM_FEE_REHEARSAL_SWITCH_LABEL, 'settings.dev.minFee.hint': MINIMUM_FEE_REHEARSAL_HINT,
+  'settings.protect.title': ppc.PROTECT_CONFIRM_TITLE, 'settings.protect.titleButton': ppc.PROTECT_BUTTON_TITLE, 'settings.protect.message': ppc.PROTECT_CONFIRM_MESSAGE,
+  'settings.protect.cancelled': ppc.CANCELLED_TEXT, 'settings.protect.notAttempted': ppc.NOT_ATTEMPTED_TEXT, 'settings.protect.noStrongBiometrics': ppc.NO_STRONG_BIOMETRICS_TEXT,
+  'settings.protect.policyOff': ppc.POLICY_OFF_TEXT, 'settings.protect.reverted': ppc.REVERTED_TEXT, 'settings.protect.standardCopy': ppc.STANDARD_COPY_NOTE,
+  'settings.wc.status.saved': wcm.WC_PROJECT_ID_SAVED_STATUS, 'settings.wc.status.builtIn': wcm.WC_PROJECT_ID_BUILT_IN_STATUS,
+  'settings.wc.clear.label': wcm.WC_PROJECT_ID_CLEAR_LABEL, 'settings.wc.clear.a11y': wcm.WC_PROJECT_ID_CLEAR_A11Y_LABEL,
+  'settings.wc.clear.title': wcm.WC_PROJECT_ID_CLEAR_CONFIRM_TITLE, 'settings.wc.clear.message': wcm.WC_PROJECT_ID_CLEAR_CONFIRM_MESSAGE,
+  // The app lock's copy of both kinds (duress.ts LOCK_COPY and its constants) and the refusals (pin.ts).
+  'settings.appLock.kind.pin': duress.APP_LOCK_KIND_CHOICES.pin, 'settings.appLock.kind.phr': duress.APP_LOCK_KIND_CHOICES.phr,
+  'settings.appLock.kindLabel': duress.APP_LOCK_KIND_CHOICE_LABEL, 'settings.appLock.offStatus': duress.APP_LOCK_OFF_STATUS,
+  'settings.appLock.backupNote': duress.APP_LOCK_BACKUP_NOTE, 'settings.appLock.strength': duress.LOCK_STRENGTH_NOTE,
+  'settings.appLock.passphraseAdvice': duress.PASSPHRASE_ADVICE, 'settings.appLock.keyboardNote': duress.PASSPHRASE_KEYBOARD_NOTE,
+  'settings.appLock.sameKind': duress.LOCK_SAME_KIND_NOTE, 'settings.appLock.noCopy': duress.PASSPHRASE_NO_COPY_NOTE,
+  'settings.duress.funding': duress.DURESS_FUNDING_NOTE, 'settings.duress.mustDiffer': duress.DURESS_MUST_DIFFER,
+  'settings.appLock.notCompleted': duress.PIN_ACTION_NOT_COMPLETED, 'settings.appLock.backupMismatch': duress.PIN_BACKUP_MISMATCH,
+  'settings.appPin.what': duress.LOCK_COPY.pin.whatNote, 'settings.appPin.limits': duress.LOCK_COPY.pin.limitsNote, 'settings.appPin.costs': duress.LOCK_COPY.pin.costsNote,
+  'settings.appPin.on': duress.LOCK_COPY.pin.onStatus, 'settings.appPin.change': duress.LOCK_COPY.pin.changeButton, 'settings.appPin.switch': duress.LOCK_COPY.pin.switchButton,
+  'settings.duress.pin.title': duress.LOCK_COPY.pin.duressTitle, 'settings.duress.pin.explanation': duress.LOCK_COPY.pin.duressExplanation,
+  'settings.duress.pin.claim': duress.LOCK_COPY.pin.duressHonestClaim, 'settings.duress.pin.backup': duress.LOCK_COPY.pin.duressBackupNote,
+  'settings.duress.pin.needs': duress.LOCK_COPY.pin.duressNeeds, 'settings.duress.pin.set': duress.LOCK_COPY.pin.duressSetStatus,
+  'settings.duress.pin.notSet': duress.LOCK_COPY.pin.duressNotSetStatus, 'settings.duress.pin.add': duress.LOCK_COPY.pin.addDuressButton,
+  'settings.duress.pin.change': duress.LOCK_COPY.pin.changeDuressButton, 'settings.duress.pin.remove': duress.LOCK_COPY.pin.removeDuressButton,
+  'settings.appPin.remove.title': duress.LOCK_COPY.pin.removeTitle, 'settings.appLock.remove.body': duress.LOCK_COPY.pin.removeBody,
+  'settings.appPin.remove.withDuress': duress.LOCK_COPY.pin.removeWithDuressBody, 'settings.duress.pin.remove.title': duress.LOCK_COPY.pin.removeDuressTitle,
+  'settings.duress.pin.remove.body': duress.LOCK_COPY.pin.removeDuressBody,
+  'settings.appPin.prompt.current': duress.LOCK_COPY.pin.prompts.current, 'settings.appPin.prompt.choose': duress.LOCK_COPY.pin.prompts.choose,
+  'settings.appPin.prompt.chooseAgain': duress.LOCK_COPY.pin.prompts.chooseAgain, 'settings.duress.pin.prompt.choose': duress.LOCK_COPY.pin.prompts.chooseDuress,
+  'settings.duress.pin.prompt.chooseAgain': duress.LOCK_COPY.pin.prompts.chooseDuressAgain,
+  'settings.appPin.result.on': duress.LOCK_COPY.pin.results.on, 'settings.appPin.result.changed': duress.LOCK_COPY.pin.results.changed,
+  'settings.appPin.result.off': duress.LOCK_COPY.pin.results.off, 'settings.duress.pin.result.set': duress.LOCK_COPY.pin.results.duressSet,
+  'settings.duress.pin.result.changed': duress.LOCK_COPY.pin.results.duressChanged, 'settings.duress.pin.result.removed': duress.LOCK_COPY.pin.results.duressRemoved,
+  'settings.appPin.result.switched': duress.LOCK_COPY.pin.results.switched,
+  'settings.appPassphrase.title': duress.LOCK_COPY.phr.sectionTitle, 'settings.appPassphrase.what': duress.LOCK_COPY.phr.whatNote,
+  'settings.appPassphrase.limits': duress.LOCK_COPY.phr.limitsNote, 'settings.appPassphrase.costs': duress.LOCK_COPY.phr.costsNote,
+  'settings.appPassphrase.on': duress.LOCK_COPY.phr.onStatus, 'settings.appPassphrase.change': duress.LOCK_COPY.phr.changeButton,
+  'settings.appPassphrase.switch': duress.LOCK_COPY.phr.switchButton, 'settings.duress.phr.title': duress.LOCK_COPY.phr.duressTitle,
+  'settings.duress.phr.explanation': duress.LOCK_COPY.phr.duressExplanation, 'settings.duress.phr.claim': duress.LOCK_COPY.phr.duressHonestClaim,
+  'settings.duress.phr.backup': duress.LOCK_COPY.phr.duressBackupNote, 'settings.duress.phr.needs': duress.LOCK_COPY.phr.duressNeeds,
+  'settings.duress.phr.set': duress.LOCK_COPY.phr.duressSetStatus, 'settings.duress.phr.notSet': duress.LOCK_COPY.phr.duressNotSetStatus,
+  'settings.duress.phr.add': duress.LOCK_COPY.phr.addDuressButton, 'settings.duress.phr.change': duress.LOCK_COPY.phr.changeDuressButton,
+  'settings.duress.phr.remove': duress.LOCK_COPY.phr.removeDuressButton, 'settings.appPassphrase.remove.title': duress.LOCK_COPY.phr.removeTitle,
+  'settings.appPassphrase.remove.withDuress': duress.LOCK_COPY.phr.removeWithDuressBody, 'settings.duress.phr.remove.title': duress.LOCK_COPY.phr.removeDuressTitle,
+  'settings.duress.phr.remove.body': duress.LOCK_COPY.phr.removeDuressBody,
+  'settings.appPassphrase.prompt.current': duress.LOCK_COPY.phr.prompts.current, 'settings.appPassphrase.prompt.choose': duress.LOCK_COPY.phr.prompts.choose,
+  'settings.appPassphrase.prompt.chooseAgain': duress.LOCK_COPY.phr.prompts.chooseAgain, 'settings.duress.phr.prompt.choose': duress.LOCK_COPY.phr.prompts.chooseDuress,
+  'settings.duress.phr.prompt.chooseAgain': duress.LOCK_COPY.phr.prompts.chooseDuressAgain,
+  'settings.appPassphrase.result.on': duress.LOCK_COPY.phr.results.on, 'settings.appPassphrase.result.changed': duress.LOCK_COPY.phr.results.changed,
+  'settings.appPassphrase.result.off': duress.LOCK_COPY.phr.results.off, 'settings.duress.phr.result.set': duress.LOCK_COPY.phr.results.duressSet,
+  'settings.duress.phr.result.changed': duress.LOCK_COPY.phr.results.duressChanged, 'settings.duress.phr.result.removed': duress.LOCK_COPY.phr.results.duressRemoved,
+  'settings.appPassphrase.result.switched': duress.LOCK_COPY.phr.results.switched,
+  'settings.appLock.pin.format': pinm.PIN_FORMAT_MESSAGE, 'settings.appLock.pin.notUsable': pinm.PIN_NOT_USABLE_MESSAGE, 'settings.appLock.pin.mismatch': pinm.PIN_MISMATCH_MESSAGE,
+  'settings.appLock.phr.length': pinm.PASSPHRASE_LENGTH_MESSAGE, 'settings.appLock.phr.edgeSpace': pinm.PASSPHRASE_EDGE_SPACE_MESSAGE,
+  'settings.appLock.phr.control': pinm.PASSPHRASE_CONTROL_MESSAGE, 'settings.appLock.phr.invalidText': pinm.PASSPHRASE_INVALID_TEXT_MESSAGE,
+  'settings.appLock.phr.notUsable': pinm.PASSPHRASE_NOT_USABLE_MESSAGE, 'settings.appLock.phr.phraseWords': pinm.PASSPHRASE_PHRASE_WORDS_MESSAGE,
+  'settings.appLock.phr.mismatch': pinm.PASSPHRASE_MISMATCH_MESSAGE,
+  'settings.notifications.switch': notif.NOTIFICATIONS_SWITCH_LABEL, 'settings.notifications.what': notif.NOTIFICATIONS_WHAT_NOTE,
+  'settings.notifications.privacy': notif.NOTIFICATIONS_PRIVACY_NOTE, 'settings.notifications.limits': notif.NOTIFICATIONS_LIMITS_NOTE,
+  'settings.notifications.statusOff': notif.describeNotificationsStatus({ state: 'off' }), 'settings.notifications.statusOn': notif.describeNotificationsStatus({ state: 'on' }),
+  'settings.notifications.denied': notif.NOTIFICATIONS_DENIED_TEXT,
+  'accounts.watch.intro': wo.WATCH_ADDRESS_INTRO, 'accounts.watch.privacy': wo.WATCH_ADDRESS_PRIVACY_NOTE, 'accounts.watchOnly.listHint': wo.WATCH_ONLY_LIST_HINT,
+  'accounts.watch.buttonHint': wo.WATCH_ADDRESS_BUTTON_HINT, 'accounts.watchOnly.rowNote': wo.WATCH_ONLY_ACCOUNTS_ROW_NOTE,
+  'accounts.watchedWas': wo.PHRASE_ACCOUNT_WAS_WATCHED_TITLE, 'accounts.stopWatching.title': wo.REMOVE_WATCH_ONLY_TITLE,
+  'accounts.revealImported.message': ikeys.REVEAL_IMPORTED_MESSAGE, 'accounts.revealImported.title': ikeys.REVEAL_IMPORTED_TITLE,
+  'accounts.removeImported.title': ikeys.REMOVE_IMPORTED_TITLE, 'accounts.removeImported.confirmTitle': ikeys.REMOVE_IMPORTED_CONFIRM_TITLE,
+  'accounts.removeImported.confirmMessage': ikeys.REMOVE_IMPORTED_CONFIRM_MESSAGE, 'accounts.importedWas': ikeys.PHRASE_ACCOUNT_WAS_IMPORTED_TITLE,
+  'accounts.multisig.listHint': MULTISIG_ACCOUNTS_LIST_HINT,
+  'recordsBackup.what': rbk.RECORDS_BACKUP_WHAT_NOTE, 'recordsBackup.key': rbk.RECORDS_BACKUP_KEY_NOTE, 'recordsBackup.notIncluded': rbk.RECORDS_BACKUP_NOT_INCLUDED_NOTE,
+  'recordsBackup.merge': rbk.RECORDS_BACKUP_MERGE_NOTE, 'recordsBackup.file': rbk.RECORDS_BACKUP_FILE_NOTE, 'recordsBackup.export': rbk.RECORDS_BACKUP_EXPORT_BUTTON,
+  'recordsBackup.import': rbk.RECORDS_BACKUP_IMPORT_BUTTON, 'recordsBackup.confirmTitle': rbk.RECORDS_BACKUP_CONFIRM_TITLE,
+  'sessions.audit': sessionsMod.SESSIONS_AUDIT_NOTE, 'sessions.wipeWarning': sessionsMod.SESSIONS_WIPE_WARNING, 'sessions.installMode': sessionsMod.SESSIONS_INSTALL_MODE_NOTE,
+  'sessions.subscription.keyWarning': subsMod.SUBSCRIPTION_KEY_WARNING, 'sessions.installedPermissionId': subsMod.INSTALLED_PERMISSION_ID_LABEL,
+  'sessions.subscription.expiredUnhanded': subsMod.SUBSCRIPTION_EXPIRED_UNHANDED_TEXT,
+  'sessions.recurring.cardNote': recMod.RECURRING_CARD_NOTE, 'sessions.recurring.completed': recMod.RECURRING_COMPLETED_TEXT,
+  'sessions.recurring.intro': recMod.RECURRING_FORM_INTRO, 'sessions.recurring.reminders': recMod.RECURRING_LATER_SLICE_NOTE,
+  'sessions.recurring.payPrompt': recMod.RECURRING_PAY_PROMPT_NOTE, 'sessions.recurring.spending': recMod.RECURRING_SPENDING_NOTE,
+  'sessions.recurring.whileOpen': recMod.RECURRING_WHILE_OPEN_NOTE, 'sessions.dca.reservation': dcaMod.DCA_ESTIMATE_RESERVATION_NOTE,
+  'dca.cardNote': dcaMod.DCA_CARD_NOTE, 'dca.completed': dcaMod.DCA_COMPLETED_TEXT,
+  'coldAa.requestCaption': coldAa.COLD_AA_REQUEST_CAPTION, 'coldAa.switch': coldAa.COLD_AA_SWITCH_LABEL, 'coldAa.switch.hint': coldAa.COLD_AA_SWITCH_HINT,
+  'coldAa.accountNote': coldAa.COLD_AA_ACCOUNT_NOTE, 'coldAa.paymasterNotUsed': coldAa.COLD_AA_PAYMASTER_NOT_USED_NOTE, 'coldAa.ownerRow': coldAa.COLD_AA_OWNER_ROW_LABEL,
+  'coldAa.qrContents': coldAa.COLD_AA_QR_CONTENTS, 'coldAa.checkOnSigner': coldAa.COLD_AA_CHECK_ON_SIGNER, 'coldAa.formatNote': coldAa.COLD_AA_FORMAT_NOTE,
+  'coldAa.feesFixed': coldAa.COLD_AA_FEES_FIXED_NOTE, 'coldAa.scanNote': coldAa.COLD_AA_SCAN_NOTE, 'coldAa.reviewAgain': coldAa.COLD_AA_REVIEW_AGAIN_NOTE,
+  'coldAa.submit': coldAa.COLD_AA_SUBMIT_BUTTON, 'coldAa.scanRationale': coldAa.COLD_AA_SCAN_RATIONALE,
+  'send.aa.estimatePassed': coldAa.COLD_AA_ESTIMATE_PASSED,
+  'broadcast.unknown.title': bcast.BROADCAST_OUTCOME_UNKNOWN_TITLE, 'broadcast.handedOver.title': bcast.BROADCAST_ALREADY_HANDED_OVER_TITLE,
+  'broadcast.handedOver': bcast.BROADCAST_ALREADY_HANDED_OVER_SENTENCE,
 };
 {
   const bad = Object.entries(CONSTANTS).filter(([id, v]) => en[id] !== v).map(([id, v]) => `${id}: ${JSON.stringify(en[id])} ≠ ${JSON.stringify(v)}`);
@@ -599,6 +739,93 @@ function unusedIds(table, scans) {
     unused.length === 0, unused.join(', '));
 }
 
+let ITEM8_MUTANTS = 0;
+let ITEM8_CAUGHT = 0;
+function caught8(name, wasCaught) {
+  ITEM8_MUTANTS += 1;
+  if (wasCaught) ITEM8_CAUGHT += 1;
+  check(`mutant caught: ${name}`, wasCaught);
+}
+// ---------------------------------------------------------------------------
+console.log('check-i18n: the second localisation pass (phase 23 item 8)');
+// ---------------------------------------------------------------------------
+// The entries migrated in this pass were located in the checkout of commit
+// 5cb4601 (the fixture records "base": "5cb4601" on each of them); every one
+// is checked above against that record like the groundwork's entries. Here:
+// the ids, their Spanish draft, the screens they come from, the sentences the
+// wallet modules now build through the table, and four mutants.
+{
+  const ITEM8 = ['literal', 'template', 'composite'].flatMap((s) => Object.entries(FIXTURE[s]).filter(([, f]) => f.base === '5cb4601').map(([id]) => id));
+  const AREAS = ['send.aa.', 'aa.', 'staking.', 'settings.', 'accounts.', 'recordsBackup.', 'sessions.', 'dca.', 'subscriptionKey.', 'swap.', 'broadcast.', 'coldAa.'];
+  check(`phase 23 item 8: ${ITEM8.length} ids migrated from 5cb4601, each from the screens of this pass, each with a Spanish draft that differs from the id`,
+    ITEM8.length >= 650 && ITEM8.every((id) => AREAS.some((a) => id.startsWith(a)) && typeof es[id] === 'string' && es[id] !== id),
+    ITEM8.filter((id) => !AREAS.some((a) => id.startsWith(a)) || typeof es[id] !== 'string').slice(0, 5).join(', '));
+  check('…the fixture of the groundwork is untouched: its own entries keep no "base" (they are the c5baff6 record)',
+    Object.keys(FIXTURE.literal).filter((id) => FIXTURE.literal[id].base === undefined).length === 336 && FIXTURE.base === 'c5baff6');
+  // A handful of exact English entries, one per screen (the rest is the fixture's job).
+  const EXACT = {
+    'send.aa.button.send': 'Send {symbol} from smart account',
+    'send.aa.included': 'Included on-chain.',
+    'settings.appPassphrase.title': 'App passphrase',
+    'settings.wipe.sure.body': 'Without your written recovery phrase, the funds controlled by this wallet will be unrecoverable by anyone, forever.',
+    'accounts.row.derivation': '{address} · derivation index {index}',
+    'sessions.field.payments': 'Number of payments (1–{max}; sets the expiry)',
+    'swap.sold': 'Sold {sell} {sellSymbol} for at least {minBuy} {buySymbol} (guaranteed minimum after slippage). The exact amount received is on the transaction.',
+    'staking.source': 'Source: {source}, read {read}.',
+    'broadcast.detail': '{sentence}\n\nTechnical detail: {technical}',
+  };
+  check('…exact English for one entry of each screen (Send, Settings incl. "App passphrase", Accounts, Sessions, Swap, Staking, the broadcast outcome)',
+    Object.entries(EXACT).every(([id, v]) => en[id] === v), Object.entries(EXACT).filter(([id, v]) => en[id] !== v).map(([id]) => id).join(', '));
+  check('…the phase-22 leftover "App passphrase" is shown through the table, in Spanish "Contraseña de la aplicación"',
+    duress.LOCK_COPY.phr.sectionTitle === en['settings.appPassphrase.title'] && I.localizeIn('es', 'App passphrase') === 'Contraseña de la aplicación');
+  // Sentences a wallet module now builds through t(): the same English as before.
+  const fmt = (w) => `${w} wei`;
+  check('aa.ts aaSelfPaidFeeSentence: the three sentences are the earlier English (no deposit / deposit covers / deposit first)',
+    aa.aaSelfPaidFeeSentence({ fee: 10n }, fmt) === aa.AA_SELF_PAID_FEE_SENTENCE &&
+      aa.aaSelfPaidFeeSentence({ fee: 10n, deposit: 20n }, fmt) === `The smart account's EntryPoint deposit (20 wei) covers this whole worst-case fee, so nothing for gas comes from its balance; the deposit is reduced by what the operation actually uses.` &&
+      aa.aaSelfPaidFeeSentence({ fee: 10n, deposit: 3n }, fmt) === `The fee comes first from the smart account's EntryPoint deposit (3 wei); its balance tops the deposit up by the rest of the worst case, up to 7 wei. What the operation does not use stays in the deposit for later fees; it does not return to the balance.`);
+  check('duress.ts backupCheckLabel: "word 3 and word 9" in English, the Spanish words in Spanish', (() => {
+    const enLabel = duress.backupCheckLabel([2, 8]);
+    I.setActiveLanguage('es');
+    try {
+      return enLabel === 'word 3 and word 9' && duress.backupCheckLabel([2, 8]) === 'la palabra 3 y la palabra 9';
+    } finally {
+      I.setActiveLanguage('en');
+    }
+  })());
+  const pseudoUnknown = { name: 'BroadcastOutcomeUnknownError', kind: 'tx', hash: '0xab', chain: 'eip155:11155111', recorded: true, technical: 'timed out' };
+  const outcome = bcast.describeBroadcastOutcome(pseudoUnknown);
+  const handed = bcast.describeBroadcastOutcome({ name: 'BroadcastAlreadyHandedOverError' });
+  check('broadcast-outcome.ts: the title and the sentence through the table are the constants, the technical line as before',
+    outcome.title === bcast.BROADCAST_OUTCOME_UNKNOWN_TITLE && outcome.detail === `${bcast.BROADCAST_TX_UNKNOWN_SENTENCE}\n\nTechnical detail: Transaction hash: 0xab. timed out` &&
+      handed.title === bcast.BROADCAST_ALREADY_HANDED_OVER_TITLE && handed.detail === bcast.BROADCAST_ALREADY_HANDED_OVER_SENTENCE &&
+      I.t('broadcast.userop.unknown', { seconds: 60 }) === bcast.BROADCAST_USEROP_UNKNOWN_SENTENCE &&
+      I.t('broadcast.tx.unknownUnlisted', { seconds: 60 }) === bcast.BROADCAST_TX_UNKNOWN_UNLISTED_SENTENCE &&
+      I.t('broadcast.userop.unknownUnlisted', { seconds: 60 }) === bcast.BROADCAST_USEROP_UNKNOWN_UNLISTED_SENTENCE &&
+      I.t('broadcast.unknown', { seconds: 60 }) === bcast.BROADCAST_UNKNOWN_SENTENCE);
+  // Call sites: the shared receipt lines and the Row sinks.
+  const sendSrc = read('src/screens/SendScreen.tsx');
+  const stakingSrc = read('src/screens/StakingScreen.tsx');
+  const receipt = "{aaResult.success === true ? tx('Included on-chain — succeeded.') : tx('Included on-chain.')}";
+  check('the smart-account receipt line goes through the table in Send, Staking and Swap alike', [sendSrc, stakingSrc, read('src/screens/SwapScreen.tsx')].every((s) => s.includes(receipt)));
+  const rowSinks = ['src/screens/SessionsScreen.tsx', 'src/screens/SwapScreen.tsx', 'src/screens/StakingViews.tsx'].filter((f) => !/\{localized?\(label\)\}/.test(read(f)));
+  check('…the Sessions, Swap and Staking rows localize their label (an English entry is shown in the chosen language)', rowSinks.length === 0, rowSinks.join(', '));
+  check('…texts for someone else stay English: biometric prompt titles keep their literal (Staking approve, the Settings reveal), share texts are not migrated',
+    stakingSrc.includes('requireLocalAuth(`Approve exactly ${exact18(approval.amount)} ${approval.symbol} for ${plan.contractLabel}`)') &&
+      read('src/screens/SettingsScreen.tsx').includes("requireLocalAuth('Reveal recovery phrase', { kind: 'phrase' })") &&
+      read('src/screens/SettingsScreen.tsx').includes("Share.share({ message: text, title: 'Recovery records' })"));
+  // Mutants (each must be caught by the checks above).
+  const esMissing8 = { ...es };
+  delete esMissing8['sessions.feeBudget.lowered'];
+  caught8('item 8: a Spanish line missing for a migrated id', EN_IDS.some((id) => typeof esMissing8[id] !== 'string'));
+  caught8('item 8: an English entry changed by one character (the wipe dialog\'s title without its "?")',
+    fixtureProblems({ ...en, 'settings.wipe.title': 'Wipe wallet' }, FIXTURE).length >= 1);
+  const enUnused8 = { ...en, 'swap.unusedLine': 'A swap sentence no screen shows.' };
+  caught8('item 8: an unused id added to the table', unusedIds(enUnused8, SCANS).includes('swap.unusedLine') && fixtureProblems(enUnused8, FIXTURE).length === 1);
+  const sendMutant = sendSrc.replace(receipt, "Included on-chain{aaResult.success === true ? ' — succeeded.' : '.'}");
+  caught8('item 8: the old English-only receipt line in Send', ![sendMutant, stakingSrc].every((s) => s.includes(receipt)));
+}
+
 // ---------------------------------------------------------------------------
 console.log('check-i18n: the stored language choice (device-wide, through the storage seam)');
 // ---------------------------------------------------------------------------
@@ -779,6 +1006,7 @@ function caught(name, wasCaught) {
   caught('an unused id added to the table', unusedIds(enExtra, SCANS).includes('home.unusedThing') && fixtureProblems(enExtra, FIXTURE).length === 1);
 }
 check(`at least six mutants, all caught (${mutantsCaught} of ${mutants + 5} including the table mutants)`, mutants + 5 >= 6 && mutantsCaught === mutants + 5);
+check(`phase 23 item 8: at least three mutants of its own, all caught (${ITEM8_CAUGHT} of ${ITEM8_MUTANTS})`, ITEM8_MUTANTS >= 3 && ITEM8_CAUGHT === ITEM8_MUTANTS);
 
-console.log(`\ncheck-i18n: ${passed} passed, ${failed} failed (${mutants + 5} mutants)`);
+console.log(`\ncheck-i18n: ${passed} passed, ${failed} failed (${mutants + 5 + ITEM8_MUTANTS} mutants)`);
 if (failed > 0) process.exit(1);

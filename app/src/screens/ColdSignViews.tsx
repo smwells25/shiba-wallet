@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 import { Button, WarningBox } from '../components';
+import { localize } from '../i18n/index';
+import { useI18n } from '../i18n/useI18n';
 import { PayloadQr } from '../components/RecoveryViews';
 import { QrScanner } from '../components/QrScanner';
 import { AaDepositNote } from '../components/AaDepositNote';
@@ -185,11 +187,13 @@ export function ColdAaAccountCard({
   paymasterConfigured: boolean;
 }) {
   const theme = useTheme();
+  // The cold-aa notes through the string table (phase 23 item 8).
+  useI18n();
   const fmt = (wei: bigint) => `${formatUnits(wei, 18, 18)} ${symbol}`;
   return (
     <View style={styles.stack}>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{COLD_AA_ACCOUNT_NOTE}</Text>
-      {paymasterConfigured ? <Text style={[styles.hint, { color: theme.textMuted }]}>{COLD_AA_PAYMASTER_NOT_USED_NOTE}</Text> : null}
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(COLD_AA_ACCOUNT_NOTE)}</Text>
+      {paymasterConfigured ? <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(COLD_AA_PAYMASTER_NOT_USED_NOTE)}</Text> : null}
       {error ? <Text style={[styles.body, { color: theme.danger }]}>{error}</Text> : null}
       {account ? (
         <>
@@ -253,7 +257,7 @@ export function ColdAaConfirm({
         <InfoRow label="Amount" value={fmt(quote.amount)} theme={theme} />
       )}
       {adjustment ? <WarningBox>{adjustment}</WarningBox> : null}
-      <InfoRow label={COLD_AA_OWNER_ROW_LABEL} value={owner} monoValue theme={theme} />
+      <InfoRow label={localize(COLD_AA_OWNER_ROW_LABEL)} value={owner} monoValue theme={theme} />
       <InfoRow label={aaSenderLabel(quote)} value={quote.sender} monoValue theme={theme} />
       <InfoRow label={`Smart account ${symbol} balance`} value={fmt(quote.senderBalance)} theme={theme} />
       <InfoRow label="Deployment" value={quote.deployed ? 'Already deployed' : 'Will deploy with this send'} theme={theme} />
@@ -273,7 +277,7 @@ export function ColdAaConfirm({
       />
       <RiskWarnings url={url} wallet={quote.sender} {...aaRiskWarningTarget(quote)} />
       <SpendingPolicyNotice owner={owner} quote={quote} from={owner} />
-      <Text style={[styles.body, { color: theme.success }]}>{COLD_AA_ESTIMATE_PASSED}</Text>
+      <Text style={[styles.body, { color: theme.success }]}>{localize(COLD_AA_ESTIMATE_PASSED)}</Text>
     </View>
   );
 }

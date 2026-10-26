@@ -35,6 +35,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { ethers } from 'ethers';
+import { en as EN_TABLE } from '../src/i18n/en.ts';
 import { bitcoinKeyProvider, evmKeyProvider, mnemonicToSeed, solanaKeyProvider } from '@shiba-wallet/core';
 import { ENTRYPOINT_V07, KERNEL_V3_3, getUserOpHash, predictKernelAddress } from '@shiba-wallet/chains-evm';
 import {
@@ -958,7 +959,8 @@ console.log('check-key-import: findings 2–8 of the 2026-10-04 private-key run'
   const removeOrder = (body) => {
     const confirm = body.indexOf('REMOVE_IMPORTED_CONFIRM_TITLE');
     const gate = body.indexOf('requireLocalAuth(PROMPTS.importedKeyRemove, {');
-    const refusal = body.indexOf("if (!auth.ok) {\n                    Alert.alert('Not removed', `${auth.message} Nothing was deleted.`);\n                    return;\n                  }");
+    // Phase 23 item 8: the refusal's words through the string table (tx), English unchanged.
+    const refusal = body.indexOf("if (!auth.ok) {\n                    Alert.alert(tx('Not removed'), `${auth.message} ${tx('Nothing was deleted.')}`);\n                    return;\n                  }");
     const del = body.indexOf('removeImportedAccount(account.index)');
     return confirm >= 0 && gate > confirm && refusal > gate && del > refusal;
   };
@@ -1031,7 +1033,8 @@ console.log('check-key-import: findings 2–8 of the 2026-10-04 private-key run'
   const homeMutant = home.replace('{activeAccount?.imported ? null : (', '{(');
   check('M12 caught: a Home screen that always shows the recover link fails the check',
     !/\{activeAccount\?\.imported \? null : \(\s*<Pressable[\s\S]{0,600}Lost a recovery phrase\? Recover an account with guardians/.test(homeMutant));
-  const accCall = '{accountsBackupHint(importedCount > 0, { watchOnly: watchOnlyAccounts.length > 0, multisig: multisigAccounts.length > 0 })}';
+  // Phase 23 item 8: the sentence is shown through the string table (localize).
+  const accCall = '{localize(accountsBackupHint(importedCount > 0, { watchOnly: watchOnlyAccounts.length > 0, multisig: multisigAccounts.length > 0 }))}';
   const accMutant = acc.replace(accCall, 'Every account comes from your one recovery phrase, so the phrase backs up all of them.');
   check('M13 caught: the old Settings opening sentence fails the shared-sentence check',
     acc.includes(accCall) && !accMutant.includes(accCall) && /Every account comes from your one recovery phrase, so the phrase backs/.test(accMutant));
@@ -1066,13 +1069,19 @@ console.log('check-key-import: honesty and input hygiene in the screens (source 
     accountsBackupHint(true) === 'Every account except the imported ones comes from your one recovery phrase. Imported accounts are NOT backed up by the phrase: keep their private keys yourself.' &&
       accountsBackupHint(false) === 'Every account comes from your one recovery phrase — backing up the phrase backs up all of them.');
   check('Settings → Accounts and the switcher both use it; the old opening sentence is gone from Settings',
-    acc.includes('{accountsBackupHint(importedCount > 0, { watchOnly: watchOnlyAccounts.length > 0, multisig: multisigAccounts.length > 0 })}') &&
+    acc.includes('{localize(accountsBackupHint(importedCount > 0, { watchOnly: watchOnlyAccounts.length > 0, multisig: multisigAccounts.length > 0 }))}') &&
       /\{accountsBackupHint\(anyImported, \{ watchOnly: anyWatched, multisig: anyMultisig \}\)\}/.test(src('components/AccountSwitcher.tsx')) &&
       !/Every account comes from your one recovery phrase, so the phrase backs/.test(acc) && !/Imported accounts are the exception/.test(acc));
   const settings = src('screens/SettingsScreen.tsx');
-  check('Backup section names the imported accounts the phrase does NOT back up', /It does NOT back up your imported accounts/.test(settings));
-  check('the phrase reveal says it does not restore imported accounts, and its gate opens the PHRASE', /They do not restore your imported accounts/.test(settings) && /requireLocalAuth\('Reveal recovery phrase', \{ kind: 'phrase' \}\)/.test(settings));
-  check('wipe confirmation names the imported keys it deletes', /This also deletes the private keys of your imported accounts/.test(settings));
+  // Phase 23 item 8: these sentences now come from the string table; the
+  // screen calls them by id with the names, and the English is unchanged.
+  check('Backup section names the imported accounts the phrase does NOT back up',
+    settings.includes("{t('settings.backup.importedNotBackedUp', { names: importedNames })}") && /^It does NOT back up your imported accounts \(\{names\}\)/.test(EN_TABLE['settings.backup.importedNotBackedUp']));
+  check('the phrase reveal says it does not restore imported accounts, and its gate opens the PHRASE',
+    settings.includes("t('settings.reveal.warningImported', { names: importedNames })") && /They do not restore your imported accounts \(\{names\}\)\.$/.test(EN_TABLE['settings.reveal.warningImported']) &&
+      /requireLocalAuth\('Reveal recovery phrase', \{ kind: 'phrase' \}\)/.test(settings));
+  check('wipe confirmation names the imported keys it deletes',
+    settings.includes("t('settings.wipe.imported', { names: importedNames })") && /^This also deletes the private keys of your imported accounts \(\{names\}\)/.test(EN_TABLE['settings.wipe.imported']));
   check('the onboarding backup screen says imported keys are not covered', /They do not back up private keys you import later/.test(src('screens/BackupScreen.tsx')));
   // Show private key: same confirmation, gate and screenshot block as the phrase.
   const revealIdx = acc.indexOf('const onRevealImported');

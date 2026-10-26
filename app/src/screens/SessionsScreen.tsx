@@ -29,6 +29,9 @@ import {
 } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
 import { Button, ImportedKeyNotice, screenStyle, TestNetworksOnlyCard, WarningBox, useFieldLabels } from '../components';
+import { T } from '../i18n/T';
+import { useI18n } from '../i18n/useI18n';
+import { localize, t, tx } from '../i18n/index';
 import { ContactPicker, RecipientContactNotice } from '../components/Contacts';
 import { GrantReview } from '../components/SessionGrantViews';
 import { PayloadQr } from '../components/RecoveryViews';
@@ -372,6 +375,10 @@ interface Progress {
  */
 export function SessionsScreen({ navigation }: Props) {
   const theme = useTheme();
+  // The screen's own texts go through the string table (phase 23 item 8);
+  // the sentences the wallet modules build stay as written unless they are
+  // an English table entry (localize).
+  useI18n();
   const fieldLabel = useFieldLabels();
   const { accounts, activeAccount, signWith } = useWallet();
   const { evmChain } = usePrefs();
@@ -813,7 +820,7 @@ export function SessionsScreen({ navigation }: Props) {
     }
     const auth = await requireLocalAuth('Approve granting this session');
     if (!auth.ok) {
-      Alert.alert('Not granted', auth.message);
+      Alert.alert(tx('Not granted'), auth.message);
       return;
     }
     setPhase('sending');
@@ -1115,7 +1122,7 @@ export function SessionsScreen({ navigation }: Props) {
         ? await requireLocalAuth('Approve this recurring payment')
         : await requireLocalAuth('Approve this subscription');
     if (!auth.ok) {
-      Alert.alert('Not granted', auth.message);
+      Alert.alert(tx('Not granted'), auth.message);
       setPhase('sub-confirm');
       return;
     }
@@ -1419,7 +1426,7 @@ export function SessionsScreen({ navigation }: Props) {
     }
     const auth = await requireLocalAuth('Approve this recurring swap');
     if (!auth.ok) {
-      Alert.alert('Not granted', auth.message);
+      Alert.alert(tx('Not granted'), auth.message);
       setPhase('sub-confirm');
       return;
     }
@@ -1502,11 +1509,11 @@ export function SessionsScreen({ navigation }: Props) {
   const confirmSwapDialog = (plan: DcaSwapPlan) =>
     new Promise<boolean>((resolve) => {
       Alert.alert(
-        'Swap now?',
+        tx('Swap now?'),
         dcaConfirmMessage(plan, { nativeSymbol: symbol }),
         [
-          { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-          { text: 'Swap now', onPress: () => resolve(true) },
+          { text: tx('Cancel'), style: 'cancel', onPress: () => resolve(false) },
+          { text: tx('Swap now'), onPress: () => resolve(true) },
         ],
         { cancelable: true, onDismiss: () => resolve(false) },
       );
@@ -1588,7 +1595,7 @@ export function SessionsScreen({ navigation }: Props) {
   const onShowKey = async (record: SessionRecord) => {
     const auth = await requireLocalAuth('Show the subscription key for the merchant');
     if (!auth.ok) {
-      Alert.alert('Not shown', auth.message);
+      Alert.alert(tx('Not shown'), auth.message);
       return;
     }
     try {
@@ -1596,7 +1603,7 @@ export function SessionsScreen({ navigation }: Props) {
       setKeyExport({ record, text: JSON.stringify(payload), fileName: subscriptionKeyFileName(payload) });
       setPhase('key-export');
     } catch (e) {
-      Alert.alert('Key not available', e instanceof Error ? e.message : String(e));
+      Alert.alert(tx('Key not available'), e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -1604,13 +1611,12 @@ export function SessionsScreen({ navigation }: Props) {
     const current = keyExport;
     if (!current) return;
     Alert.alert(
-      'Delete the key from this device?',
-      'Only do this once the merchant has the key. It cannot be shown again; if it was lost, revoke the ' +
-        'subscription and create a new one.',
+      tx('Delete the key from this device?'),
+      t('sessions.handover.body'),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: tx('Cancel'), style: 'cancel' },
         {
-          text: 'The merchant has it',
+          text: tx('The merchant has it'),
           style: 'destructive',
           onPress: () => {
             markSubscriptionKeyExported(current.record, AsyncStorage, sessionKeyVault).then(
@@ -1619,7 +1625,7 @@ export function SessionsScreen({ navigation }: Props) {
                 setPhase('list');
                 reloadList();
               },
-              (e: unknown) => Alert.alert('Not changed', e instanceof Error ? e.message : String(e)),
+              (e: unknown) => Alert.alert(tx('Not changed'), e instanceof Error ? e.message : String(e)),
             );
           },
         },
@@ -1634,20 +1640,22 @@ export function SessionsScreen({ navigation }: Props) {
     if (!allowed) return;
     const call = sessionTestCall(allowed);
     Alert.alert(
-      'Test this session?',
-      `The SESSION key (not your account key) signs one operation: call ${call.to} with ` +
-        `${call.data.length === 0 ? 'no data' : `only the selector ${toHex(call.data)} (no arguments)`} and 0 ${symbol}. ` +
-        `Gas is paid by ${record.account}. A call with a selector but no arguments may be refused by the ` +
-        'target contract; the bundler’s message is shown as returned.',
+      tx('Test this session?'),
+      t('sessions.test.body', {
+        target: call.to,
+        data: call.data.length === 0 ? tx('no data') : t('sessions.test.selector', { selector: toHex(call.data) }),
+        symbol,
+        account: record.account,
+      }),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: tx('Cancel'), style: 'cancel' },
         {
-          text: 'Send test',
+          text: tx('Send test'),
           onPress: () => {
             void (async () => {
               const auth = await requireLocalAuth('Approve a session-key test operation');
               if (!auth.ok) {
-                Alert.alert('Not sent', auth.message);
+                Alert.alert(tx('Not sent'), auth.message);
                 return;
               }
               try {
@@ -1672,7 +1680,7 @@ export function SessionsScreen({ navigation }: Props) {
                 );
               } catch (e) {
                 const { title, detail } = describe(e, 'send');
-                Alert.alert(title === 'The transaction could not be sent.' ? 'Session test refused' : title, detail);
+                Alert.alert(title === 'The transaction could not be sent.' ? tx('Session test refused') : localize(title), localize(detail));
                 refreshRecord(record);
               }
             })();
@@ -1706,11 +1714,11 @@ export function SessionsScreen({ navigation }: Props) {
   const confirmPaymentDialog = (plan: RecurringPaymentPlan) =>
     new Promise<boolean>((resolve) => {
       Alert.alert(
-        'Send this payment now?',
+        tx('Send this payment now?'),
         recurringConfirmMessage(plan, { nativeSymbol: symbol, payeeName: nameFor(plan.terms.merchant) }),
         [
-          { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
-          { text: 'Send payment', onPress: () => resolve(true) },
+          { text: tx('Cancel'), style: 'cancel', onPress: () => resolve(false) },
+          { text: tx('Send payment'), onPress: () => resolve(true) },
         ],
         { cancelable: true, onDismiss: () => resolve(false) },
       );
@@ -1812,7 +1820,7 @@ export function SessionsScreen({ navigation }: Props) {
     }
     const auth = await requireLocalAuth(revokeApprovalPrompt(target.record));
     if (!auth.ok) {
-      Alert.alert('Not revoked', auth.message);
+      Alert.alert(tx('Not revoked'), auth.message);
       return;
     }
     setPhase('sending');
@@ -1893,10 +1901,10 @@ export function SessionsScreen({ navigation }: Props) {
 
   const onForget = (record: SessionRecord) => {
     if (!bundle) return;
-    Alert.alert('Forget this session?', 'It is removed from this list (and its key from this device).', [
-      { text: 'Cancel', style: 'cancel' },
+    Alert.alert(tx('Forget this session?'), tx('It is removed from this list (and its key from this device).'), [
+      { text: tx('Cancel'), style: 'cancel' },
       {
-        text: 'Forget',
+        text: tx('Forget'),
         style: 'destructive',
         onPress: () => {
           forgetSession({ record, node: bundle.node, store: AsyncStorage, vault: sessionKeyVault }).then(
@@ -1905,7 +1913,7 @@ export function SessionsScreen({ navigation }: Props) {
               reloadList();
             },
             (e: unknown) => {
-              Alert.alert('Kept', e instanceof Error ? e.message : String(e));
+              Alert.alert(tx('Kept'), e instanceof Error ? e.message : String(e));
               // A failed action re-reads the card (finding 8).
               refreshRecord(record);
             },
@@ -1917,13 +1925,12 @@ export function SessionsScreen({ navigation }: Props) {
 
   const onResetList = () => {
     Alert.alert(
-      'Reset the session list?',
-      'The unreadable list is cleared. This does NOT revoke anything on-chain: grants stay active until ' +
-        'they expire, and the session keys the old list referenced stay unused in secure storage.',
+      tx('Reset the session list?'),
+      t('sessions.reset.body'),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: tx('Cancel'), style: 'cancel' },
         {
-          text: 'Reset',
+          text: tx('Reset'),
           style: 'destructive',
           onPress: () =>
             void resetSessions()
@@ -1948,7 +1955,7 @@ export function SessionsScreen({ navigation }: Props) {
     <>
       <Text style={[styles.networkLine, { color: theme.textMuted }]}>
         {evmChain.label}
-        {evmChain.testnet ? ' · TESTNET' : ''} · chain id {evmChain.chainIdDecimal}
+        {evmChain.testnet ? ` · ${tx('TESTNET')}` : ''} · {t('sessions.chainId', { chainId: evmChain.chainIdDecimal })}
       </Text>
       <Row label="Owner account (installs and revokes)" value={activeAccount?.name ?? 'Account'} sub={owner} theme={theme} />
       <ImportedKeyNotice show={activeAccount?.imported === true} />
@@ -1971,21 +1978,21 @@ export function SessionsScreen({ navigation }: Props) {
     return (
       <ScrollView key="progress" style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
         <Text accessibilityRole="header" style={[styles.title, { color: theme.success }]}>{sessionProgressTitle(progress.kind)}</Text>
-        <Text style={[styles.label, { color: theme.textMuted }]}>UserOperation hash</Text>
+        <Text style={[styles.label, { color: theme.textMuted }]}><T>UserOperation hash</T></Text>
         <Text selectable style={[styles.monoText, { color: theme.text }]}>
           {progress.userOpHash}
         </Text>
         {progress.kind === 'test' ? (
-          <Text style={[styles.hint, { color: theme.textMuted }]}>Signed by the session key only.</Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}><T>Signed by the session key only.</T></Text>
         ) : null}
         {progress.kind === 'recurring-payment' ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            Signed by this recurring payment’s own key only, not by your account key.
+            <T>Signed by this recurring payment’s own key only, not by your account key.</T>
           </Text>
         ) : null}
         {progress.kind === 'dca-swap' ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            Signed by this recurring swap’s own key only, not by your account key.
+            <T>Signed by this recurring swap’s own key only, not by your account key.</T>
           </Text>
         ) : null}
         {progress.outcomeLine ? <Text style={[styles.hint, { color: theme.text }]}>{progress.outcomeLine}</Text> : null}
@@ -1996,22 +2003,22 @@ export function SessionsScreen({ navigation }: Props) {
         {progress.state === 'pending' ? (
           <View style={styles.center}>
             <ActivityIndicator color={theme.accent} />
-            <Text style={[styles.hint, { color: theme.textMuted }]}>Bundling… waiting for the receipt.</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}><T>Bundling… waiting for the receipt.</T></Text>
           </View>
         ) : null}
         {progress.state === 'done' ? (
           <Text style={[styles.ok, { color: theme.success }]}>
-            Included on-chain — succeeded.{progress.detail ? ` Status: ${progress.detail}.` : ''}
+            {tx('Included on-chain — succeeded.')}{progress.detail ? ` ${t('sessions.statusDetail', { detail: localize(progress.detail) })}` : ''}
           </Text>
         ) : null}
         {progress.state === 'failed' ? (
           <WarningBox>
-            Included, but the operation reverted.{progress.detail ? ` Status: ${progress.detail}.` : ''}
+            {tx('Included, but the operation reverted.')}{progress.detail ? ` ${t('sessions.statusDetail', { detail: localize(progress.detail) })}` : ''}
           </WarningBox>
         ) : null}
         {progress.state === 'timeout' ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            Not included within two minutes. It may still be included; the list reads the status from the chain.
+            <T>Not included within two minutes. It may still be included; the list reads the status from the chain.</T>
           </Text>
         ) : null}
         {progress.txHash && evmChain.explorerTxBase ? (
@@ -2046,7 +2053,7 @@ export function SessionsScreen({ navigation }: Props) {
     return (
       <ScrollView key="confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
-        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Grant this session?</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}><T>Grant this session?</T></Text>
         {header}
         <GrantReview
           grant={pendingView.grant}
@@ -2056,7 +2063,7 @@ export function SessionsScreen({ navigation }: Props) {
           sessionKeyHolder="this device (secure storage)"
           permissionId={toHex(pendingView.install.permissionId)}
         />
-        <Text style={[styles.hint, { color: theme.textMuted }]}>{SESSIONS_INSTALL_MODE_NOTE}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(SESSIONS_INSTALL_MODE_NOTE)}</Text>
         {!evmChain.testnet ? <WarningBox>{SESSIONS_AUDIT_NOTE}</WarningBox> : null}
         <Row
           label="Install operation"
@@ -2072,12 +2079,12 @@ export function SessionsScreen({ navigation }: Props) {
         <Row label="Account balance" value={`${formatUnits(q.senderBalance, 18, 18)} ${symbol}`} theme={theme} />
         <AaDepositNote fee={q.fee} deposit={q.deposit} sponsored={q.sponsored} symbol={symbol} />
         <Text style={[styles.ok, { color: theme.success }]}>
-          Bundler gas estimate passed (eth_estimateUserOperationGas simulated the install).
+          <T>Bundler gas estimate passed (eth_estimateUserOperationGas simulated the install).</T>
         </Text>
         {phase === 'sending' ? (
           <View style={styles.center}>
             <ActivityIndicator size="large" color={theme.accent} />
-            <Text style={[styles.hint, { color: theme.textMuted }]}>Signing and sending…</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}><T>Signing and sending…</T></Text>
           </View>
         ) : (
           <>
@@ -2100,7 +2107,7 @@ export function SessionsScreen({ navigation }: Props) {
     const terms = termsOf(keyExport.record);
     return (
       <ScrollView key="key-export" style={screenStyle(theme)} contentContainerStyle={styles.content}>
-        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Hand the key to the merchant</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}><T>Hand the key to the merchant</T></Text>
         <WarningBox>{SUBSCRIPTION_KEY_WARNING}</WarningBox>
         <Row label="Subscription" value={subscriptionSummary(keyExport.record, nameFor(terms.merchant))} theme={theme} />
         <PayloadQr value={keyExport.text} caption="Subscription key and terms (JSON) for the merchant's keeper." />
@@ -2183,7 +2190,7 @@ export function SessionsScreen({ navigation }: Props) {
       <ScrollView key="sub-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
         <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>
-          {recurring ? 'Start this recurring payment?' : 'Start this subscription?'}
+          {recurring ? tx('Start this recurring payment?') : tx('Start this subscription?')}
         </Text>
         {header}
         {/* Order as recorded for phase 12 item 2 and DEMO step 10: the batch
@@ -2193,13 +2200,13 @@ export function SessionsScreen({ navigation }: Props) {
         <Text style={[styles.hint, { color: theme.textMuted }]}>{recurring ? RECURRING_START_NOTE : SUBSCRIPTION_START_NOTE}</Text>
         {recurring ? (
           <>
-            <Text style={[styles.hint, { color: theme.text }]}>{RECURRING_WHILE_OPEN_NOTE}</Text>
-            <Text style={[styles.hint, { color: theme.textMuted }]}>{RECURRING_PAY_PROMPT_NOTE}</Text>
-            <Text style={[styles.hint, { color: theme.textMuted }]}>{RECURRING_SPENDING_NOTE}</Text>
+            <Text style={[styles.hint, { color: theme.text }]}>{localize(RECURRING_WHILE_OPEN_NOTE)}</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(RECURRING_PAY_PROMPT_NOTE)}</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(RECURRING_SPENDING_NOTE)}</Text>
           </>
         ) : null}
         {shortWindow ? <WarningBox>{shortWindow}</WarningBox> : null}
-        <Text style={[styles.label, { color: theme.textMuted }]}>Your account enforces on-chain:</Text>
+        <Text style={[styles.label, { color: theme.textMuted }]}><T>Your account enforces on-chain:</T></Text>
         {review.enforced.map((line) => (
           <Text key={line} style={[styles.hint, { color: theme.text }]}>
             • {line}
@@ -2211,7 +2218,7 @@ export function SessionsScreen({ navigation }: Props) {
           </Text>
         ))}
         <Text style={[styles.hint, { color: theme.textMuted }]}>{recurring ? RECURRING_AUDIT_NOTE : SUBSCRIPTION_AUDIT_NOTE}</Text>
-        <Text style={[styles.label, { color: theme.textMuted }]}>Technical details (the grant as installed)</Text>
+        <Text style={[styles.label, { color: theme.textMuted }]}><T>Technical details (the grant as installed)</T></Text>
         <GrantReview
           grant={subPendingView.grant}
           account={account}
@@ -2221,7 +2228,7 @@ export function SessionsScreen({ navigation }: Props) {
           permissionId={null}
         />
         <Text style={[styles.hint, { color: theme.textMuted }]}>{permissionIdAtStartNote(startButton)}</Text>
-        <Text style={[styles.hint, { color: theme.textMuted }]}>{SESSIONS_INSTALL_MODE_NOTE}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(SESSIONS_INSTALL_MODE_NOTE)}</Text>
         <Row
           label="Install operation"
           value={`2 calls to your own account (installValidations, grantAccess), 0 ${symbol}`}
@@ -2249,9 +2256,12 @@ export function SessionsScreen({ navigation }: Props) {
         ) : null}
         {lowered ? (
           <WarningBox>
-            {`The suggested fee budget was lowered from ${formatUnits(lowered.from, 18, 18)} to ` +
-              `${formatUnits(lowered.to, 18, 18)} ${symbol} so that ${formatUnits(lowered.keptBack, 18, 18)} ` +
-              `${symbol} stays in the account for this install's own worst-case network fee.`}
+            {t('sessions.feeBudget.lowered', {
+              from: formatUnits(lowered.from, 18, 18),
+              to: formatUnits(lowered.to, 18, 18),
+              symbol,
+              keptBack: formatUnits(lowered.keptBack, 18, 18),
+            })}
           </WarningBox>
         ) : null}
         {funding.shortfall ? <WarningBox>{funding.shortfall}</WarningBox> : null}
@@ -2277,15 +2287,15 @@ export function SessionsScreen({ navigation }: Props) {
           })}
         </Text>
         <Text style={[styles.ok, { color: theme.success }]}>
-          Bundler gas estimate passed (eth_estimateUserOperationGas simulated the install).
+          <T>Bundler gas estimate passed (eth_estimateUserOperationGas simulated the install).</T>
         </Text>
         {phase === 'sub-sending' ? (
           <View style={styles.center}>
             <ActivityIndicator size="large" color={theme.accent} />
             <Text style={[styles.hint, { color: theme.textMuted }]}>
               {subSendStage === 'requote'
-                ? 'Starting the clock now and asking the bundler again…'
-                : 'Signing and sending…'}
+                ? tx('Starting the clock now and asking the bundler again…')
+                : tx('Signing and sending…')}
             </Text>
           </View>
         ) : (
@@ -2347,29 +2357,29 @@ export function SessionsScreen({ navigation }: Props) {
     const recurringForm = subMode === 'recurring';
     return (
       <ScrollView key="sub-form" style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>{recurringForm ? 'New recurring payment' : 'New subscription'}</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>{recurringForm ? tx('New recurring payment') : tx('New subscription')}</Text>
         {header}
         {recurringForm ? (
           <>
-            <Text style={[styles.hint, { color: theme.textMuted }]}>{RECURRING_FORM_INTRO}</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(RECURRING_FORM_INTRO)}</Text>
             <WarningBox>{RECURRING_WHILE_OPEN_NOTE}</WarningBox>
-            <Text style={[styles.hint, { color: theme.textMuted }]}>{RECURRING_LATER_SLICE_NOTE}</Text>
-            <Text style={[styles.hint, { color: theme.textMuted }]}>{RECURRING_SPENDING_NOTE}</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(RECURRING_LATER_SLICE_NOTE)}</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(RECURRING_SPENDING_NOTE)}</Text>
           </>
         ) : (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            Lets one merchant take up to a fixed amount once per period, until the payments run out or you
-            revoke. A new key is created for the merchant; your account enforces the limits on-chain.
+            <T>Lets one merchant take up to a fixed amount once per period, until the payments run out or you
+            revoke. A new key is created for the merchant; your account enforces the limits on-chain.</T>
           </Text>
         )}
         <Text {...fieldLabel('merchant', recurringForm ? 'Pay to (receives the payments)' : 'Merchant (receives the payments)').label} style={[styles.label, { color: theme.textMuted }]}>
-          {recurringForm ? 'Pay to (receives the payments)' : 'Merchant (receives the payments)'}
+          {localize(recurringForm ? 'Pay to (receives the payments)' : 'Merchant (receives the payments)')}
         </Text>
         <TextInput
           {...fieldLabel('merchant', recurringForm ? 'Pay to (receives the payments)' : 'Merchant (receives the payments)').input}
           value={subForm.merchant}
           onChangeText={(t) => setSubForm((prev) => ({ ...prev, merchant: t }))}
-          placeholder={recurringForm ? 'Recipient address (0x…)' : 'Merchant address (0x…)'}
+          placeholder={recurringForm ? tx('Recipient address (0x…)') : tx('Merchant address (0x…)')}
           placeholderTextColor={theme.textMuted}
           autoCapitalize="none"
           autoCorrect={false}
@@ -2379,7 +2389,7 @@ export function SessionsScreen({ navigation }: Props) {
           <RecipientContactNotice match={merchantMatch} address={subForm.merchant.trim()} />
         ) : null}
         <Button title="Pick from contacts" variant="secondary" onPress={() => setSubPickerOpen(true)} />
-        <Text style={[styles.label, { color: theme.textMuted }]}>Paid in</Text>
+        <Text style={[styles.label, { color: theme.textMuted }]}><T>Paid in</T></Text>
         <View style={styles.rowButtons}>
           {tokenChoices.map((c, i) => (
             <Button
@@ -2390,7 +2400,7 @@ export function SessionsScreen({ navigation }: Props) {
             />
           ))}
         </View>
-        <Text {...fieldLabel('most', 'Most per payment').label} style={[styles.label, { color: theme.textMuted }]}>Most per payment</Text>
+        <Text {...fieldLabel('most', 'Most per payment').label} style={[styles.label, { color: theme.textMuted }]}><T>Most per payment</T></Text>
         <TextInput
           {...fieldLabel('most', 'Most per payment').input}
           value={subForm.amount}
@@ -2400,7 +2410,7 @@ export function SessionsScreen({ navigation }: Props) {
           keyboardType="decimal-pad"
           style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
         />
-        <Text style={[styles.label, { color: theme.textMuted }]}>Once every</Text>
+        <Text style={[styles.label, { color: theme.textMuted }]}><T>Once every</T></Text>
         <View style={styles.rowButtons}>
           {subscriptionPeriodPresets(evmChain.testnet).map((p) => {
             const chosen = !subForm.periodCustom && subForm.periodSeconds === p.seconds;
@@ -2428,7 +2438,7 @@ export function SessionsScreen({ navigation }: Props) {
               {...fieldLabel('custom-period', 'Custom period length').input}
               value={subForm.customCount}
               onChangeText={(t) => setSubForm((prev) => ({ ...prev, customCount: t }))}
-              placeholder="How many"
+              placeholder={tx('How many')}
               placeholderTextColor={theme.textMuted}
               keyboardType="number-pad"
               style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
@@ -2447,17 +2457,17 @@ export function SessionsScreen({ navigation }: Props) {
             <Text style={[styles.hint, { color: theme.textMuted }]}>{customPeriodHint}</Text>
           </>
         ) : null}
-        <Text {...fieldLabel('payments', `Number of payments (1–${SUBSCRIPTION_MAX_PAYMENTS}; sets the expiry)`).label} style={[styles.label, { color: theme.textMuted }]}>Number of payments (1–{SUBSCRIPTION_MAX_PAYMENTS}; sets the expiry)</Text>
+        <Text {...fieldLabel('payments', t('sessions.field.payments', { max: SUBSCRIPTION_MAX_PAYMENTS })).label} style={[styles.label, { color: theme.textMuted }]}>{t('sessions.field.payments', { max: SUBSCRIPTION_MAX_PAYMENTS })}</Text>
         <TextInput
-          {...fieldLabel('payments', `Number of payments (1–${SUBSCRIPTION_MAX_PAYMENTS}; sets the expiry)`).input}
+          {...fieldLabel('payments', t('sessions.field.payments', { max: SUBSCRIPTION_MAX_PAYMENTS })).input}
           value={subForm.payments}
           onChangeText={(t) => setSubForm((prev) => ({ ...prev, payments: t }))}
           keyboardType="number-pad"
           style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
         />
-        <Text {...fieldLabel('fee-budget', `Fee budget (${symbol}, all payments together)`).label} style={[styles.label, { color: theme.textMuted }]}>Fee budget ({symbol}, all payments together)</Text>
+        <Text {...fieldLabel('fee-budget', t('sessions.field.feeBudget', { symbol })).label} style={[styles.label, { color: theme.textMuted }]}>{t('sessions.field.feeBudget', { symbol })}</Text>
         <TextInput
-          {...fieldLabel('fee-budget', `Fee budget (${symbol}, all payments together)`).input}
+          {...fieldLabel('fee-budget', t('sessions.field.feeBudget', { symbol })).input}
           value={subFeeBudgetText}
           // Typing makes the figure the user's own; clearing the field goes
           // back to the suggestion that follows the payment count.
@@ -2471,8 +2481,7 @@ export function SessionsScreen({ navigation }: Props) {
           <Text style={[styles.hint, { color: theme.textMuted }]}>{recurringFeeBudgetHint(symbol)}</Text>
         ) : (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            Each payment’s network fee is paid by your account. The budget caps the total; without it a merchant
-            could pay itself high fees from your {symbol}.
+            {t('sessions.feeBudget.merchantNote', { symbol })}
           </Text>
         )}
         {/* Hidden while Review's refusal is on screen, so a shortfall is
@@ -2493,19 +2502,21 @@ export function SessionsScreen({ navigation }: Props) {
         ) : null}
         {subFeeFacts.balance !== null ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            {`The smart account holds ${formatUnits(subFeeFacts.balance, 18, 18)} ${symbol}` +
-              (subFeeFacts.deposit !== null && subFeeFacts.deposit > 0n
-                ? ` plus an EntryPoint deposit of ${formatUnits(subFeeFacts.deposit, 18, 18)} ${symbol}`
-                : '') +
-              ' (read just now).'}
+            {subFeeFacts.deposit !== null && subFeeFacts.deposit > 0n
+              ? t('sessions.balance.withDeposit', {
+                  balance: formatUnits(subFeeFacts.balance, 18, 18),
+                  deposit: formatUnits(subFeeFacts.deposit, 18, 18),
+                  symbol,
+                })
+              : t('sessions.balance', { balance: formatUnits(subFeeFacts.balance, 18, 18), symbol })}
           </Text>
         ) : null}
-        <Text {...fieldLabel('name', 'Name (optional)').label} style={[styles.label, { color: theme.textMuted }]}>Name (optional)</Text>
+        <Text {...fieldLabel('name', 'Name (optional)').label} style={[styles.label, { color: theme.textMuted }]}><T>Name (optional)</T></Text>
         <TextInput
           {...fieldLabel('name', 'Name (optional)').input}
           value={subForm.label}
           onChangeText={(t) => setSubForm((prev) => ({ ...prev, label: t }))}
-          placeholder={recurringForm ? 'e.g. rent' : 'e.g. the service’s name'}
+          placeholder={recurringForm ? tx('e.g. rent') : tx('e.g. the service’s name')}
           placeholderTextColor={theme.textMuted}
           maxLength={64}
           style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
@@ -2514,7 +2525,7 @@ export function SessionsScreen({ navigation }: Props) {
         {phase === 'sub-quoting' ? (
           <View style={styles.center}>
             <ActivityIndicator color={theme.accent} />
-            <Text style={[styles.hint, { color: theme.textMuted }]}>Reading the account and asking the bundler…</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}><T>Reading the account and asking the bundler…</T></Text>
           </View>
         ) : (
           <>
@@ -2565,7 +2576,7 @@ export function SessionsScreen({ navigation }: Props) {
           theme={theme}
         />
         <AaDepositNote fee={q.fee} deposit={q.deposit} sponsored={q.sponsored} symbol={symbol} />
-        <Text style={[styles.ok, { color: theme.success }]}>Bundler gas estimate passed.</Text>
+        <Text style={[styles.ok, { color: theme.success }]}><T>Bundler gas estimate passed.</T></Text>
         {phase === 'sending' ? (
           <ActivityIndicator size="large" color={theme.accent} />
         ) : (
@@ -2588,20 +2599,20 @@ export function SessionsScreen({ navigation }: Props) {
   if ((phase === 'form' || phase === 'quoting') && account) {
     return (
       <ScrollView key="form" style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Grant a session</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}><T>Grant a session</T></Text>
         {header}
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          A session key is a new key on this device that may make ONLY the calls you list, until it
-          expires. Your account enforces the limits on-chain. Each value cap is per call, not a total.
+          <T>A session key is a new key on this device that may make ONLY the calls you list, until it
+          expires. Your account enforces the limits on-chain. Each value cap is per call, not a total.</T>
         </Text>
         {drafts.map((d, i) => (
           <View key={i} style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-            <Text {...fieldLabel(`call-${i}`, `Allowed call ${i + 1}: target address`).label} style={[styles.label, { color: theme.textMuted }]}>Allowed call {i + 1}</Text>
+            <Text {...fieldLabel(`call-${i}`, t('sessions.call.targetLabel', { n: i + 1 })).label} style={[styles.label, { color: theme.textMuted }]}>{t('sessions.call.heading', { n: i + 1 })}</Text>
             <TextInput
-              {...fieldLabel(`call-${i}`, `Allowed call ${i + 1}: target address`).input}
+              {...fieldLabel(`call-${i}`, t('sessions.call.targetLabel', { n: i + 1 })).input}
               value={d.target}
               onChangeText={(t) => setDrafts((prev) => prev.map((x, j) => (j === i ? { ...x, target: t } : x)))}
-              placeholder="Target address (0x…)"
+              placeholder={tx('Target address (0x…)')}
               placeholderTextColor={theme.textMuted}
               autoCapitalize="none"
               autoCorrect={false}
@@ -2611,9 +2622,9 @@ export function SessionsScreen({ navigation }: Props) {
               <RecipientContactNotice match={draftMatches[i]!} address={d.target.trim()} />
             ) : null}
             <Button title="Pick from contacts" variant="secondary" onPress={() => setPickerFor(i)} />
-            <Text {...fieldLabel(`call-${i}-function`, `Call ${i + 1}: function (optional)`).label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel(`call-${i}-function`, `Call ${i + 1}: function (optional)`).text}</Text>
+            <Text {...fieldLabel(`call-${i}-function`, t('sessions.call.function', { n: i + 1 })).label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel(`call-${i}-function`, t('sessions.call.function', { n: i + 1 })).text}</Text>
             <TextInput
-              {...fieldLabel(`call-${i}-function`, `Call ${i + 1}: function (optional)`).input}
+              {...fieldLabel(`call-${i}-function`, t('sessions.call.function', { n: i + 1 })).input}
               value={d.selector}
               onChangeText={(t) => setDrafts((prev) => prev.map((x, j) => (j === i ? { ...x, selector: t } : x)))}
               placeholder="0xa9059cbb or transfer(address,uint256)"
@@ -2622,12 +2633,12 @@ export function SessionsScreen({ navigation }: Props) {
               autoCorrect={false}
               style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
             />
-            <Text {...fieldLabel(`call-${i}-cap`, `Call ${i + 1}: most ${symbol} per call`).label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel(`call-${i}-cap`, `Call ${i + 1}: most ${symbol} per call`).text}</Text>
+            <Text {...fieldLabel(`call-${i}-cap`, t('sessions.call.cap', { n: i + 1, symbol })).label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel(`call-${i}-cap`, t('sessions.call.cap', { n: i + 1, symbol })).text}</Text>
             <TextInput
-              {...fieldLabel(`call-${i}-cap`, `Call ${i + 1}: most ${symbol} per call`).input}
+              {...fieldLabel(`call-${i}-cap`, t('sessions.call.cap', { n: i + 1, symbol })).input}
               value={d.valueCapEth}
               onChangeText={(t) => setDrafts((prev) => prev.map((x, j) => (j === i ? { ...x, valueCapEth: t } : x)))}
-              placeholder="Empty means 0"
+              placeholder={tx('Empty means 0')}
               placeholderTextColor={theme.textMuted}
               keyboardType="decimal-pad"
               style={[styles.input, { color: theme.text, borderColor: theme.controlBorder }]}
@@ -2642,7 +2653,7 @@ export function SessionsScreen({ navigation }: Props) {
           </View>
         ))}
         <Button title="Add another allowed call" variant="secondary" onPress={() => setDrafts((p) => [...p, { ...EMPTY_DRAFT }])} />
-        <Text style={[styles.label, { color: theme.textMuted }]}>Expires after (required)</Text>
+        <Text style={[styles.label, { color: theme.textMuted }]}><T>Expires after (required)</T></Text>
         <View style={styles.rowButtons}>
           {SESSION_EXPIRY_PRESETS.map((p) => (
             <Button
@@ -2653,7 +2664,7 @@ export function SessionsScreen({ navigation }: Props) {
             />
           ))}
         </View>
-        <Text {...fieldLabel('gas-budget', 'Gas budget (optional)').label} style={[styles.label, { color: theme.textMuted }]}>Gas budget (optional)</Text>
+        <Text {...fieldLabel('gas-budget', 'Gas budget (optional)').label} style={[styles.label, { color: theme.textMuted }]}><T>Gas budget (optional)</T></Text>
         <TextInput
           {...fieldLabel('gas-budget', 'Gas budget (optional)').input}
           value={gasBudgetEth}
@@ -2667,7 +2678,7 @@ export function SessionsScreen({ navigation }: Props) {
         {phase === 'quoting' ? (
           <View style={styles.center}>
             <ActivityIndicator color={theme.accent} />
-            <Text style={[styles.hint, { color: theme.textMuted }]}>Reading the account and asking the bundler…</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}><T>Reading the account and asking the bundler…</T></Text>
           </View>
         ) : (
           <>
@@ -2732,13 +2743,13 @@ export function SessionsScreen({ navigation }: Props) {
       {readiness ? <TestNetworksOnlyCard feature={readiness.feature} hint={readiness.hint} /> : null}
       {header}
       <WarningBox>{SESSIONS_WIPE_WARNING}</WarningBox>
-      {!owner ? <Text style={[styles.error, { color: theme.danger }]}>No Ethereum address for this account.</Text> : null}
+      {!owner ? <Text style={[styles.error, { color: theme.danger }]}><T>No Ethereum address for this account.</T></Text> : null}
       {setupError ? <Text style={[styles.error, { color: theme.danger }]}>{setupError}</Text> : null}
       {resolution === null && !setupError && owner ? <ActivityIndicator color={theme.accent} /> : null}
       {resolution && !resolution.ok ? <WarningBox>{resolution.reason}</WarningBox> : null}
       {resolution?.ok ? (
         <>
-          {!evmChain.testnet ? <Text style={[styles.hint, { color: theme.textMuted }]}>{SESSIONS_AUDIT_NOTE}</Text> : null}
+          {!evmChain.testnet ? <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(SESSIONS_AUDIT_NOTE)}</Text> : null}
           <Button
             title="Grant a new session"
             onPress={() => {
@@ -2762,12 +2773,12 @@ export function SessionsScreen({ navigation }: Props) {
           <Button
             title="New recurring swap"
             variant="secondary"
-            accessibilityHint={`Swap a fixed amount of ${symbol} for USDC once per period, each swap after you confirm it.`}
+            accessibilityHint={t('sessions.dca.hint', { symbol })}
             onPress={() => onSubOpen('dca')}
             disabled={listFlags.unreadable || readiness !== null || dcaReadiness !== null || dcaNetworkNote !== null}
           />
           {dcaReadiness ? (
-            <Text style={[styles.hint, { color: theme.textMuted }]}>{readinessRefusal('dca')}</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(readinessRefusal('dca'))}</Text>
           ) : dcaNetworkNote ? (
             <Text style={[styles.hint, { color: theme.textMuted }]}>{dcaNetworkNote}</Text>
           ) : null}
@@ -2782,14 +2793,14 @@ export function SessionsScreen({ navigation }: Props) {
             </>
           ) : listFlags.corrupt ? (
             <Text style={[styles.hint, { color: theme.textMuted }]}>
-              Some saved sessions could not be read and are not shown.
+              <T>Some saved sessions could not be read and are not shown.</T>
             </Text>
           ) : null}
-          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Recurring payments</Text>
+          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Recurring payments</T></Text>
           {recurringList.length === 0 ? (
-            <Text style={[styles.hint, { color: theme.textMuted }]}>None on this device.</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}><T>None on this device.</T></Text>
           ) : (
-            <Text style={[styles.hint, { color: theme.textMuted }]}>{RECURRING_CARD_NOTE}</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(RECURRING_CARD_NOTE)}</Text>
           )}
           {recurringList.map(({ record: r, key, due }) => {
             const status = statuses[key];
@@ -2892,9 +2903,9 @@ export function SessionsScreen({ navigation }: Props) {
               )}
             />
           ))}
-          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Subscriptions</Text>
+          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Subscriptions</T></Text>
           {records.filter((r) => r.source === 'subscription').length === 0 ? (
-            <Text style={[styles.hint, { color: theme.textMuted }]}>None on this device.</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}><T>None on this device.</T></Text>
           ) : null}
           {sortSubscriptionRecords(records.filter((r) => r.source === 'subscription' && r.subscription)).map(
             (r) => {
@@ -2917,7 +2928,7 @@ export function SessionsScreen({ navigation }: Props) {
                   <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>{title}</Text>
                   <Text style={[styles.hint, { color: theme.text }]}>{subscriptionSummary(r, nameFor(terms.merchant))}</Text>
                   <Text style={[styles.status, { color: settled && status.kind === 'active' ? theme.success : theme.text }]}>
-                    {settled ? sessionStatusText(status) : 'Reading status…'}
+                    {settled ? localize(sessionStatusText(status)) : tx('Reading status…')}
                   </Text>
                   {subStatus === undefined || subStatus === 'loading'
                     ? null
@@ -2968,9 +2979,9 @@ export function SessionsScreen({ navigation }: Props) {
               );
             },
           )}
-          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Sessions on this account</Text>
+          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Sessions on this account</T></Text>
           {records.filter((r) => !sessionIsScheduled(r.source)).length === 0 ? (
-            <Text style={[styles.hint, { color: theme.textMuted }]}>None on this device.</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}><T>None on this device.</T></Text>
           ) : null}
           {records.filter((r) => !sessionIsScheduled(r.source)).map((r) => {
             const key = sessionRecordKey(r.chain, r.account, r.permissionId);
@@ -2982,11 +2993,13 @@ export function SessionsScreen({ navigation }: Props) {
               <View key={key} style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
                 <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>
                   {r.label}
-                  {r.source === 'erc7715' ? ' · requested over WalletConnect (ERC-7715)' : ''}
+                  {r.source === 'erc7715' ? ` · ${tx('requested over WalletConnect (ERC-7715)')}` : ''}
                 </Text>
                 <Text style={[styles.hint, { color: theme.textMuted }]}>
-                  Created {new Date(r.createdAt).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC')} ·
-                  key {r.keyHeld ? 'on this device' : r.source === 'erc7715' ? 'held by the dApp' : 'deleted'}
+                  {t('sessions.card.created', {
+                    date: new Date(r.createdAt).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC'),
+                    key: r.keyHeld ? tx('on this device') : r.source === 'erc7715' ? tx('held by the dApp') : tx('deleted'),
+                  })}
                 </Text>
                 <Text
                   style={[
@@ -2994,7 +3007,7 @@ export function SessionsScreen({ navigation }: Props) {
                     { color: active ? theme.success : status === 'loading' || status === undefined ? theme.textMuted : theme.text },
                   ]}
                 >
-                  {status === undefined || status === 'loading' ? 'Reading status…' : sessionStatusText(status)}
+                  {status === undefined || status === 'loading' ? tx('Reading status…') : localize(sessionStatusText(status))}
                 </Text>
                 <Text style={[styles.hint, { color: theme.textMuted }]}>{sessionLocalStatusText(r)}</Text>
                 {pendingSessionOperation(r) ? <ActivityIndicator color={theme.accent} /> : null}
@@ -3016,7 +3029,7 @@ export function SessionsScreen({ navigation }: Props) {
                   ? grant.calls.map((c, i) => (
                       <Button
                         key={`t${i}`}
-                        title={`Test this session (allowed call ${i + 1})`}
+                        title={t('sessions.test.button', { n: i + 1 })}
                         variant="secondary"
                         onPress={() => void onTest(r, i)}
                         disabled={readiness !== null}
@@ -3074,13 +3087,13 @@ function NetworkBadge({ label, testnet, theme }: { label: string; testnet: boole
   if (testnet) {
     return (
       <View style={[styles.badge, { backgroundColor: theme.testnetFill, borderColor: theme.testnetFill }]}>
-        <Text style={[styles.badgeText, { color: theme.onTestnetFill }]}>{label} TESTNET — test funds only</Text>
+        <Text style={[styles.badgeText, { color: theme.onTestnetFill }]}>{t('send.badge.testnet', { label })}</Text>
       </View>
     );
   }
   return (
     <View style={[styles.badge, { backgroundColor: theme.dangerSurface, borderColor: theme.danger }]}>
-      <Text style={[styles.badgeText, { color: theme.danger }]}>{label} Mainnet — real funds</Text>
+      <Text style={[styles.badgeText, { color: theme.danger }]}>{t('send.badge.mainnet', { label })}</Text>
     </View>
   );
 }
@@ -3098,15 +3111,18 @@ function Row({
   mono?: boolean;
   theme: Theme;
 }) {
+  // A label, value or note that is an English table entry is shown in the
+  // chosen language (phase 23 item 8); addresses and amounts pass unchanged.
+  const { localize: localized } = useI18n();
   return (
     <View style={[styles.row, { borderColor: theme.border }]}>
-      <Text style={[styles.rowLabel, { color: theme.textMuted }]}>{label}</Text>
+      <Text style={[styles.rowLabel, { color: theme.textMuted }]}>{localized(label)}</Text>
       <Text selectable style={[styles.rowValue, { color: theme.text }, monoFont ? { fontFamily: mono, fontSize: 13 } : null]}>
-        {value}
+        {localized(value)}
       </Text>
       {sub ? (
         <Text selectable style={[styles.rowSub, { color: theme.textMuted }]}>
-          {sub}
+          {localized(sub)}
         </Text>
       ) : null}
     </View>

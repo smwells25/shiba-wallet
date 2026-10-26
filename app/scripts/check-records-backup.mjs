@@ -764,11 +764,12 @@ console.log('Source pins: the screen wiring');
     /shareTextFile\(\{\s*directory: RECORDS_BACKUP_DIRECTORY,[\s\S]*?mimeType: RECORDS_BACKUP_MIME_TYPE,\s*UTI: RECORDS_BACKUP_UTI,/.test(section));
   check('the section renders every honesty note and both buttons',
     ['RECORDS_BACKUP_WHAT_NOTE', 'RECORDS_BACKUP_KEY_NOTE', 'RECORDS_BACKUP_NOT_INCLUDED_NOTE', 'RECORDS_BACKUP_MERGE_NOTE', 'RECORDS_BACKUP_FILE_NOTE',
-      'RECORDS_BACKUP_EXPORT_BUTTON', 'RECORDS_BACKUP_IMPORT_BUTTON'].every((n) => section.includes(`{${n}}`) || section.includes(`: ${n}`)));
+      // Phase 23 item 8: the notes are shown through the string table (localize).
+      'RECORDS_BACKUP_EXPORT_BUTTON', 'RECORDS_BACKUP_IMPORT_BUTTON'].every((n) => section.includes(`{localize(${n})}`) || section.includes(`: ${n}`)));
   check('the section refuses a non-phrase active account before doing anything',
     /if \(!phraseAccountActive\) \{\s*setStatus\(\{ lines: \[RECORDS_BACKUP_PHRASE_ACCOUNT_ONLY\]/.test(section) && section.split('if (!phraseAccountActive)').length === 3);
   check('the section checks the file\'s shape before the confirm dialog and before any prompt',
-    section.indexOf('parseRecordsBackupFile(text)') > 0 && section.indexOf('parseRecordsBackupFile(text)') < section.indexOf('Alert.alert(RECORDS_BACKUP_CONFIRM_TITLE'));
+    section.indexOf('parseRecordsBackupFile(text)') > 0 && section.indexOf('parseRecordsBackupFile(text)') < section.indexOf('Alert.alert(localize(RECORDS_BACKUP_CONFIRM_TITLE)'));
   check('the section reads a picked file with the pickRecordFile rules (no cache copy on Android) and wraps read failures',
     section.includes("const copyToCacheDirectory = Platform.OS !== 'android';") && section.includes('throw new RecordFileReadError(e);'));
   check('WalletContext derives the key through the vault function, the device check and the ACTIVE account id',

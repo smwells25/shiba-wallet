@@ -44,6 +44,7 @@ import {
   type StoreProfile,
 } from './store-keys.ts';
 import { deletePinRecord, type LockKind } from './pin.ts';
+import { t } from '../i18n/index.ts';
 
 /** The decoy wallet's storage profile. A neutral prefix: key names are visible on Android. */
 export const DECOY_STORE_PROFILE: StoreProfile = Object.freeze({ id: 'second', keyPrefix: 'w2' });
@@ -309,7 +310,8 @@ export function backupWordsMatch(phrase: string, positions: readonly number[], t
 
 /** "word 3 and word 9" style label (one-based) for the backup check. */
 export function backupCheckLabel(positions: readonly number[]): string {
-  return positions.map((p) => `word ${p + 1}`).join(' and ');
+  // Through the string table (phase 23 item 8); English unchanged.
+  return positions.map((p) => t('settings.appLock.wordN', { n: p + 1 })).join(` ${t('common.and')} `);
 }
 
 // ---------------------------------------------------------------------------
