@@ -66,6 +66,7 @@ import { formatUnits } from './balances.ts';
 import { assertFeatureAllowed, eip155Caip2, isFeatureAllowed, readinessRefusal } from '../config/readiness.ts';
 import { EVM_PROFILES, evmProfileByCaip2 } from '../config/evm-chain.ts';
 import { suggestFeesRetryingOnce } from './fee-read.ts';
+import { t } from '../i18n/index.ts';
 
 /**
  * Paying a smart-account send's network fee in USDC (phase 13 item 2, app
@@ -235,7 +236,9 @@ function joinLabels(labels: string[]): string {
 export function tokenSendFeeSentence(chainCaip2: string, account: { keyless?: boolean } = {}): string {
   const profile = evmProfileByCaip2(chainCaip2);
   const native = profile?.displaySymbol ?? 'ETH';
-  const base = `The network fee for a token send is normally paid in ${native}, not in the token.`;
+  // Through the string table (phase 23 item 8, third pass: Home's footer); in
+  // English exactly the two sentences this function built before.
+  const base = t('home.footer.tokenFee', { native });
   // A watch-only or multi-signature account has no smart-account send of
   // its own on the Send screen (a multisig's operations are self-paid in
   // ETH and built on the Multisig screen), so the USDC clause would not be
@@ -243,11 +246,9 @@ export function tokenSendFeeSentence(chainCaip2: string, account: { keyless?: bo
   if (account.keyless) return base;
   // Either source: the Send screen offers the ERC-7677 source as well.
   if (!tokenGasSourceFor(chainCaip2, { acceptsErc7677: true })) return base;
-  return (
-    `${base} On ${profile?.label ?? chainCaip2}, a smart-account send can pay it in ${TOKEN_GAS_SYMBOL} ` +
-    'instead when the Send screen offers that choice.'
-  );
+  return t('home.footer.tokenFeeUsdc', { base, network: profile?.label ?? chainCaip2, token: TOKEN_GAS_SYMBOL });
 }
+
 
 /** Settings → Tokens: the same rule for every network the app knows. */
 export function settingsTokensFeeSentence(): string {

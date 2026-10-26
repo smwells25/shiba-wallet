@@ -22,6 +22,7 @@ import {
 } from '@shiba-wallet/chains-evm';
 import { assertFeatureAllowed, eip155Caip2 } from '../config/readiness.ts';
 import { evmProfileByCaip2 } from '../config/evm-chain.ts';
+import { t } from '../i18n/index.ts';
 import {
   L1_DATA_FEE_HEADROOM_PERCENT,
   OP_STACK_GAS_PRICE_ORACLE,
@@ -396,9 +397,12 @@ export function delegationStatusText(status: AccountDelegation): string {
  */
 export function delegationLabelSuffix(status: AccountDelegation | null | undefined): string {
   if (!status) return '';
-  if (status.kind === 'kernel-v3.3') return ' · upgraded (Kernel v3.3)';
-  if (status.kind === 'other') return ` · delegated to ${shortDelegate(status.delegate)} (not the wallet's Kernel)`;
-  if (status.kind === 'contract') return ' · holds contract code';
+  // Through the string table (phase 23 item 8, third pass: Home's account
+  // line); in English exactly the suffixes this function returned before.
+  if (status.kind === 'kernel-v3.3') return t('home.delegation.suffix.kernel');
+  if (status.kind === 'other') return t('home.delegation.suffix.other', { delegate: shortDelegate(status.delegate) });
+  if (status.kind === 'contract') return t('home.delegation.suffix.contract');
+
   return '';
 }
 

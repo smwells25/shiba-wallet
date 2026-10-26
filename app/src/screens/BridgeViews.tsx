@@ -4,6 +4,9 @@ import type { BridgeTrustStatement } from '@shiba-wallet/chains-evm';
 import type { Theme } from '../theme';
 import { WarningBox } from '../components';
 import { withShortAddresses } from '../a11y';
+import { localize, t, tx } from '../i18n/index';
+import { T } from '../i18n/T';
+import { useI18n } from '../i18n/useI18n';
 import {
   BRIDGE_FEE_BEFORE_QUOTE,
   bridgeLiveStatusText,
@@ -33,19 +36,22 @@ export interface ProviderRowQuote {
 
 /** The three parts of a trust statement, labelled, verbatim. */
 export function TrustStatementCard({ trust, theme, title }: { trust: BridgeTrustStatement; theme: Theme; title: string }) {
+  // The labels through the string table (phase 23 item 8, third pass); the
+  // trust statement itself is the engine's, verbatim.
+  useI18n();
   return (
     <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
       <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>{title}</Text>
       <Text style={[styles.body, { color: theme.text }]}>
-        <Text style={styles.strong}>Who verifies: </Text>
+        <Text style={styles.strong}>{tx('Who verifies:')} </Text>
         {trust.verification}
       </Text>
       <Text style={[styles.body, { color: theme.text }]}>
-        <Text style={styles.strong}>Who controls: </Text>
+        <Text style={styles.strong}>{tx('Who controls:')} </Text>
         {trust.control}
       </Text>
       <Text style={[styles.body, { color: theme.text }]}>
-        <Text style={styles.strong}>If it does not arrive: </Text>
+        <Text style={styles.strong}>{tx('If it does not arrive:')} </Text>
         {trust.refundRule}
       </Text>
     </View>
@@ -134,6 +140,7 @@ export function ProviderRadioRow({
   onSelect: () => void;
   theme: Theme;
 }) {
+  useI18n();
   return (
     <View
       style={[
@@ -159,7 +166,7 @@ export function ProviderRadioRow({
         </View>
         <Text style={[styles.providerLabel, { color: theme.text }]}>
           {row.label}
-          {row.asset ? ` · moves ${row.asset}` : ''}
+          {row.asset ? t('bridge.row.moves', { asset: row.asset }) : ''}
         </Text>
       </Pressable>
       <View
@@ -169,27 +176,27 @@ export function ProviderRadioRow({
         onResponderRelease={row.selectable ? onSelect : undefined}
         style={styles.radioBody}
       >
-        {row.note ? <Text accessible style={[styles.body, { color: theme.textMuted }]}>{row.note}</Text> : null}
+        {row.note ? <Text accessible style={[styles.body, { color: theme.textMuted }]}>{localize(row.note)}</Text> : null}
         <Text accessible style={[styles.body, { color: theme.text }]}>
-          <Text style={styles.strong}>Who verifies: </Text>
+          <Text style={styles.strong}>{tx('Who verifies:')} </Text>
           {row.trust.verification}
         </Text>
         <Text accessible style={[styles.body, { color: theme.text }]}>
-          <Text style={styles.strong}>Who controls: </Text>
+          <Text style={styles.strong}>{tx('Who controls:')} </Text>
           {row.trust.control}
         </Text>
         <Text accessible style={[styles.body, { color: theme.text }]}>
-          <Text style={styles.strong}>If it does not arrive: </Text>
+          <Text style={styles.strong}>{tx('If it does not arrive:')} </Text>
           {row.trust.refundRule}
         </Text>
         {row.selectable ? (
           quote ? (
             <Text accessible style={[styles.body, { color: theme.text }]}>
-              <Text style={styles.strong}>Fee (quoted just now): </Text>
+              <Text style={styles.strong}>{tx('Fee (quoted just now):')} </Text>
               {quote.fee}. {quote.arrives}
             </Text>
           ) : (
-            <Text accessible style={[styles.body, { color: theme.textMuted }]}>{BRIDGE_FEE_BEFORE_QUOTE}</Text>
+            <Text accessible style={[styles.body, { color: theme.textMuted }]}>{localize(BRIDGE_FEE_BEFORE_QUOTE)}</Text>
           )
         ) : null}
         {row.measured ? <Text accessible style={[styles.body, { color: theme.text }]}>{row.measured}</Text> : null}
@@ -217,11 +224,14 @@ export function TransferStatusCard({
   // The "(checking…)" mark that every 15-second poll sets and clears is a
   // separate, non-live Text: with it inside the live region, TalkBack
   // announced the unchanged status on every idle poll (pass p23-cctp).
+  useI18n();
   const liveStatus = bridgeLiveStatusText(record);
   const asset = routeAsset(record.route);
+  const sentTime = new Date(record.sentAt).toISOString().slice(11, 19);
   const through =
-    `Through ${record.providerLabel}, to ${record.recipient}, sent ${new Date(record.sentAt).toISOString().slice(11, 19)} UTC` +
-    `${record.senderKind === 'smart-account' ? ' from your smart account' : ''}.`;
+    record.senderKind === 'smart-account'
+      ? t('bridge.record.throughSmart', { provider: record.providerLabel, recipient: record.recipient, time: sentTime })
+      : t('bridge.record.through', { provider: record.providerLabel, recipient: record.recipient, time: sentTime });
   const assetName = asset === 'usdc' ? 'USDC' : symbol;
   const failed = record.status?.state === 'failed';
   return (
@@ -236,19 +246,19 @@ export function TransferStatusCard({
         <Text accessibilityLiveRegion="polite" style={[styles.status, { color: failed ? theme.danger : theme.text }]}>
           {liveStatus}
         </Text>
-        {checking ? <Text style={[styles.body, { color: theme.textMuted }]}>(checking…)</Text> : null}
+        {checking ? <Text style={[styles.body, { color: theme.textMuted }]}><T>(checking…)</T></Text> : null}
       </View>
       <Text style={[styles.body, { color: theme.text }]}>{bridgeStatusSentence(record)}</Text>
       {record.status && record.checkError ? (
-        <Text style={[styles.body, { color: theme.textMuted }]}>The last check failed: {record.checkError}</Text>
+        <Text style={[styles.body, { color: theme.textMuted }]}>{t('bridge.record.lastCheckFailed', { error: localize(record.checkError) })}</Text>
       ) : null}
-      <Text style={[styles.label, { color: theme.textMuted }]}>Sending transaction</Text>
+      <Text style={[styles.label, { color: theme.textMuted }]}><T>Sending transaction</T></Text>
       <Text selectable style={[styles.monoText, { color: theme.text }]}>
-        {record.sourceTxHash ?? (record.userOpHash ? `not known yet (UserOperation ${record.userOpHash})` : 'not known yet')}
+        {record.sourceTxHash ?? (record.userOpHash ? t('bridge.record.notKnownUserOp', { hash: record.userOpHash }) : tx('not known yet'))}
       </Text>
       {record.status?.destinationTxHash ? (
         <>
-          <Text style={[styles.label, { color: theme.textMuted }]}>Receiving transaction</Text>
+          <Text style={[styles.label, { color: theme.textMuted }]}><T>Receiving transaction</T></Text>
           <Text selectable style={[styles.monoText, { color: theme.text }]}>
             {record.status.destinationTxHash}
           </Text>
@@ -257,7 +267,8 @@ export function TransferStatusCard({
       {record.retryTxHash ? (
         <>
           <Text style={[styles.label, { color: theme.textMuted }]}>
-            {asset === 'usdc' ? 'Mint transaction sent from this wallet' : 'Delivery transaction sent from this wallet'}
+            {asset === 'usdc' ? tx('Mint transaction sent from this wallet') : tx('Delivery transaction sent from this wallet')}
+
           </Text>
           <Text selectable style={[styles.monoText, { color: theme.text }]}>
             {record.retryTxHash}

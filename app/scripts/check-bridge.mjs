@@ -180,6 +180,10 @@ import { EVM_SEPOLIA, evmProfileByCaip2, setCustomEvmProfiles } from '../src/con
 import { MULTISIG_ALLOWED_ROUTES, WATCH_ONLY_ALLOWED_ROUTES, multisigRouteRefusal, watchOnlyRouteRefusal } from '../src/wallet/watch-only.ts';
 import { KERNEL_ACCOUNT_0, OWNER_0, TEST_MNEMONIC, decodeKernelExecute, fakeBundler, fakeKernelNode } from './fakes-kernel.mjs';
 import { spokenShortAddress, withShortAddresses } from '../src/a11y.ts';
+// Phase 23 item 8 (the third localisation pass): the screen's English now
+// stands in the string table; the pins read it there (scripts/check-i18n.mjs
+// proves each entry is the English the screen showed before).
+import { en as EN_TABLE } from '../src/i18n/en.ts';
 
 let passed = 0;
 let failed = 0;
@@ -1291,7 +1295,9 @@ console.log('check-bridge: the screen, the route gates, Home and the navigator (
     /<View accessibilityRole="radiogroup"[^>]*>\s*\{rows\.map\(\(row\) =>/.test(screen) && !/rows\.filter\(\(r\) => r\.selectable\)\.map\(\(row\) =>\s*\{\s*const q/.test(screen) &&
       views.includes('accessibilityRole="radio"') && views.includes('accessibilityState={{ checked: selected, disabled: !row.selectable }}'));
   check('each provider row shows its label, the trust statement’s three parts, the fee once quoted and the measured time',
-    ['Who verifies: ', 'Who controls: ', 'If it does not arrive: ', 'Fee (quoted just now): ', '{row.measured}', '{row.timeSource}', '{row.note}'].every((s) => views.includes(s)));
+    ["{tx('Who verifies:')} </Text>", "{tx('Who controls:')} </Text>", "{tx('If it does not arrive:')} </Text>", "{tx('Fee (quoted just now):')} </Text>", '{row.measured}', '{row.timeSource}', '{localize(row.note)}'].every((s) => views.includes(s)) &&
+      EN_TABLE['bridge.trust.verifies'] === 'Who verifies:' && EN_TABLE['bridge.trust.controls'] === 'Who controls:' &&
+      EN_TABLE['bridge.trust.refund'] === 'If it does not arrive:' && EN_TABLE['bridge.row.feeQuoted'] === 'Fee (quoted just now):');
   check('both send paths ask the device with the prompt title, after the spending limits',
     (screen.match(/const auth = await requireLocalAuth\(bridgePromptTitle\(plan\)\);/g) ?? []).length === 2 &&
       screen.indexOf('spendingGateForQuote({ chain: caip2, owner: account.address, from: preparedFrom.current') < screen.indexOf('requireLocalAuth(bridgePromptTitle(plan))'));
@@ -1318,7 +1324,8 @@ console.log('check-bridge: the screen, the route gates, Home and the navigator (
   check('the Mint panel: shown for an attested CCTP transfer with no mint sent yet, its own prompt, prepareBridgeMint, and the blocker from bridgeMintBlocker',
     screen.includes('{bridgeMintCall(r) && !r.retryTxHash ? (') && screen.includes('requireLocalAuth(bridgeMintPromptTitle(record))') &&
       screen.includes('prepareBridgeMint(ep.url, fromAddress, record)') && screen.includes('const blocker = bridgeMintBlocker(activeCaip2, record, balance, symbol);') &&
-      screen.includes('title={`Mint on ${record.destinationLabel}`}') && screen.includes('updateBridgeTransfer(record.id, { retryTxHash: sent.txid });'));
+      screen.includes("title={t('bridge.mint.button', { destination: record.destinationLabel })}") && EN_TABLE['bridge.mint.button'] === 'Mint on {destination}' &&
+      screen.includes('updateBridgeTransfer(record.id, { retryTxHash: sent.txid });'));
   check('tracking stores the status with trackedPatch (a CCTP transfer’s attested message kept for a restart)', screen.includes('updateBridgeTransfer(record.id, trackedPatch(record, status, Date.now()));'));
   check('the smart-account sentence is shown on the form before Review (Kernel), the EIP-7702 one for an upgraded account',
     screen.includes("aaActive && aaType === 'kernel-v3.3' ? (\n              <WarningBox>{smartAccountRecipientNote(account.address, destinationLabel)}</WarningBox>") &&
@@ -1377,7 +1384,7 @@ console.log('check-bridge: the emulator pass p21b findings (provider choice, spo
       bridgeProviderChoiceHint(bridgeProviderRows(bridgeOfferFor(caip(BASE), 'usdc'), ARB), null) === BRIDGE_SINGLE_PROVIDER_NOTE);
   check('…the screen: chosenProvider comes from chosenBridgeProvider (no fallback to the first row), the hint is drawn, Get quotes and Review are disabled while nothing is chosen, each row is checked only when chosen',
     screen.includes('const chosenProvider = chosenBridgeProvider(rows, providerId);') && !/rows\.find\(\(r\) => r\.selectable\)\?\.id/.test(screen) &&
-      screen.includes('{providerChoiceHint ? <Text style={[styles.hint, { color: theme.text }]}>{providerChoiceHint}</Text> : null}') &&
+      screen.includes('{providerChoiceHint ? <Text style={[styles.hint, { color: theme.text }]}>{localize(providerChoiceHint)}</Text> : null}') &&
       (screen.match(/disabled=\{quoting \|\| chosenProvider === null\}/g) ?? []).length === 2 && screen.includes('selected={chosenProvider === row.id}'));
   const m2b = await bridgeMutant(
     'return picked !== null && rows.some((r) => r.id === picked && r.selectable) ? picked : null;',
@@ -1394,8 +1401,8 @@ console.log('check-bridge: the emulator pass p21b findings (provider choice, spo
       providerRowSpokenLabel({ label: 'Y', asset: null, selectable: true }, { fee: '1 test ETH.' }) === 'Y, fee 1 test ETH',
     `${providerRowSpokenLabel(lz, null)} | ${providerRowSpokenLabel(cctp, null)}`);
   const m3b = await bridgeMutant(
-    "const tail = !row.selectable ? ', not available' : quote ? `, fee ${quote.fee}` : '';\n  return `${head}${tail}`.replace(/[.\\s]+$/, '');",
-    "const tail = !row.selectable ? `, not available: ${row.note}` : quote ? `, fee ${quote.fee}` : '';\n  return `${head}${tail}`;",
+    "const tail = !row.selectable ? t('bridge.row.spokenNotAvailable') : quote ? t('bridge.row.spokenFee', { fee: quote.fee }) : '';\n  return `${head}${tail}`.replace(/[.\\s]+$/, '');",
+    "const tail = !row.selectable ? `, not available: ${row.note}` : quote ? t('bridge.row.spokenFee', { fee: quote.fee }) : '';\n  return `${head}${tail}`;",
   );
   check('MUTANT (the old spoken label with the reason and its final period) is caught', /\.$/.test(m3b.providerRowSpokenLabel(cctp, null)));
   // The body's opening tag, whatever its props, and its contents up to the
@@ -1426,7 +1433,8 @@ console.log('check-bridge: the emulator pass p21b findings (provider choice, spo
     // labelled-by), and every top-level sentence an `accessible` Text.
     if (!bodyOpenerOk(body[1])) return false;
     const topTexts = body[2].match(/<Text\b[^>]*style=\{\[styles\.body[^>]*>/g) ?? [];
-    return ['{row.note}', 'Who verifies: ', 'Who controls: ', 'If it does not arrive: ', 'Fee (quoted just now): ', '{BRIDGE_FEE_BEFORE_QUOTE}', '{row.measured}', '{row.timeSource}'].every((t) => body[2].includes(t)) &&
+    // Phase 23 item 8 (third pass): the labels and the note through the string table.
+    return ['{localize(row.note)}', "{tx('Who verifies:')} </Text>", "{tx('Who controls:')} </Text>", "{tx('If it does not arrive:')} </Text>", "{tx('Fee (quoted just now):')} </Text>", '{localize(BRIDGE_FEE_BEFORE_QUOTE)}', '{row.measured}', '{row.timeSource}'].every((t) => body[2].includes(t)) &&
       topTexts.length === 8 && topTexts.every((t) => /^<Text accessible style=/.test(t));
   };
   check('…the row: the radio control holds only the head; the note, the three trust lines, the fee and the measured time sit in a body that is neither accessible nor focusable, so each Text is its own stop (source)',
@@ -1457,7 +1465,7 @@ console.log('check-bridge: the emulator pass p21b findings (provider choice, spo
     !rowStructureOk(views.replace('onStartShouldSetResponder={row.selectable ? claimBodyTouch : undefined}', 'onStartShouldSetResponder={claimBodyTouch}')) &&
       !rowStructureOk(views.replace('onResponderRelease={row.selectable ? onSelect : undefined}', 'onResponderRelease={onSelect}')));
   check('MUTANT (p21e finding B2b: one sentence not its own accessible Text) is caught',
-    !rowStructureOk(views.replace('<Text accessible style={[styles.body, { color: theme.text }]}>\n          <Text style={styles.strong}>Who controls: </Text>', '<Text style={[styles.body, { color: theme.text }]}>\n          <Text style={styles.strong}>Who controls: </Text>')));
+    !rowStructureOk(views.replace("<Text accessible style={[styles.body, { color: theme.text }]}>\n          <Text style={styles.strong}>{tx('Who controls:')} </Text>", "<Text style={[styles.body, { color: theme.text }]}>\n          <Text style={styles.strong}>{tx('Who controls:')} </Text>")));
   // The sentences each Text speaks, exactly, and none with a doubled period
   // (the CCTP row read "…at any time.. disabled").
   const cctpRow = bridgeProviderRows(bridgeOfferFor(caip(BASE), 'usdc'), ARB)[0];
@@ -1531,12 +1539,12 @@ console.log('check-bridge: the emulator pass p21b findings (provider choice, spo
       bridgeChoiceNote(bridgeOfferFor(caip(BASE)), 0) === null);
   const choiceNoteWired = (src) =>
     src.includes('const choiceNote = offer !== null ? bridgeChoiceNote(offer, rows.length) : null;') &&
-    /\{choiceNote \? \(\s*<>\s*<Text accessibilityRole="header" style=\{\[styles\.label, \{ color: theme\.textMuted \}\]\}>Choose a provider<\/Text>\s*<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}>\{choiceNote\}<\/Text>/.test(src) &
+    /\{choiceNote \? \(\s*<>\s*<Text accessibilityRole="header" style=\{\[styles\.label, \{ color: theme\.textMuted \}\]\}><T>Choose a provider<\/T><\/Text>\s*<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}>\{choiceNote\}<\/Text>/.test(src) &
     !src.includes('{BRIDGE_CHOICE_NOTE}');
   check('…the screen shows "Choose a provider" and that note only when there is one (source)', choiceNoteWired(screen));
   check('MUTANT (the screen showing the pair sentence everywhere) is caught',
     !choiceNoteWired(screen.replace('<Text style={[styles.hint, { color: theme.textMuted }]}>{choiceNote}</Text>', '<Text style={[styles.hint, { color: theme.textMuted }]}>{BRIDGE_CHOICE_NOTE}</Text>')));
-  const m7c = await bridgeMutant('  if (bridgeFormInputsShown(offer)) return BRIDGE_CHOICE_NOTE;', '  return BRIDGE_CHOICE_NOTE;');
+  const m7c = await bridgeMutant("  if (bridgeFormInputsShown(offer)) return t('bridge.choiceNote');", "  return t('bridge.choiceNote');");
   check('MUTANT (the pair sentence where no pair can be chosen) is caught', m7c.bridgeChoiceNote(noSendOffer, 1) !== SEP_NO_PAIR);
 
   // (8) The sent time is the broadcast's, whatever waits afterwards.
@@ -1574,8 +1582,9 @@ console.log('check-bridge: the emulator pass p21b findings (provider choice, spo
 
   // (9) The placeholder cannot be mistaken for a value.
   check('finding 9: the amount placeholder is a worded example (exact), the step hint unchanged',
-    BRIDGE_AMOUNT_PLACEHOLDER === 'Amount, for example 0.0002' && screen.includes('placeholder={bridgeAmountPlaceholder(asset)}') && !screen.includes('placeholder="0.0002"') &&
-      screen.includes('Stargate moves {symbol} in steps of 0.000001; an amount with more decimal places is refused, not rounded.'));
+    BRIDGE_AMOUNT_PLACEHOLDER === 'Amount, for example 0.0002' && screen.includes('placeholder={localize(bridgeAmountPlaceholder(asset))}') && !screen.includes('placeholder="0.0002"') &&
+      screen.includes("{t('bridge.amount.nativeHint', { symbol })}") &&
+      EN_TABLE['bridge.amount.nativeHint'] === 'Stargate moves {symbol} in steps of 0.000001; an amount with more decimal places is refused, not rounded.');
 }
 
 // ---------------------------------------------------------------------------
@@ -2227,7 +2236,7 @@ console.log('check-bridge: mutation checks');
   const forged = mintStatus(cctpIface.encodeFunctionData('receiveMessage', [ATTESTED_MSG, '0x' + '00'.repeat(130)]));
   check('MUTANT (the mint call not matched to the attested message) is caught', m14.bridgeMintCall(forged) !== null && bridgeMintCall(forged) === null);
   // 15. The Mint offered from another network.
-  const m15 = await bridgeMutant('  if (activeCaip2 !== record.destinationCaip2) {\n    return (\n      `Anyone with', '  if (false) {\n    return (\n      `Anyone with');
+  const m15 = await bridgeMutant("  if (activeCaip2 !== record.destinationCaip2) {\n    return t('bridge.mint.otherNetwork', {", "  if (false) {\n    return t('bridge.mint.otherNetwork', {");
   const recLike = { destinationCaip2: caip(ARB), destinationLabel: 'Arbitrum Sepolia', recipient: EOA, attested: fakeAtt };
   check('MUTANT (the Mint offered while another network is active) is caught', m15.bridgeMintBlocker(caip(BASE), recLike, 1n) === null && bridgeMintBlocker(caip(BASE), recLike, 1n) !== null);
   // 16. Records written before the attested message no longer read.
@@ -2342,7 +2351,8 @@ console.log('check-bridge: the emulator pass p23-cctp findings (the Home link, t
     /<Text accessibilityLiveRegion="polite"[^>]*>\s*\{liveStatus\}\s*<\/Text>/.test(src) &&
     (src.match(/accessibilityLiveRegion=/g) ?? []).length === 1 &&
     src.includes('const liveStatus = bridgeLiveStatusText(record);') &&
-    src.includes("{checking ? <Text style={[styles.body, { color: theme.textMuted }]}>(checking…)</Text> : null}");
+    src.includes("{checking ? <Text style={[styles.body, { color: theme.textMuted }]}><T>(checking…)</T></Text> : null}") &&
+    EN_TABLE['bridge.record.checking'] === '(checking…)';
   check('finding 5: the tracking card’s live region holds the status alone; "(checking…)" is a separate, non-live Text', liveRegionOk(views));
   const mutantViews = views.replace('          {liveStatus}\n', "          {liveStatus}\n          {checking ? ' (checking…)' : ''}\n");
   check('MUTANT (the checking mark back inside the live region) is caught by the source pin', mutantViews !== views && !liveRegionOk(mutantViews));

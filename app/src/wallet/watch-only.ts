@@ -15,6 +15,7 @@
 import { EVM_CHAIN_ID, validateRecipient } from './send.ts';
 import { extractScannedAddress } from './scan.ts';
 import { watchOnlyDuplicateError } from './accounts.ts';
+import { t } from '../i18n/index.ts';
 
 export {
   WATCH_ONLY_NOTICE,
@@ -388,12 +389,9 @@ export const WATCHED_ADDRESS_TITLE = 'Watched address';
 
 /** Home's footer for a watch-only account. */
 export function watchOnlyFooterText(name: string): string {
-  return (
-    `${name} is an address you watch; this wallet holds no key for it, so it cannot sign or swap for it. ` +
-    'A send on an Ethereum network can still be prepared here and signed by an off-line signer that holds ' +
-    'its key: use "Send with an off-line signer". Balances come from the RPC endpoints in Settings; pull ' +
-    'down to refresh. Activity and NFTs read this address from the indexers in Settings.'
-  );
+  // Through the string table (phase 23 item 8, third pass); in English exactly
+  // the sentence this function built before.
+  return t('home.footer.watchOnly', { name });
 }
 
 // ---------------------------------------------------------------------------
@@ -460,10 +458,7 @@ export function switcherListOverflows(sizes: { listHeight: number; contentHeight
  * operations only on the record's network.
  */
 export function multisigOtherNetworkNote(label: string, recordNetwork: string, activeNetwork: string): string {
-  return (
-    `${label} is recorded on ${recordNetwork}, and the Multisig screen builds its operations only there. ` +
-    `The active network here is ${activeNetwork}; send to this address only on ${recordNetwork}.`
-  );
+  return t('home.multisig.otherNetwork', { label, recordNetwork, activeNetwork });
 }
 
 /**
@@ -498,9 +493,5 @@ export function nftsOwnerSentence(account: { watchOnly: boolean; multisig?: bool
 
 /** Home's footer for a multisig account. */
 export function multisigFooterText(name: string): string {
-  return (
-    `${name} is a multi-signature account: its operations are built on the Multisig screen and need its ` +
-    'co-signers’ approvals. Balances come from the RPC endpoints in Settings; pull down to refresh. Activity and ' +
-    'NFTs read this address from the indexers in Settings.'
-  );
+  return t('home.footer.multisig', { name });
 }

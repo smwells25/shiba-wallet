@@ -64,6 +64,15 @@ import {
 } from './aa.ts';
 import { assertFeatureAllowed, eip155Caip2 } from '../config/readiness.ts';
 import { evmProfileByCaip2 } from '../config/evm-chain.ts';
+// The sentences the Multisig screen shows go through the string table (phase
+// 23 item 8, the third localisation pass); in English each is exactly the
+// sentence built before (scripts/check-i18n.mjs). NOT through the table, on
+// purpose: the share texts and the exported record (texts for someone else,
+// built in English), the account names and shape labels ("Multisig 1
+// (2-of-3)", part of those texts), the call descriptions (stored in each
+// operation's summary and shared with the co-signers), the device prompt
+// titles, and the engine's own sentences.
+import { localize, t } from '../i18n/index.ts';
 
 /**
  * Multi-signature accounts in the app (feature 24, phase 17 item 1), built
@@ -272,14 +281,16 @@ export function multisigExposureLine(config: MultisigConfig, localSigner: string
   const ops = e.operationMinimumSigners;
   const msgs = e.messageMinimumSigners;
   const local = localSigner ? config.signers.find((s) => sameAddress(s.address, localSigner)) : undefined;
+  // Assembled from table entries in the same order as before, so the English
+  // is byte for byte the earlier sentence (scripts/check-i18n.mjs).
   let lead: string;
   if (equal && ops === n) {
-    lead = `Every operation needs ${n === 2 ? 'both signers' : `all ${n} signers`}`;
-    if (local) lead += ', so this phone’s signer is always one of them';
+    lead = n === 2 ? t('multisig.exposure.allBoth') : t('multisig.exposure.all', { n });
+    if (local) lead += t('multisig.exposure.alwaysLocal');
   } else {
     lead = equal
-      ? `Any ${ops} of the ${n} signers together can send an operation`
-      : `Signers whose weights add up to ${config.threshold} (at least ${ops} of them) can send an operation`;
+      ? t('multisig.exposure.anyOf', { ops, n })
+      : t('multisig.exposure.weighted', { threshold: config.threshold, ops });
     if (local) {
       const others = config.signers.filter((s) => s !== local);
       const otherWeight = others.reduce((sum, s) => sum + s.weight, 0);
@@ -287,24 +298,21 @@ export function multisigExposureLine(config: MultisigConfig, localSigner: string
       if (fewest !== null) {
         const who =
           fewest === others.length
-            ? `the ${others.length} co-signer${others.length === 1 ? '' : 's'}`
-            : `any ${fewest} of the ${others.length} co-signers`;
+            ? others.length === 1
+              ? t('multisig.exposure.whoAllOne', { count: others.length })
+              : t('multisig.exposure.whoAll', { count: others.length })
+            : t('multisig.exposure.whoAny', { fewest, count: others.length });
         lead += equal
-          ? ` — including ${who} without this phone`
+          ? t('multisig.exposure.including', { who })
           : fewest === others.length
-            ? ` — including the ${others.length} co-signers together, without this phone`
-            : ` — including co-signers without this phone (at least ${fewest} of the ${others.length})`;
+            ? t('multisig.exposure.includingAll', { count: others.length })
+            : t('multisig.exposure.includingSome', { fewest, count: others.length });
       } else {
-        lead +=
-          ` — and this phone’s signer is always one of them, because the co-signers’ combined weight ${otherWeight} ` +
-          `is below the threshold ${config.threshold}`;
+        lead += t('multisig.exposure.localAlways', { weight: otherWeight, threshold: config.threshold });
       }
     }
   }
-  return (
-    `${lead}; for messages the deployed validator needs only ${msgs}, so this account must never be used to ` +
-    'sign logins, orders or token permits — the wallet refuses that.'
-  );
+  return t('multisig.exposure.messages', { lead, msgs });
 }
 
 /** The features a multisig is refused, each with its plain reason. */
@@ -337,43 +345,22 @@ export type MultisigRefusedFeature =
 export function multisigFeatureRefusal(feature: MultisigRefusedFeature): string {
   switch (feature) {
     case 'guardians':
-      return (
-        'Guardians are not available for a multi-signature account: its root signer module is the same contract ' +
-        'guardian recovery uses, and the account keys a module by its address, so the signer set and a guardian ' +
-        'set would collide on one validation id and one storage slot.'
-      );
+      return t('multisig.refused.guardians');
     case 'inheritance':
-      return (
-        'Inheritance is not available for a multi-signature account: it is built on the guardian module, which ' +
-        'is the same contract as the account’s root signer module, so the two would collide.'
-      );
+      return t('multisig.refused.inheritance');
     case 'passkeys':
-      return (
-        'A passkey signer is not offered for a multi-signature account: it would let one passkey act for the ' +
-        'account without the co-signers, and adding one to a multisig root has never been tested.'
-      );
+      return t('multisig.refused.passkeys');
     case 'session-keys':
-      return (
-        'Session keys are not offered for a multi-signature account: a session key would let one key act for the ' +
-        'account without the co-signers, and adding one to a multisig root has never been tested.'
-      );
+      return t('multisig.refused.sessionKeys');
     case 'eip7702':
-      return (
-        'An EIP-7702 upgrade is not applicable: it upgrades a regular account’s own address, and a ' +
-        'multi-signature account is already a deployed smart account with no single owner key.'
-      );
+      return t('multisig.refused.eip7702');
     case 'owner-rotation':
-      return 'A multi-signature account has no single owner key to change; its signer set is fixed when it is deployed.';
+      return t('multisig.refused.ownerRotation');
+    // The engine's refusal sentence stays as the engine wrote it.
     case 'walletconnect':
-      return (
-        'A multi-signature account is never offered to apps over WalletConnect: apps ask for message signatures, ' +
-        'which it cannot give honestly. ' + MULTISIG_ERC1271_REFUSAL
-      );
+      return t('multisig.refused.walletconnect', { refusal: MULTISIG_ERC1271_REFUSAL });
     case 'browser':
-      return (
-        'A multi-signature account is never connected to sites in the in-app browser: sites ask for message ' +
-        'signatures, which it cannot give honestly. ' + MULTISIG_ERC1271_REFUSAL
-      );
+      return t('multisig.refused.browser', { refusal: MULTISIG_ERC1271_REFUSAL });
     case 'message-signing':
       return MULTISIG_ERC1271_REFUSAL;
   }
@@ -414,11 +401,11 @@ export type MultisigConfigCheck =
   | { ok: false; error: string };
 
 function parseWeight(raw: string, where: string): number | string {
-  const t = raw.trim();
-  if (!/^[0-9]{1,4}$/.test(t)) return `${where}: the weight must be a whole number from 1 to ${MAX_MULTISIG_FORM_WEIGHT}.`;
-  const n = Number(t);
+  const text = raw.trim();
+  if (!/^[0-9]{1,4}$/.test(text)) return t('multisig.config.weight', { where, max: MAX_MULTISIG_FORM_WEIGHT });
+  const n = Number(text);
   if (n < 1 || n > MAX_MULTISIG_FORM_WEIGHT) {
-    return `${where}: the weight must be a whole number from 1 to ${MAX_MULTISIG_FORM_WEIGHT}.`;
+    return t('multisig.config.weight', { where, max: MAX_MULTISIG_FORM_WEIGHT });
   }
   return n;
 }
@@ -433,48 +420,45 @@ function parseWeight(raw: string, where: string): number | string {
  */
 export function buildMultisigConfig(draft: MultisigDraft, ownAccounts: readonly OwnAccount[] = []): MultisigConfigCheck {
   const local = validateRecipient(EVM_CHAIN_ID, draft.localSigner);
-  if (!local.ok) return { ok: false, error: `This wallet’s signer: ${local.error}` };
-  if (draft.cosigners.length < 1) return { ok: false, error: 'Add at least one co-signer.' };
+  if (!local.ok) return { ok: false, error: t('multisig.config.localSigner', { error: local.error }) };
+  if (draft.cosigners.length < 1) return { ok: false, error: t('multisig.config.addCosigner') };
   if (draft.cosigners.length > MAX_MULTISIG_COSIGNERS) {
-    return { ok: false, error: `At most ${MAX_MULTISIG_COSIGNERS} co-signers can be added here.` };
+    return { ok: false, error: t('multisig.config.atMost', { max: MAX_MULTISIG_COSIGNERS }) };
   }
-  const localWeight = parseWeight(draft.localWeight, 'This wallet’s signer');
+  const localWeight = parseWeight(draft.localWeight, t('multisig.signer.local'));
   if (typeof localWeight === 'string') return { ok: false, error: localWeight };
   const signers = [{ address: local.normalized, weight: localWeight }];
   const warnings: string[] = [];
   const seen = new Set([local.normalized.toLowerCase()]);
   for (let i = 0; i < draft.cosigners.length; i++) {
-    const where = `Co-signer ${i + 1}`;
+    const where = t('multisig.cosigner.heading', { n: i + 1 });
     const c = draft.cosigners[i]!;
-    if (c.address.trim() === '') return { ok: false, error: `${where}: enter the co-signer’s Ethereum address.` };
+    if (c.address.trim() === '') return { ok: false, error: t('multisig.config.enterAddress', { where }) };
     const v = validateRecipient(EVM_CHAIN_ID, c.address);
-    if (!v.ok) return { ok: false, error: `${where}: ${v.error}` };
+    if (!v.ok) return { ok: false, error: t('multisig.config.addressError', { where, error: v.error }) };
     const lower = v.normalized.toLowerCase();
     if (lower === local.normalized.toLowerCase()) {
-      return { ok: false, error: `${where} is this wallet’s own signer; a signer can appear only once.` };
+      return { ok: false, error: t('multisig.config.isLocal', { where }) };
     }
-    if (seen.has(lower)) return { ok: false, error: `${where} repeats an earlier co-signer; a signer can appear only once.` };
+    if (seen.has(lower)) return { ok: false, error: t('multisig.config.repeats', { where }) };
     seen.add(lower);
     const w = parseWeight(c.weight, where);
     if (typeof w === 'string') return { ok: false, error: w };
     signers.push({ address: v.normalized, weight: w });
     const own = ownAccounts.find((a) => a.address.toLowerCase() === lower);
     if (own) {
-      warnings.push(
-        `${where} is ${own.name}, another account of this wallet: this phone would hold two of the keys, so losing ` +
-          'or compromising it affects both.',
-      );
+      warnings.push(t('multisig.config.ownAccount', { where, name: own.name }));
     }
   }
-  const t = draft.threshold.trim();
-  if (!/^[0-9]{1,5}$/.test(t) || Number(t) < 1) return { ok: false, error: 'The threshold must be a whole number of at least 1.' };
-  const config: MultisigConfig = { signers, threshold: Number(t), delaySeconds: 0 };
+  const thresholdText = draft.threshold.trim();
+  if (!/^[0-9]{1,5}$/.test(thresholdText) || Number(thresholdText) < 1) return { ok: false, error: t('multisig.config.threshold') };
+  const config: MultisigConfig = { signers, threshold: Number(thresholdText), delaySeconds: 0 };
   try {
     validateMultisigConfig(config);
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
-  if (multisigExposure(config).operationMinimumSigners < 2) return { ok: false, error: MULTISIG_SINGLE_SIGNER_REFUSAL };
+  if (multisigExposure(config).operationMinimumSigners < 2) return { ok: false, error: t('multisig.config.singleSigner') };
   return { ok: true, config, warnings };
 }
 
@@ -967,15 +951,16 @@ export async function recordMultisigCosignerApproval(
 
 /** The History line for a co-signer approval: "Approved as co-signer: <summary> (request 0x12345678…)". */
 export function multisigCosignedHistoryLine(entry: Pick<MultisigCosignedEntry, 'summary' | 'requestId'>): string {
-  return `Approved as co-signer: ${entry.summary} (request ${entry.requestId.slice(0, 10)}…)`;
+  return t('multisig.history.cosigned', { summary: entry.summary, request: entry.requestId.slice(0, 10) });
 }
 
 /** The detail under it: the nonce, the approving account and the time; no claim about inclusion. */
 export function multisigCosignedHistoryDetail(entry: Pick<MultisigCosignedEntry, 'nonce' | 'signer' | 'approvedAt'>): string {
-  return (
-    `Nonce ${entry.nonce} · approved by ${entry.signer} on ${new Date(entry.approvedAt).toISOString().slice(0, 16).replace('T', ' ')} UTC. ` +
-    'Whether it was submitted is up to the submitter; this phone does not track it.'
-  );
+  return t('multisig.history.cosignedDetail', {
+    nonce: entry.nonce,
+    signer: entry.signer,
+    time: new Date(entry.approvedAt).toISOString().slice(0, 16).replace('T', ' '),
+  });
 }
 
 /** One stored multisig as the account list and the account switcher need it (public data only). */
@@ -1132,11 +1117,7 @@ export async function renameMultisigRecord(id: number, rawName: string, store: K
 export const REMOVE_MULTISIG_TITLE = 'Remove this multisig from this wallet?';
 
 export function removeMultisigMessage(record: MultisigRecord): string {
-  return (
-    `${multisigDisplayName(record)} (${record.address}) is removed from this phone, with its operation history. ` +
-    'Nothing secret is deleted and nothing on-chain changes: the account and its funds stay where they are, ' +
-    'controlled by its signers. Keep its exported record if you want to add it again later.'
-  );
+  return t('multisig.remove.body', { name: multisigDisplayName(record), address: record.address });
 }
 
 // ---------------------------------------------------------------------------
@@ -1287,10 +1268,7 @@ export async function importMultisigRecord(
     (a) => a.kind === 'phrase' && parsed.config.signers.some((s) => sameAddress(s.address, a.address)),
   );
   if (!local) {
-    throw new Error(
-      'None of this wallet’s recovery-phrase accounts is a signer of this multisig, so it cannot approve or submit for ' +
-        'it. Add the account that is a signer first, or watch the address instead (Settings → Accounts).',
-    );
+    throw new Error(t('multisig.import.noOwnSigner'));
   }
   return mutate(store, (state) => {
     const existing = state.records.find((r) => r.chain === parsed.chain && sameAddress(r.address, parsed.facts.account));
@@ -1448,9 +1426,9 @@ export const MULTISIG_DEPLOYED_NOT_VISIBLE_NOTE =
 /** The detail view's deployment line for what the chain and the record say. */
 export function multisigChainNote(record: Pick<MultisigRecord, 'deployed'>, state: MultisigChainState): string {
   if (state.deployed) {
-    return state.problems.length > 0 ? `On-chain check: ${state.problems.join(' ')}` : MULTISIG_DEPLOYED_MATCH_NOTE;
+    return state.problems.length > 0 ? t('multisig.chain.check', { problems: state.problems.join(' ') }) : t('multisig.chain.match');
   }
-  return record.deployed.deployed ? MULTISIG_DEPLOYED_NOT_VISIBLE_NOTE : MULTISIG_DEPLOY_NOTE;
+  return record.deployed.deployed ? t('multisig.chain.notVisible') : t('multisig.deployNote');
 }
 
 /**
@@ -1539,10 +1517,10 @@ export async function readMultisigFunds(node: JsonRpcTransport, address: string)
 
 /** "0.0005 test ETH · EntryPoint deposit (pays fees first): 0.000697 test ETH" for the list row. */
 export function multisigFundsLine(funds: MultisigFunds | undefined, format: (wei: bigint) => string): string {
-  if (!funds) return 'Balance loading…';
-  const balance = funds.balance === null ? 'Balance unknown' : format(funds.balance);
-  const deposit = funds.deposit === null ? 'could not be read' : format(funds.deposit);
-  return `${balance} · ${MULTISIG_DEPOSIT_ROW_LABEL}: ${deposit}`;
+  if (!funds) return t('multisig.funds.loading');
+  const balance = funds.balance === null ? t('multisig.funds.unknown') : format(funds.balance);
+  const deposit = funds.deposit === null ? t('home.deposit.unreadable') : format(funds.deposit);
+  return t('multisig.funds.line', { balance, label: localize(MULTISIG_DEPOSIT_ROW_LABEL), deposit });
 }
 
 /**
@@ -1625,28 +1603,28 @@ export function multisigFundingFigure(p: {
     const { fee, amount } = p.lastQuote;
     const deposit = p.funds?.deposit ?? 0n;
     const fromBalance = amount + (fee > deposit ? fee - deposit : 0n);
-    let text = `The last accepted quote for this operation had a worst-case network fee of ${fmt(fee)}.`;
-    const what = amount > 0n ? ` (the amount ${fmt(amount)} plus ${deposit > 0n ? 'the rest of ' : ''}the fee)` : '';
+    // Assembled from table entries in the same order as before (English byte for byte).
+    let text = t('multisig.funding.lastQuote', { fee: fmt(fee) });
+    const what =
+      amount > 0n
+        ? deposit > 0n
+          ? t('multisig.funding.whatRest', { amount: fmt(amount) })
+          : t('multisig.funding.what', { amount: fmt(amount) })
+        : '';
     text +=
       deposit > 0n
-        ? ` The EntryPoint deposit of ${fmt(deposit)} pays the fee first, so at that figure the balance must hold ${fmt(fromBalance)}${what}.`
-        : ` At that figure the balance must hold ${fmt(fromBalance)}${what}.`;
+        ? ` ${t('multisig.funding.depositFirst', { deposit: fmt(deposit), need: fmt(fromBalance), what })}`
+        : ` ${t('multisig.funding.mustHold', { need: fmt(fromBalance), what })}`;
     const balance = p.funds?.balance ?? null;
-    if (balance === null) return `${text} Its balance could not be read just now.`;
+    if (balance === null) return `${text} ${t('multisig.funding.balanceUnread')}`;
     if (fromBalance > balance) {
-      return (
-        `${text} It holds ${fmt(balance)}, so send at least ${fmt(fromBalance - balance)} to the multisig, and a ` +
-        'little more, because the fee changes between quotes.'
-      );
+      return `${text} ${t('multisig.funding.short', { balance: fmt(balance), shortfall: fmt(fromBalance - balance) })}`;
     }
-    return (
-      `${text} It holds ${fmt(balance)}, which would have covered that quote, so the fee or the gas estimate has ` +
-      'risen since; the new figure is unknown because the estimate itself was refused.'
-    );
+    return `${text} ${t('multisig.funding.covered', { balance: fmt(balance) })}`;
   }
-  const unknown = 'The exact amount is unknown because the estimate itself was refused.';
+  const unknown = t('multisig.funding.unknown');
   if (p.chain !== 'eip155:11155111') return unknown;
-  return `${unknown} ${p.deploys ? MULTISIG_RECORDED_DEPLOY_COST_NOTE : MULTISIG_RECORDED_LATER_COST_NOTE}`;
+  return `${unknown} ${p.deploys ? t('multisig.funding.recordedDeploy') : t('multisig.funding.recordedLater')}`;
 }
 
 /**
@@ -1686,7 +1664,7 @@ export function multisigSubmitErrorText(
         symbol: ctx.symbol,
       })}`
     : '';
-  return `${base}${figure}\n\n${MULTISIG_FUND_AND_RETRY}`;
+  return `${base}${figure}\n\n${t('multisig.fundAndRetry')}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1953,16 +1931,14 @@ export function addMultisigApproval(
  * not check s either, and the approval id is the keccak of the stored bytes).
  */
 export function externalApprovalSignature(text: string): string | null {
-  const t = text.trim();
-  const unquoted = t.length >= 2 && t.startsWith('"') && t.endsWith('"') ? t.slice(1, -1).trim() : t;
+  const trimmed = text.trim();
+  const unquoted = trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"') ? trimmed.slice(1, -1).trim() : trimmed;
   if (!/^0x[0-9a-fA-F]{130}$/.test(unquoted)) return null;
   const hex = unquoted.toLowerCase();
   const v = parseInt(hex.slice(130, 132), 16);
   if (v === 27 || v === 28) return hex;
   if (v === 0 || v === 1) return hex.slice(0, 130) + (v + 27).toString(16);
-  throw new Error(
-    `The signature’s last byte (v) is ${v}; an Ethereum signature ends in 27 or 28 (or 0 or 1). It cannot be used as an approval.`,
-  );
+  throw new Error(t('multisig.approval.badV', { v }));
 }
 
 /** `message` ending in a full stop (unchanged when it already ends a sentence). */
@@ -2009,7 +1985,8 @@ function addApprovalChecked(
   const added = verifyMultisigApproval(op.request, approval, multisigConfigOf(record));
   if (sameAddress(added.address, record.localSigner)) throw new Error(MULTISIG_SUBMITTER_APPROVAL_REFUSAL);
   if (op.approvals.some((a) => sameAddress(a.signer, added.address))) {
-    throw new Error(`An approval from ${added.address} was already added.`);
+    throw new Error(t('multisig.approval.duplicate', { address: added.address }));
+
   }
   const normalized = { signer: checksum(added.address), signature: approval.signature };
   return {
@@ -2087,13 +2064,10 @@ export function multisigWeightProgress(record: MultisigRecord, op: Pick<Multisig
  */
 export function multisigCosignerBarLabel(p: MultisigWeightProgress): string {
   if (p.cosignersAlone) {
-    return `Co-signer approvals: weight ${p.cosignerWeight} (threshold ${p.threshold} met by co-signers alone) — ready`;
+    return t('multisig.bar.alone', { weight: p.cosignerWeight, threshold: p.threshold });
   }
-  if (p.ready) return `Co-signer approvals: weight ${p.cosignerWeight} of ${p.cosignerNeeded} needed — ready`;
-  return (
-    `Co-signer approvals: weight ${p.cosignerWeight} of ${p.cosignerNeeded} needed ` +
-    `(${p.cosignerNeeded - p.cosignerWeight} still needed)`
-  );
+  if (p.ready) return t('multisig.bar.ready', { weight: p.cosignerWeight, needed: p.cosignerNeeded });
+  return t('multisig.bar.short', { weight: p.cosignerWeight, needed: p.cosignerNeeded, missing: p.cosignerNeeded - p.cosignerWeight });
 }
 
 /**
@@ -2103,29 +2077,21 @@ export function multisigCosignerBarLabel(p: MultisigWeightProgress): string {
  * is not "the remaining weight" the threshold needs.
  */
 export function multisigLocalSignsLine(p: MultisigWeightProgress): string {
-  return `This wallet signs the remaining weight ${p.localWeight} when you submit.`;
+  return t('multisig.bar.localSigns', { weight: p.localWeight });
 }
 
 /** Under the submit button while the co-signer weight is short. */
 export function multisigNotReadyHint(p: MultisigWeightProgress): string {
-  return `Submitting needs co-signer approvals of weight ${p.cosignerNeeded}; the approvals so far reach ${p.cosignerWeight}.`;
+  return t('multisig.bar.notReady', { needed: p.cosignerNeeded, weight: p.cosignerWeight });
 }
 
 /** The confirm screen's approvals sentence. */
 export function multisigSubmitApprovalsLine(p: MultisigWeightProgress): string {
-  return (
-    `Co-signer approvals: weight ${p.cosignerWeight} (${p.cosignerNeeded} needed). This wallet signs the remaining ` +
-    `weight ${p.localWeight} when you submit, for weight ${p.weight} of the threshold ${p.threshold}. Your device ` +
-    'check comes next; this wallet’s signer then signs the final operation, and the signer module checks every ' +
-    'approval again.'
-  );
+  return t('multisig.bar.submitLine', { weight: p.cosignerWeight, needed: p.cosignerNeeded, local: p.localWeight, total: p.weight, threshold: p.threshold });
 }
 
 export function multisigThresholdNotReached(weight: number, threshold: number): string {
-  return (
-    `The approvals plus this wallet’s signer reach weight ${weight}, below the threshold ${threshold}. Collect more ` +
-    'co-signer approvals first. Nothing was signed.'
-  );
+  return t('multisig.bar.thresholdNotReached', { weight, threshold });
 }
 
 /**
@@ -2145,7 +2111,7 @@ export const MULTISIG_PREVIEW_UNDEPLOYED_NOTE =
   '(deploying it moves no funds apart from the network fee).';
 
 export function multisigPreviewNote(deployed: boolean): string {
-  return deployed ? MULTISIG_PREVIEW_NOTE : `${MULTISIG_PREVIEW_NOTE} ${MULTISIG_PREVIEW_UNDEPLOYED_NOTE}`;
+  return deployed ? t('multisig.preview.note') : `${t('multisig.preview.note')} ${t('multisig.preview.undeployed')}`;
 }
 
 /**
@@ -2374,7 +2340,7 @@ export function reviewMultisigRequestAsCosigner(
   const network = evmProfileByCaip2(parsed.chain)?.label ?? parsed.chain;
   if (parsed.chain !== ctx.activeChain) {
     const active = evmProfileByCaip2(ctx.activeChain)?.label ?? ctx.activeChain;
-    throw new Error(`This request is for ${network}, but the active network is ${active}. Switch networks first (Settings → Developer).`);
+    throw new Error(t('multisig.cosign.otherNetwork', { network, active }));
   }
   assertFeatureAllowed('multisig', parsed.chain);
   const signerEntry = ctx.activeAddress ? parsed.config.signers.find((s) => sameAddress(s.address, ctx.activeAddress)) : undefined;
@@ -2382,8 +2348,8 @@ export function reviewMultisigRequestAsCosigner(
     const other = ctx.ownAccounts.find((a) => parsed.config.signers.some((s) => sameAddress(s.address, a.address)));
     throw new Error(
       other
-        ? `The active account is not a signer of this multisig, but ${other.name} (${other.address}) is. Switch to it on Home first.`
-        : 'None of this wallet’s accounts is a signer of this multisig, so there is nothing to approve here.',
+        ? t('multisig.cosign.otherAccount', { name: other.name, address: other.address })
+        : t('multisig.cosign.noSigner'),
     );
   }
   const knownRecord = ctx.records.find((r) => r.chain === parsed.chain && sameAddress(r.address, parsed.request.account)) ?? null;
@@ -2393,9 +2359,9 @@ export function reviewMultisigRequestAsCosigner(
       knownRecord.threshold === parsed.config.threshold &&
       knownRecord.signers.length === parsed.config.signers.length &&
       knownRecord.signers.every((s) => parsed.config.signers.some((p) => sameAddress(p.address, s.address) && p.weight === s.weight));
-    if (!same) warnings.push('The signer set in this request differs from this wallet’s record of the account.');
+    if (!same) warnings.push(t('multisig.cosign.setDiffers'));
   } else {
-    warnings.push('This account is not in this wallet. Its address was checked against the signer set in the request.');
+    warnings.push(t('multisig.cosign.notInWallet'));
   }
   return {
     ...parsed,
@@ -2567,10 +2533,7 @@ export function acceptMultisigQrScan(scan: MultisigQrScan | null, data: string):
   const received = scan ? scan.parts.filter((x) => x !== null).length : 0;
   if (!text.startsWith(MULTISIG_QR_PART_PREFIX)) {
     if (scan && received > 0) {
-      throw new Error(
-        `This QR code is not part of the code being read (${received} of ${scan.total} parts read so far). ` +
-          'Scan the next part of the same code, or tap Start over.',
-      );
+      throw new Error(t('multisig.qr.otherCode', { received, total: scan.total }));
     }
     if (text === '') throw new Error('The QR code was empty.');
     return { kind: 'complete', text };
@@ -2583,15 +2546,12 @@ export function acceptMultisigQrScan(scan: MultisigQrScan | null, data: string):
   }
   const chunk = m[3]!;
   if (scan && received > 0 && scan.total !== total) {
-    throw new Error(
-      `This part belongs to a code in ${total} parts, but the code being read has ${scan.total}. ` +
-        'Tap Start over to read a different code.',
-    );
+    throw new Error(t('multisig.qr.otherTotal', { total, current: scan.total }));
   }
   const parts = scan && received > 0 ? [...scan.parts] : new Array<string | null>(total).fill(null);
   const previous = parts[n - 1];
   if (previous !== null && previous !== undefined && previous !== chunk) {
-    throw new Error(`Part ${n} was already read with different contents, so this is another code. Tap Start over to read a different code.`);
+    throw new Error(t('multisig.qr.partDiffers', { n }));
   }
   const repeated = previous === chunk;
   parts[n - 1] = chunk;
@@ -2603,23 +2563,18 @@ export function acceptMultisigQrScan(scan: MultisigQrScan | null, data: string):
 /** The scanner's progress line between parts. */
 export function multisigQrProgressLine(received: number, total: number, repeated = false): string {
   const missing = total - received;
-  return (
-    `${repeated ? 'That part was already read. ' : ''}${received} of ${total} parts read. ` +
-    `Show the next part on the other phone (Next part) and scan it; ${missing} ${missing === 1 ? 'part is' : 'parts are'} still missing.`
-  );
+  const line = missing === 1 ? t('multisig.qr.progressOne', { received, total, missing }) : t('multisig.qr.progress', { received, total, missing });
+  return repeated ? `${t('multisig.qr.alreadyRead')} ${line}` : line;
 }
 
 /** The caption under one code of a multi-part QR. */
 export function multisigQrPartCaption(caption: string, index: number, total: number): string {
-  return total > 1 ? `${caption} — part ${index + 1} of ${total}` : caption;
+  return total > 1 ? t('multisig.qr.partCaption', { caption, n: index + 1, total }) : caption;
 }
 
 /** The sentence above a multi-part QR code. */
 export function multisigQrPagedNote(total: number): string {
-  return (
-    `This is too much for one reliable QR code, so it is shown as ${total} codes. The other phone scans them one ` +
-    'at a time with its scan button; tap Next part after each one is read. The order does not matter.'
-  );
+  return t('multisig.qr.paged', { total });
 }
 
 /** Shown when a payload is too large even for the parts (never for the payloads the screens build). */
@@ -2632,10 +2587,7 @@ export const MULTISIG_QR_TOO_LARGE = 'Too large for QR codes — use Share, Copy
 function refusePastedQrPart(text: string): void {
   const m = QR_PART.exec(text.trim());
   if (m) {
-    throw new Error(
-      `This is part ${m[1]} of ${m[2]} of a multi-part QR code, not the whole text. Read every part with the scan ` +
-        'button on this screen, or paste the whole text the other phone shared.',
-    );
+    throw new Error(t('multisig.qr.pastedPart', { n: m[1]!, total: m[2]! }));
   }
 }
 
@@ -2717,7 +2669,7 @@ export function multisigFileText(
   const typed = typeof info.mimeType === 'string' && info.mimeType.toLowerCase().split(';')[0]!.trim() === 'application/json';
   if (!named && !typed) throw new Error('Choose a .json file exported by Shiba Wallet.');
   if ((typeof info.size === 'number' && info.size > MULTISIG_FILE_MAX_BYTES) || utf8Length(text) > MULTISIG_FILE_MAX_BYTES) {
-    throw new Error(`This file is larger than ${MULTISIG_FILE_MAX_BYTES / 1024} KiB, so it is not a multisig file.`);
+    throw new Error(t('multisig.file.tooLarge', { kib: MULTISIG_FILE_MAX_BYTES / 1024 }));
   }
   const body = (text.charCodeAt(0) === 0xfeff ? text.slice(1) : text).trim();
   if (body === '' || extractFirstJsonObject(body) !== body) {
@@ -2760,5 +2712,6 @@ export function multisigFileContents(payload: string): string {
  */
 export function multisigFileRefusal(e: unknown): string {
   const reason = e instanceof Error ? e.message : String(e);
-  return `This file was not accepted. ${asSentence(reason)}`;
+  // A reason that is a table entry (the file checks' fixed sentences) is shown in the chosen language.
+  return t('multisig.file.refused', { reason: localize(asSentence(reason)) });
 }

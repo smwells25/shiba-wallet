@@ -392,7 +392,7 @@ function homeMultisigProblems(home) {
     home.includes("{isEvm && multisig\n            ? cardLink('multisig-operations', 'Multisig', () => navigation.navigate('Multisig'), 'Opens this multisig’s operations')"));
   need('Activity, NFTs and Approvals stay linked', /cardLink\('activity'/.test(home) && /isEvm \? cardLink\('nfts'/.test(home) && /cardLink\('approvals', 'Approvals'/.test(home));
   need('the EntryPoint deposit read with the Multisig screen\'s reader', home.includes('readMultisigFunds(httpTransport(endpoint.url), multisigAddress)'));
-  need('the deposit row', home.includes("{MULTISIG_DEPOSIT_ROW_LABEL}:{' '}") && home.includes('maskAmount(formatBalanceDisplay(shownDeposit.deposit, 18), hideAmounts)'));
+  need('the deposit row', home.includes("{localize(MULTISIG_DEPOSIT_ROW_LABEL)}:{' '}") && home.includes('maskAmount(formatBalanceDisplay(shownDeposit.deposit, 18), hideAmounts)'));
   need('the notice under the switcher', home.includes('{multisig ? <WarningBox>{MULTISIG_ACCOUNT_NOTICE}</WarningBox> : null}'));
   need('the other-network note', home.includes('{multisigNetworkNote ? <WarningBox>{multisigNetworkNote}</WarningBox> : null}') && home.includes('multisigInfo.chain !== evmChain.caip2'));
   need('Bitcoin, Dogecoin and Solana not available', home.includes('<UnavailableChains accounts={accounts} sentence={MULTISIG_NO_CHAIN} />'));
@@ -407,7 +407,7 @@ function homeMultisigProblems(home) {
   for (const [name, from, to] of [
     ['M-h1 Send offered from a multisig (noKey without multisig)', 'const noKey = watchOnly || multisig;', 'const noKey = watchOnly;'],
     ['M-h2 the Multisig operations link dropped', "cardLink('multisig-operations',", "cardLink('multisig-gone',"],
-    ['M-h3 the deposit row dropped', "{MULTISIG_DEPOSIT_ROW_LABEL}:{' '}", ''],
+    ['M-h3 the deposit row dropped', "{localize(MULTISIG_DEPOSIT_ROW_LABEL)}:{' '}", ''],
     ['M-h4 the notice dropped', '{multisig ? <WarningBox>{MULTISIG_ACCOUNT_NOTICE}</WarningBox> : null}', ''],
   ]) {
     check(`mutation anchor present (${name})`, home.includes(from));
@@ -553,6 +553,39 @@ console.log('Home: one spoken element per token row, the Hide amounts switch, li
   check('…Home: the chain card\'s Send link takes the profile\'s displaySymbol on the EVM card; token rows their own symbol; no hint is built from a hard-coded "Sends ${…}" (source)', hintOk(home));
   check('…mutant caught: the old hint from the chain row\'s symbol',
     !hintOk(home.replace('sendLinkHint(isEvm ? evmChain.displaySymbol : item.symbol),', '`Sends ${item.symbol}`,')));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-home: phase 23 item 8 — the third localisation pass (the rest of Home)');
+// ---------------------------------------------------------------------------
+{
+  const home = source('../src/screens/HomeScreen.tsx');
+  const I = await import('../src/i18n/index.ts');
+  const { en } = await import('../src/i18n/en.ts');
+  const { delegationLabelSuffix } = await import('../src/wallet/delegation.ts');
+  const wiredOk = (src) =>
+    (src.match(/t\('home\.delegation\.line', \{ name: activeAccount\.name, suffix: delegationLabelSuffix\(delegation\.status\), network: evmChain\.label \}\)/g) ?? []).length === 3 &&
+    src.includes("`${tx('Warning:')} ${t('home.delegation.line',") && src.includes("tx('Tap to review.')") &&
+    src.includes("accessibilityHint={tx('Opens the account upgrade screen')}") && src.includes("accessibilityHint={tx('Opens the account upgrade screen to review this')}") &&
+    src.includes("accessibilityHint={tx('Opens the guardians screen')}") && src.includes("t('home.recovered.line', {") &&
+    src.includes("localize(FOREIGN_DELEGATE_WARNING)") &&
+    src.includes("? `${localize(MULTISIG_DEPOSIT_ROW_LABEL)}: ${tx('hidden')}`") && src.includes("? tx('loading')") && src.includes("? tx('loading…')") &&
+    (src.match(/tx\('could not be read'\)/g) ?? []).length === 2;
+  check('the account-upgrade, recovered-account and multisig-deposit lines go through the string table (source)', wiredOk(home));
+  check('…mutant caught: the warning line built in English again', !wiredOk(home.replace("`${tx('Warning:')} ${t('home.delegation.line',", "`Warning: ${t('home.delegation.line',")));
+  check('the English is the line Home showed before: "Account 1 · upgraded (Kernel v3.3) on Ethereum Sepolia"',
+    I.t('home.delegation.line', { name: 'Account 1', suffix: delegationLabelSuffix({ kind: 'kernel-v3.3' }), network: 'Ethereum Sepolia' }) === 'Account 1 · upgraded (Kernel v3.3) on Ethereum Sepolia' &&
+      delegationLabelSuffix({ kind: 'contract' }) === ' · holds contract code' && delegationLabelSuffix({ kind: 'plain' }) === '' &&
+      en['home.recovered.line'] === '{name} · recovered account {address} on {network} (not found from your recovery phrase alone; keep its record backed up)');
+  check('…and in Spanish the suffix and the line follow the language (the account and network names unchanged)', (() => {
+    I.setActiveLanguage('es');
+    try {
+      return delegationLabelSuffix({ kind: 'kernel-v3.3' }) === ' · mejorada (Kernel v3.3)' &&
+        I.t('home.delegation.line', { name: 'Account 1', suffix: delegationLabelSuffix({ kind: 'kernel-v3.3' }), network: 'Ethereum Sepolia' }) === 'Account 1 · mejorada (Kernel v3.3) en Ethereum Sepolia';
+    } finally {
+      I.setActiveLanguage('en');
+    }
+  })());
 }
 
 console.log(`\ncheck-home: ${passed} passed, ${failed} failed`);

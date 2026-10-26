@@ -1,6 +1,6 @@
 {
  "base": "c5baff6",
- "about": "The English each migrated string-table entry had in the app at commit c5baff6, before the localisation groundwork (phase 22 item 6). Generated from that checkout: \"literal\" entries were found as a string literal, a folded string concatenation or a JSX text (whitespace collapsed as JSX does) at the places listed; \"template\" entries have their static parts (the text between placeholders) found in that order in a template literal, a string concatenation or a JSX element; \"composite\" entries were assembled from several pieces, described with their place; \"new\" entries did not exist (Settings → Language). scripts/check-i18n.mjs compares app/src/i18n/en.ts with this file. \"changed\" entries are migrated entries whose English was reworded on purpose after the migration: \"before\" is the text at c5baff6 (equal to the entry's own record above), \"en\" the text now, \"why\" the reason; the \"new\" list also holds the ids added since (the Settings → Language note on shared texts and the passphrase forms of the app-lock notes, phase 22 polish). Phase 23 item 8 (the second localisation pass): entries carrying \"base\": \"5cb4601\" were located the same way in the checkout of commit 5cb4601, where the screens they come from stood when they were migrated (the base above applies to every entry without one).",
+ "about": "The English each migrated string-table entry had in the app at commit c5baff6, before the localisation groundwork (phase 22 item 6). Generated from that checkout: \"literal\" entries were found as a string literal, a folded string concatenation or a JSX text (whitespace collapsed as JSX does) at the places listed; \"template\" entries have their static parts (the text between placeholders) found in that order in a template literal, a string concatenation or a JSX element; \"composite\" entries were assembled from several pieces, described with their place; \"new\" entries did not exist (Settings → Language). scripts/check-i18n.mjs compares app/src/i18n/en.ts with this file. \"changed\" entries are migrated entries whose English was reworded on purpose after the migration: \"before\" is the text at c5baff6 (equal to the entry's own record above), \"en\" the text now, \"why\" the reason; the \"new\" list also holds the ids added since (the Settings → Language note on shared texts and the passphrase forms of the app-lock notes, phase 22 polish). Phase 23 item 8 (the second localisation pass): entries carrying \"base\": \"5cb4601\" were located the same way in the checkout of commit 5cb4601, where the screens they come from stood when they were migrated (the base above applies to every entry without one). Phase 23 item 8 (the third localisation pass): entries carrying \"base\": \"6a1d2bb\" were located the same way in the checkout of commit 6a1d2bb (Bridge, Multisig and the rest of Home).",
  "literal": {
   "common.cancel": {
    "en": "Cancel",
@@ -5543,6 +5543,2138 @@
     "src/wallet/cold-signing.ts:724 literal"
    ],
    "base": "5cb4601"
+  },
+  "home.deposit.hidden": {
+   "en": "hidden",
+   "where": [
+    "src/screens/HomeScreen.tsx:687 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "home.deposit.loading": {
+   "en": "loading",
+   "where": [
+    "src/screens/HomeScreen.tsx:104 literal",
+    "src/screens/HomeScreen.tsx:131 literal",
+    "src/screens/HomeScreen.tsx:690 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "home.deposit.loadingVisible": {
+   "en": "loading…",
+   "where": [
+    "src/screens/HomeScreen.tsx:699 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "home.deposit.unreadable": {
+   "en": "could not be read",
+   "where": [
+    "src/screens/HomeScreen.tsx:692 literal",
+    "src/screens/HomeScreen.tsx:701 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "home.delegation.hint": {
+   "en": "Opens the account upgrade screen",
+   "where": [
+    "src/screens/HomeScreen.tsx:806 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "home.delegation.warning": {
+   "en": "Warning:",
+   "where": [
+    "src/screens/HomeScreen.tsx:821 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "home.delegation.tapToReview": {
+   "en": "Tap to review.",
+   "where": [
+    "src/screens/HomeScreen.tsx:823 literal",
+    "src/screens/HomeScreen.tsx:836 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "home.delegation.warningHint": {
+   "en": "Opens the account upgrade screen to review this",
+   "where": [
+    "src/screens/HomeScreen.tsx:825 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "home.delegation.foreign": {
+   "en": "This is not the wallet's Kernel delegate. If you did not do this, revoke it now.",
+   "where": [
+    "src/wallet/delegation.ts:376 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "home.delegation.suffix.kernel": {
+   "en": " · upgraded (Kernel v3.3)",
+   "where": [
+    "src/wallet/delegation.ts:399 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "home.delegation.suffix.contract": {
+   "en": " · holds contract code",
+   "where": [
+    "src/wallet/delegation.ts:401 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "home.recovered.hint": {
+   "en": "Opens the guardians screen",
+   "where": [
+    "src/screens/HomeScreen.tsx:843 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.title": {
+   "en": "Bridge (test networks)",
+   "where": [
+    "src/screens/BridgeScreen.tsx:336 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.networkNotChanged": {
+   "en": "The network was not changed",
+   "where": [
+    "src/screens/BridgeScreen.tsx:299 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.reset.title": {
+   "en": "Reset the transfer list?",
+   "where": [
+    "src/screens/BridgeScreen.tsx:318 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.reset.body": {
+   "en": "This forgets every bridge transfer listed on this phone. Nothing on the network changes.",
+   "where": [
+    "src/screens/BridgeScreen.tsx:318 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.reset.button": {
+   "en": "Reset the transfer list",
+   "where": [
+    "src/screens/BridgeScreen.tsx:1203 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.noBundlerForReceipt": {
+   "en": "No bundler is configured for that network any more, so the smart-account operation’s receipt cannot be read.",
+   "where": [
+    "src/screens/BridgeScreen.tsx:130 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.noDetails": {
+   "en": "No details were given.",
+   "where": [
+    "src/screens/BridgeScreen.tsx:161 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.amountZero": {
+   "en": "Enter an amount greater than zero.",
+   "where": [
+    "src/screens/BridgeScreen.tsx:494 literal",
+    "src/wallet/bridge.ts:1278 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.chooseNetwork": {
+   "en": "Choose the network to send to.",
+   "where": [
+    "src/screens/BridgeScreen.tsx:504 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.smartUnreadable": {
+   "en": "The smart account could not be read just now; go back and try again.",
+   "where": [
+    "src/screens/BridgeScreen.tsx:508 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.noProviderForPair": {
+   "en": "No provider can be chosen for this pair of networks.",
+   "where": [
+    "src/screens/BridgeScreen.tsx:568 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.reviewAgain": {
+   "en": "Please review again.",
+   "where": [
+    "src/screens/BridgeScreen.tsx:621 literal",
+    "src/screens/BridgeScreen.tsx:664 literal",
+    "src/screens/BridgeScreen.tsx:704 literal",
+    "src/screens/BridgeScreen.tsx:712 literal",
+    "src/screens/BridgeScreen.tsx:751 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.approval.confirmed": {
+   "en": "Approval confirmed. The burn was quoted after the approval; these are its final numbers.",
+   "where": [
+    "src/screens/BridgeScreen.tsx:648 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.success.txid": {
+   "en": "Transaction id (on this network)",
+   "where": [
+    "src/screens/BridgeScreen.tsx:804 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.success.noReceipt": {
+   "en": "No receipt yet. The operation may still be included — keep the UserOperation hash above to look it up later. The transfer below can be followed once the bundle transaction is known.",
+   "where": [
+    "src/screens/BridgeScreen.tsx:815 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.success.reverted": {
+   "en": "The bundler reports the operation was included but reverted on-chain. The gas was still charged to the smart account. Nothing was bridged.",
+   "where": [
+    "src/screens/BridgeScreen.tsx:822 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.success.whereTitle": {
+   "en": "Where the transfer is",
+   "where": [
+    "src/screens/BridgeScreen.tsx:829 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.confirm.pinnedTitle": {
+   "en": "Written into the call and checked by this wallet",
+   "where": [
+    "src/screens/BridgeScreen.tsx:891 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.approve.title": {
+   "en": "Step 1 of 2 — Approve exactly the amount",
+   "where": [
+    "src/screens/BridgeScreen.tsx:908 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.form.asset": {
+   "en": "Asset to bridge",
+   "where": [
+    "src/screens/BridgeScreen.tsx:1034 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.form.sendTo": {
+   "en": "Send to network",
+   "where": [
+    "src/screens/BridgeScreen.tsx:1068 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.form.receiveAt": {
+   "en": "Receive the USDC at",
+   "where": [
+    "src/screens/BridgeScreen.tsx:1089 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.form.regularAccount": {
+   "en": "Your regular account",
+   "where": [
+    "src/screens/BridgeScreen.tsx:1094 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.form.smartAccount": {
+   "en": "Your smart account",
+   "where": [
+    "src/screens/BridgeScreen.tsx:1094 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.form.chooseProvider": {
+   "en": "Choose a provider",
+   "where": [
+    "src/screens/BridgeScreen.tsx:373 literal",
+    "src/screens/BridgeScreen.tsx:1163 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.form.reading": {
+   "en": "Reading the provider’s contracts and preparing the quote…",
+   "where": [
+    "src/screens/BridgeScreen.tsx:1188 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.form.getQuotes": {
+   "en": "Get quotes",
+   "where": [
+    "src/screens/BridgeScreen.tsx:1191 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.form.gettingQuotes": {
+   "en": "Getting quotes…",
+   "where": [
+    "src/screens/BridgeScreen.tsx:1191 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.form.transfers": {
+   "en": "Transfers sent from this screen",
+   "where": [
+    "src/screens/BridgeScreen.tsx:1198 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.retry.send": {
+   "en": "Send the delivery transaction",
+   "where": [
+    "src/screens/BridgeScreen.tsx:1291 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.retry.prepare": {
+   "en": "Prepare the delivery transaction",
+   "where": [
+    "src/screens/BridgeScreen.tsx:1294 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.trust.verifies": {
+   "en": "Who verifies:",
+   "where": [
+    "src/screens/BridgeViews.tsx:40 jsx",
+    "src/screens/BridgeViews.tsx:174 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.trust.controls": {
+   "en": "Who controls:",
+   "where": [
+    "src/screens/BridgeViews.tsx:44 jsx",
+    "src/screens/BridgeViews.tsx:178 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.trust.refund": {
+   "en": "If it does not arrive:",
+   "where": [
+    "src/screens/BridgeViews.tsx:48 jsx",
+    "src/screens/BridgeViews.tsx:182 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.row.feeQuoted": {
+   "en": "Fee (quoted just now):",
+   "where": [
+    "src/screens/BridgeViews.tsx:188 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.record.checking": {
+   "en": "(checking…)",
+   "where": [
+    "src/screens/BridgeViews.tsx:217 literal",
+    "src/screens/BridgeViews.tsx:239 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.record.sendingTx": {
+   "en": "Sending transaction",
+   "where": [
+    "src/screens/BridgeViews.tsx:245 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.record.notKnown": {
+   "en": "not known yet",
+   "where": [
+    "src/screens/BridgeViews.tsx:247 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.record.receivingTx": {
+   "en": "Receiving transaction",
+   "where": [
+    "src/screens/BridgeViews.tsx:251 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.record.mintSent": {
+   "en": "Mint transaction sent from this wallet",
+   "where": [
+    "src/screens/BridgeViews.tsx:260 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.record.deliverySent": {
+   "en": "Delivery transaction sent from this wallet",
+   "where": [
+    "src/screens/BridgeViews.tsx:260 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.intro": {
+   "en": "Bridging moves test ETH or USDC from this network to another test network. A bridge provider carries the transfer, and you trust the provider’s contracts and verifiers while it is on its way, so each provider below says who that is. These are test networks: the coins have no value.",
+   "where": [
+    "src/wallet/bridge.ts:154 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.choiceNote": {
+   "en": "You choose the provider. The wallet lists every provider it knows for this asset and this pair of networks and never picks one for you.",
+   "where": [
+    "src/wallet/bridge.ts:160 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.amount.usdcHint": {
+   "en": "USDC has 6 decimal places; an amount with more is refused, not rounded.",
+   "where": [
+    "src/wallet/bridge.ts:293 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.timeNotPromise": {
+   "en": "A time measured once is not a promise: delivery waits for the verifiers and the executor, and either can take longer.",
+   "where": [
+    "src/wallet/bridge.ts:298 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.feeBeforeQuote": {
+   "en": "Fee: quoted live from the provider’s contracts when you tap Get quotes or Review.",
+   "where": [
+    "src/wallet/bridge.ts:301 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.singleProvider": {
+   "en": "One provider serves this route; choose it to continue.",
+   "where": [
+    "src/wallet/bridge.ts:308 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.amount.placeholder": {
+   "en": "Amount, for example 0.0002",
+   "where": [
+    "src/wallet/bridge.ts:317 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.amount.placeholderUsdc": {
+   "en": "Amount, for example 1",
+   "where": [
+    "src/wallet/bridge.ts:320 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.row.spokenNotAvailable": {
+   "en": ", not available",
+   "where": [
+    "src/wallet/bridge.ts:376 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.records.note": {
+   "en": "Transfers sent from this screen are kept on this phone (the newest 64) and followed here whenever this screen is open. The sending transaction also appears in Activity.",
+   "where": [
+    "src/wallet/bridge.ts:399 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.records.readOnly": {
+   "en": "The list of bridge transfers on this phone could not be read in full, so it is not changed: transfers sent now are followed only until the app is closed. Reset the transfer list to start a new one; nothing on the network changes.",
+   "where": [
+    "src/wallet/bridge.ts:404 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.refusal.listingOnly": {
+   "en": "This provider was built for listing only; nothing can be quoted with it.",
+   "where": [
+    "src/wallet/bridge.ts:462 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.refusal.ethereumOnly": {
+   "en": "Bridging works only on Ethereum networks.",
+   "where": [
+    "src/wallet/bridge.ts:527 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.offer.chooseUsdc": {
+   "en": "Choose USDC above to bridge USDC with Circle CCTP.",
+   "where": [
+    "src/wallet/bridge.ts:655 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.providerComing": {
+   "en": "Listed for comparison; not offered for sending in this version.",
+   "where": [
+    "src/wallet/bridge.ts:760 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.logTooOld": {
+   "en": "This transfer was sent too long ago for the wallet to search the receiving network for it; look up the sending transaction in LayerZero Scan or an explorer.",
+   "where": [
+    "src/wallet/bridge.ts:912 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.logTooOldCctp": {
+   "en": "This transfer was sent too long ago for the wallet to search the receiving network for its mint; look up the recipient on that network in an explorer. If the USDC was never minted, anyone can still send the mint with Circle’s attested message.",
+   "where": [
+    "src/wallet/bridge.ts:916 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.refusal.nativeSmart": {
+   "en": "Test ETH is bridged only to your regular account: Stargate hands ETH over with a 2,300-gas transfer, which a deployed smart account cannot accept. Nothing was quoted.",
+   "where": [
+    "src/wallet/bridge.ts:1218 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.refusal.notOffered": {
+   "en": "This bridge provider is not offered in this wallet.",
+   "where": [
+    "src/wallet/bridge.ts:1266 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.refusal.builtInOnly": {
+   "en": "Bridging is offered only to the built-in test networks.",
+   "where": [
+    "src/wallet/bridge.ts:1269 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.refusal.otherAccount": {
+   "en": "This quote was prepared for another account. Nothing was quoted.",
+   "where": [
+    "src/wallet/bridge.ts:1375 literal",
+    "src/wallet/bridge.ts:1396 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.refusal.value": {
+   "en": "The transaction would not carry the quoted value. Nothing was signed.",
+   "where": [
+    "src/wallet/bridge.ts:1379 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.refusal.noApproval": {
+   "en": "This transfer needs no token approval.",
+   "where": [
+    "src/wallet/bridge.ts:1400 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.refusal.approvalMismatch": {
+   "en": "The approval transaction would not be the exact approval quoted. Nothing was signed.",
+   "where": [
+    "src/wallet/bridge.ts:1404 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.refusal.regularOnly": {
+   "en": "This quote was prepared for the regular account. Nothing was quoted.",
+   "where": [
+    "src/wallet/bridge.ts:1425 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.refusal.aaNetwork": {
+   "en": "The smart-account setup is for another network than this quote. Nothing was quoted.",
+   "where": [
+    "src/wallet/bridge.ts:1427 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.refusal.calls": {
+   "en": "The operation would not carry the quoted calls and value. Nothing was signed.",
+   "where": [
+    "src/wallet/bridge.ts:1431 literal",
+    "src/wallet/bridge.ts:1446 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.refusal.aaAddress": {
+   "en": "This quote was read for another address than the smart account. Nothing was quoted.",
+   "where": [
+    "src/wallet/bridge.ts:1439 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.fee.pool": {
+   "en": "Pool fee (taken from the amount)",
+   "where": [
+    "src/wallet/bridge.ts:1533 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.fee.unknown": {
+   "en": "not known before sending",
+   "where": [
+    "src/wallet/bridge.ts:1534 literal",
+    "src/wallet/bridge.ts:1644 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.lz.pin.noOptions": {
+   "en": "No extra options and no compose message: the transfer cannot run code of its own on the receiving network.",
+   "where": [
+    "src/wallet/bridge.ts:1550 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.firstMintPaymaster": {
+   "en": "Circle's USDC fee paymaster cannot pay for the first mint on a network where this account holds no USDC: it takes its fee before the mint runs.",
+   "where": [
+    "src/wallet/bridge.ts:1595 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.feeLabel": {
+   "en": "Circle protocol fee (Standard Transfer)",
+   "where": [
+    "src/wallet/bridge.ts:1643 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.call.oneOperation": {
+   "en": "One smart-account operation carries both calls, all or nothing, so there is one device prompt.",
+   "where": [
+    "src/wallet/bridge.ts:1656 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.call.twoTransactions": {
+   "en": "Two transactions, each with its own device prompt: first the approval, then, once it is confirmed, the burn.",
+   "where": [
+    "src/wallet/bridge.ts:1657 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.pin.caller": {
+   "en": "Destination caller: none (zero), so anyone may send the mint; it still goes only to the recipient above.",
+   "where": [
+    "src/wallet/bridge.ts:1664 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.pin.standard": {
+   "en": "Maximum fee 0 and finality 2000: a Standard Transfer, which Circle attests after the sending network’s hard finality. This wallet never builds a Fast Transfer.",
+   "where": [
+    "src/wallet/bridge.ts:1665 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.userop.waiting": {
+   "en": "Waiting for the bundle transaction that carries the smart-account operation; tracking starts once it is known.",
+   "where": [
+    "src/wallet/bridge.ts:2164 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.userop.notIncluded": {
+   "en": "The smart-account operation has not been included yet: the bundler has no receipt for it. Tracking starts once it is included in a bundle transaction.",
+   "where": [
+    "src/wallet/bridge.ts:2167 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.userop.reverted": {
+   "en": "The smart-account operation was included but reverted, so nothing was bridged; its network fee was still charged.",
+   "where": [
+    "src/wallet/bridge.ts:2170 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.userop.malformed": {
+   "en": "The bundler’s receipt for the smart-account operation was not in the expected shape, so the wallet did not use it and will ask again.",
+   "where": [
+    "src/wallet/bridge.ts:2173 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.status.waitingAttestation": {
+   "en": "Waiting for Circle’s attestation",
+   "where": [
+    "src/wallet/bridge.ts:2287 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.status.notChecked": {
+   "en": "Not checked yet",
+   "where": [
+    "src/wallet/bridge.ts:2292 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.status.onItsWay": {
+   "en": "On its way",
+   "where": [
+    "src/wallet/bridge.ts:2294 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.status.failed": {
+   "en": "Failed",
+   "where": [
+    "src/wallet/bridge.ts:2300 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.status.unknown": {
+   "en": "Not known yet",
+   "where": [
+    "src/wallet/bridge.ts:2302 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.status.notAsked": {
+   "en": "The wallet has not asked where this transfer is yet.",
+   "where": [
+    "src/wallet/bridge.ts:2315 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.expiry.unknown": {
+   "en": "Circle’s attested message is valid until it is used, unless it carries an expiration block: Circle’s technical guide says an expired message must be re-attested by Circle (possible at any time) before it can be minted.",
+   "where": [
+    "src/wallet/bridge.ts:2369 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.expiry.none": {
+   "en": "The attested message carries no expiration block (0), so it stays valid until the mint is sent: Circle’s contract accepts such a message at any time, and only once.",
+   "where": [
+    "src/wallet/bridge.ts:2372 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.expiry.arbitrum": {
+   "en": "(on Arbitrum an Ethereum block number, as Circle’s guide notes)",
+   "where": [
+    "src/wallet/bridge.ts:2374 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.refusal.noMint": {
+   "en": "There is no mint transaction to send for this transfer.",
+   "where": [
+    "src/wallet/bridge.ts:2469 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.refusal.noDelivery": {
+   "en": "There is no delivery transaction to send for this transfer.",
+   "where": [
+    "src/wallet/bridge.ts:2508 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.noEndpoint": {
+   "en": "No RPC endpoint is configured for this network.",
+   "where": [
+    "src/screens/MultisigScreen.tsx:239 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.chooseToken": {
+   "en": "Choose a token tracked on this network.",
+   "where": [
+    "src/screens/MultisigScreen.tsx:403 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.noBundler": {
+   "en": "No bundler is configured for this network (Settings → Account Abstraction).",
+   "where": [
+    "src/screens/MultisigScreen.tsx:455 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.create.title": {
+   "en": "New multi-signature account",
+   "where": [
+    "src/screens/MultisigScreen.tsx:660 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.create.localSigner": {
+   "en": "This wallet’s signer (the active account)",
+   "where": [
+    "src/screens/MultisigScreen.tsx:664 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.create.localWeight": {
+   "en": "Weight of this wallet’s signer",
+   "where": [
+    "src/screens/MultisigScreen.tsx:673 literal",
+    "src/screens/MultisigScreen.tsx:673 jsx",
+    "src/screens/MultisigScreen.tsx:675 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosigner.address": {
+   "en": "Ethereum address",
+   "where": [
+    "src/screens/MultisigScreen.tsx:684 literal",
+    "src/screens/MultisigScreen.tsx:691 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosigner.scanRationale": {
+   "en": "Scan the co-signer’s Ethereum address QR code.",
+   "where": [
+    "src/screens/MultisigScreen.tsx:693 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosigner.weight": {
+   "en": "Weight",
+   "where": [
+    "src/screens/MultisigScreen.tsx:685 literal",
+    "src/screens/MultisigScreen.tsx:695 literal",
+    "src/screens/MultisigScreen.tsx:695 literal",
+    "src/screens/MultisigScreen.tsx:697 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosigner.add": {
+   "en": "Add a co-signer",
+   "where": [
+    "src/screens/MultisigScreen.tsx:709 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.create.threshold": {
+   "en": "Threshold: the combined weight every operation needs (at least two signers).",
+   "where": [
+    "src/screens/MultisigScreen.tsx:711 literal",
+    "src/screens/MultisigScreen.tsx:711 jsx",
+    "src/screens/MultisigScreen.tsx:713 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.create.namePlaceholder": {
+   "en": "For example Family vault",
+   "where": [
+    "src/screens/MultisigScreen.tsx:724 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.review.address": {
+   "en": "Account address (not deployed yet)",
+   "where": [
+    "src/screens/MultisigScreen.tsx:750 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.signer.local": {
+   "en": "This wallet’s signer",
+   "where": [
+    "src/screens/MultisigScreen.tsx:760 literal",
+    "src/screens/MultisigScreen.tsx:807 literal",
+    "src/wallet/multisig.ts:441 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.signer.cosigner": {
+   "en": "Co-signer",
+   "where": [
+    "src/screens/MultisigScreen.tsx:687 jsx",
+    "src/screens/MultisigScreen.tsx:760 literal",
+    "src/screens/MultisigScreen.tsx:807 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.threshold": {
+   "en": "Threshold",
+   "where": [
+    "src/screens/MultisigScreen.tsx:767 literal",
+    "src/screens/MultisigScreen.tsx:814 literal",
+    "src/screens/MultisigScreen.tsx:1173 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.review.create": {
+   "en": "Create this multisig",
+   "where": [
+    "src/screens/MultisigScreen.tsx:773 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.detail.address": {
+   "en": "Multisig address (receive here)",
+   "where": [
+    "src/screens/MultisigScreen.tsx:790 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.detail.qrCaption": {
+   "en": "The multisig account’s address. Anyone can send to it; moving funds out needs the co-signers.",
+   "where": [
+    "src/screens/MultisigScreen.tsx:793 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.detail.loading": {
+   "en": "Loading…",
+   "where": [
+    "src/screens/MultisigScreen.tsx:797 literal",
+    "src/screens/MultisigScreen.tsx:800 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.detail.unreadable": {
+   "en": "Could not be read",
+   "where": [
+    "src/screens/MultisigScreen.tsx:797 literal",
+    "src/screens/MultisigScreen.tsx:800 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.detail.checking": {
+   "en": "Checking the account on-chain…",
+   "where": [
+    "src/screens/MultisigScreen.tsx:803 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.detail.continue": {
+   "en": "Continue the operation being approved",
+   "where": [
+    "src/screens/MultisigScreen.tsx:823 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.detail.newOperation": {
+   "en": "New operation (send)",
+   "where": [
+    "src/screens/MultisigScreen.tsx:831 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.detail.newOperation.title": {
+   "en": "Start a new operation?",
+   "where": [
+    "src/screens/MultisigScreen.tsx:845 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.detail.newOperation.body": {
+   "en": "The one you are collecting approvals for will be discarded.",
+   "where": [
+    "src/screens/MultisigScreen.tsx:846 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.detail.newOperation.discard": {
+   "en": "Discard and start",
+   "where": [
+    "src/screens/MultisigScreen.tsx:849 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.detail.shareTitle": {
+   "en": "Share the account with the co-signers",
+   "where": [
+    "src/screens/MultisigScreen.tsx:859 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.detail.shareHint": {
+   "en": "A co-signer adds the same account on their phone from this record (it contains no secrets).",
+   "where": [
+    "src/screens/MultisigScreen.tsx:861 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.detail.recordCaption": {
+   "en": "Multisig account record",
+   "where": [
+    "src/screens/MultisigScreen.tsx:863 literal",
+    "src/screens/MultisigScreen.tsx:864 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.detail.history": {
+   "en": "History",
+   "where": [
+    "src/screens/MultisigScreen.tsx:868 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.detail.remove": {
+   "en": "Remove from this wallet",
+   "where": [
+    "src/screens/MultisigScreen.tsx:888 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.send.intro": {
+   "en": "This builds a signing request for the co-signers; nothing is signed or sent until enough of them approve and you submit.",
+   "where": [
+    "src/screens/MultisigScreen.tsx:922 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.send.recipient": {
+   "en": "Recipient address",
+   "where": [
+    "src/screens/MultisigScreen.tsx:930 literal",
+    "src/screens/MultisigScreen.tsx:930 literal",
+    "src/screens/MultisigScreen.tsx:932 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.send.recipientPlaceholder": {
+   "en": "Recipient (0x…)",
+   "where": [
+    "src/screens/MultisigScreen.tsx:935 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.send.build": {
+   "en": "Build the signing request",
+   "where": [
+    "src/screens/MultisigScreen.tsx:952 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.requestId": {
+   "en": "Request id (call data and nonce)",
+   "where": [
+    "src/screens/MultisigScreen.tsx:966 literal",
+    "src/screens/MultisigScreen.tsx:1234 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.nonce": {
+   "en": "Nonce",
+   "where": [
+    "src/screens/MultisigScreen.tsx:967 literal",
+    "src/screens/MultisigScreen.tsx:1233 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.collect.step1": {
+   "en": "1. Send this request to the co-signers",
+   "where": [
+    "src/screens/MultisigScreen.tsx:980 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.collect.requestCaption": {
+   "en": "Multisig signing request",
+   "where": [
+    "src/screens/MultisigScreen.tsx:981 literal",
+    "src/screens/MultisigScreen.tsx:982 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.collect.step2": {
+   "en": "2. Add each approval you receive",
+   "where": [
+    "src/screens/MultisigScreen.tsx:984 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.collect.paste": {
+   "en": "Paste a co-signer’s approval (or a 65-byte signature from another wallet)",
+   "where": [
+    "src/screens/MultisigScreen.tsx:997 literal",
+    "src/screens/MultisigScreen.tsx:997 literal",
+    "src/screens/MultisigScreen.tsx:999 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.collect.pastePlaceholder": {
+   "en": "Approval text or a 0x… signature",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1002 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.collect.add": {
+   "en": "Add approval",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1009 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.collect.addFile": {
+   "en": "Add an approval from a file",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1010 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.collect.step3": {
+   "en": "3. Submit",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1011 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.collect.review": {
+   "en": "Review and submit",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1015 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.confirm.title": {
+   "en": "Submit the multisig operation",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1029 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.confirm.fee": {
+   "en": "Network fee (worst case, set by you as the submitter)",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1036 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.confirm.ownBalance": {
+   "en": "Paid from the multisig’s own balance.",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1038 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.confirm.deploys": {
+   "en": "This operation also deploys the multisig account (its first operation).",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1051 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.confirm.approve": {
+   "en": "Approve and submit",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1058 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.progress.pending": {
+   "en": "Submitted — waiting for inclusion…",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1080 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.progress.timeout": {
+   "en": "Not included yet",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1082 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.progress.failed": {
+   "en": "Included, but the operation failed",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1084 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.progress.timeoutHint": {
+   "en": "The bundler has not reported it within two minutes. It may still be included; the UserOperation hash is the lookup key.",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1092 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.progress.back": {
+   "en": "Back to the multisig",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1098 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.import.title": {
+   "en": "Add a multisig from its record",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1121 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.import.intro": {
+   "en": "Scan the account record on another signer’s phone, paste the text they shared, or open its file. The wallet checks that the address follows from the signer set and that one of your recovery-phrase accounts is a signer.",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1123 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.import.paste": {
+   "en": "Paste the multisig record",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1135 literal",
+    "src/screens/MultisigScreen.tsx:1135 literal",
+    "src/screens/MultisigScreen.tsx:1137 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.import.pastePlaceholder": {
+   "en": "Record text",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1140 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.import.check": {
+   "en": "Check the record",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1148 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.import.openFile": {
+   "en": "Open a record file",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1149 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.account": {
+   "en": "Account",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1159 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.import.add": {
+   "en": "Add to this wallet",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1175 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosign.title": {
+   "en": "Approve a request (as a co-signer)",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1186 jsx",
+    "src/screens/MultisigScreen.tsx:1356 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosign.intro": {
+   "en": "Scan the signing request on the submitter’s phone (a long request comes in several QR codes; scan each one), paste the text they shared, or open its file. You will see the account, the network, the nonce and every call in full before anything is signed.",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1188 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosign.paste": {
+   "en": "Paste the multisig signing request",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1201 literal",
+    "src/screens/MultisigScreen.tsx:1201 literal",
+    "src/screens/MultisigScreen.tsx:1203 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosign.pastePlaceholder": {
+   "en": "Request text",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1206 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosign.review": {
+   "en": "Review the request",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1214 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosign.openFile": {
+   "en": "Open a request file",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1215 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosign.reviewTitle": {
+   "en": "Review before you approve",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1225 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosign.account": {
+   "en": "Multisig account",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1227 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.network": {
+   "en": "Network",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1232 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosign.youApproveAs": {
+   "en": "You approve as",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1235 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosign.approve": {
+   "en": "Approve as co-signer",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1244 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosign.doneTitle": {
+   "en": "Approval ready — give it to the submitter",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1256 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosign.approvalCaption": {
+   "en": "Multisig approval",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1261 literal",
+    "src/screens/MultisigScreen.tsx:1262 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.list.intro": {
+   "en": "An account that needs several signers for every operation: this wallet’s account plus co-signers on other phones, each with a weight, and a threshold.",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1298 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.list.deployed": {
+   "en": "deployed",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1311 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.list.notDeployed": {
+   "en": "not deployed yet",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1311 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.list.collecting": {
+   "en": "an operation is collecting approvals",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1312 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.list.cosignedElsewhere": {
+   "en": "Approved as a co-signer (accounts not in this wallet)",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1322 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.list.checkNetwork": {
+   "en": "Check this network",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1331 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.list.create": {
+   "en": "Create a multisig",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1339 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.list.add": {
+   "en": "Add a multisig from a record",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1347 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.unverifiedNetwork": {
+   "en": "Multi-signature accounts need the Kernel v3.3 contracts and ZeroDev's weighted signer module on this network; the wallet has not verified them here.",
+   "where": [
+    "src/config/evm-chain.ts:1208 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.scanQr": {
+   "en": "Scan QR code",
+   "where": [
+    "src/components/RecoveryViews.tsx:280 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.refused.title": {
+   "en": "Not available for a multi-signature account",
+   "where": [
+    "src/screens/MultisigViews.tsx:97 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.calls.one": {
+   "en": "The call",
+   "where": [
+    "src/screens/MultisigViews.tsx:147 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.file.save": {
+   "en": "Save as file (.json)",
+   "where": [
+    "src/screens/MultisigViews.tsx:169 literal",
+    "src/screens/MultisigViews.tsx:176 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.file.unavailable": {
+   "en": "Sharing files is not available on this device. Use Share… or Copy instead.",
+   "where": [
+    "src/screens/MultisigViews.tsx:193 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.file.hint": {
+   "en": "Shares the text as a .json file (for example to a messaging app or your cloud drive). It contains no secrets; the temporary copy on this phone is deleted a minute after the share sheet closes.",
+   "where": [
+    "src/screens/MultisigViews.tsx:204 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.qr.previous": {
+   "en": "Previous part",
+   "where": [
+    "src/screens/MultisigViews.tsx:233 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.qr.next": {
+   "en": "Next part",
+   "where": [
+    "src/screens/MultisigViews.tsx:234 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.freshDeploy": {
+   "en": "A multi-signature account is always a new account, deployed fresh with its signer set. This wallet never converts an existing account: Kernel keeps the old single-key validator installed when the root signer changes, so a converted account would still obey one key, a backdoor around the co-signers.",
+   "where": [
+    "src/wallet/multisig.ts:201 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.feesLine": {
+   "en": "Co-signers approve the calls and the nonce, not the network fee or paymaster, which the submitter sets.",
+   "where": [
+    "src/wallet/multisig.ts:207 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.unaudited": {
+   "en": "The weighted signer module and the Kernel v3.3 account it runs on have no published audit for their deployed versions, so this wallet offers multi-signature accounts on test networks only.",
+   "where": [
+    "src/wallet/multisig.ts:211 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.deployNote": {
+   "en": "Not deployed yet. The first operation deploys the account; it needs the co-signers’ approvals like every operation, and the account pays the network fee from its own balance, so fund the address first.",
+   "where": [
+    "src/wallet/multisig.ts:219 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.fundAndRetry": {
+   "en": "The co-signer approvals stay valid while you fund the multisig, as long as no other operation uses this nonce: fund it, then review and submit again without collecting them again.",
+   "where": [
+    "src/wallet/multisig.ts:228 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.phraseSignerOnly": {
+   "en": "A multi-signature account is created with this wallet’s active recovery-phrase account as one of its signers. Switch to an account from your recovery phrase first (imported keys and watch-only addresses cannot be the wallet’s signer).",
+   "where": [
+    "src/wallet/multisig.ts:233 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.config.singleSigner": {
+   "en": "With these weights and this threshold one signer alone could send operations, which is not a multi-signature account. Raise the threshold or lower the heaviest weight so every operation needs at least two signers.",
+   "where": [
+    "src/wallet/multisig.ts:239 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.approval.submitter": {
+   "en": "This approval is from this wallet’s own signer, which submits the operation and signs it last. The signer module counts each signer once, so it cannot also be a co-signer approval.",
+   "where": [
+    "src/wallet/multisig.ts:244 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.exposure.alwaysLocal": {
+   "en": ", so this phone’s signer is always one of them",
+   "where": [
+    "src/wallet/multisig.ts:278 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.refused.guardians": {
+   "en": "Guardians are not available for a multi-signature account: its root signer module is the same contract guardian recovery uses, and the account keys a module by its address, so the signer set and a guardian set would collide on one validation id and one storage slot.",
+   "where": [
+    "src/wallet/multisig.ts:341 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.refused.inheritance": {
+   "en": "Inheritance is not available for a multi-signature account: it is built on the guardian module, which is the same contract as the account’s root signer module, so the two would collide.",
+   "where": [
+    "src/wallet/multisig.ts:347 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.refused.passkeys": {
+   "en": "A passkey signer is not offered for a multi-signature account: it would let one passkey act for the account without the co-signers, and adding one to a multisig root has never been tested.",
+   "where": [
+    "src/wallet/multisig.ts:352 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.refused.sessionKeys": {
+   "en": "Session keys are not offered for a multi-signature account: a session key would let one key act for the account without the co-signers, and adding one to a multisig root has never been tested.",
+   "where": [
+    "src/wallet/multisig.ts:357 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.refused.eip7702": {
+   "en": "An EIP-7702 upgrade is not applicable: it upgrades a regular account’s own address, and a multi-signature account is already a deployed smart account with no single owner key.",
+   "where": [
+    "src/wallet/multisig.ts:362 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.refused.ownerRotation": {
+   "en": "A multi-signature account has no single owner key to change; its signer set is fixed when it is deployed.",
+   "where": [
+    "src/wallet/multisig.ts:366 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.config.addCosigner": {
+   "en": "Add at least one co-signer.",
+   "where": [
+    "src/wallet/multisig.ts:437 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.config.threshold": {
+   "en": "The threshold must be a whole number of at least 1.",
+   "where": [
+    "src/wallet/multisig.ts:470 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.storeDamaged": {
+   "en": "The list of multi-signature accounts on this phone could not be read, so nothing was changed. The accounts themselves are on-chain; import their records again if the list stays unreadable.",
+   "where": [
+    "src/wallet/multisig.ts:824 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.remove.title": {
+   "en": "Remove this multisig from this wallet?",
+   "where": [
+    "src/wallet/multisig.ts:1132 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.import.noRecord": {
+   "en": "No multisig record found in the text.",
+   "where": [
+    "src/wallet/multisig.ts:1257 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.import.invalidJson": {
+   "en": "The multisig record is not valid JSON.",
+   "where": [
+    "src/wallet/multisig.ts:1262 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.import.isRequest": {
+   "en": "This is a signing request, not an account record. Open it under “Approve a request”.",
+   "where": [
+    "src/wallet/multisig.ts:1265 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.import.isApproval": {
+   "en": "This is a co-signer’s approval, not an account record.",
+   "where": [
+    "src/wallet/multisig.ts:1266 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.import.notRecord": {
+   "en": "This is not a Shiba Wallet multisig record.",
+   "where": [
+    "src/wallet/multisig.ts:1267 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.import.version": {
+   "en": "Unsupported multisig record version.",
+   "where": [
+    "src/wallet/multisig.ts:1268 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.import.detailsMissing": {
+   "en": "The multisig account details are missing.",
+   "where": [
+    "src/wallet/multisig.ts:1186 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.import.badChainId": {
+   "en": "The multisig record has no valid chain id.",
+   "where": [
+    "src/wallet/multisig.ts:1188 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.import.badAccount": {
+   "en": "The multisig record has no valid account address.",
+   "where": [
+    "src/wallet/multisig.ts:1189 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.import.noSigners": {
+   "en": "The multisig record lists no signers.",
+   "where": [
+    "src/wallet/multisig.ts:1190 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.import.badThreshold": {
+   "en": "The multisig record has no valid threshold.",
+   "where": [
+    "src/wallet/multisig.ts:1197 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.import.delay": {
+   "en": "This wallet supports multisig accounts without a delay only.",
+   "where": [
+    "src/wallet/multisig.ts:1198 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.import.badIndex": {
+   "en": "The multisig record has no valid index.",
+   "where": [
+    "src/wallet/multisig.ts:1199 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.import.otherDeployment": {
+   "en": "This multisig uses deployment addresses this wallet does not use (factory, implementation or signer module).",
+   "where": [
+    "src/wallet/multisig.ts:1207 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.import.noOwnSigner": {
+   "en": "None of this wallet’s recovery-phrase accounts is a signer of this multisig, so it cannot approve or submit for it. Add the account that is a signer first, or watch the address instead (Settings → Accounts).",
+   "where": [
+    "src/wallet/multisig.ts:1291 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.noSlot": {
+   "en": "No multisig slot is left in this wallet.",
+   "where": [
+    "src/wallet/multisig.ts:1080 literal",
+    "src/wallet/multisig.ts:1301 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.create.noDelay": {
+   "en": "This wallet creates multisig accounts without a delay.",
+   "where": [
+    "src/wallet/multisig.ts:1071 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.create.mustBeSigner": {
+   "en": "This wallet’s signer must be one of the multisig’s signers.",
+   "where": [
+    "src/wallet/multisig.ts:1074 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.create.tooMany": {
+   "en": "This phone already holds too many multisig accounts with this exact signer set on this network.",
+   "where": [
+    "src/wallet/multisig.ts:553 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.notInWallet": {
+   "en": "This multisig is not in this wallet.",
+   "where": [
+    "src/wallet/multisig.ts:1116 literal",
+    "src/wallet/multisig.ts:1126 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.notInWalletAnyMore": {
+   "en": "This multisig is not in this wallet any more.",
+   "where": [
+    "src/wallet/multisig.ts:1792 literal",
+    "src/wallet/multisig.ts:2029 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.chain.match": {
+   "en": "Deployed; its signer set and threshold on-chain match this record.",
+   "where": [
+    "src/wallet/multisig.ts:1441 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.chain.notVisible": {
+   "en": "Deployed by its first operation (the bundler’s receipt confirmed it), but the network endpoint does not show the account’s code yet, so its signer set could not be compared on-chain. Open the multisig again in a moment.",
+   "where": [
+    "src/wallet/multisig.ts:1445 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.depositNote": {
+   "en": "The EntryPoint holds this deposit for the multisig and takes network fees from it first. It cannot be sent as an amount, and this wallet does not offer a way to withdraw it; later operations use it for their fees.",
+   "where": [
+    "src/wallet/multisig.ts:1514 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.funds.loading": {
+   "en": "Balance loading…",
+   "where": [
+    "src/wallet/multisig.ts:1542 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.funds.unknown": {
+   "en": "Balance unknown",
+   "where": [
+    "src/wallet/multisig.ts:1543 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.funding.recordedDeploy": {
+   "en": "For scale only: in this wallet’s recorded test run on Ethereum Sepolia (2026-10-10), the first operation of a 2-of-3 multisig, which also deployed it, was quoted at a worst-case network fee of about 0.0036 to 0.0066 test ETH at different fee levels and actually cost about 0.0020 test ETH. That is a recorded range, not a quote for this operation; fees change.",
+   "where": [
+    "src/wallet/multisig.ts:1586 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.funding.recordedLater": {
+   "en": "For scale only: in this wallet’s recorded test run on Ethereum Sepolia (2026-10-10), a later operation of a 2-of-3 multisig was quoted at a worst-case network fee of about 0.0013 to 0.0023 test ETH at different fee levels and actually cost about 0.0008 test ETH. That is a recorded range, not a quote for this operation; fees change.",
+   "where": [
+    "src/wallet/multisig.ts:1592 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.funding.balanceUnread": {
+   "en": "Its balance could not be read just now.",
+   "where": [
+    "src/wallet/multisig.ts:1635 jsx"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.funding.unknown": {
+   "en": "The exact amount is unknown because the estimate itself was refused.",
+   "where": [
+    "src/wallet/multisig.ts:1647 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.preview.note": {
+   "en": "Simulated as direct calls from the multisig account. The network fee the multisig pays through the EntryPoint is shown separately above and is not part of this list.",
+   "where": [
+    "src/wallet/multisig.ts:2140 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.preview.undeployed": {
+   "en": "The multisig is not deployed yet: this operation deploys it first, which the simulation leaves out (deploying it moves no funds apart from the network fee).",
+   "where": [
+    "src/wallet/multisig.ts:2144 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.submit.notCollecting": {
+   "en": "This operation was already submitted or replaced. Nothing was signed.",
+   "where": [
+    "src/wallet/multisig.ts:2188 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.submit.callsDiffer": {
+   "en": "The quoted calls differ from the ones the co-signers approved. Nothing was signed.",
+   "where": [
+    "src/wallet/multisig.ts:2210 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.submit.noCalls": {
+   "en": "Nothing to send: the operation has no calls.",
+   "where": [
+    "src/wallet/multisig.ts:1762 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.request.notFound": {
+   "en": "No multisig signing request found in the text.",
+   "where": [
+    "src/wallet/multisig.ts:2317 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.request.invalidJson": {
+   "en": "The signing request is not valid JSON.",
+   "where": [
+    "src/wallet/multisig.ts:2322 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.request.isApproval": {
+   "en": "This is a co-signer’s approval, not a signing request. Add it on the submitting phone.",
+   "where": [
+    "src/wallet/multisig.ts:2325 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.request.isRecord": {
+   "en": "This is an account record, not a signing request.",
+   "where": [
+    "src/wallet/multisig.ts:2326 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.request.notRequest": {
+   "en": "This is not a Shiba Wallet multisig signing request.",
+   "where": [
+    "src/wallet/multisig.ts:2327 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.request.version": {
+   "en": "Unsupported signing request version.",
+   "where": [
+    "src/wallet/multisig.ts:2328 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.request.otherNetwork": {
+   "en": "The request and its account are on different networks.",
+   "where": [
+    "src/wallet/multisig.ts:2331 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.request.otherAccount": {
+   "en": "The request is for a different account than its account details.",
+   "where": [
+    "src/wallet/multisig.ts:2332 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.request.otherModule": {
+   "en": "The request names a different signer module than its account.",
+   "where": [
+    "src/wallet/multisig.ts:2333 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.request.noCalls": {
+   "en": "The request lists no calls.",
+   "where": [
+    "src/wallet/multisig.ts:2334 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.request.badCall": {
+   "en": "A call in the request is malformed.",
+   "where": [
+    "src/wallet/multisig.ts:2336 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.request.callsMismatch": {
+   "en": "The listed calls do not match the request’s call data. Nothing can be approved.",
+   "where": [
+    "src/wallet/multisig.ts:2339 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosign.noSigner": {
+   "en": "None of this wallet’s accounts is a signer of this multisig, so there is nothing to approve here.",
+   "where": [
+    "src/wallet/multisig.ts:2386 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosign.setDiffers": {
+   "en": "The signer set in this request differs from this wallet’s record of the account.",
+   "where": [
+    "src/wallet/multisig.ts:2396 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosign.notInWallet": {
+   "en": "This account is not in this wallet. Its address was checked against the signer set in the request.",
+   "where": [
+    "src/wallet/multisig.ts:2398 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosign.notVerified": {
+   "en": "The approval did not verify. Nothing was shared.",
+   "where": [
+    "src/wallet/multisig.ts:2419 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.approval.notCollecting": {
+   "en": "This operation is no longer collecting approvals.",
+   "where": [
+    "src/wallet/multisig.ts:1979 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.approval.notFound": {
+   "en": "No approval found in the text.",
+   "where": [
+    "src/wallet/multisig.ts:1989 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.approval.invalidJson": {
+   "en": "The approval is not valid JSON.",
+   "where": [
+    "src/wallet/multisig.ts:1994 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.approval.isRequest": {
+   "en": "This is a signing request, not an approval.",
+   "where": [
+    "src/wallet/multisig.ts:1997 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.approval.isRecord": {
+   "en": "This is an account record, not an approval.",
+   "where": [
+    "src/wallet/multisig.ts:1998 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.approval.version": {
+   "en": "Unsupported approval version.",
+   "where": [
+    "src/wallet/multisig.ts:2000 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.approval.otherNetwork": {
+   "en": "This approval is for another network.",
+   "where": [
+    "src/wallet/multisig.ts:2001 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.approval.otherAccount": {
+   "en": "This approval is for another account.",
+   "where": [
+    "src/wallet/multisig.ts:2002 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.approval.otherRequest": {
+   "en": "This approval is for another request (a different call or nonce).",
+   "where": [
+    "src/wallet/multisig.ts:2004 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.qr.empty": {
+   "en": "The QR code was empty.",
+   "where": [
+    "src/wallet/multisig.ts:2575 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.qr.damaged": {
+   "en": "This QR code looks like part of a Shiba Wallet multisig code, but it is damaged. Scan it again.",
+   "where": [
+    "src/wallet/multisig.ts:2582 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.qr.alreadyRead": {
+   "en": "That part was already read.",
+   "where": [
+    "src/wallet/multisig.ts:2607 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.qr.tooLarge": {
+   "en": "Too large for QR codes — use Share, Copy or Save as file instead.",
+   "where": [
+    "src/wallet/multisig.ts:2626 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.scan.request": {
+   "en": "Scan a request",
+   "where": [
+    "src/wallet/multisig.ts:2643 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.scan.approval": {
+   "en": "Scan an approval",
+   "where": [
+    "src/wallet/multisig.ts:2644 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.scan.record": {
+   "en": "Scan a record",
+   "where": [
+    "src/wallet/multisig.ts:2645 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.scan.next": {
+   "en": "Scan the next part",
+   "where": [
+    "src/wallet/multisig.ts:2646 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.scan.startOver": {
+   "en": "Start over",
+   "where": [
+    "src/wallet/multisig.ts:2647 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.scan.requestRationale": {
+   "en": "Point the camera at the signing request QR code on the submitter’s phone. A request in several parts is read one part at a time.",
+   "where": [
+    "src/wallet/multisig.ts:2649 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.scan.approvalRationale": {
+   "en": "Point the camera at the approval QR code on the co-signer’s phone, or at a signature QR code from another wallet.",
+   "where": [
+    "src/wallet/multisig.ts:2651 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.scan.recordRationale": {
+   "en": "Point the camera at the multisig record QR code on the other signer’s phone. A record in several parts is read one part at a time.",
+   "where": [
+    "src/wallet/multisig.ts:2653 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.scan.requestNote": {
+   "en": "A scanned request is checked exactly like pasted text: the wallet recomputes the account address, the call data and the request id from what it read, and you still see every call in full before anything is signed.",
+   "where": [
+    "src/wallet/multisig.ts:2656 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.scan.recordNote": {
+   "en": "A scanned record is checked exactly like pasted text: the account address must follow from its signer set, and one of your recovery-phrase accounts must be a signer.",
+   "where": [
+    "src/wallet/multisig.ts:2660 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.scan.approvalNote": {
+   "en": "A scanned approval is checked exactly like pasted text: its signature must recover to a signer of this multisig for this exact request (these calls at this nonce), or it is refused.",
+   "where": [
+    "src/wallet/multisig.ts:2664 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.file.chooseJson": {
+   "en": "Choose a .json file exported by Shiba Wallet.",
+   "where": [
+    "src/wallet/multisig.ts:2718 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.file.oneObject": {
+   "en": "This file must contain exactly one JSON object and nothing else.",
+   "where": [
+    "src/wallet/multisig.ts:2724 literal"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.file.onlyPayloads": {
+   "en": "Only a multisig record, request or approval can be saved as a file.",
+   "where": [
+    "src/wallet/multisig.ts:2743 literal",
+    "src/wallet/multisig.ts:2748 literal",
+    "src/wallet/multisig.ts:2751 literal"
+   ],
+   "base": "6a1d2bb"
   }
  },
  "template": {
@@ -7147,6 +9279,1498 @@
     ""
    ],
    "base": "5cb4601"
+  },
+  "home.delegation.line": {
+   "en": "{name}{suffix} on {network}",
+   "where": "src/screens/HomeScreen.tsx:810 expr",
+   "old": [
+    "",
+    "",
+    " on ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "home.delegation.suffix.other": {
+   "en": " · delegated to {delegate} (not the wallet's Kernel)",
+   "where": "src/wallet/delegation.ts:400 expr",
+   "old": [
+    " · delegated to ",
+    " (not the wallet's Kernel)"
+   ],
+   "base": "6a1d2bb"
+  },
+  "home.recovered.line": {
+   "en": "{name} · recovered account {address} on {network} (not found from your recovery phrase alone; keep its record backed up)",
+   "where": "src/screens/HomeScreen.tsx:847 expr",
+   "old": [
+    "",
+    " · recovered account ",
+    " on ",
+    " (not found from your recovery phrase alone; keep its record backed up)"
+   ],
+   "base": "6a1d2bb"
+  },
+  "home.footer.watchOnly": {
+   "en": "{name} is an address you watch; this wallet holds no key for it, so it cannot sign or swap for it. A send on an Ethereum network can still be prepared here and signed by an off-line signer that holds its key: use \"Send with an off-line signer\". Balances come from the RPC endpoints in Settings; pull down to refresh. Activity and NFTs read this address from the indexers in Settings.",
+   "where": "src/wallet/watch-only.ts:392 expr",
+   "old": [
+    "",
+    " is an address you watch; this wallet holds no key for it, so it cannot sign or swap for it. A send on an Ethereum network can still be prepared here and signed by an off-line signer that holds its key: use \"Send with an off-line signer\". Balances come from the RPC endpoints in Settings; pull down to refresh. Activity and NFTs read this address from the indexers in Settings."
+   ],
+   "base": "6a1d2bb"
+  },
+  "home.footer.multisig": {
+   "en": "{name} is a multi-signature account: its operations are built on the Multisig screen and need its co-signers’ approvals. Balances come from the RPC endpoints in Settings; pull down to refresh. Activity and NFTs read this address from the indexers in Settings.",
+   "where": "src/wallet/watch-only.ts:502 expr",
+   "old": [
+    "",
+    " is a multi-signature account: its operations are built on the Multisig screen and need its co-signers’ approvals. Balances come from the RPC endpoints in Settings; pull down to refresh. Activity and NFTs read this address from the indexers in Settings."
+   ],
+   "base": "6a1d2bb"
+  },
+  "home.multisig.otherNetwork": {
+   "en": "{label} is recorded on {recordNetwork}, and the Multisig screen builds its operations only there. The active network here is {activeNetwork}; send to this address only on {recordNetwork}.",
+   "where": "src/wallet/watch-only.ts:464 expr",
+   "old": [
+    "",
+    " is recorded on ",
+    ", and the Multisig screen builds its operations only there. The active network here is ",
+    "; send to this address only on ",
+    "."
+   ],
+   "base": "6a1d2bb"
+  },
+  "home.footer.tokenFee": {
+   "en": "The network fee for a token send is normally paid in {native}, not in the token.",
+   "where": "src/wallet/token-gas.ts:238 expr",
+   "old": [
+    "The network fee for a token send is normally paid in ",
+    ", not in the token."
+   ],
+   "base": "6a1d2bb"
+  },
+  "home.footer.tokenFeeUsdc": {
+   "en": "{base} On {network}, a smart-account send can pay it in {token} instead when the Send screen offers that choice.",
+   "where": "src/wallet/token-gas.ts:247 expr",
+   "old": [
+    "",
+    " On ",
+    ", a smart-account send can pay it in ",
+    " instead when the Send screen offers that choice."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.aa.setupFailed": {
+   "en": "The smart account could not be set up: {error}",
+   "where": "src/screens/BridgeScreen.tsx:187 expr",
+   "old": [
+    "The smart account could not be set up: ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.approval.notConfirmed": {
+   "en": "The approval was broadcast (transaction {txid}) but has not taken effect yet. Nothing further was sent. Wait for it to confirm, then review again: the approval will already be in place.",
+   "where": "src/screens/BridgeScreen.tsx:641 expr",
+   "old": [
+    "The approval was broadcast (transaction ",
+    ") but has not taken effect yet. Nothing further was sent. Wait for it to confirm, then review again: the approval will already be in place."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.confirm.header": {
+   "en": "{source} → {destination} through {provider}",
+   "where": "src/screens/BridgeScreen.tsx:863 expr",
+   "old": [
+    "",
+    " → ",
+    " through ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.confirm.whatIsSigned": {
+   "en": "What is signed on {source}",
+   "where": "src/screens/BridgeScreen.tsx:871 expr",
+   "old": [
+    "What is signed on ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.confirm.trustTitle": {
+   "en": "Who you trust with {provider}",
+   "where": "src/screens/BridgeScreen.tsx:888 expr",
+   "old": [
+    "Who you trust with ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.row.maxFeeApproval": {
+   "en": "Max network fee for the approval (paid in {symbol})",
+   "where": "src/screens/BridgeScreen.tsx:912 expr",
+   "old": [
+    "Max network fee for the approval (paid in ",
+    ")"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.row.maxFeeOn": {
+   "en": "Max network fee on {source} (paid in {symbol})",
+   "where": "src/screens/BridgeScreen.tsx:953 expr",
+   "old": [
+    "Max network fee on ",
+    " (paid in ",
+    ")"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.amount.nativeHint": {
+   "en": "Stargate moves {symbol} in steps of 0.000001; an amount with more decimal places is refused, not rounded.",
+   "where": "src/screens/BridgeScreen.tsx:1153 expr",
+   "old": [
+    "Stargate moves ",
+    " in steps of 0.000001; an amount with more decimal places is refused, not rounded."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.row.maxFeeDelivery": {
+   "en": "Max network fee for the delivery (paid in {symbol})",
+   "where": "src/screens/BridgeScreen.tsx:1285 expr",
+   "old": [
+    "Max network fee for the delivery (paid in ",
+    ")"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.row.maxFeeMint": {
+   "en": "Max network fee for the mint (paid in {symbol})",
+   "where": "src/screens/BridgeScreen.tsx:1393 expr",
+   "old": [
+    "Max network fee for the mint (paid in ",
+    ")"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.mint.button": {
+   "en": "Mint on {destination}",
+   "where": "src/screens/BridgeScreen.tsx:1402 expr",
+   "old": [
+    "Mint on ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.switch.hint": {
+   "en": "Makes {destination} the active test network, as Settings → Developer does; this screen stays open",
+   "where": "src/screens/BridgeScreen.tsx:1439 expr",
+   "old": [
+    "Makes ",
+    " the active test network, as Settings → Developer does; this screen stays open"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.row.moves": {
+   "en": " · moves {asset}",
+   "where": "src/screens/BridgeViews.tsx:162 expr",
+   "old": [
+    " · moves ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.record.lastCheckFailed": {
+   "en": "The last check failed: {error}",
+   "where": "src/screens/BridgeViews.tsx:243 expr",
+   "old": [
+    "The last check failed: ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.record.notKnownUserOp": {
+   "en": "not known yet (UserOperation {hash})",
+   "where": "src/screens/BridgeViews.tsx:247 expr",
+   "old": [
+    "not known yet (UserOperation ",
+    ")"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.choiceNote.noSource": {
+   "en": "The wallet lists every provider it knows, each with the reason it cannot send from {source}, and never picks one for you.",
+   "where": "src/wallet/bridge.ts:174 expr",
+   "old": [
+    "The wallet lists every provider it knows, each with the reason it cannot send from ",
+    ", and never picks one for you."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.noRoute": {
+   "en": "Does not serve {source} → {destination} in this wallet.",
+   "where": "src/wallet/bridge.ts:182 expr",
+   "old": [
+    "Does not serve ",
+    " → ",
+    " in this wallet."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.noSourceRoute": {
+   "en": "Does not serve {source} in this wallet.",
+   "where": "src/wallet/bridge.ts:182 expr",
+   "old": [
+    "Does not serve ",
+    " in this wallet."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.recipient.regular": {
+   "en": "The test ETH arrives at your regular account {recipient} on {destination}, the same address as on this network.",
+   "where": "src/wallet/bridge.ts:197 expr",
+   "old": [
+    "The test ETH arrives at your regular account ",
+    " on ",
+    ", the same address as on this network."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.recipient.smart": {
+   "en": "Sent from your smart account, the test ETH arrives at your regular account {recipient} on {destination}, not at the smart account. Stargate hands ETH over with a 2,300-gas transfer, which a deployed smart account cannot accept, so the ETH would wait in Stargate’s pool until someone sent a second transaction there. This wallet therefore offers only your regular account as the recipient.",
+   "where": "src/wallet/bridge.ts:207 expr",
+   "old": [
+    "Sent from your smart account, the test ETH arrives at your regular account ",
+    " on ",
+    ", not at the smart account. Stargate hands ETH over with a 2,300-gas transfer, which a deployed smart account cannot accept, so the ETH would wait in Stargate’s pool until someone sent a second transaction there. This wallet therefore offers only your regular account as the recipient."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.recipient.upgraded": {
+   "en": "Your smart account is this same address (upgraded with EIP-7702), so the test ETH arrives at {recipient} on {destination}, the same address as on this network. An upgrade on this network does not carry over: whether the address has code there is read when you review.",
+   "where": "src/wallet/bridge.ts:221 expr",
+   "old": [
+    "Your smart account is this same address (upgraded with EIP-7702), so the test ETH arrives at ",
+    " on ",
+    ", the same address as on this network. An upgrade on this network does not carry over: whether the address has code there is read when you review."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.usdc.smartUnavailable": {
+   "en": "Your smart account cannot be chosen as the recipient on {destination}: the wallet has not verified the smart-account contracts there, so it cannot say the address is the same. Your regular account receives.",
+   "where": "src/wallet/bridge.ts:264 expr",
+   "old": [
+    "Your smart account cannot be chosen as the recipient on ",
+    ": the wallet has not verified the smart-account contracts there, so it cannot say the address is the same. Your regular account receives."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.recipientCode.code": {
+   "en": "Your regular account has contract code on {destination} (an account upgrade, for example). Stargate’s 2,300-gas delivery may not be accepted there; the ETH would then wait in Stargate’s pool, and the tracking below offers the transaction that delivers it.",
+   "where": "src/wallet/bridge.ts:274 expr",
+   "old": [
+    "Your regular account has contract code on ",
+    " (an account upgrade, for example). Stargate’s 2,300-gas delivery may not be accepted there; the ETH would then wait in Stargate’s pool, and the tracking below offers the transaction that delivers it."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.recipientCode.unknown": {
+   "en": "Whether your regular account has contract code on {destination} could not be read just now.",
+   "where": "src/wallet/bridge.ts:279 expr",
+   "old": [
+    "Whether your regular account has contract code on ",
+    " could not be read just now."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.pinnedPool": {
+   "en": "This transaction goes to Stargate’s native ETH pool on {source} ({pool}), pinned by this wallet from Stargate’s published test-network deployments and checked on-chain on 2026-10-15. The risk card below does not know Stargate’s pools by name.",
+   "where": "src/wallet/bridge.ts:285 expr",
+   "old": [
+    "This transaction goes to Stargate’s native ETH pool on ",
+    " (",
+    "), pinned by this wallet from Stargate’s published test-network deployments and checked on-chain on 2026-10-15. The risk card below does not know Stargate’s pools by name."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.row.spokenMoves": {
+   "en": ", moves {asset}",
+   "where": "src/wallet/bridge.ts:375 expr",
+   "old": [
+    ", moves ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.row.spokenFee": {
+   "en": ", fee {fee}",
+   "where": "src/wallet/bridge.ts:376 expr",
+   "old": [
+    ", fee ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.offer.notBuiltIn": {
+   "en": "No bridge provider in this wallet serves {source}: bridging is offered only between the built-in test networks.",
+   "where": "src/wallet/bridge.ts:633 expr",
+   "old": [
+    "No bridge provider in this wallet serves ",
+    ": bridging is offered only between the built-in test networks."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.offer.noProvider": {
+   "en": "No bridge provider in this wallet serves {source}.",
+   "where": "src/wallet/bridge.ts:651 expr",
+   "old": [
+    "No bridge provider in this wallet serves ",
+    "."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.offer.noPool": {
+   "en": "No provider in this wallet can bridge {asset} from {source}: Stargate has no pool there.",
+   "where": "src/wallet/bridge.ts:655 expr",
+   "old": [
+    "No provider in this wallet can bridge ",
+    " from ",
+    ": Stargate has no pool there."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.offer.noCctp": {
+   "en": "No provider in this wallet can bridge USDC from {source}: Circle CCTP is not deployed there.",
+   "where": "src/wallet/bridge.ts:656 expr",
+   "old": [
+    "No provider in this wallet can bridge USDC from ",
+    ": Circle CCTP is not deployed there."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.offer.notYet": {
+   "en": "No provider in this wallet can bridge {asset} from {source} yet.",
+   "where": "src/wallet/bridge.ts:658 expr",
+   "old": [
+    "No provider in this wallet can bridge ",
+    " from ",
+    " yet."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.measured": {
+   "en": "Measured once on {date}: {seconds} s on this route, from the sending block to the delivery block.",
+   "where": "src/wallet/bridge.ts:704 expr",
+   "old": [
+    "Measured once on ",
+    ": ",
+    " s on this route, from the sending block to the delivery block."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.refusal.noEndpoints": {
+   "en": "The wallet has no built-in endpoints for chain {chainId}.",
+   "where": "src/wallet/bridge.ts:960 expr",
+   "old": [
+    "The wallet has no built-in endpoints for chain ",
+    "."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.refusal.usdcBalance": {
+   "en": "You hold {balance} USDC on {source}, and this transfer needs {amount} USDC. Nothing was quoted.",
+   "where": "src/wallet/bridge.ts:1222 expr",
+   "old": [
+    "You hold ",
+    " USDC on ",
+    ", and this transfer needs ",
+    " USDC. Nothing was quoted."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.l1.note": {
+   "en": "This is a layer-2 network: every transaction also pays for publishing its data on Ethereum. The network’s fee oracle estimates {estimate} {symbol} for this transaction; {percent}% more is reserved because this fee follows Ethereum’s fees and cannot be capped. It is included in the max network fee and the total.",
+   "where": "src/wallet/bridge.ts:1494 expr",
+   "old": [
+    "This is a layer-2 network: every transaction also pays for publishing its data on Ethereum. The network’s fee oracle estimates ",
+    " ",
+    " for this transaction; ",
+    "% more is reserved because this fee follows Ethereum’s fees and cannot be capped. It is included in the max network fee and the total."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.fee.messaging": {
+   "en": "LayerZero messaging fee (paid in {symbol})",
+   "where": "src/wallet/bridge.ts:1533 expr",
+   "old": [
+    "LayerZero messaging fee (paid in ",
+    ")"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.fee.other": {
+   "en": "{kind} fee",
+   "where": "src/wallet/bridge.ts:1533 expr",
+   "old": [
+    "",
+    " fee"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.lz.pin.network": {
+   "en": "Receiving network: {destination} (LayerZero endpoint id {eid}).",
+   "where": "src/wallet/bridge.ts:1546 expr",
+   "old": [
+    "Receiving network: ",
+    " (LayerZero endpoint id ",
+    ")."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.lz.pin.recipient": {
+   "en": "Recipient: {recipient}.",
+   "where": "src/wallet/bridge.ts:1547 expr",
+   "old": [
+    "Recipient: ",
+    "."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.lz.pin.amount": {
+   "en": "Amount: {amount} {symbol}; at least {minimum} {symbol} must arrive, or the transfer reverts on this network and nothing leaves.",
+   "where": "src/wallet/bridge.ts:1548 expr",
+   "old": [
+    "Amount: ",
+    " ",
+    "; at least ",
+    " ",
+    " must arrive, or the transfer reverts on this network and nothing leaves."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.lz.pin.fee": {
+   "en": "Messaging fee: {fee} {symbol}, paid with this transaction; any part not used is refunded to {sender}.",
+   "where": "src/wallet/bridge.ts:1549 expr",
+   "old": [
+    "Messaging fee: ",
+    " ",
+    ", paid with this transaction; any part not used is refunded to ",
+    "."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.lz.pin.fixed": {
+   "en": "All of these are fixed words of the call ({pins} of them). Before showing this screen the wallet re-read the receiving network, the recipient, the amount, the fee and the refund address from the call itself, with the value sent; the other words are fixed by how it builds the call.",
+   "where": "src/wallet/bridge.ts:1551 expr",
+   "old": [
+    "All of these are fixed words of the call (",
+    " of them). Before showing this screen the wallet re-read the receiving network, the recipient, the amount, the fee and the refund address from the call itself, with the value sent; the other words are fixed by how it builds the call."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.lz.noApproval": {
+   "en": "No token approval: the pool takes the {symbol} sent with the call itself.",
+   "where": "src/wallet/bridge.ts:1555 expr",
+   "old": [
+    "No token approval: the pool takes the ",
+    " sent with the call itself."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.lz.exactApproval": {
+   "en": "Exact approval only: this allows {spender} to take exactly {amount} base units of {token}, nothing more.",
+   "where": "src/wallet/bridge.ts:1556 expr",
+   "old": [
+    "Exact approval only: this allows ",
+    " to take exactly ",
+    " base units of ",
+    ", nothing more."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.youSend": {
+   "en": "You send {amount} from {source}",
+   "where": "src/wallet/bridge.ts:1563 expr",
+   "old": [
+    "You send ",
+    " from ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.arrives": {
+   "en": "Expected to arrive on {destination}: {amount}",
+   "where": "src/wallet/bridge.ts:1564 expr",
+   "old": [
+    "Expected to arrive on ",
+    ": ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.lz.minimum": {
+   "en": "Least that may arrive (written into the call): {amount}",
+   "where": "src/wallet/bridge.ts:1565 expr",
+   "old": [
+    "Least that may arrive (written into the call): ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.lz.total": {
+   "en": "{total} {symbol} (amount {amount} + messaging fee {fee}), before this network’s own transaction fee",
+   "where": "src/wallet/bridge.ts:1567 expr",
+   "old": [
+    "",
+    " ",
+    " (amount ",
+    " + messaging fee ",
+    "), before this network’s own transaction fee"
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.pinnedContract": {
+   "en": "The burn goes to Circle’s TokenMessengerV2 on {source} ({contract}), pinned by this wallet from Circle’s published test-network addresses and checked on-chain on 2026-10-25. The risk card below names it too.",
+   "where": "src/wallet/bridge.ts:1582 expr",
+   "old": [
+    "The burn goes to Circle’s TokenMessengerV2 on ",
+    " (",
+    "), pinned by this wallet from Circle’s published test-network addresses and checked on-chain on 2026-10-25. The risk card below names it too."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.firstMintPaymasterUnread": {
+   "en": "{note} Whether the recipient holds USDC on {destination} could not be read just now.",
+   "where": "src/wallet/bridge.ts:1604 expr",
+   "old": [
+    "",
+    " Whether the recipient holds USDC on ",
+    " could not be read just now."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.smartFeeNote": {
+   "en": "The network fee is paid in {symbol} from the smart account. Paying it in USDC through Circle’s paymaster is not offered for bridging in this version.",
+   "where": "src/wallet/bridge.ts:1609 expr",
+   "old": [
+    "The network fee is paid in ",
+    " from the smart account. Paying it in USDC through Circle’s paymaster is not offered for bridging in this version."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.mintStep": {
+   "en": "After Circle’s attestation (about 17 minutes in the measured runs) the USDC is minted on {destination} by a transaction there. This wallet can send it from your regular account when {destination} is the active network and that account holds test ETH there for gas; anyone else with gas there may send it too, and the USDC still goes only to the recipient written into the burn.",
+   "where": "src/wallet/bridge.ts:1618 expr",
+   "old": [
+    "After Circle’s attestation (about 17 minutes in the measured runs) the USDC is minted on ",
+    " by a transaction there. This wallet can send it from your regular account when ",
+    " is the active network and that account holds test ETH there for gas; anyone else with gas there may send it too, and the USDC still goes only to the recipient written into the burn."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.call.approve": {
+   "en": "1. approve on USDC ({token}): allows Circle’s TokenMessengerV2 {spender} to take exactly {amount}.",
+   "where": "src/wallet/bridge.ts:1653 expr",
+   "old": [
+    "1. approve on USDC (",
+    "): allows Circle’s TokenMessengerV2 ",
+    " to take exactly ",
+    "."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.call.burn": {
+   "en": "2. depositForBurn on Circle’s TokenMessengerV2 ({contract}): burns {amount} on {source} for minting on {destination}.",
+   "where": "src/wallet/bridge.ts:1654 expr",
+   "old": [
+    "2. depositForBurn on Circle’s TokenMessengerV2 (",
+    "): burns ",
+    " on ",
+    " for minting on ",
+    "."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.pin.network": {
+   "en": "Receiving network: {destination} (CCTP domain {domain}).",
+   "where": "src/wallet/bridge.ts:1660 expr",
+   "old": [
+    "Receiving network: ",
+    " (CCTP domain ",
+    ")."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.pin.amount": {
+   "en": "Amount: {amount} ({base} base units), burned here and minted there.",
+   "where": "src/wallet/bridge.ts:1662 expr",
+   "old": [
+    "Amount: ",
+    " (",
+    " base units), burned here and minted there."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.pin.token": {
+   "en": "Burn token: USDC {token} on {source}.",
+   "where": "src/wallet/bridge.ts:1663 expr",
+   "old": [
+    "Burn token: USDC ",
+    " on ",
+    "."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.pin.fixed": {
+   "en": "All seven words of the call are fixed ({pins} pins), and before showing this screen the wallet re-read each of them from the call itself.",
+   "where": "src/wallet/bridge.ts:1666 expr",
+   "old": [
+    "All seven words of the call are fixed (",
+    " pins), and before showing this screen the wallet re-read each of them from the call itself."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.minimum": {
+   "en": "Least that may arrive (written into the call as a maximum fee of 0): {amount}",
+   "where": "src/wallet/bridge.ts:1673 expr",
+   "old": [
+    "Least that may arrive (written into the call as a maximum fee of 0): ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.total": {
+   "en": "{total} (amount {amount} + Circle fee 0), before the network fees in {symbol}",
+   "where": "src/wallet/bridge.ts:1675 expr",
+   "old": [
+    "",
+    " (amount ",
+    " + Circle fee 0), before the network fees in ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.exactApproval": {
+   "en": "Exact approval only: this allows Circle’s TokenMessengerV2 ({spender}) to take exactly {amount} ({base} base units) of USDC ({token}), nothing more; the burn uses all of it, so nothing stays approved.",
+   "where": "src/wallet/bridge.ts:1680 expr",
+   "old": [
+    "Exact approval only: this allows Circle’s TokenMessengerV2 (",
+    ") to take exactly ",
+    " (",
+    " base units) of USDC (",
+    "), nothing more; the burn uses all of it, so nothing stays approved."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.status.attestedWaiting": {
+   "en": "Attested: waiting for the mint on {destination}",
+   "where": "src/wallet/bridge.ts:2288 expr",
+   "old": [
+    "Attested: waiting for the mint on ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.status.delivered": {
+   "en": "Delivered on {destination}",
+   "where": "src/wallet/bridge.ts:2296 expr",
+   "old": [
+    "Delivered on ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.status.waitingDestination": {
+   "en": "Waiting for a transaction on {destination}",
+   "where": "src/wallet/bridge.ts:2298 expr",
+   "old": [
+    "Waiting for a transaction on ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.status.checkFailed": {
+   "en": "The transfer could not be checked just now: {error}",
+   "where": "src/wallet/bridge.ts:2314 expr",
+   "old": [
+    "The transfer could not be checked just now: ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.attested": {
+   "en": "Attested. The USDC can now be minted on {destination}.",
+   "where": "src/wallet/bridge.ts:2349 expr",
+   "old": [
+    "Attested. The USDC can now be minted on ",
+    "."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.expiry.block": {
+   "en": "The attested message expires after block {block}{arbitrum}. After that Circle’s contract refuses it until Circle re-attests it, which Circle’s technical guide says can be requested at any time; this wallet does not request it.",
+   "where": "src/wallet/bridge.ts:2376 expr",
+   "old": [
+    "The attested message expires after block ",
+    "",
+    ". After that Circle’s contract refuses it until Circle re-attests it, which Circle’s technical guide says can be requested at any time; this wallet does not request it."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.mint.otherNetwork": {
+   "en": "Anyone with {symbol} on {destination} can send this mint transaction, and the USDC still goes only to {recipient}. {expiry} {switchSentence}",
+   "where": "src/wallet/bridge.ts:2418 expr",
+   "old": [
+    "Anyone with ",
+    " on ",
+    " can send this mint transaction, and the USDC still goes only to ",
+    ". ",
+    " ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.mint.noGas": {
+   "en": "Your regular account holds no {symbol} on {destination} to pay for the mint transaction. Anyone with {symbol} there can send it, and the USDC still goes only to {recipient}. {expiry}",
+   "where": "src/wallet/bridge.ts:2424 expr",
+   "old": [
+    "Your regular account holds no ",
+    " on ",
+    " to pay for the mint transaction. Anyone with ",
+    " there can send it, and the USDC still goes only to ",
+    ". ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.switch.sentence": {
+   "en": "To send it from this wallet, make {destination} the active network with the button below (the same choice as Settings → Developer → Test network); this screen stays open and this transfer stays listed here.",
+   "where": "src/wallet/bridge.ts:2440 expr",
+   "old": [
+    "To send it from this wallet, make ",
+    " the active network with the button below (the same choice as Settings → Developer → Test network); this screen stays open and this transfer stays listed here."
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.switch.button": {
+   "en": "Switch to {destination}",
+   "where": "src/wallet/bridge.ts:2447 expr",
+   "old": [
+    "Switch to ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "bridge.retry.otherNetwork": {
+   "en": "Anyone can send this delivery transaction on {destination}, paying the gas there. {switchSentence}",
+   "where": "src/wallet/bridge.ts:2499 expr",
+   "old": [
+    "Anyone can send this delivery transaction on ",
+    ", paying the gas there. ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.detail.chainReadFailed": {
+   "en": "Could not read the account on-chain: {error}",
+   "where": "src/screens/MultisigScreen.tsx:316 expr",
+   "old": [
+    "Could not read the account on-chain: ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.import.otherChain": {
+   "en": "This record is for chain id {chainId}; switch to that network first (Settings → Developer).",
+   "where": "src/screens/MultisigScreen.tsx:545 expr",
+   "old": [
+    "This record is for chain id ",
+    "; switch to that network first (Settings → Developer)."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosigner.heading": {
+   "en": "Co-signer {n}",
+   "where": "src/screens/MultisigScreen.tsx:687 expr",
+   "old": [
+    "Co-signer ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosigner.remove": {
+   "en": "Remove co-signer {n}",
+   "where": "src/screens/MultisigScreen.tsx:704 expr",
+   "old": [
+    "Remove co-signer ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.review.title": {
+   "en": "Review the new multisig ({shape})",
+   "where": "src/screens/MultisigScreen.tsx:746 expr",
+   "old": [
+    "Review the new multisig (",
+    ")"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.review.indexNote": {
+   "en": "CREATE2 index {index}: the address follows from the signer set, the threshold and this index (index 0 unless this phone already holds the same set here).",
+   "where": "src/screens/MultisigScreen.tsx:752 expr",
+   "old": [
+    "CREATE2 index ",
+    ": the address follows from the signer set, the threshold and this index (index 0 unless this phone already holds the same set here)."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.weightSub": {
+   "en": "weight {weight}",
+   "where": "src/screens/MultisigScreen.tsx:763 expr",
+   "old": [
+    "weight ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.detail.qrLabel": {
+   "en": "the multisig account’s address, {address}",
+   "where": "src/screens/MultisigScreen.tsx:794 expr",
+   "old": [
+    "the multisig account’s address, ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.create2Index": {
+   "en": "CREATE2 index {index}",
+   "where": "src/screens/MultisigScreen.tsx:752 expr",
+   "old": [
+    "CREATE2 index ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.detail.otherSigner": {
+   "en": "This wallet’s signer for this multisig is {signer}. Switch to that account on Home to build or submit operations.",
+   "where": "src/screens/MultisigScreen.tsx:817 expr",
+   "old": [
+    "This wallet’s signer for this multisig is ",
+    ". Switch to that account on Home to build or submit operations."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.send.title": {
+   "en": "New operation from {name}",
+   "where": "src/screens/MultisigScreen.tsx:920 expr",
+   "old": [
+    "New operation from ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.field.amountIn": {
+   "en": "Amount in {symbol}",
+   "where": "src/screens/MultisigScreen.tsx:941 expr",
+   "old": [
+    "Amount in ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.collect.title": {
+   "en": "Collect approvals · {name}",
+   "where": "src/screens/MultisigScreen.tsx:965 expr",
+   "old": [
+    "Collect approvals · ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.collect.approver": {
+   "en": "✓ {address} (weight {weight})",
+   "where": "src/screens/MultisigScreen.tsx:977 expr",
+   "old": [
+    "✓ ",
+    " (weight ",
+    ")"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.confirm.depositFirst": {
+   "en": "The account’s EntryPoint deposit of {deposit} {symbol} pays first.",
+   "where": "src/screens/MultisigScreen.tsx:1038 expr",
+   "old": [
+    "The account’s EntryPoint deposit of ",
+    " ",
+    " pays first."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.import.reviewTitle": {
+   "en": "Add this multisig ({shape})?",
+   "where": "src/screens/MultisigScreen.tsx:1158 expr",
+   "old": [
+    "Add this multisig (",
+    ")?"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.import.chainAndIndex": {
+   "en": "Chain id {chainId} · CREATE2 index {index}",
+   "where": "src/screens/MultisigScreen.tsx:1159 expr",
+   "old": [
+    "Chain id ",
+    " · CREATE2 index ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.import.ownSigner": {
+   "en": "Signer: {name} (this wallet)",
+   "where": "src/screens/MultisigScreen.tsx:1165 expr",
+   "old": [
+    "Signer: ",
+    " (this wallet)"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosign.notInWalletShape": {
+   "en": "{shape}, not in this wallet",
+   "where": "src/screens/MultisigScreen.tsx:1229 expr",
+   "old": [
+    "",
+    ", not in this wallet"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosign.network": {
+   "en": "{network} (chain id {chainId})",
+   "where": "src/screens/MultisigScreen.tsx:1232 expr",
+   "old": [
+    "",
+    " (chain id ",
+    ")"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosign.weightOf": {
+   "en": "weight {weight} of the threshold {threshold}",
+   "where": "src/screens/MultisigScreen.tsx:1235 expr",
+   "old": [
+    "weight ",
+    " of the threshold ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosign.doneHint": {
+   "en": "Show the QR code to the submitter, or share the text or file. It approves only this request (these calls at nonce {nonce}); it is useless for anything else.",
+   "where": "src/screens/MultisigScreen.tsx:1258 expr",
+   "old": [
+    "Show the QR code to the submitter, or share the text or file. It approves only this request (these calls at nonce ",
+    "); it is useless for anything else."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.list.none": {
+   "en": "No multi-signature account on {network} yet.",
+   "where": "src/screens/MultisigScreen.tsx:1302 expr",
+   "old": [
+    "No multi-signature account on ",
+    " yet."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.list.open": {
+   "en": "Open {name}",
+   "where": "src/screens/MultisigScreen.tsx:1316 expr",
+   "old": [
+    "Open ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.calls.many": {
+   "en": "The {count} calls (one atomic operation)",
+   "where": "src/screens/MultisigViews.tsx:147 expr",
+   "old": [
+    "The ",
+    " calls (one atomic operation)"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.call.to": {
+   "en": "to {address}",
+   "where": "src/screens/MultisigViews.tsx:155 expr",
+   "old": [
+    "to ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.call.value": {
+   "en": "value {amount} {symbol} ({wei} wei)",
+   "where": "src/screens/MultisigViews.tsx:158 expr",
+   "old": [
+    "value ",
+    " ",
+    " (",
+    " wei)"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.call.data": {
+   "en": "data {data}",
+   "where": "src/screens/MultisigViews.tsx:161 expr",
+   "old": [
+    "data ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.exposure.anyOf": {
+   "en": "Any {ops} of the {n} signers together can send an operation",
+   "where": "src/wallet/multisig.ts:281 expr",
+   "old": [
+    "Any ",
+    " of the ",
+    " signers together can send an operation"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.exposure.weighted": {
+   "en": "Signers whose weights add up to {threshold} (at least {ops} of them) can send an operation",
+   "where": "src/wallet/multisig.ts:282 expr",
+   "old": [
+    "Signers whose weights add up to ",
+    " (at least ",
+    " of them) can send an operation"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.exposure.whoAny": {
+   "en": "any {fewest} of the {count} co-signers",
+   "where": "src/wallet/multisig.ts:291 expr",
+   "old": [
+    "any ",
+    " of the ",
+    " co-signers"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.exposure.including": {
+   "en": " — including {who} without this phone",
+   "where": "src/wallet/multisig.ts:293 expr",
+   "old": [
+    " — including ",
+    " without this phone"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.exposure.includingAll": {
+   "en": " — including the {count} co-signers together, without this phone",
+   "where": "src/wallet/multisig.ts:295 expr",
+   "old": [
+    " — including the ",
+    " co-signers together, without this phone"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.exposure.includingSome": {
+   "en": " — including co-signers without this phone (at least {fewest} of the {count})",
+   "where": "src/wallet/multisig.ts:296 expr",
+   "old": [
+    " — including co-signers without this phone (at least ",
+    " of the ",
+    ")"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.exposure.localAlways": {
+   "en": " — and this phone’s signer is always one of them, because the co-signers’ combined weight {weight} is below the threshold {threshold}",
+   "where": "src/wallet/multisig.ts:299 expr",
+   "old": [
+    " — and this phone’s signer is always one of them, because the co-signers’ combined weight ",
+    " is below the threshold ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.exposure.messages": {
+   "en": "{lead}; for messages the deployed validator needs only {msgs}, so this account must never be used to sign logins, orders or token permits — the wallet refuses that.",
+   "where": "src/wallet/multisig.ts:305 expr",
+   "old": [
+    "",
+    "; for messages the deployed validator needs only ",
+    ", so this account must never be used to sign logins, orders or token permits — the wallet refuses that."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.config.weight": {
+   "en": "{where}: the weight must be a whole number from 1 to {max}.",
+   "where": "src/wallet/multisig.ts:418 expr",
+   "old": [
+    "",
+    ": the weight must be a whole number from 1 to ",
+    "."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.config.localSigner": {
+   "en": "This wallet’s signer: {error}",
+   "where": "src/wallet/multisig.ts:436 expr",
+   "old": [
+    "This wallet’s signer: ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.config.atMost": {
+   "en": "At most {max} co-signers can be added here.",
+   "where": "src/wallet/multisig.ts:439 expr",
+   "old": [
+    "At most ",
+    " co-signers can be added here."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.config.enterAddress": {
+   "en": "{where}: enter the co-signer’s Ethereum address.",
+   "where": "src/wallet/multisig.ts:449 expr",
+   "old": [
+    "",
+    ": enter the co-signer’s Ethereum address."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.config.addressError": {
+   "en": "{where}: {error}",
+   "where": "src/wallet/multisig.ts:196 expr",
+   "old": [
+    "",
+    ": ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.config.isLocal": {
+   "en": "{where} is this wallet’s own signer; a signer can appear only once.",
+   "where": "src/wallet/multisig.ts:454 expr",
+   "old": [
+    "",
+    " is this wallet’s own signer; a signer can appear only once."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.config.repeats": {
+   "en": "{where} repeats an earlier co-signer; a signer can appear only once.",
+   "where": "src/wallet/multisig.ts:456 expr",
+   "old": [
+    "",
+    " repeats an earlier co-signer; a signer can appear only once."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.config.ownAccount": {
+   "en": "{where} is {name}, another account of this wallet: this phone would hold two of the keys, so losing or compromising it affects both.",
+   "where": "src/wallet/multisig.ts:464 expr",
+   "old": [
+    "",
+    " is ",
+    ", another account of this wallet: this phone would hold two of the keys, so losing or compromising it affects both."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.history.cosigned": {
+   "en": "Approved as co-signer: {summary} (request {request}…)",
+   "where": "src/wallet/multisig.ts:970 expr",
+   "old": [
+    "Approved as co-signer: ",
+    " (request ",
+    "…)"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.history.cosignedDetail": {
+   "en": "Nonce {nonce} · approved by {signer} on {time} UTC. Whether it was submitted is up to the submitter; this phone does not track it.",
+   "where": "src/wallet/multisig.ts:976 expr",
+   "old": [
+    "Nonce ",
+    " · approved by ",
+    " on ",
+    " UTC. Whether it was submitted is up to the submitter; this phone does not track it."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.remove.body": {
+   "en": "{name} ({address}) is removed from this phone, with its operation history. Nothing secret is deleted and nothing on-chain changes: the account and its funds stay where they are, controlled by its signers. Keep its exported record if you want to add it again later.",
+   "where": "src/wallet/multisig.ts:1136 expr",
+   "old": [
+    "",
+    " (",
+    ") is removed from this phone, with its operation history. Nothing secret is deleted and nothing on-chain changes: the account and its funds stay where they are, controlled by its signers. Keep its exported record if you want to add it again later."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.chain.check": {
+   "en": "On-chain check: {problems}",
+   "where": "src/wallet/multisig.ts:1451 expr",
+   "old": [
+    "On-chain check: ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.funds.line": {
+   "en": "{balance} · {label}: {deposit}",
+   "where": "src/wallet/multisig.ts:1545 expr",
+   "old": [
+    "",
+    " · ",
+    ": ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.funding.lastQuote": {
+   "en": "The last accepted quote for this operation had a worst-case network fee of {fee}.",
+   "where": "src/wallet/multisig.ts:1628 expr",
+   "old": [
+    "The last accepted quote for this operation had a worst-case network fee of ",
+    "."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.funding.depositFirst": {
+   "en": "The EntryPoint deposit of {deposit} pays the fee first, so at that figure the balance must hold {need}{what}.",
+   "where": "src/wallet/multisig.ts:1632 expr",
+   "old": [
+    "The EntryPoint deposit of ",
+    " pays the fee first, so at that figure the balance must hold ",
+    "",
+    "."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.funding.mustHold": {
+   "en": "At that figure the balance must hold {need}{what}.",
+   "where": "src/wallet/multisig.ts:1633 expr",
+   "old": [
+    "At that figure the balance must hold ",
+    "",
+    "."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.funding.short": {
+   "en": "It holds {balance}, so send at least {shortfall} to the multisig, and a little more, because the fee changes between quotes.",
+   "where": "src/wallet/multisig.ts:1638 expr",
+   "old": [
+    "It holds ",
+    ", so send at least ",
+    " to the multisig, and a little more, because the fee changes between quotes."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.funding.covered": {
+   "en": "It holds {balance}, which would have covered that quote, so the fee or the gas estimate has risen since; the new figure is unknown because the estimate itself was refused.",
+   "where": "src/wallet/multisig.ts:1643 expr",
+   "old": [
+    "It holds ",
+    ", which would have covered that quote, so the fee or the gas estimate has risen since; the new figure is unknown because the estimate itself was refused."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.bar.alone": {
+   "en": "Co-signer approvals: weight {weight} (threshold {threshold} met by co-signers alone) — ready",
+   "where": "src/wallet/multisig.ts:2090 expr",
+   "old": [
+    "Co-signer approvals: weight ",
+    " (threshold ",
+    " met by co-signers alone) — ready"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.bar.ready": {
+   "en": "Co-signer approvals: weight {weight} of {needed} needed — ready",
+   "where": "src/wallet/multisig.ts:2092 expr",
+   "old": [
+    "Co-signer approvals: weight ",
+    " of ",
+    " needed — ready"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.bar.short": {
+   "en": "Co-signer approvals: weight {weight} of {needed} needed ({missing} still needed)",
+   "where": "src/wallet/multisig.ts:2094 expr",
+   "old": [
+    "Co-signer approvals: weight ",
+    " of ",
+    " needed (",
+    " still needed)"
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.bar.localSigns": {
+   "en": "This wallet signs the remaining weight {weight} when you submit.",
+   "where": "src/wallet/multisig.ts:2106 expr",
+   "old": [
+    "This wallet signs the remaining weight ",
+    " when you submit."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.bar.notReady": {
+   "en": "Submitting needs co-signer approvals of weight {needed}; the approvals so far reach {weight}.",
+   "where": "src/wallet/multisig.ts:2111 expr",
+   "old": [
+    "Submitting needs co-signer approvals of weight ",
+    "; the approvals so far reach ",
+    "."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.bar.submitLine": {
+   "en": "Co-signer approvals: weight {weight} ({needed} needed). This wallet signs the remaining weight {local} when you submit, for weight {total} of the threshold {threshold}. Your device check comes next; this wallet’s signer then signs the final operation, and the signer module checks every approval again.",
+   "where": "src/wallet/multisig.ts:2117 expr",
+   "old": [
+    "Co-signer approvals: weight ",
+    " (",
+    " needed). This wallet signs the remaining weight ",
+    " when you submit, for weight ",
+    " of the threshold ",
+    ". Your device check comes next; this wallet’s signer then signs the final operation, and the signer module checks every approval again."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.bar.thresholdNotReached": {
+   "en": "The approvals plus this wallet’s signer reach weight {weight}, below the threshold {threshold}. Collect more co-signer approvals first. Nothing was signed.",
+   "where": "src/wallet/multisig.ts:2126 expr",
+   "old": [
+    "The approvals plus this wallet’s signer reach weight ",
+    ", below the threshold ",
+    ". Collect more co-signer approvals first. Nothing was signed."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosign.otherNetwork": {
+   "en": "This request is for {network}, but the active network is {active}. Switch networks first (Settings → Developer).",
+   "where": "src/wallet/multisig.ts:2377 expr",
+   "old": [
+    "This request is for ",
+    ", but the active network is ",
+    ". Switch networks first (Settings → Developer)."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.cosign.otherAccount": {
+   "en": "The active account is not a signer of this multisig, but {name} ({address}) is. Switch to it on Home first.",
+   "where": "src/wallet/multisig.ts:2385 expr",
+   "old": [
+    "The active account is not a signer of this multisig, but ",
+    " (",
+    ") is. Switch to it on Home first."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.approval.duplicate": {
+   "en": "An approval from {address} was already added.",
+   "where": "src/wallet/multisig.ts:2012 expr",
+   "old": [
+    "An approval from ",
+    " was already added."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.approval.badV": {
+   "en": "The signature’s last byte (v) is {v}; an Ethereum signature ends in 27 or 28 (or 0 or 1). It cannot be used as an approval.",
+   "where": "src/wallet/multisig.ts:1964 expr",
+   "old": [
+    "The signature’s last byte (v) is ",
+    "; an Ethereum signature ends in 27 or 28 (or 0 or 1). It cannot be used as an approval."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.qr.otherCode": {
+   "en": "This QR code is not part of the code being read ({received} of {total} parts read so far). Scan the next part of the same code, or tap Start over.",
+   "where": "src/wallet/multisig.ts:2571 expr",
+   "old": [
+    "This QR code is not part of the code being read (",
+    " of ",
+    " parts read so far). Scan the next part of the same code, or tap Start over."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.qr.otherTotal": {
+   "en": "This part belongs to a code in {total} parts, but the code being read has {current}. Tap Start over to read a different code.",
+   "where": "src/wallet/multisig.ts:2587 expr",
+   "old": [
+    "This part belongs to a code in ",
+    " parts, but the code being read has ",
+    ". Tap Start over to read a different code."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.qr.partDiffers": {
+   "en": "Part {n} was already read with different contents, so this is another code. Tap Start over to read a different code.",
+   "where": "src/wallet/multisig.ts:2594 expr",
+   "old": [
+    "Part ",
+    " was already read with different contents, so this is another code. Tap Start over to read a different code."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.qr.partCaption": {
+   "en": "{caption} — part {n} of {total}",
+   "where": "src/wallet/multisig.ts:2614 expr",
+   "old": [
+    "",
+    " — part ",
+    " of ",
+    ""
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.qr.paged": {
+   "en": "This is too much for one reliable QR code, so it is shown as {total} codes. The other phone scans them one at a time with its scan button; tap Next part after each one is read. The order does not matter.",
+   "where": "src/wallet/multisig.ts:2620 expr",
+   "old": [
+    "This is too much for one reliable QR code, so it is shown as ",
+    " codes. The other phone scans them one at a time with its scan button; tap Next part after each one is read. The order does not matter."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.qr.pastedPart": {
+   "en": "This is part {n} of {total} of a multi-part QR code, not the whole text. Read every part with the scan button on this screen, or paste the whole text the other phone shared.",
+   "where": "src/wallet/multisig.ts:2636 expr",
+   "old": [
+    "This is part ",
+    " of ",
+    " of a multi-part QR code, not the whole text. Read every part with the scan button on this screen, or paste the whole text the other phone shared."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.file.tooLarge": {
+   "en": "This file is larger than {kib} KiB, so it is not a multisig file.",
+   "where": "src/wallet/multisig.ts:2720 expr",
+   "old": [
+    "This file is larger than ",
+    " KiB, so it is not a multisig file."
+   ],
+   "base": "6a1d2bb"
+  },
+  "multisig.file.refused": {
+   "en": "This file was not accepted. {reason}",
+   "where": "src/wallet/multisig.ts:2763 expr",
+   "old": [
+    "This file was not accepted. ",
+    ""
+   ],
+   "base": "6a1d2bb"
   }
  },
  "composite": {
@@ -7313,6 +10937,144 @@
    "where": "src/screens/StakingViews.tsx:236 jsx",
    "old": "The simulation of these calls failed{revertReason ? `: ${revertReason}` : ''}. (with a reason)",
    "base": "5cb4601"
+  },
+  "bridge.leaving.fee": {
+   "en": "Leaving your account for the bridge (amount + fee)",
+   "where": "src/screens/BridgeScreen.tsx:884 expr",
+   "old": "`Leaving your account for the bridge (amount + ${p.asset === 'usdc' ? 'Circle fee' : 'fee'})` (the test-ETH branch)",
+   "base": "6a1d2bb"
+  },
+  "bridge.leaving.circleFee": {
+   "en": "Leaving your account for the bridge (amount + Circle fee)",
+   "where": "src/screens/BridgeScreen.tsx:884 expr",
+   "old": "`Leaving your account for the bridge (amount + ${p.asset === 'usdc' ? 'Circle fee' : 'fee'})` (the USDC branch)",
+   "base": "6a1d2bb"
+  },
+  "bridge.record.through": {
+   "en": "Through {provider}, to {recipient}, sent {time} UTC.",
+   "where": "src/screens/BridgeViews.tsx:223 expr",
+   "old": "`Through ${record.providerLabel}, to ${record.recipient}, sent ${…} UTC` + `${record.senderKind === 'smart-account' ? ' from your smart account' : ''}.` (the regular-account branch)",
+   "base": "6a1d2bb"
+  },
+  "bridge.record.throughSmart": {
+   "en": "Through {provider}, to {recipient}, sent {time} UTC from your smart account.",
+   "where": "src/screens/BridgeViews.tsx:223 expr",
+   "old": "`Through ${record.providerLabel}, to ${record.recipient}, sent ${…} UTC` + `${record.senderKind === 'smart-account' ? ' from your smart account' : ''}.` (the smart-account branch)",
+   "base": "6a1d2bb"
+  },
+  "bridge.usdc.recipient.regular": {
+   "en": "The USDC is minted to your regular account {recipient} on {destination}, the same address as on this network.",
+   "where": "src/wallet/bridge.ts:249 expr",
+   "old": "`The USDC is minted to your regular account${recipient ? ` ${recipient}` : ''} on ${destinationLabel}, the same address as on this network.` (with a recipient)",
+   "base": "6a1d2bb"
+  },
+  "bridge.usdc.recipient.regularLater": {
+   "en": "The USDC is minted to your regular account on {destination}, the same address as on this network.",
+   "where": "src/wallet/bridge.ts:249 expr",
+   "old": "`The USDC is minted to your regular account${recipient ? ` ${recipient}` : ''} on ${destinationLabel}, the same address as on this network.` (without a recipient)",
+   "base": "6a1d2bb"
+  },
+  "bridge.usdc.recipient.smart": {
+   "en": "The USDC is minted to your smart account {recipient} on {destination}, the same address as on this network. It does not need to be deployed there: CCTP mints USDC with an ordinary token mint, which needs no code at the recipient, unlike Stargate’s 2,300-gas ETH transfer.",
+   "where": "src/wallet/bridge.ts:252 expr",
+   "old": "`The USDC is minted to your smart account${recipient ? ` ${recipient}` : ''} on ${destinationLabel}, the same address as on this network${recipient ? '' : ' (shown when you review)'}. ` + 'It does not need to be deployed there: …' (with a recipient)",
+   "base": "6a1d2bb"
+  },
+  "bridge.usdc.recipient.smartLater": {
+   "en": "The USDC is minted to your smart account on {destination}, the same address as on this network (shown when you review). It does not need to be deployed there: CCTP mints USDC with an ordinary token mint, which needs no code at the recipient, unlike Stargate’s 2,300-gas ETH transfer.",
+   "where": "src/wallet/bridge.ts:252 expr",
+   "old": "`The USDC is minted to your smart account${recipient ? ` ${recipient}` : ''} on ${destinationLabel}, the same address as on this network${recipient ? '' : ' (shown when you review)'}. ` + 'It does not need to be deployed there: …' (without a recipient)",
+   "base": "6a1d2bb"
+  },
+  "bridge.worstCase.l1": {
+   "en": "Worst case at {gwei} gwei max fee × {gas} gas, plus the layer 1 data fee below; the actual fee is usually lower.",
+   "where": "src/wallet/bridge.ts:1488 expr",
+   "old": "`Worst case at ${…} gwei max fee × ${…} gas` + `${op ? ', plus the layer 1 data fee below' : ''}; the actual fee is usually lower.` (the layer-2 branch; the other branch is the Staking screen's staking.worstCase)",
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.pin.recipientSmart": {
+   "en": "Recipient: {recipient} (your smart account).",
+   "where": "src/wallet/bridge.ts:1661 expr",
+   "old": "`Recipient: ${plan.recipient} (your ${plan.recipientKind === 'smart-account' ? 'smart account' : 'regular account'}).` (the smart-account branch)",
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.pin.recipientRegular": {
+   "en": "Recipient: {recipient} (your regular account).",
+   "where": "src/wallet/bridge.ts:1661 expr",
+   "old": "`Recipient: ${plan.recipient} (your ${plan.recipientKind === 'smart-account' ? 'smart account' : 'regular account'}).` (the regular-account branch)",
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.burned": {
+   "en": "Burned on {source}. Waiting for Circle’s attestation: it comes after the source chain’s hard finality, about 17 minutes in the measured runs.",
+   "where": "src/wallet/bridge.ts:2342 expr",
+   "old": "`Burned on ${sourceLabel}${block === null ? '' : ` (block ${block})`}. Waiting for Circle’s attestation: it comes after the ` + 'source chain’s hard finality, …' (without a block)",
+   "base": "6a1d2bb"
+  },
+  "bridge.cctp.burnedBlock": {
+   "en": "Burned on {source} (block {block}). Waiting for Circle’s attestation: it comes after the source chain’s hard finality, about 17 minutes in the measured runs.",
+   "where": "src/wallet/bridge.ts:2342 expr",
+   "old": "`Burned on ${sourceLabel}${block === null ? '' : ` (block ${block})`}. Waiting for Circle’s attestation: it comes after the ` + 'source chain’s hard finality, …' (with a block)",
+   "base": "6a1d2bb"
+  },
+  "multisig.exposure.allBoth": {
+   "en": "Every operation needs both signers",
+   "where": "src/wallet/multisig.ts:277 expr",
+   "old": "`Every operation needs ${n === 2 ? 'both signers' : `all ${n} signers`}` (two signers)",
+   "base": "6a1d2bb"
+  },
+  "multisig.exposure.all": {
+   "en": "Every operation needs all {n} signers",
+   "where": "src/wallet/multisig.ts:277 expr",
+   "old": "`Every operation needs ${n === 2 ? 'both signers' : `all ${n} signers`}` (more than two signers)",
+   "base": "6a1d2bb"
+  },
+  "multisig.exposure.whoAllOne": {
+   "en": "the {count} co-signer",
+   "where": "src/wallet/multisig.ts:290 expr",
+   "old": "`the ${others.length} co-signer${others.length === 1 ? '' : 's'}` (one co-signer)",
+   "base": "6a1d2bb"
+  },
+  "multisig.exposure.whoAll": {
+   "en": "the {count} co-signers",
+   "where": "src/wallet/multisig.ts:290 expr",
+   "old": "`the ${others.length} co-signer${others.length === 1 ? '' : 's'}` (several co-signers)",
+   "base": "6a1d2bb"
+  },
+  "multisig.refused.walletconnect": {
+   "en": "A multi-signature account is never offered to apps over WalletConnect: apps ask for message signatures, which it cannot give honestly. {refusal}",
+   "where": "src/wallet/multisig.ts:366 expr",
+   "old": "'A multi-signature account is never offered to apps over WalletConnect: …which it cannot give honestly. ' + MULTISIG_ERC1271_REFUSAL",
+   "base": "6a1d2bb"
+  },
+  "multisig.refused.browser": {
+   "en": "A multi-signature account is never connected to sites in the in-app browser: sites ask for message signatures, which it cannot give honestly. {refusal}",
+   "where": "src/wallet/multisig.ts:374 expr",
+   "old": "'A multi-signature account is never connected to sites in the in-app browser: …which it cannot give honestly. ' + MULTISIG_ERC1271_REFUSAL",
+   "base": "6a1d2bb"
+  },
+  "multisig.funding.what": {
+   "en": " (the amount {amount} plus the fee)",
+   "where": "src/wallet/multisig.ts:1629 expr",
+   "old": "` (the amount ${fmt(amount)} plus ${deposit > 0n ? 'the rest of ' : ''}the fee)` (no deposit)",
+   "base": "6a1d2bb"
+  },
+  "multisig.funding.whatRest": {
+   "en": " (the amount {amount} plus the rest of the fee)",
+   "where": "src/wallet/multisig.ts:1629 expr",
+   "old": "` (the amount ${fmt(amount)} plus ${deposit > 0n ? 'the rest of ' : ''}the fee)` (with a deposit)",
+   "base": "6a1d2bb"
+  },
+  "multisig.qr.progress": {
+   "en": "{received} of {total} parts read. Show the next part on the other phone (Next part) and scan it; {missing} parts are still missing.",
+   "where": "src/wallet/multisig.ts:2607 expr",
+   "old": "`${received} of ${total} parts read. ` + `Show the next part … scan it; ${missing} ${missing === 1 ? 'part is' : 'parts are'} still missing.` (several missing)",
+   "base": "6a1d2bb"
+  },
+  "multisig.qr.progressOne": {
+   "en": "{received} of {total} parts read. Show the next part on the other phone (Next part) and scan it; {missing} part is still missing.",
+   "where": "src/wallet/multisig.ts:2607 expr",
+   "old": "`${received} of ${total} parts read. ` + `Show the next part … scan it; ${missing} ${missing === 1 ? 'part is' : 'parts are'} still missing.` (one missing)",
+   "base": "6a1d2bb"
   }
  },
  "new": [
@@ -7459,7 +11221,8 @@
   "broadcast.tx.openUnlisted",
   "broadcast.userop.open",
   "broadcast.userop.openUnlisted",
-  "broadcast.open"
+  "broadcast.open",
+  "multisig.cosigner.scanLabel"
  ],
  "changed": {
   "activity.note.privacy": {

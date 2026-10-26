@@ -1877,9 +1877,9 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
     // placeholder, and no longer use HiddenFieldLabel.
     const pasteBoxes = [
       ['components/RecoveryViews.tsx', "fieldLabel('paste', label)", 'placeholder={placeholder}'],
-      ['screens/MultisigScreen.tsx', "fieldLabel('approval-paste', 'Paste a co-signer’s approval (or a 65-byte signature from another wallet)')", 'placeholder="Approval text or a 0x… signature"'],
-      ['screens/MultisigScreen.tsx', "fieldLabel('record-paste', 'Paste the multisig record')", 'placeholder="Record text"'],
-      ['screens/MultisigScreen.tsx', "fieldLabel('request-paste', 'Paste the multisig signing request')", 'placeholder="Request text"'],
+      ['screens/MultisigScreen.tsx', "fieldLabel('approval-paste', 'Paste a co-signer’s approval (or a 65-byte signature from another wallet)')", "placeholder={tx('Approval text or a 0x… signature')}"],
+      ['screens/MultisigScreen.tsx', "fieldLabel('record-paste', 'Paste the multisig record')", "placeholder={tx('Record text')}"],
+      ['screens/MultisigScreen.tsx', "fieldLabel('request-paste', 'Paste the multisig signing request')", "placeholder={tx('Request text')}"],
     ];
     const pasteBoxProblems = (all) => pasteBoxes.filter(([f, e, ph]) => {
       const src = all.find((x) => x.f === f)?.src ?? '';
@@ -1906,6 +1906,26 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
       pasteOrScanTags.length === 6 &&
         pasteCallers.every(([f, l, ph]) => pasteOrScanTags.some((x) => x.f === f && x.t.includes(l) && x.t.includes(ph))),
       `${pasteOrScanTags.length} callers`);
+    // Phase 23 item 8 (the third localisation pass; the item-8c follow-up):
+    // PasteOrScan's Scan button speaks "Scan QR code: <scanLabel>" when a
+    // caller passes one, else the caption; the multisig co-signer cards pass
+    // "Co-signer N, Ethereum address" (each card's caption is "Ethereum
+    // address", so the number would otherwise be lost), the other callers none.
+    const rvSrc = files.find((x) => x.f === 'components/RecoveryViews.tsx').src;
+    const scanLabelProblems = (rv, tagsList) => {
+      const out = [];
+      if (!/scanLabel\?: string;/.test(rv) || !rv.includes("accessibilityLabel={`${localize('Scan QR code')}: ${localize(scanLabel ?? label)}`}")) out.push('PasteOrScan does not speak scanLabel ?? label');
+      const withScan = tagsList.filter((x) => /\sscanLabel=/.test(x.t));
+      if (withScan.length !== 1 || withScan[0].f !== 'screens/MultisigScreen.tsx' || !withScan[0].t.includes("scanLabel={t('multisig.cosigner.scanLabel', { n: i + 1 })}")) out.push('only the co-signer card passes the numbered scanLabel');
+      return out;
+    };
+    check('phase 23 item 8 (third pass): the Scan button speaks scanLabel when given (the co-signer card: "Co-signer N, Ethereum address"), the caption otherwise (source)',
+      scanLabelProblems(rvSrc, pasteOrScanTags).length === 0 && EN_TABLE['multisig.cosigner.scanLabel'] === 'Co-signer {n}, Ethereum address',
+      scanLabelProblems(rvSrc, pasteOrScanTags).join('; '));
+    check('…mutant caught (third pass): the spoken label ignoring scanLabel (every card "Scan QR code: Ethereum address" again)',
+      scanLabelProblems(rvSrc.replace('localize(scanLabel ?? label)', 'localize(label)'), pasteOrScanTags).length === 1);
+    check('…mutant caught (third pass): the co-signer card without its scanLabel',
+      scanLabelProblems(rvSrc, pasteOrScanTags.map((x) => ({ ...x, t: x.t.replace(/\s+scanLabel=\{t\('multisig\.cosigner\.scanLabel', \{ n: i \+ 1 \}\)\}/, '') }))).length === 1);
     const captioned = [
       ['components/Contacts.tsx', "fieldLabel('contact-name', 'Contact name')"],
       ['screens/ContactsScreen.tsx', 'fieldLabel(`rename-${contact.address}`, `New name for ${contact.name}`)'],
@@ -1928,7 +1948,8 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
       ['screens/ImportScreen.tsx', "fieldLabel('phrase', 'Recovery phrase')"],
       ['screens/MultisigScreen.tsx', "fieldLabel('multisig-name', 'Name (optional)')"],
       ['screens/MultisigScreen.tsx', "fieldLabel('op-recipient', 'Recipient address')"],
-      ['screens/MultisigScreen.tsx', 'fieldLabel(\'op-amount\', `Amount in ${symbolFor(asset)}`)'],
+      // Phase 23 item 8 (third pass): the caption through the string table (its English "Amount in {symbol}" unchanged).
+      ['screens/MultisigScreen.tsx', "fieldLabel('op-amount', t('multisig.field.amountIn', { symbol: symbolFor(asset) }))"],
       ['screens/SwapScreen.tsx', "fieldLabel('custom-slippage', 'Custom maximum slippage in basis points')"],
       ['screens/SpendingLimitsScreen.tsx', 'fieldLabel(\'custom-window\', `Custom window length in ${customUnit}`)'],
       ['screens/DcaViews.tsx', "field('custom-period', 'Custom period length')"],
@@ -2032,7 +2053,11 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
       // placeholder (the EditText's hint, ReactEditText.kt :563–568), then
       // the caption it is labelled by. Words are compared lower-cased, split
       // on everything but letters, digits and "$".
-      const words = (t) => t.toLowerCase().split(/[^a-z0-9$]+/).filter(Boolean);
+      // Phase 23 item 8 (third pass): an interpolation (`${…}` in a template
+      // literal, `{name}` in a table entry) is a value, not a word of the
+      // name, so a caption through t('…', { symbol }) and a placeholder built
+      // from a template are compared on their words alone.
+      const words = (t) => t.replace(/\$\{[^}]*\}|\{[A-Za-z][A-Za-z0-9]*\}/g, ' ').toLowerCase().split(/[^a-z0-9$]+/).filter(Boolean);
       const same = (a, b) => {
         const la = texts(a);
         const lb = texts(b);
@@ -2100,7 +2125,7 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
         `${inputsWithPlaceholder} fields with a placeholder; ${placeholderProblems(files).join('; ')}`);
       const withFile = (f, from, to) => files.map((x) => (x.f === f ? { ...x, src: x.src.replace(from, to) } : x));
       check('…mutant caught (phase 22): a Multisig paste box whose placeholder is its caption again',
-        placeholderProblems(withFile('screens/MultisigScreen.tsx', 'placeholder="Record text"', 'placeholder="Paste the multisig record"')).length === 1);
+        placeholderProblems(withFile('screens/MultisigScreen.tsx', "placeholder={tx('Record text')}", "placeholder={tx('Paste the multisig record')}")).length === 1);
       check('…mutant caught (phase 22): PasteOrScan using its caption as the placeholder again',
         placeholderProblems(withFile('components/RecoveryViews.tsx', 'placeholder={placeholder}', 'placeholder={label}')).length === 1);
       check('…mutant caught (phase 22): a PasteOrScan caller whose placeholder repeats its label',

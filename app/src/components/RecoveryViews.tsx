@@ -11,6 +11,7 @@ import type { KernelGuardianSet } from '@shiba-wallet/chains-evm';
 import { Button, WarningBox, useFieldLabels } from '../components';
 import { payloadQrSpokenLabel } from '../a11y';
 import { useTheme } from '../theme';
+import { useI18n } from '../i18n/useI18n';
 import { QrScanner } from './QrScanner';
 import {
   GUARDIANS_TRADE_OFF,
@@ -245,6 +246,13 @@ export function ShareActions({ text, shareTitle, onShared }: { text: string; sha
  * `label` is the field's visible caption (and its name for screen readers);
  * `placeholder` is a short hint that must not repeat the caption, or a
  * screen reader says the field's name twice (phase 22).
+ *
+ * `scanLabel` (optional) is what the Scan button names in its spoken label,
+ * "Scan QR code: <scanLabel>", when the caption alone is ambiguous: the
+ * multisig co-signer cards all caption their field "Ethereum address", so
+ * each passes "Co-signer N, Ethereum address" and a screen reader hears
+ * which co-signer the button scans for (the item-8c follow-up). Without it
+ * the spoken label names the caption, as before.
  */
 export function PasteOrScan({
   value,
@@ -252,14 +260,20 @@ export function PasteOrScan({
   label,
   placeholder,
   rationale,
+  scanLabel,
 }: {
   value: string;
   onChange: (text: string) => void;
   label: string;
   placeholder: string;
   rationale: string;
+  scanLabel?: string;
 }) {
   const theme = useTheme();
+  // The Scan button's title and spoken label in the chosen language when they
+  // are table entries (phase 23 item 8, third pass); the caption is localized
+  // by useFieldLabels.
+  const { localize } = useI18n();
   const fieldLabel = useFieldLabels();
   const [scanning, setScanning] = useState(false);
   return (
@@ -278,7 +292,9 @@ export function PasteOrScan({
       />
       <Button
         title="Scan QR code"
-        accessibilityLabel={`Scan QR code: ${label}`}
+        accessibilityLabel={`${localize('Scan QR code')}: ${localize(scanLabel ?? label)}`}
+
+
         variant="secondary"
         onPress={() => setScanning(true)}
       />

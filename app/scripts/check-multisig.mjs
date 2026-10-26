@@ -231,6 +231,10 @@ import {
   submitMultisigWithGate,
 } from '../src/wallet/multisig.ts';
 import { USEROP_HASH, decodeKernelExecute, fakeBundler, fakeKernelNode, fromRpcOp, memoryStore } from './fakes-kernel.mjs';
+// Phase 23 item 8 (the third localisation pass): the screen's English now
+// stands in the string table; the source pins read the accessor call and the
+// entry (scripts/check-i18n.mjs proves each entry is the English shown before).
+import { en as EN_TABLE } from '../src/i18n/en.ts';
 
 let passed = 0;
 let failed = 0;
@@ -515,8 +519,8 @@ console.log('check-multisig: honesty lines (exact text)');
   // confirm, checked here too so the two cannot drift apart).
   const feeOrderOk = (src) => {
     const c = src.slice(src.indexOf("if ((phase === 'confirm' || phase === 'sending') && selected && op && submission)"), src.indexOf("if (phase === 'progress' && selected && progress)"));
-    const fee = c.indexOf('label="Network fee (worst case, set by you as the submitter)"');
-    const total = c.indexOf('<InfoRow label="Total (worst case)"');
+    const fee = c.indexOf("label={tx('Network fee (worst case, set by you as the submitter)')}");
+    const total = c.indexOf("<InfoRow label={tx('Total (worst case)')}");
     const preview = c.indexOf('<BalanceChangePreview');
     const risk = c.indexOf('<RiskWarnings url={nodeUrl}');
     return fee > 0 && total > fee && preview > total && risk > preview;
@@ -531,8 +535,8 @@ console.log('check-multisig: honesty lines (exact text)');
   {
     // Mutant: the old order (preview and risk card first, fee rows after).
     const c0 = screen.indexOf("if ((phase === 'confirm' || phase === 'sending') && selected && op && submission)");
-    const feeStart = screen.indexOf('        <InfoRow\n          label="Network fee (worst case, set by you as the submitter)"', c0);
-    const feeEnd = screen.indexOf('\n', screen.indexOf('<InfoRow label="Total (worst case)"', feeStart)) + 1;
+    const feeStart = screen.indexOf("        <InfoRow\n          label={tx('Network fee (worst case, set by you as the submitter)')}", c0);
+    const feeEnd = screen.indexOf('\n', screen.indexOf("<InfoRow label={tx('Total (worst case)')}", feeStart)) + 1;
     const riskEnd = screen.indexOf('\n', screen.indexOf('<RiskWarnings url={nodeUrl}', feeEnd)) + 1;
     const oldOrder = screen.slice(0, feeStart) + screen.slice(feeEnd, riskEnd) + screen.slice(feeStart, feeEnd) + screen.slice(riskEnd);
     check('mutant caught: the old order (preview above the fee rows its note points up to)', feeStart > c0 && oldOrder !== screen && !feeOrderOk(oldOrder));
@@ -1126,7 +1130,7 @@ console.log('check-multisig: deployment refresh, deposit, own addresses (finding
       MULTISIG_DEPOSIT_ROW_LABEL === 'EntryPoint deposit (pays fees first)' && multisigFundsLine(undefined, fmt) === 'Balance loading…',
     multisigFundsLine({ balance: 507_000_000_000_000n, deposit: DEP }, fmt));
   check('screen: the detail view shows the deposit row with its note, and the list uses multisigFundsLine',
-    /label=\{MULTISIG_DEPOSIT_ROW_LABEL\}/.test(screenSrc) && /sub=\{MULTISIG_DEPOSIT_NOTE\}/.test(screenSrc) && /multisigFundsLine\(funds\[r\.address\], formatNative\)/.test(screenSrc) && /readMultisigFunds\(node, r\.address\)/.test(screenSrc));
+    /label=\{localize\(MULTISIG_DEPOSIT_ROW_LABEL\)\}/.test(screenSrc) && /sub=\{localize\(MULTISIG_DEPOSIT_NOTE\)\}/.test(screenSrc) && /multisigFundsLine\(funds\[r\.address\], formatNative\)/.test(screenSrc) && /readMultisigFunds\(node, r\.address\)/.test(screenSrc));
 
   // (8) The wallet's own multisig addresses, named as every screen names them.
   const own = await ownMultisigAddresses(SEPOLIA, fresh);
@@ -1515,9 +1519,10 @@ console.log('check-multisig: the multisig as an account in the switcher (phase 1
     // collecting confirms before discarding it (it is abandoned when the new
     // request is built), with the exact wording.
     check('detail: "New operation (send)" confirms before discarding a collecting operation (finding 3)',
-      /if \(selected\.operations\.some\(\(o\) => o\.status === 'collecting'\)\) \{\s*Alert\.alert\(\s*'Start a new operation\?',\s*'The one you are collecting approvals for will be discarded\.',/.test(detail) &&
-        /\{ text: 'Cancel', style: 'cancel' \}/.test(detail) &&
-        /\{ text: 'Discard and start', style: 'destructive', onPress: start \}/.test(detail) &&
+      /if \(selected\.operations\.some\(\(o\) => o\.status === 'collecting'\)\) \{\s*Alert\.alert\(\s*tx\('Start a new operation\?'\),\s*tx\('The one you are collecting approvals for will be discarded\.'\),/.test(detail) &&
+        /\{ text: tx\('Cancel'\), style: 'cancel' \}/.test(detail) &&
+        /\{ text: tx\('Discard and start'\), style: 'destructive', onPress: start \}/.test(detail) &&
+        EN_TABLE['multisig.detail.newOperation.title'] === 'Start a new operation?' && EN_TABLE['multisig.detail.newOperation.discard'] === 'Discard and start' &&
         /\} else \{\s*start\(\);\s*\}/.test(detail));
     // Finding 2: the History list key is not the request id alone (a legacy
     // store, or an in-place status change, could otherwise collide).
@@ -1931,8 +1936,8 @@ console.log('check-multisig: phase 19 item 1 — QR codes in parts, scanning, fi
   check('adding a multisig: "Scan a record" hands the text to onReviewImport, the paste reader; the file button to reviewImport',
     scanWired(importPhase, 'MULTISIG_SCAN_RECORD_TITLE', 'onReviewImport') && importPhase.includes('onPress={() => onReviewImport(importInput)}') && importPhase.includes('onPress={() => void pickInto(reviewImport)}'));
   check('the request, approval and record QR codes are shown through MultisigPayloadQr (parts when needed); no single oversized code is left',
-    screen.includes('<MultisigPayloadQr payload={payload} caption="Multisig signing request" />') && screen.includes('<MultisigPayloadQr payload={cosignPayload} caption="Multisig approval" />') &&
-      screen.includes('<MultisigPayloadQr payload={exported.json} caption="Multisig account record" />') && !/multisigQrValue\(/.test(screen) && !/exported\.qrValue/.test(screen));
+    screen.includes("<MultisigPayloadQr payload={payload} caption={tx('Multisig signing request')} />") && screen.includes("<MultisigPayloadQr payload={cosignPayload} caption={tx('Multisig approval')} />") &&
+      screen.includes("<MultisigPayloadQr payload={exported.json} caption={tx('Multisig account record')} />") && !/multisigQrValue\(/.test(screen) && !/exported\.qrValue/.test(screen));
   check('views: the scan button uses the existing QrScanner and passes the joined text on unchanged; the paged QR uses PayloadQr with Previous / Next part',
     views.includes("import { QrScanner } from '../components/QrScanner';") && /const result = acceptMultisigQrScan\(scan, data\);/.test(views) && /onComplete\(result\.text\);/.test(views) &&
       /const parts = splitMultisigQrParts\(payload\);/.test(views) && /<PayloadQr value=\{parts\[index\]!\} caption=\{multisigQrPartCaption\(caption, index, total\)\} \/>/.test(views) &&
@@ -2140,10 +2145,11 @@ console.log('check-multisig: pass p20c (TalkBack and dark mode) findings 5, 9 an
       rv.includes("{...(label === undefined ? { importantForAccessibility: 'no' as const, accessibilityElementsHidden: true } : {})}"));
   const ms = read('src/screens/MultisigScreen.tsx');
   check('…the multisig address QR names the address in its short form (source)',
-    ms.includes('label={`the multisig account’s address, ${spokenShortAddress(selected.address)}`}'));
+    ms.includes("label={t('multisig.detail.qrLabel', { address: spokenShortAddress(selected.address) })}") &&
+      EN_TABLE['multisig.detail.qrLabel'] === 'the multisig account’s address, {address}');
   check('…"Multi-signature accounts" is spoken once: the header bar keeps it, the in-screen copy is hidden from screen readers (source)',
-    ms.includes('navigation.setOptions({ title: MULTISIG_TITLE });') &&
-      /<Text importantForAccessibility="no" accessibilityElementsHidden style=\{\[styles\.title, \{ color: theme\.text \}\]\}>\s*\{MULTISIG_TITLE\}/.test(ms));
+    ms.includes('navigation.setOptions({ title: localize(MULTISIG_TITLE) });') &&
+      /<Text importantForAccessibility="no" accessibilityElementsHidden style=\{\[styles\.title, \{ color: theme\.text \}\]\}>\s*\{localize\(MULTISIG_TITLE\)\}/.test(ms));
   // (17) The exposure warning is drawn as a warning.
   const exposureOk = (src) => src.includes('<Text style={[styles.hint, { color: theme.warningText }]}>{multisigExposureLine(multisigConfigOf(r), r.localSigner)}</Text>');
   check('finding 17: the multisig list card draws the exposure warning in the warning text colour, not muted grey (source)', exposureOk(ms));
@@ -2157,9 +2163,9 @@ console.log('check-multisig: pass p20c (TalkBack and dark mode) findings 5, 9 an
     // Pass p22a: the add-from-a-record review's signer lines too (3), and the
     // create form's "This wallet's signer" row.
     (src.match(/value=\{s\.address\}\s+spokenValue=\{spokenShortAddress\(s\.address\)\}/g) ?? []).length === 3 &&
-    /label="This wallet’s signer \(the active account\)"\s+value=\{phraseSigner\}\s+spokenValue=\{spokenShortAddress\(phraseSigner\)\}/.test(src) &&
-    src.includes('<InfoRow label="Multisig address (receive here)" value={selected.address} spokenValue={spokenShortAddress(selected.address)} monoValue />') &&
-    src.includes('<InfoRow label="You approve as" value={r.signer.address} spokenValue={spokenShortAddress(r.signer.address)}');
+    /label=\{tx\('This wallet’s signer \(the active account\)'\)\}\s+value=\{phraseSigner\}\s+spokenValue=\{spokenShortAddress\(phraseSigner\)\}/.test(src) &&
+    src.includes("<InfoRow label={tx('Multisig address (receive here)')} value={selected.address} spokenValue={spokenShortAddress(selected.address)} monoValue />") &&
+    src.includes("<InfoRow label={tx('You approve as')} value={r.signer.address} spokenValue={spokenShortAddress(r.signer.address)}");
   check('p20d finding 7: the multisig list address, the receive address and each signer line are spoken in the short form (source)', spokenOk(ms));
   check('…mutant caught: a signer line spoken in full again', !spokenOk(ms.replace('spokenValue={spokenShortAddress(s.address)}', '')));
   check('…mutant caught (p22a): the create form\'s "This wallet\'s signer" row spoken in full again', !spokenOk(ms.replace('spokenValue={spokenShortAddress(phraseSigner)}', '')));
@@ -2298,7 +2304,7 @@ console.log('check-multisig: phase 23 item 8 — the co-signer card captions');
     const end = start < 0 ? -1 : src.indexOf('</View>\n        ))}', start);
     if (start < 0 || end < 0) return ['the co-signer card was not found'];
     const card = src.slice(start, end);
-    const heading = card.indexOf('<Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>Co-signer {i + 1}</Text>');
+    const heading = card.indexOf("<Text accessibilityRole=\"header\" style={[styles.cardTitle, { color: theme.text }]}>{t('multisig.cosigner.heading', { n: i + 1 })}</Text>");
     const address = card.indexOf('label="Ethereum address"');
     const weightCaption = card.indexOf("<Text {...fieldLabel(`cosigner-${i}-weight`, 'Weight').label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel(`cosigner-${i}-weight`, 'Weight').text}</Text>");
     const weightInput = card.indexOf("<TextInput\n              {...fieldLabel(`cosigner-${i}-weight`, 'Weight').input}");
@@ -2323,7 +2329,33 @@ console.log('check-multisig: phase 23 item 8 — the co-signer card captions');
   check('…mutant caught: PasteOrScan\'s field no longer labelled by its caption',
     cardProblems(screenSrc, recoverySrc.replace("{...fieldLabel('paste', label).input}", '')).length >= 1);
   check('…mutant caught: the card heading without its header role',
-    cardProblems(screenSrc.replace('<Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>Co-signer {i + 1}</Text>', '<Text style={[styles.cardTitle, { color: theme.text }]}>Co-signer {i + 1}</Text>')).length >= 1);
+    cardProblems(screenSrc.replace("<Text accessibilityRole=\"header\" style={[styles.cardTitle, { color: theme.text }]}>{t('multisig.cosigner.heading', { n: i + 1 })}</Text>", "<Text style={[styles.cardTitle, { color: theme.text }]}>{t('multisig.cosigner.heading', { n: i + 1 })}</Text>")).length >= 1);
+  // Phase 23 item 8 (the third localisation pass) — the item-8c follow-up:
+  // every card's Scan button used to say "Scan QR code: Ethereum address",
+  // without the co-signer number. PasteOrScan's optional scanLabel names the
+  // co-signer in the spoken label while the visible caption stays
+  // "Ethereum address" (cardProblems above still pins the caption).
+  const scanProblems = (src, rv = recoverySrc) => {
+    const out = [];
+    const start = src.indexOf('{cosigners.map((c, i) => (');
+    const end = start < 0 ? -1 : src.indexOf('</View>\n        ))}', start);
+    const card = start < 0 || end < 0 ? '' : src.slice(start, end);
+    if (!card.includes("scanLabel={t('multisig.cosigner.scanLabel', { n: i + 1 })}")) out.push('the card does not pass the numbered scanLabel');
+    if (!rv.includes('scanLabel?: string;') || !rv.includes("accessibilityLabel={`${localize('Scan QR code')}: ${localize(scanLabel ?? label)}`}")) {
+      out.push('PasteOrScan does not speak scanLabel (falling back to the caption)');
+    }
+    return out;
+  };
+  check('phase 23 item 8 (third pass): each co-signer card\'s Scan button names its co-signer ("Scan QR code: Co-signer N, Ethereum address"), the caption unchanged (source)',
+    scanProblems(screenSrc).length === 0 && EN_TABLE['multisig.cosigner.scanLabel'] === 'Co-signer {n}, Ethereum address' &&
+      EN_TABLE['multisig.cosigner.heading'] === 'Co-signer {n}' && EN_TABLE['multisig.cosigner.address'] === 'Ethereum address' &&
+      EN_TABLE['multisig.scanQr'] === 'Scan QR code', scanProblems(screenSrc).join('; '));
+  check('…the spoken label in English, exactly: "Scan QR code: Co-signer 2, Ethereum address"',
+    `${EN_TABLE['multisig.scanQr']}: ${EN_TABLE['multisig.cosigner.scanLabel'].replace('{n}', '2')}` === 'Scan QR code: Co-signer 2, Ethereum address');
+  check('…mutant caught: the card without its scanLabel (every button "Scan QR code: Ethereum address" again)',
+    scanProblems(screenSrc.replace("\n              scanLabel={t('multisig.cosigner.scanLabel', { n: i + 1 })}", '')).length >= 1);
+  check('…mutant caught: PasteOrScan ignoring scanLabel',
+    scanProblems(screenSrc, recoverySrc.replace('${localize(scanLabel ?? label)}', '${localize(label)}')).length >= 1);
 }
 
 // ===========================================================================

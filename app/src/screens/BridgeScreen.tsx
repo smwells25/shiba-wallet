@@ -9,6 +9,9 @@ import { callWithFailover, getEndpoint, type NetworkEndpoint, type UsableEndpoin
 import { readinessGate } from '../config/readiness';
 import { sanitizeEndpointMessage } from '../config/endpoint-probe';
 import { useTheme } from '../theme';
+import { T } from '../i18n/T';
+import { localize, t, tx } from '../i18n/index';
+import { useI18n } from '../i18n/useI18n';
 import { BalanceChangePreview } from '../components/BalanceChangePreview';
 import { RiskWarnings } from '../components/RiskWarnings';
 import { SpendingPolicyNotice, spendingGateForQuote } from '../components/SpendingPolicyViews';
@@ -184,7 +187,7 @@ function useBridgeAaBundle(
       const bundle = createAaClientFromConfig(aaConfig, { nodeUrl: url, chainId: BigInt(chainIdDecimal), accountIndex, ownerAddress });
       return { bundle, url, error: null };
     } catch (e) {
-      return { bundle: null, url: null, error: `The smart account could not be set up: ${errorText(e)}` };
+      return { bundle: null, url: null, error: t('bridge.aa.setupFailed', { error: errorText(e) }) };
     }
   }, [active, url, aaConfig, accountIndex, ownerAddress, chainIdDecimal]);
 }
@@ -243,6 +246,8 @@ function describeBridgeError(e: unknown, symbol: string): string {
  */
 export function BridgeScreen({ navigation }: Props) {
   const theme = useTheme();
+  // Localisation (phase 23 item 8, third pass): re-render on a language change.
+  useI18n();
   const fieldLabel = useFieldLabels();
   const { accounts, signWith, activeAccount } = useWallet();
   const { evmChain, setTestNetwork } = usePrefs();
@@ -296,7 +301,7 @@ export function BridgeScreen({ navigation }: Props) {
   }
   /** Makes the transfer's receiving network the active one, through the preference Settings → Developer writes. */
   const switchNetwork = (target: Parameters<typeof setTestNetwork>[0]) => {
-    setTestNetwork(target).catch((e: unknown) => Alert.alert('The network was not changed', errorText(e)));
+    setTestNetwork(target).catch((e: unknown) => Alert.alert(tx('The network was not changed'), errorText(e)));
   };
 
   // Transfers sent from this screen (stored per wallet; wallet/bridge.ts), and which are being checked.
@@ -315,10 +320,10 @@ export function BridgeScreen({ navigation }: Props) {
     };
   }, []);
   const onResetTransfers = () => {
-    Alert.alert('Reset the transfer list?', 'This forgets every bridge transfer listed on this phone. Nothing on the network changes.', [
-      { text: 'Cancel', style: 'cancel' },
+    Alert.alert(tx('Reset the transfer list?'), tx('This forgets every bridge transfer listed on this phone. Nothing on the network changes.'), [
+      { text: tx('Cancel'), style: 'cancel' },
       {
-        text: 'Reset',
+        text: tx('Reset'),
         style: 'destructive',
         onPress: () => {
           void resetBridgeTransfers(AsyncStorage)
@@ -333,7 +338,7 @@ export function BridgeScreen({ navigation }: Props) {
   };
 
   useEffect(() => {
-    navigation.setOptions({ title: 'Bridge (test networks)' });
+    navigation.setOptions({ title: tx('Bridge (test networks)') });
   }, [navigation]);
 
   useEffect(() => {
@@ -444,7 +449,7 @@ export function BridgeScreen({ navigation }: Props) {
   if (!account) {
     return (
       <View style={[screenStyle(theme), styles.center]}>
-        <Text style={{ color: theme.textMuted }}>No Ethereum account.</Text>
+        <Text style={{ color: theme.textMuted }}><T>No Ethereum account.</T></Text>
       </View>
     );
   }
@@ -622,13 +627,13 @@ export function BridgeScreen({ navigation }: Props) {
       return;
     }
     if (!eoaQuote.simulation.ok) {
-      Alert.alert('Not sent', `The pre-flight simulation failed: ${eoaQuote.simulation.reason}. Nothing was sent.`);
+      Alert.alert(tx('Not sent'), t('staking.preflightFailed', { reason: eoaQuote.simulation.reason }));
       return;
     }
     // As on the Staking screen, the approval itself moves nothing; the spending limits are checked on the burn.
     const auth = await requireLocalAuth(bridgeApprovePromptTitle(plan));
     if (!auth.ok) {
-      Alert.alert('Not approved', auth.message);
+      Alert.alert(tx('Not approved'), auth.message);
       return;
     }
     setPhase('approving');
@@ -637,10 +642,7 @@ export function BridgeScreen({ navigation }: Props) {
       setApproveTxid(sent.txid);
       const confirmed = await waitForAllowance(approveUrl, approval.token, account.address, approval.spender, approval.amount);
       if (!confirmed) {
-        backToForm(
-          `The approval was broadcast (transaction ${sent.txid}) but has not taken effect yet. Nothing further was sent. ` +
-            'Wait for it to confirm, then review again: the approval will already be in place.',
-        );
+        backToForm(t('bridge.approval.notConfirmed', { txid: sent.txid }));
         return;
       }
       const burn = await prepareBridgeSend(approveUrl, account.address, plan);
@@ -665,14 +667,14 @@ export function BridgeScreen({ navigation }: Props) {
       return;
     }
     if (!eoaQuote.simulation.ok) {
-      Alert.alert('Not sent', `The pre-flight simulation failed: ${eoaQuote.simulation.reason}. Nothing was sent.`);
+      Alert.alert(tx('Not sent'), t('staking.preflightFailed', { reason: eoaQuote.simulation.reason }));
       return;
     }
     const withinLimits = await spendingGateForQuote({ chain: caip2, owner: account.address, from: preparedFrom.current ?? account.address, quote: eoaQuote, url: sendUrl });
     if (!withinLimits) return;
     const auth = await requireLocalAuth(bridgePromptTitle(plan));
     if (!auth.ok) {
-      Alert.alert('Not sent', auth.message);
+      Alert.alert(tx('Not sent'), auth.message);
       return;
     }
     setPhase('sending');
@@ -716,7 +718,7 @@ export function BridgeScreen({ navigation }: Props) {
     if (!withinLimits) return;
     const auth = await requireLocalAuth(bridgePromptTitle(plan));
     if (!auth.ok) {
-      Alert.alert('Not sent', auth.message);
+      Alert.alert(tx('Not sent'), auth.message);
       return;
     }
     setPhase('aa-sending');
@@ -799,21 +801,23 @@ export function BridgeScreen({ navigation }: Props) {
   if (phase === 'success' && plan && (result || aaResult)) {
     return (
       <ScrollView key="bridge-success" style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
-        <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}>{aaResult ? 'Sent to the bundler ✓' : 'Sent ✓'}</Text>
+        <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}>{aaResult ? tx('Sent to the bundler ✓') : tx('Sent ✓')}</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>{bridgePromptTitle(plan)}.</Text>
-        <Text style={[styles.label, { color: theme.textMuted }]}>{aaResult ? 'UserOperation hash' : 'Transaction id (on this network)'}</Text>
+        <Text style={[styles.label, { color: theme.textMuted }]}>{aaResult ? tx('UserOperation hash') : tx('Transaction id (on this network)')}</Text>
         <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <Text selectable style={[styles.monoText, { color: theme.text }]}>
             {aaResult ? aaResult.userOpHash : result!.txid}
           </Text>
         </View>
         {result?.explorerUrl ? <Button title="View on block explorer" variant="secondary" onPress={() => void Linking.openURL(result.explorerUrl!)} /> : null}
-        {approveTxid ? <Text style={[styles.hint, { color: theme.textMuted }]}>Approval transaction: {approveTxid}</Text> : null}
-        {aaResult?.receiptState === 'pending' ? sendingView('Bundling… waiting for the UserOperation receipt.') : null}
+        {approveTxid ? <Text style={[styles.hint, { color: theme.textMuted }]}>{t('staking.success.approvalTx', { hash: approveTxid })}</Text> : null}
+        {aaResult?.receiptState === 'pending' ? sendingView(tx('Bundling… waiting for the UserOperation receipt.')) : null}
         {aaResult?.receiptState === 'timeout' ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            No receipt yet. The operation may still be included — keep the UserOperation hash above to look it up later. The
-            transfer below can be followed once the bundle transaction is known.
+            <T>
+              No receipt yet. The operation may still be included — keep the UserOperation hash above to look it up later. The
+              transfer below can be followed once the bundle transaction is known.
+            </T>
           </Text>
         ) : null}
         {aaResult?.receiptState === 'found' ? (
@@ -823,12 +827,12 @@ export function BridgeScreen({ navigation }: Props) {
               account. Nothing was bridged.
             </WarningBox>
           ) : (
-            <Text style={[styles.simulationOk, { color: theme.success }]}>Included on-chain{aaResult.success === true ? ' — succeeded.' : '.'}</Text>
+            <Text style={[styles.simulationOk, { color: theme.success }]}>{aaResult.success === true ? tx('Included on-chain — succeeded.') : tx('Included on-chain.')}</Text>
           )
         ) : null}
-        <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>Where the transfer is</Text>
+        <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}><T>Where the transfer is</T></Text>
         {transferCards(sentRecordId)}
-        <Text style={[styles.hint, { color: theme.textMuted }]}>{BRIDGE_RECORDS_NOTE}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(BRIDGE_RECORDS_NOTE)}</Text>
         {recordsReadOnly ? <WarningBox>{BRIDGE_RECORDS_READ_ONLY_MESSAGE}</WarningBox> : null}
         {sentNetwork && aaResult ? <TransactionNoteField network={sentNetwork} txid={aaResult.txHash} userOpHash={aaResult.userOpHash} /> : null}
         {sentNetwork && !aaResult && result ? <TransactionNoteField network={sentNetwork} txid={result.txid} userOpHash={null} /> : null}
@@ -861,14 +865,14 @@ export function BridgeScreen({ navigation }: Props) {
     return (
       <>
         <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>
-          {p.sourceLabel} → {p.destinationLabel} through {p.providerLabel}
+          {t('bridge.confirm.header', { source: p.sourceLabel, destination: p.destinationLabel, provider: p.providerLabel })}
         </Text>
         <Text style={[styles.notice, { color: theme.text }]}>{model.youSend}</Text>
         <Text style={[styles.notice, { color: theme.text }]}>{model.arrives}</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>{model.minimum}</Text>
         {model.callLines.length > 0 ? (
           <>
-            <Text accessibilityRole="header" style={[styles.label, { color: theme.textMuted }]}>What is signed on {p.sourceLabel}</Text>
+            <Text accessibilityRole="header" style={[styles.label, { color: theme.textMuted }]}>{t('bridge.confirm.whatIsSigned', { source: p.sourceLabel })}</Text>
             {model.callLines.map((line) => (
               <Text key={line} style={[styles.hint, { color: theme.text }]}>{line}</Text>
             ))}
@@ -881,14 +885,19 @@ export function BridgeScreen({ navigation }: Props) {
             <Text style={[styles.hint, { color: theme.textMuted }]}>{f.note}</Text>
           </View>
         ))}
-        <Row label={`Leaving your account for the bridge (amount + ${p.asset === 'usdc' ? 'Circle fee' : 'fee'})`} value={model.total} theme={theme} />
+        <Row
+          label={p.asset === 'usdc' ? 'Leaving your account for the bridge (amount + Circle fee)' : 'Leaving your account for the bridge (amount + fee)'}
+          value={model.total}
+          theme={theme}
+        />
+
         {model.timeLines.map((line) => (
           <Text key={line} style={[styles.hint, { color: theme.textMuted }]}>{line}</Text>
         ))}
-        <TrustStatementCard trust={model.trust} theme={theme} title={`Who you trust with ${p.providerLabel}`} />
+        <TrustStatementCard trust={model.trust} theme={theme} title={t('bridge.confirm.trustTitle', { provider: p.providerLabel })} />
         <Text style={[styles.hint, { color: theme.text }]}>{model.destinationStep}</Text>
         <Text style={[styles.hint, { color: theme.text }]}>{model.approvalLine}</Text>
-        <Text accessibilityRole="header" style={[styles.label, { color: theme.textMuted }]}>Written into the call and checked by this wallet</Text>
+        <Text accessibilityRole="header" style={[styles.label, { color: theme.textMuted }]}><T>Written into the call and checked by this wallet</T></Text>
         {model.pinnedSummary.map((line) => (
           <Text key={line} style={[styles.hint, { color: theme.text }]}>• {line}</Text>
         ))}
@@ -905,11 +914,11 @@ export function BridgeScreen({ navigation }: Props) {
     return (
       <ScrollView key="bridge-approve" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
-        <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>Step 1 of 2 — Approve exactly the amount</Text>
+        <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}><T>Step 1 of 2 — Approve exactly the amount</T></Text>
         <Row label="From account" value={activeAccount?.name ?? '—'} sub={account.address} spoken={`From account: ${activeAccount?.name ?? 'unknown'}, ${spokenShortAddress(account.address)}`} theme={theme} />
         <ImportedKeyNotice show={activeAccount?.imported === true} />
         {confirmBody(plan)}
-        <Row label={`Max network fee for the approval (paid in ${symbol})`} value={`${exact18(eoaQuote.fee)} ${symbol}`} theme={theme} />
+        <Row label={t('bridge.row.maxFeeApproval', { symbol })} value={`${exact18(eoaQuote.fee)} ${symbol}`} theme={theme} />
         {(() => {
           const sourceFees = bridgeSourceFeeLines(eoaQuote, symbol);
           return (
@@ -925,12 +934,12 @@ export function BridgeScreen({ navigation }: Props) {
         <BalanceChangePreview url={quotedUrl} request={{ from: account.address, to: eoaQuote.to, value: 0n, ...(eoaQuote.data ? { data: eoaQuote.data } : {}) }} />
         <RiskWarnings url={quotedUrl} wallet={account.address} to={eoaQuote.to} data={eoaQuote.data} />
         {eoaQuote.simulation.ok ? (
-          <Text style={[styles.simulationOk, { color: theme.success }]}>Pre-flight simulation passed (eth_call).</Text>
+          <Text style={[styles.simulationOk, { color: theme.success }]}><T>Pre-flight simulation passed (eth_call).</T></Text>
         ) : (
-          <WarningBox>Pre-flight simulation failed: {eoaQuote.simulation.reason}. Nothing will be sent.</WarningBox>
+          <WarningBox>{t('staking.simulation.failed', { reason: eoaQuote.simulation.reason })}</WarningBox>
         )}
         {phase === 'approving' ? (
-          sendingView('Approving, then waiting for the approval to take effect…')
+          sendingView(tx('Approving, then waiting for the approval to take effect…'))
         ) : (
           <>
             <Button title={bridgeApprovePromptTitle(plan)} onPress={() => void onApprove()} disabled={!eoaQuote.simulation.ok} />
@@ -945,12 +954,12 @@ export function BridgeScreen({ navigation }: Props) {
     return (
       <ScrollView key="bridge-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
-        {notice ? <Text style={[styles.hint, { color: theme.success }]}>{notice}</Text> : null}
-        {approveTxid ? <Text style={[styles.hint, { color: theme.textMuted }]}>Approval transaction: {approveTxid}</Text> : null}
+        {notice ? <Text style={[styles.hint, { color: theme.success }]}>{localize(notice)}</Text> : null}
+        {approveTxid ? <Text style={[styles.hint, { color: theme.textMuted }]}>{t('staking.success.approvalTx', { hash: approveTxid })}</Text> : null}
         <Row label="From account" value={activeAccount?.name ?? '—'} sub={account.address} spoken={`From account: ${activeAccount?.name ?? 'unknown'}, ${spokenShortAddress(account.address)}`} theme={theme} />
         <ImportedKeyNotice show={activeAccount?.imported === true} />
         {confirmBody(plan)}
-        <Row label={`Max network fee on ${plan.sourceLabel} (paid in ${symbol})`} value={`${exact18(eoaQuote.fee)} ${symbol}`} theme={theme} />
+        <Row label={t('bridge.row.maxFeeOn', { source: plan.sourceLabel, symbol })} value={`${exact18(eoaQuote.fee)} ${symbol}`} theme={theme} />
         {(() => {
           const sourceFees = bridgeSourceFeeLines(eoaQuote, symbol);
           return (
@@ -968,12 +977,12 @@ export function BridgeScreen({ navigation }: Props) {
         <RiskWarnings url={quotedUrl} wallet={account.address} to={eoaQuote.to} data={eoaQuote.data} />
         <SpendingPolicyNotice owner={account.address} quote={eoaQuote} from={account.address} />
         {eoaQuote.simulation.ok ? (
-          <Text style={[styles.simulationOk, { color: theme.success }]}>Pre-flight simulation passed (eth_call).</Text>
+          <Text style={[styles.simulationOk, { color: theme.success }]}><T>Pre-flight simulation passed (eth_call).</T></Text>
         ) : (
-          <WarningBox>Pre-flight simulation failed: {eoaQuote.simulation.reason}. Nothing will be sent.</WarningBox>
+          <WarningBox>{t('staking.simulation.failed', { reason: eoaQuote.simulation.reason })}</WarningBox>
         )}
         {phase === 'sending' ? (
-          sendingView('Signing and broadcasting…')
+          sendingView(tx('Signing and broadcasting…'))
         ) : (
           <>
             <Button title={bridgePromptTitle(plan)} onPress={() => void onSend()} disabled={!eoaQuote.simulation.ok} />
@@ -989,14 +998,14 @@ export function BridgeScreen({ navigation }: Props) {
     return (
       <ScrollView key="bridge-aa-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
-        <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>Smart account · {aaAccountTypeLabel(aaQuote.accountType)}</Text>
+        <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>{t('staking.aa.title', { type: localize(aaAccountTypeLabel(aaQuote.accountType)) })}</Text>
         <Row label="Owner account (signs)" value={activeAccount?.name ?? '—'} sub={account.address} spoken={`Owner account (signs): ${activeAccount?.name ?? 'unknown'}, ${spokenShortAddress(account.address)}`} theme={theme} />
         <ImportedKeyNotice show={activeAccount?.imported === true} />
         <Row label={aaSenderLabel(aaQuote)} value={aaQuote.sender} mono theme={theme} />
         {confirmBody(plan)}
-        <Row label={`Smart account ${symbol} balance`} value={`${exact18(aaQuote.senderBalance)} ${symbol}`} theme={theme} />
+        <Row label={t('send.aa.row.smartBalance', { symbol })} value={`${exact18(aaQuote.senderBalance)} ${symbol}`} theme={theme} />
         <Row label="Deployment" value={aaQuote.deployed ? 'Already deployed' : 'Will deploy with this operation'} theme={theme} />
-        {!aaQuote.deployed && aaQuote.accountType === 'kernel-v3.3' ? <Text style={[styles.hint, { color: theme.textMuted }]}>{KERNEL_BUNDLER_NOTE}</Text> : null}
+        {!aaQuote.deployed && aaQuote.accountType === 'kernel-v3.3' ? <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(KERNEL_BUNDLER_NOTE)}</Text> : null}
         <Row
           label={aaQuote.sponsored ? 'Network fee' : 'Max network fee (bundler estimate)'}
           value={aaQuote.sponsored ? 'Sponsored — you pay 0' : `${exact18(aaQuote.fee)} ${symbol}`}
@@ -1011,9 +1020,9 @@ export function BridgeScreen({ navigation }: Props) {
         />
         <RiskWarnings url={url} wallet={aaQuote.sender} to={plan.call.to} data={plan.call.data} />
         <SpendingPolicyNotice owner={account.address} quote={aaQuote} from={account.address} />
-        <Text style={[styles.simulationOk, { color: theme.success }]}>Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).</Text>
+        <Text style={[styles.simulationOk, { color: theme.success }]}><T>Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).</T></Text>
         {phase === 'aa-sending' ? (
-          sendingView('Signing and submitting to the bundler…')
+          sendingView(tx('Signing and submitting to the bundler…'))
         ) : (
           <>
             <Button title={bridgePromptTitle(plan)} onPress={() => void onAaSend()} />
@@ -1026,12 +1035,12 @@ export function BridgeScreen({ navigation }: Props) {
 
   // --------------------------------------------------------------- form
   const currentRowQuotes = rowQuotes && rowQuotes.key === rowQuoteKey ? rowQuotes.byProvider : {};
-  const amountField = fieldLabel('amount', `Amount (${assetName})`);
+  const amountField = fieldLabel('amount', t('send.field.amount', { symbol: assetName }));
   return (
     <ScrollView key="bridge-form" style={screenStyle(theme)} contentContainerStyle={styles.content}>
       <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
-      <Text style={[styles.hint, { color: theme.text }]}>{BRIDGE_INTRO}</Text>
-      <Text accessibilityRole="header" style={[styles.label, { color: theme.textMuted }]}>Asset to bridge</Text>
+      <Text style={[styles.hint, { color: theme.text }]}>{localize(BRIDGE_INTRO)}</Text>
+      <Text accessibilityRole="header" style={[styles.label, { color: theme.textMuted }]}><T>Asset to bridge</T></Text>
       <View style={styles.choiceRow}>
         {BRIDGE_ASSETS.map((a) => (
           <Button
@@ -1055,9 +1064,9 @@ export function BridgeScreen({ navigation }: Props) {
 
       {aaOffered ? (
         <View style={styles.toggleRow}>
-          <Switch {...switchColors(theme)} accessibilityLabel="Send from the smart account" value={aaEnabled} onValueChange={setAaEnabled} />
+          <Switch {...switchColors(theme)} accessibilityLabel={tx('Send from the smart account')} value={aaEnabled} onValueChange={setAaEnabled} />
           <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text }]}>
-            Send from the smart account
+            <T>Send from the smart account</T>
           </Text>
         </View>
       ) : null}
@@ -1065,7 +1074,7 @@ export function BridgeScreen({ navigation }: Props) {
 
       {inputsShown && offer.destinations.length > 0 ? (
         <>
-          <Text accessibilityRole="header" style={[styles.label, { color: theme.textMuted }]}>Send to network</Text>
+          <Text accessibilityRole="header" style={[styles.label, { color: theme.textMuted }]}><T>Send to network</T></Text>
           <View style={styles.choiceRow}>
             {offer.destinations.map((d) => (
               <Button
@@ -1086,7 +1095,7 @@ export function BridgeScreen({ navigation }: Props) {
             <>
               {smartRecipientOffered ? (
                 <>
-                  <Text accessibilityRole="header" style={[styles.label, { color: theme.textMuted }]}>Receive the USDC at</Text>
+                  <Text accessibilityRole="header" style={[styles.label, { color: theme.textMuted }]}><T>Receive the USDC at</T></Text>
                   <View style={styles.choiceRow}>
                     {(['regular', 'smart-account'] as const).map((k) => (
                       <Button
@@ -1145,13 +1154,11 @@ export function BridgeScreen({ navigation }: Props) {
               setFormError(null);
             }}
             keyboardType="decimal-pad"
-            placeholder={bridgeAmountPlaceholder(asset)}
+            placeholder={localize(bridgeAmountPlaceholder(asset))}
             placeholderTextColor={theme.textMuted}
           />
           {asset === 'native' ? (
-            <Text style={[styles.hint, { color: theme.textMuted }]}>
-              Stargate moves {symbol} in steps of 0.000001; an amount with more decimal places is refused, not rounded.
-            </Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{t('bridge.amount.nativeHint', { symbol })}</Text>
           ) : (
             <Text style={[styles.hint, { color: theme.textMuted }]}>{bridgeAmountHint('usdc')}</Text>
           )}
@@ -1160,11 +1167,11 @@ export function BridgeScreen({ navigation }: Props) {
 
       {choiceNote ? (
         <>
-          <Text accessibilityRole="header" style={[styles.label, { color: theme.textMuted }]}>Choose a provider</Text>
+          <Text accessibilityRole="header" style={[styles.label, { color: theme.textMuted }]}><T>Choose a provider</T></Text>
           <Text style={[styles.hint, { color: theme.textMuted }]}>{choiceNote}</Text>
         </>
       ) : null}
-      {providerChoiceHint ? <Text style={[styles.hint, { color: theme.text }]}>{providerChoiceHint}</Text> : null}
+      {providerChoiceHint ? <Text style={[styles.hint, { color: theme.text }]}>{localize(providerChoiceHint)}</Text> : null}
       <View accessibilityRole="radiogroup" style={styles.content}>
         {rows.map((row) => {
           const q = currentRowQuotes[row.id];
@@ -1185,7 +1192,7 @@ export function BridgeScreen({ navigation }: Props) {
 
       {formError ? <BridgeWarning text={formError} announce /> : null}
       {phase === 'preparing' ? (
-        sendingView('Reading the provider’s contracts and preparing the quote…')
+        sendingView(tx('Reading the provider’s contracts and preparing the quote…'))
       ) : (
         <>
           <Button title={quoting ? 'Getting quotes…' : 'Get quotes'} variant="secondary" onPress={() => void onGetQuotes()} disabled={quoting || chosenProvider === null} />
@@ -1195,8 +1202,8 @@ export function BridgeScreen({ navigation }: Props) {
 
       {records.length > 0 || recordsReadOnly ? (
         <>
-          <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>Transfers sent from this screen</Text>
-          <Text style={[styles.hint, { color: theme.textMuted }]}>{BRIDGE_RECORDS_NOTE}</Text>
+          <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}><T>Transfers sent from this screen</T></Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(BRIDGE_RECORDS_NOTE)}</Text>
           {recordsReadOnly ? (
             <>
               <WarningBox>{BRIDGE_RECORDS_READ_ONLY_MESSAGE}</WarningBox>
@@ -1237,6 +1244,7 @@ function RetryPanel({
   onSwitchNetwork: (target: NonNullable<ReturnType<typeof bridgeSwitchTarget>>) => void;
 }) {
   const theme = useTheme();
+  useI18n();
   const [quote, setQuote] = useState<{ q: EvmSendQuote; url: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1259,7 +1267,7 @@ function RetryPanel({
   const send = async () => {
     if (!quote) return;
     if (!quote.q.simulation.ok) {
-      setError(`The pre-flight simulation failed: ${quote.q.simulation.reason}. Nothing was sent.`);
+      setError(t('staking.preflightFailed', { reason: quote.q.simulation.reason }));
       return;
     }
     const auth = await requireLocalAuth(bridgeRetryPromptTitle(record));
@@ -1282,11 +1290,11 @@ function RetryPanel({
     <View style={styles.content}>
       {quote ? (
         <>
-          <Row label={`Max network fee for the delivery (paid in ${symbol})`} value={`${exact18(quote.q.fee)} ${symbol}`} theme={theme} />
+          <Row label={t('bridge.row.maxFeeDelivery', { symbol })} value={`${exact18(quote.q.fee)} ${symbol}`} theme={theme} />
           {quote.q.simulation.ok ? (
-            <Text style={[styles.simulationOk, { color: theme.success }]}>Pre-flight simulation passed (eth_call).</Text>
+            <Text style={[styles.simulationOk, { color: theme.success }]}><T>Pre-flight simulation passed (eth_call).</T></Text>
           ) : (
-            <WarningBox>Pre-flight simulation failed: {quote.q.simulation.reason}. Nothing will be sent.</WarningBox>
+            <WarningBox>{t('staking.simulation.failed', { reason: quote.q.simulation.reason })}</WarningBox>
           )}
           <Button title="Send the delivery transaction" onPress={() => void send()} disabled={busy || !quote.q.simulation.ok} />
         </>
@@ -1330,6 +1338,7 @@ function MintPanel({
   onSwitchNetwork: (target: NonNullable<ReturnType<typeof bridgeSwitchTarget>>) => void;
 }) {
   const theme = useTheme();
+  useI18n();
   const [quote, setQuote] = useState<{ q: EvmSendQuote; url: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1367,7 +1376,7 @@ function MintPanel({
   const send = async () => {
     if (!quote) return;
     if (!quote.q.simulation.ok) {
-      setError(`The pre-flight simulation failed: ${quote.q.simulation.reason}. Nothing was sent.`);
+      setError(t('staking.preflightFailed', { reason: quote.q.simulation.reason }));
       return;
     }
     const auth = await requireLocalAuth(bridgeMintPromptTitle(record));
@@ -1390,16 +1399,16 @@ function MintPanel({
     <View style={styles.content}>
       {quote ? (
         <>
-          <Row label={`Max network fee for the mint (paid in ${symbol})`} value={`${exact18(quote.q.fee)} ${symbol}`} theme={theme} />
+          <Row label={t('bridge.row.maxFeeMint', { symbol })} value={`${exact18(quote.q.fee)} ${symbol}`} theme={theme} />
           {quote.q.simulation.ok ? (
-            <Text style={[styles.simulationOk, { color: theme.success }]}>Pre-flight simulation passed (eth_call).</Text>
+            <Text style={[styles.simulationOk, { color: theme.success }]}><T>Pre-flight simulation passed (eth_call).</T></Text>
           ) : (
-            <WarningBox>Pre-flight simulation failed: {quote.q.simulation.reason}. Nothing will be sent.</WarningBox>
+            <WarningBox>{t('staking.simulation.failed', { reason: quote.q.simulation.reason })}</WarningBox>
           )}
           <Button title={bridgeMintPromptTitle(record)} onPress={() => void send()} disabled={busy || !quote.q.simulation.ok} />
         </>
       ) : (
-        <Button title={`Mint on ${record.destinationLabel}`} variant="secondary" onPress={() => void prepare()} disabled={busy} />
+        <Button title={t('bridge.mint.button', { destination: record.destinationLabel })} variant="secondary" onPress={() => void prepare()} disabled={busy} />
       )}
       {error ? <WarningBox>{error}</WarningBox> : null}
     </View>
@@ -1428,6 +1437,7 @@ function BlockerWithSwitch({
   onSwitchNetwork: (target: NonNullable<ReturnType<typeof bridgeSwitchTarget>>) => void;
 }) {
   const theme = useTheme();
+  useI18n();
   const target = bridgeSwitchTarget(activeCaip2, record);
   return (
     <View style={styles.content}>
@@ -1436,7 +1446,8 @@ function BlockerWithSwitch({
         <Button
           title={bridgeSwitchButtonTitle(record.destinationLabel)}
           variant="secondary"
-          accessibilityHint={`Makes ${record.destinationLabel} the active test network, as Settings → Developer does; this screen stays open`}
+          accessibilityHint={t('bridge.switch.hint', { destination: record.destinationLabel })}
+
           onPress={() => onSwitchNetwork(target)}
         />
       ) : null}
