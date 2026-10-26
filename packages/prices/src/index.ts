@@ -27,13 +27,16 @@ export {
   HISTORY_POINT_TOLERANCE_MS,
   documentedGranularity,
   fetchMarketChartRange,
+  fetchTokenMarketChartRange,
   marketChartRangeUrl,
   nearestPricePoint,
   parseMarketChartBody,
+  tokenMarketChartRangeUrl,
 } from './history.js';
 export type {
   HistoricalPricePoint,
   HistoryGranularity,
   MarketChartRangeConfig,
   MarketChartRangeRequest,
+  TokenMarketChartRangeRequest,
 } from './history.js';

@@ -3,24 +3,38 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { Button } from '../components';
 import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
+import type { FungibleAsset } from '@shiba-wallet/core';
 import type { AccountView, ChainAccount } from '../wallet/WalletContext';
 import { useHistory } from '../wallet/useHistory';
 import { usePrices } from '../wallet/usePrices';
 import { useOwnEvmAddresses } from '../wallet/useOwnAddresses';
 import { useClockTick } from '../components/RecurringDueBanner';
 import { loadNativeBalance } from '../wallet/useBalances';
+import { loadTokenBalance } from '../wallet/useTokenBalances';
+import { listTokens } from '../wallet/tokens';
 import { getAaConfig } from '../wallet/aa';
 import { historySmartAccountFor } from '../wallet/activity-sentences';
 import { fetchPriceHistory, nativePriceAssetId, type PriceHistoryResult } from '../wallet/prices';
 import { EVM_CHAIN_ID } from '../wallet/send';
-import { computeNativePnl, pnlFigureLines, pnlHistoryLoadedLine, pnlPriceRange, type PnlPriceHistory } from '../wallet/pnl';
+import {
+  computeNativePnl,
+  computeTokenPnl,
+  pnlFigureLines,
+  pnlHistoryLoadedLine,
+  pnlPriceRange,
+  pnlTokenChipTitle,
+  pnlTokenChoices,
+  type PnlPriceHistory,
+  type PnlTokenAsset,
+} from '../wallet/pnl';
 import type { PortfolioSlot } from '../wallet/portfolio';
 
 /** The intro of the profit-and-loss section. */
 export const PNL_INTRO =
   'Profit and loss for the active account, worked out on this phone from its loaded transaction history and ' +
-  'CoinGecko’s prices. It is offered only for the native coin of a main network: test-network coins have no price, ' +
-  'and tokens are not offered (see the notes). Nothing is guessed: where the history or a price is missing, the ' +
+  'CoinGecko’s prices. It is offered for the native coin of a main network and for each ERC-20 token tracked on ' +
+  'the active main network that CoinGecko prices, a token counted only by its own contract: test-network coins and ' +
+  'tokens have no price, so they are not offered. Nothing is guessed: where the history or a price is missing, the ' +
   'wallet says what is missing instead of showing a figure. Working it out loads the account’s history and one ' +
   'price history from CoinGecko.';
 
@@ -30,10 +44,19 @@ export const PNL_NO_SLOTS =
 
 export const PNL_WATCHED_NOTE = 'These figures are for a watched address: it is not your funds.';
 
+/** What one profit-and-loss button works out: a network's own coin, or a tracked token on the EVM slot. */
+type PnlSubject = { kind: 'native'; slot: PortfolioSlot } | { kind: 'token'; slot: PortfolioSlot; asset: PnlTokenAsset };
+
+function subjectKey(subject: PnlSubject): string {
+  return subject.kind === 'native' ? `native:${subject.slot.slot}` : `token:${subject.asset.contract}`;
+}
+
 /**
  * The profit-and-loss section (feature 97) under the portfolio: one button
- * per priced network slot the active account has an address on; the panel
- * loads only after the button is pressed.
+ * per priced network slot the active account has an address on, then one
+ * per tracked token pnlTokenChoices offers on the active EVM network (only
+ * a main network: a test network's slot is never in `slots` and its tokens
+ * have no price id); the panel loads only after a button is pressed.
  */
 export function PnlSection({
   slots,
@@ -49,7 +72,28 @@ export function PnlSection({
   const theme = useTheme();
   const [chosen, setChosen] = useState<string | null>(null);
   const usable = slots.filter((s) => accounts.some((a) => a.chainId === s.slot));
-  const slot = usable.find((s) => s.slot === chosen) ?? null;
+  // The EVM slot, only when it is priced now (a main network) and the account has an address on it.
+  const evmSlot = usable.find((s) => s.evm && s.networkChainId === evmCaip2) ?? null;
+  const hasEvmSlot = evmSlot !== null;
+  const [tracked, setTracked] = useState<{ chain: string; tokens: FungibleAsset[] } | null>(null);
+  useEffect(() => {
+    if (!hasEvmSlot) return undefined;
+    let cancelled = false;
+    listTokens(evmCaip2)
+      .catch(() => [] as FungibleAsset[])
+      .then((tokens) => {
+        if (!cancelled) setTracked({ chain: evmCaip2, tokens });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [hasEvmSlot, evmCaip2]);
+  const tokenChoices = evmSlot && tracked && tracked.chain === evmCaip2 ? pnlTokenChoices(tracked.tokens, evmCaip2) : [];
+  const subjects: PnlSubject[] = [
+    ...usable.map((s) => ({ kind: 'native' as const, slot: s })),
+    ...(evmSlot ? tokenChoices.map((asset) => ({ kind: 'token' as const, slot: evmSlot, asset })) : []),
+  ];
+  const subject = subjects.find((x) => subjectKey(x) === chosen) ?? null;
   return (
     <View style={styles.section}>
       <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>
@@ -58,23 +102,34 @@ export function PnlSection({
       <Text style={[styles.hint, { color: theme.textMuted }]}>{PNL_INTRO}</Text>
       {usable.length === 0 ? <Text style={[styles.hint, { color: theme.textMuted }]}>{PNL_NO_SLOTS}</Text> : null}
       <View style={styles.chips}>
-        {usable.map((s) => (
-          <Button
-            key={s.slot}
-            title={`${chosen === s.slot ? '✓ ' : ''}${s.symbol} on ${s.label}`}
-            variant="secondary"
-            selected={chosen === s.slot}
-            accessibilityHint={`Works out profit and loss for ${s.symbol}; loads the history and a price history`}
-            onPress={() => setChosen(s.slot)}
-            style={styles.chip}
-          />
-        ))}
+        {subjects.map((x) => {
+          const key = subjectKey(x);
+          const title =
+            x.kind === 'native'
+              ? `${x.slot.symbol} on ${x.slot.label}`
+              : pnlTokenChipTitle(x.asset, tokenChoices, x.slot.label, x.slot.symbol);
+          return (
+            <Button
+              key={key}
+              title={`${chosen === key ? '✓ ' : ''}${title}`}
+              variant="secondary"
+              selected={chosen === key}
+              accessibilityHint={
+                x.kind === 'native'
+                  ? `Works out profit and loss for ${x.slot.symbol}; loads the history and a price history`
+                  : `Works out profit and loss for the tracked ${x.asset.symbol} token, contract ${x.asset.contract}; loads the history and a price history`
+              }
+              onPress={() => setChosen(key)}
+              style={styles.chip}
+            />
+          );
+        })}
       </View>
-      {slot && activeAccount ? (
+      {subject && activeAccount ? (
         <PnlPanel
-          key={`${slot.slot}|${activeAccount.index}|${evmCaip2}`}
-          slot={slot}
-          address={accounts.find((a) => a.chainId === slot.slot)!.address}
+          key={`${subjectKey(subject)}|${activeAccount.index}|${evmCaip2}`}
+          subject={subject}
+          address={accounts.find((a) => a.chainId === subject.slot.slot)!.address}
           activeAccount={activeAccount}
           evmCaip2={evmCaip2}
         />
@@ -84,19 +139,23 @@ export function PnlSection({
 }
 
 function PnlPanel({
-  slot,
+  subject,
   address,
   activeAccount,
   evmCaip2,
 }: {
-  slot: PortfolioSlot;
+  subject: PnlSubject;
   address: string;
   activeAccount: AccountView;
   evmCaip2: string;
 }) {
   const theme = useTheme();
   const { hideAmounts, showFiat } = usePrefs();
-  const priceId = nativePriceAssetId(slot.slot, slot.networkChainId)!;
+  const slot = subject.slot;
+  const token = subject.kind === 'token' ? subject.asset : null;
+  const priceId = token ? token.priceId : nativePriceAssetId(slot.slot, slot.networkChainId)!;
+  const symbol = token ? token.symbol : slot.symbol;
+  const decimals = token ? token.decimals : slot.decimals;
   const isEvm = slot.slot === EVM_CHAIN_ID;
   const smartCandidate = isEvm && !activeAccount.watchOnly && !activeAccount.multisig;
 
@@ -130,8 +189,15 @@ function PnlPanel({
     if (smart === null) return undefined;
     let cancelled = false;
     const holders = [address, ...(smartAddress ? [smartAddress] : [])];
+    const contract = token?.contract ?? null;
     Promise.all(
       holders.map(async (h) => {
+        if (contract !== null) {
+          // A token's balance, read only on the network it is tracked on.
+          const load = await loadTokenBalance(contract, h, { expectedChain: evmCaip2 });
+          if (load.status !== 'ok' || load.endpoint.network.chainId !== evmCaip2) return null;
+          return load.amount;
+        }
         const load = await loadNativeBalance(slot.slot, h);
         if (load.status !== 'ok' || load.endpoint.network.chainId !== slot.networkChainId) return null;
         return load.amount;
@@ -147,7 +213,7 @@ function PnlPanel({
     return () => {
       cancelled = true;
     };
-  }, [smart, smartAddress, address, slot.slot, slot.networkChainId]);
+  }, [smart, smartAddress, address, slot.slot, slot.networkChainId, token?.contract, evmCaip2]);
 
   const own = useOwnEvmAddresses();
   const ownAddresses = useMemo(
@@ -162,7 +228,7 @@ function PnlPanel({
   const entries = state.status === 'ok' ? state.entries : [];
   const hasMore = state.status === 'ok' ? state.hasMore : false;
   const nowMs = tick * 1000;
-  const range = state.status === 'ok' && !hasMore ? pnlPriceRange({ entries, ownAddresses, nowMs }) : null;
+  const range = state.status === 'ok' && !hasMore ? pnlPriceRange({ entries, ownAddresses, nowMs, ...(token ? { asset: token } : {}) }) : null;
   const rangeKey = range ? `${range.fromSec}|${range.toSec}` : null;
   const [history, setHistory] = useState<{ key: string; result: PriceHistoryResult } | null>(null);
   useEffect(() => {
@@ -197,20 +263,22 @@ function PnlPanel({
           : history.result
         : { status: 'not-requested' };
   const waitingForPrices = range !== null && (!history || history.key !== rangeKey);
+  const common = {
+    entries,
+    hasMore,
+    smartAccount: smartAddress ? { address: smartAddress, status: state.smartAccount } : null,
+    ownAddresses,
+    balance: balance?.value ?? null,
+    prices,
+    currentQuote: quote,
+    nowMs,
+  };
   const result =
     balance === null || waitingForPrices
       ? null
-      : computeNativePnl({
-          asset: { priceId, symbol: slot.symbol, decimals: slot.decimals },
-          entries,
-          hasMore,
-          smartAccount: smartAddress ? { address: smartAddress, status: state.smartAccount } : null,
-          ownAddresses,
-          balance: balance.value,
-          prices,
-          currentQuote: quote,
-          nowMs,
-        });
+      : token
+        ? computeTokenPnl({ ...common, asset: token })
+        : computeNativePnl({ ...common, asset: { priceId, symbol, decimals } });
 
   return (
     <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
@@ -227,7 +295,7 @@ function PnlPanel({
           ))
         : null}
       {result?.kind === 'ok'
-        ? pnlFigureLines(result, { symbol: slot.symbol, decimals: slot.decimals }, hideAmounts).map((line) => (
+        ? pnlFigureLines(result, { symbol, decimals }, hideAmounts).map((line) => (
             <View key={line.label} style={styles.figure} accessible accessibilityLabel={`${line.label}: ${hideAmounts && line.label !== 'Counted' ? 'hidden' : line.text}`}>
               <Text style={[styles.figureLabel, { color: theme.textMuted }]}>{line.label}</Text>
               <Text style={[styles.figureText, { color: theme.text }]}>{line.text}</Text>

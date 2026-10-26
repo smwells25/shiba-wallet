@@ -9,7 +9,7 @@ import {
 // Explicit .ts extensions: scripts/check-pnl.mjs loads this module under
 // Node's type stripping, which resolves relative specifiers literally.
 import { formatBalanceDisplay } from './balances.ts';
-import { describeAge, staleNoteFor, tokenPriceAssetId, PRICE_HISTORY_MAX_DAYS } from './prices.ts';
+import { describeAge, historySourceFor, staleNoteFor, tokenPriceAssetId, PRICE_HISTORY_MAX_DAYS } from './prices.ts';
 import { ZERO_MONEY, formatMoney, moneyAdd, moneyOf, moneyReduce, moneySub, type Money } from './portfolio.ts';
 import type { SmartAccountHistoryStatus } from './smart-account-history.ts';
 
@@ -56,11 +56,13 @@ import type { SmartAccountHistoryStatus } from './smart-account-history.ts';
  *    left out and counted. A token transfer that names no contract cannot be
  *    told apart from the real one, so it is a gap, never a guess. Network
  *    fees are paid in the native coin, never in the token, so a token's
- *    shortfall is never assumed to be fees: it is a gap. The app does not
- *    offer token profit and loss on screen yet: the wallet reads CoinGecko's
- *    price history only for the four native coins (prices.ts
- *    historyCoinIdFor), so a token's history request answers 'unsupported'
- *    and the result is that gap.
+ *    shortfall is never assumed to be fees: it is a gap. On screen
+ *    (phase 23 item 8, second slice) a token is offered only through
+ *    pnlTokenChoices: tracked, on the ACTIVE main network, with a price id,
+ *    and with a price history CoinGecko serves by its exact contract
+ *    (prices.ts historySourceFor: /coins/{platform}/contract/{contract}/
+ *    market_chart/range). A history request that is not mapped still
+ *    answers 'unsupported', and the result is the token gap sentence below.
  *
  * Exact: amounts are bigints, money is an exact fraction (portfolio.ts
  * Money), rounded to the cent only for display. Free of React Native
@@ -219,10 +221,15 @@ export function pnlPriceRange(
   return { fromSec: from, toSec: Math.ceil(nowSec / hour) * hour };
 }
 
-/** Why the native profit and loss leaves tokens out (its note on token transfers). */
-export const TOKEN_PNL_NOT_OFFERED =
-  'Profit and loss for tokens is not offered yet: this wallet reads CoinGecko’s price history only for the native ' +
-  'coins of the main networks, not for tokens.';
+/**
+ * Why the native profit and loss leaves tokens out (its note on token
+ * transfers). Until phase 23 item 8's second slice it said token profit and
+ * loss was "not offered yet"; tracked tokens on the active main network now
+ * have their own buttons (pnlTokenChoices).
+ */
+export const TOKEN_PNL_SEPARATE =
+  'Profit and loss for a token is worked out separately, from that token’s own transfers: each ERC-20 token tracked ' +
+  'on the active main network that CoinGecko prices has its own button.';
 
 const CONTRACT_RE = /^0x[0-9a-f]{40}$/;
 
@@ -247,6 +254,48 @@ export function tokenPnlAsset(
   return { status: 'ok', asset: { priceId, symbol: token.symbol, decimals: token.decimals, contract } };
 }
 
+/**
+ * The tracked tokens the profit-and-loss section offers a button for, in the
+ * stored order: exactly the tokens tokenPnlAsset accepts on `activeEvmCaip2`
+ * (an ERC-20 on the ACTIVE network, that network a MAIN network, a 20-byte
+ * contract) whose price history the wallet reads by contract
+ * (prices.ts historySourceFor answers 'token'). A test-network token never
+ * appears ("test, no value"), nor a token of another network, nor one
+ * CoinGecko is not asked about. A contract listed twice is offered once.
+ */
+export function pnlTokenChoices(tokens: readonly FungibleAsset[], activeEvmCaip2: string): PnlTokenAsset[] {
+  const out: PnlTokenAsset[] = [];
+  const seen = new Set<string>();
+  for (const token of tokens) {
+    const chosen = tokenPnlAsset(token, activeEvmCaip2);
+    if (chosen.status !== 'ok') continue;
+    const source = historySourceFor(chosen.asset.priceId);
+    if (!source || source.kind !== 'token' || source.contract !== chosen.asset.contract) continue;
+    if (seen.has(chosen.asset.contract)) continue;
+    seen.add(chosen.asset.contract);
+    out.push(chosen.asset);
+  }
+  return out;
+}
+
+/**
+ * A token button's title: "<SYMBOL> on <network>", with the short contract
+ * added when another offered token (or the network's own coin) carries the
+ * same symbol, so two buttons never read alike.
+ */
+export function pnlTokenChipTitle(
+  asset: PnlTokenAsset,
+  offered: readonly PnlTokenAsset[],
+  networkLabel: string,
+  nativeSymbol: string,
+): string {
+  const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  const clash =
+    same(asset.symbol, nativeSymbol) || offered.some((o) => o.contract !== asset.contract && same(o.symbol, asset.symbol));
+  const short = `${asset.contract.slice(0, 6)}…${asset.contract.slice(-4)}`;
+  return `${asset.symbol}${clash ? ` (${short})` : ''} on ${networkLabel}`;
+}
+
 /** The entries one profit-and-loss run counts, and how each is valued. */
 interface PnlMode {
   kind: 'native' | 'token';
@@ -268,7 +317,7 @@ function nativeMode(input: Pick<PnlInput, 'entries' | 'asset'>): PnlMode {
   if (tokenCount > 0) {
     identityNotes.push(
       `${plural(tokenCount, 'token transfer is', 'token transfers are')} in the loaded history and ${tokenCount === 1 ? 'is' : 'are'} not part of these ${sym} ` +
-        `figures. ${TOKEN_PNL_NOT_OFFERED}`,
+        `figures. ${TOKEN_PNL_SEPARATE}`,
     );
   }
   return { kind: 'native', selected: native, amountOf: (e) => e.amount, identityGaps: [], identityNotes };
