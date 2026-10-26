@@ -12850,3 +12850,97 @@ to the Chairperson at once.
       Still to update at the refresh: THREAT_MODEL §3.6 ("no development
       build was ever built" — and now an iOS build exists), the
       never-on-a-device list, FEATURE_UNIVERSE's iOS lines, RELEASE.md.
+- [x] Audit-pack follow-up — THE ENSv2 SEPOLIA PINS IN verify-pins.mjs AND
+      THE STALE "NEVER SENT" SENTENCES (commit below; scripts/audit/
+      verify-pins.mjs, AUDIT_SCOPE.md §4.1 / §5.3 / §5.7, BRIDGE_PROVIDERS.md
+      §6 / §10, MAINNET_READINESS.md §2, CROSS_CHAIN_OPTIONS.md §5.2, plus
+      the CTO's three corrections — the ens-register.ts comment, two
+      WALLET_HANDLES §3.2 cells, a MAINNET_READINESS ENS bullet; verified in
+      the CTO's isolated worktree on HEAD fd5beb6: `--offline` lists 190
+      (network, address) pairs from 109 pins (was 177 / 94; the 13 new
+      pairs all on Sepolia) with no request under the guard, node --check
+      clean, check-readiness 222, check-screen-protection 87, check-devmode
+      444, check-bridge 345, check-names 61, the scan clean; nothing
+      signed or sent; every chain read keyless and read-only). THE SCRIPT
+      collects all 11 ENS_V2_SEPOLIA addresses (ens-register.ts 72–92),
+      ENS_V2_SEPOLIA_USDC (merged into the Sepolia USDC row) and the
+      Universal Resolver's proxy chain MANAGED_URP 0x6d80…e6F1 / UR_V2
+      0x24E1…2D72 (pinned only in ens-register-smoke.mjs 76–77 — read
+      from that file's TEXT, because importing it would run it; cross-
+      checked against the engine comment's abbreviations); pass-or-fail
+      facts, each against an engine constant: the registrar's
+      rentPriceOracle(), ETH_REGISTRY() and the four limits
+      (ENS_V2_SEPOLIA_REGISTRAR_LIMITS), the oracle's isPaymentToken(USDC)
+      and the first priced label length from getBaseRates() against
+      ENS_V2_MIN_LABEL_LENGTH, the registry's hasRootRoles(REGISTRAR|RENEW,
+      registrar) (bits from ens-register-smoke.mjs:189), the root
+      registry's getSubregistry("eth") and getResolver("reverse"), the
+      factory's proxyLogic() and predictProxyAddress = the engine's own
+      predictVerifiableProxyAddress, the v1 ReverseRegistrar's
+      defaultResolver(), the proxy chain (the UR proxy's ERC-1967 slot →
+      MANAGED_URP, its slot and implementation() → UR_V2, UR_V2's
+      ROOT_REGISTRY() = the pinned root) and the engine's readEnsPrimaryName
+      on mainnet and Sepolia; report-only: supportsInterface(0xc1401b80),
+      the USDC ratio, the registrar's owner() and BENEFICIARY(), both
+      proxies' admin(); the engine's readEnsRegistrarConfig /
+      readEnsPricing / quoteEnsRegistration / readEnsOwnedResolver are
+      MIRRORED with eth_call, not called, because they first call
+      eth_getBlockByNumber, outside the script's method allow-list (CTO
+      DECISION: keep the allow-list as it is). Small fixes: a repeated pin
+      no longer duplicates its label, a comment-only fact may carry an
+      abbreviated address, readHead() works in a linked worktree. LIVE
+      `--network sepolia` 2026-10-26 03:20 UTC, exit 0: verified 48,
+      present-unverified 14, confirmed-no-code 2, eoa-delegated 1 (a
+      one-network run cannot mark "verified by identity", so the 5 such
+      rows read unverified here; the 52 pre-existing pairs equal the 14:20
+      full-run figures); the 13 new pairs — ETHRegistrar 8,037 B match,
+      ETHRegistry 16,000 B exact_match, RootRegistry 16,000 B exact_match
+      (byte-identical to the ETHRegistry, keccak 0xddb7698f…8e98), the
+      oracle 8,355 B match, VerifiableFactory 1,524 B exact_match, the
+      PermissionedResolver impl 15,608 B match, the UserRegistry impl
+      18,982 B exact_match, the v1 ReverseRegistrar 3,382 B exact_match,
+      the v1 PublicResolver 14,512 B exact_match, ENSV1Resolver 11,102 B
+      match, ManagedUniversalResolverProxy 2,612 B exact_match (impl
+      match), UniversalResolverV2 18,792 B match, and the factory's
+      proxyLogic() 0xC415…6BDd 1,357 B with NO SOURCIFY RECORD — so the
+      ens-register.ts comment "Every contract below is verified on
+      Sourcify" was wrong and now names the exception, and WALLET_HANDLES
+      §3.2's "(not queried)" cells read none / exact_match; facts: limits
+      60 / 86,400 / 2,419,200 / 2,419,200 s, REGISTRAR|RENEW true, .eth and
+      reverse at the pins, the USDC ratio (1, 1000000) as the comment,
+      base rates [0, 0, 20294267, 5073567, 253679] with the first priced
+      length 3 (= the comment's $640 / $160 / $8 a year), the prediction
+      equal, supportsInterface true, the registrar owner() = BENEFICIARY()
+      = 0x84D3a426D4E12E955d1DF95db0B24fe26afE39D3 (no code), the UR proxy
+      admin 0x6942…556F and the managed proxy admin 0xffFf…8f80 (no code),
+      readEnsPrimaryName "none" for the sample; `--network mainnet` also
+      passed (verified 21, unverified 3, no-code 1). AUDIT_SCOPE: a 15-row
+      ENSv2 Sepolia table in §5.3 (not a new §5.8, so every "section 5.7"
+      reference stays valid) with a paragraph on who controls these
+      contracts, an ENSv2 row in §4.1 (audit branches exist; contents and
+      covered commits not read), §5.7's coverage and the Sepolia re-run
+      (the all-network table left at the 14:20 figures). THE STALE
+      SENTENCES, confirmed at HEAD first (readiness.ts 478–485 already
+      says two CCTP transfers were sent by script; CCTP_COMING_NOTE is
+      gone, its successor BRIDGE_PROVIDER_COMING_NOTE shown by no provider):
+      AUDIT_SCOPE §4.1's CCTP row and §5.6, MAINNET_READINESS §2 and
+      BRIDGE_PROVIDERS §6 / §10 now say CCTP V2 Standard Transfers were
+      proven live by script on two routes (BRIDGING §17), offered in the
+      Bridge screen since 0a5bc7f, NOT yet sent through the app (the
+      emulator pass pending), the LayerZero half seen on the emulator in
+      p21b; BRIDGE_PROVIDERS §6 gained the asset-first screen, "Both
+      providers are offered", the CCTP branch of checkBridgeQuote and the
+      USDC balance refusal, the two-prompt and one-batch send paths, the
+      per-asset recipient rule, the burned / attested tracking states and
+      the 12 × 9,000-block search limit, the mint panel and the stored
+      attested message — each cited to bridge.ts / BridgeScreen.tsx lines;
+      §10's "next" list reads: a CCTP transfer through the app with its
+      mint and a restart, a CCTP burn from and mint to a smart account, a
+      LayerZero transfer to a Kernel account with Stargate's retry live, an
+      OP Sepolia CCTP route, risk-card names and a CCTP Activity sentence;
+      CROSS_CHAIN_OPTIONS §5.2 item 6 gained a "Corrected since" sentence
+      (its §3.2 and the table cell stay dated text at f4b9339).
+      MAINNET_READINESS §2 gained the ENS bullet (Sepolia ENSv2 pins only;
+      ENSv2 not launched on mainnet; no ENSv1 path built; the primary-name
+      read runs on mainnet read-only). Dates in the docs are UTC
+      (2026-10-26 for a run on the evening of the 25th local time).

@@ -28,8 +28,10 @@ import type { Call } from './smart-account.js';
  * whose ROOT_REGISTRY() is 0xB458…C43f, whose getSubregistry("eth") is the
  * ETHRegistry below, whose root roles REGISTRAR|RENEW are held by the
  * ETHRegistrar below; that registrar emitted NameRegistered events the
- * same day (e.g. block 11991195). Every contract below is verified on
- * Sourcify (full or partial match); see docs/WALLET_HANDLES.md section 3.
+ * same day (e.g. block 11991195). Every contract below has a Sourcify
+ * match or exact match EXCEPT the VerifiableFactory's proxyLogic()
+ * (0xC415…6BDd), which has no Sourcify record (scripts/audit/verify-pins.mjs
+ * re-reads them all, 2026-10-26); see docs/WALLET_HANDLES.md section 3.
  *
  * THE FLOW (contracts-v2 at 07e55a05, src/registrar/ETHRegistrar.sol, and
  * the docs' src/pages/ensv2/eth-registrar.mdx):

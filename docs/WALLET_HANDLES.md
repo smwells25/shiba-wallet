@@ -135,7 +135,7 @@ metadata hash differs).
 | RootRegistry | `0xB458D6a3a77919449d03e7A6903C26827c1eC43f` | 16,000 B | exact_match |
 | StandardRentPriceOracle | `0x8196665D4ca7488B6474a9EC8E7d2719FB42263A` | 8,355 B | match |
 | VerifiableFactory | `0xDa70306C98E97eCe36F997a21368e53298572991` | 1,524 B | exact_match |
-| its proxyLogic() | `0xC41576B4B809B99CF0fF2e5B41b4F147cd9b6BDd` | 1,357 B | (not queried) |
+| its proxyLogic() | `0xC41576B4B809B99CF0fF2e5B41b4F147cd9b6BDd` | 1,357 B | none — no Sourcify record (verify-pins.mjs, 2026-10-26) |
 | PermissionedResolver implementation | `0x115eb53F0c60696633855F90b138178Fb40b2b2C` | 15,608 B | match |
 | UserRegistry implementation | `0x9BD8a88719068D09ecee662f36C0E3856708366a` | 18,982 B | exact_match |
 | Universal Resolver proxy | `0xeEeEEEeE14D718C2B47D9923Deab1335E144EeEe` | 2,491 B | exact_match |
@@ -144,7 +144,7 @@ metadata hash differs).
 | ENSV1Resolver (reverse mirror) | `0x322B7581cA210a69c6D0e0D7c88a7688D2789Cb0` | 11,102 B | match |
 | ENSv1 ReverseRegistrar | `0xA0a1AbcDAe1a2a4A2EF8e9113Ff0e02DD81DC0C6` | 3,382 B | exact_match |
 | ENSv1 PublicResolver (its default resolver) | `0xE99638b40E4Fff0129D56f03b55b6bbC4BBE49b5` | 14,512 B | exact_match |
-| Circle USDC (payment token) | `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` | 1,798 B | (not queried) |
+| Circle USDC (payment token) | `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238` | 1,798 B | exact_match (verify-pins.mjs, 2026-10-26) |
 
 The ENSv1 addresses come from `ensdomains/ens-contracts` at `ebe0b848`
 (the `staging` branch the docs call the source of truth),
