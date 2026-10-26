@@ -2280,6 +2280,53 @@ console.log('check-multisig: pass p20c (TalkBack and dark mode) findings 5, 9 an
 }
 
 // ===========================================================================
+console.log('check-multisig: phase 23 item 8 — the co-signer card captions');
+// ===========================================================================
+{
+  // Since the phase 22 caption slice each co-signer card showed the heading
+  // "Co-signer N" and then the caption "Co-signer N: Ethereum address" (two
+  // stops saying the same thing). The heading now names the co-signer and
+  // the captions under it say only which field: "Ethereum address" (the
+  // PasteOrScan caption, which is its field's labelled-by source in
+  // RecoveryViews.tsx) and "Weight" (a fieldLabel caption the weight field
+  // spreads). Source pins, each with a mutant.
+  const screenSrc = readFileSync(join(HERE, '..', 'src', 'screens', 'MultisigScreen.tsx'), 'utf8');
+  const recoverySrc = readFileSync(join(HERE, '..', 'src', 'components', 'RecoveryViews.tsx'), 'utf8');
+  const cardProblems = (src, rv = recoverySrc) => {
+    const out = [];
+    const start = src.indexOf('{cosigners.map((c, i) => (');
+    const end = start < 0 ? -1 : src.indexOf('</View>\n        ))}', start);
+    if (start < 0 || end < 0) return ['the co-signer card was not found'];
+    const card = src.slice(start, end);
+    const heading = card.indexOf('<Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>Co-signer {i + 1}</Text>');
+    const address = card.indexOf('label="Ethereum address"');
+    const weightCaption = card.indexOf("<Text {...fieldLabel(`cosigner-${i}-weight`, 'Weight').label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel(`cosigner-${i}-weight`, 'Weight').text}</Text>");
+    const weightInput = card.indexOf("<TextInput\n              {...fieldLabel(`cosigner-${i}-weight`, 'Weight').input}");
+    if (heading < 0) out.push('the heading "Co-signer {i + 1}" (header role) is missing');
+    if (address < 0) out.push('the address caption is not exactly "Ethereum address"');
+    if (weightCaption < 0) out.push('the weight caption is not exactly "Weight", drawn from the field label');
+    if (weightInput < 0) out.push('the weight field does not spread the caption\'s .input (labelled-by)');
+    if (heading >= 0 && !(heading < address && address < weightCaption && weightCaption < weightInput)) out.push('order is not heading → address caption → weight caption → weight field');
+    if (/Co-signer \$\{i \+ 1\}:|Co-signer \$\{i \+ 1\} weight/.test(card)) out.push('a caption still repeats the co-signer number');
+    // The PasteOrScan caption stays its field's labelled-by source.
+    if (!rv.includes("<Text {...fieldLabel('paste', label).label}") || !rv.includes("{...fieldLabel('paste', label).input}")) out.push('PasteOrScan no longer ties its caption to its field');
+    return out;
+  };
+  check('phase 23 item 8: each co-signer card reads "Co-signer N" (heading), then the captions "Ethereum address" and "Weight", each its field\'s labelled-by source (source)',
+    cardProblems(screenSrc).length === 0, cardProblems(screenSrc).join('; '));
+  check('…mutant caught: the address caption restored to "Co-signer N: Ethereum address"',
+    cardProblems(screenSrc.replace('label="Ethereum address"', 'label={`Co-signer ${i + 1}: Ethereum address`}')).length >= 1);
+  check('…mutant caught: the weight caption restored to "Co-signer N weight"',
+    cardProblems(screenSrc.replaceAll("fieldLabel(`cosigner-${i}-weight`, 'Weight')", 'fieldLabel(`cosigner-${i}-weight`, `Co-signer ${i + 1} weight`)')).length >= 1);
+  check('…mutant caught: the weight field no longer labelled by its caption (the .input spread dropped)',
+    cardProblems(screenSrc.replace("<TextInput\n              {...fieldLabel(`cosigner-${i}-weight`, 'Weight').input}", '<TextInput')).length >= 1);
+  check('…mutant caught: PasteOrScan\'s field no longer labelled by its caption',
+    cardProblems(screenSrc, recoverySrc.replace("{...fieldLabel('paste', label).input}", '')).length >= 1);
+  check('…mutant caught: the card heading without its header role',
+    cardProblems(screenSrc.replace('<Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>Co-signer {i + 1}</Text>', '<Text style={[styles.cardTitle, { color: theme.text }]}>Co-signer {i + 1}</Text>')).length >= 1);
+}
+
+// ===========================================================================
 console.log('check-multisig: wipe');
 // ===========================================================================
 {

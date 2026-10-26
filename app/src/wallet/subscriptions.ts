@@ -209,6 +209,37 @@ export const SUBSCRIPTION_MAX_PAYMENTS = 120;
  * recorded charge (745,173) with about 34% to spare; defaultFeeBudgetWei
  * then doubles it because fees move. A default, shown and editable, not a
  * guarantee. Merchant subscriptions share the template (and this figure).
+ *
+ * ERC-20 pulls after the fork, by simulation only (phase 23 item 8,
+ * 2026-10-26 ~19:47–19:50 UTC; eth_simulateV1 of EntryPoint v0.7 handleOps
+ * against the real Sepolia EntryPoint, Kernel v3.3 and permission modules,
+ * the public test mnemonic's undeployed account deployed and granted a
+ * 5 USDC / 30-day subscription in the same simulation, Circle's Sepolia USDC
+ * balance set by a state override — the machinery of
+ * scripts/testnet/subscription-keeper.mjs dry-run; identical answers from
+ * ethereum-sepolia-rpc.publicnode.com (reth 2.8.0 and Geth 1.17.9 behind it)
+ * and 0xrpc.io (Geth 1.17.10)). The smallest limits that still succeed, found
+ * by bisection, for the permission's FIRST pull with an EntryPoint deposit
+ * top-up during validation (the costlier case): verificationGasLimit 398,731,
+ * callGasLimit 45,021 when the merchant already holds USDC and 147,702 when
+ * it has never held any (the pull creates its balance slot); gas used with
+ * those limits, preVerificationGas 60,000 included: 502,944 / 601,340. A
+ * later pull: 300,834 + 45,021, used 393,989. A native pull for comparison:
+ * 367,152 + 32,278 (first) and 269,254 + 16,548…32,278 (later). The pre-fork
+ * ERC-20 pull above used 287,499 gas (its UserOperationEvent, read back
+ * 2026-10-26), so an ERC-20 pull's gas used rose after the fork, unlike the
+ * native pull measured in phase 15 (an inference: the two runs differ in
+ * account and limits, and no pre-fork node is left to repeat the same call).
+ * The minimum signed sum for the costliest ERC-20 pull is therefore about
+ * 398,731 + 147,702 + ~52,000 = ~598,000 gas, under this allowance. What a
+ * bundler signs is larger: ZeroDev's verificationGasLimit for the two live
+ * native payments above was 1.83 times the simulated minimum for the same
+ * shape (670,981 / 367,152 and 491,538 / 269,254); applying that ratio, and
+ * 1.3–1.6 times the minimum callGasLimit, to the first ERC-20 pull to a
+ * merchant that never held the token predicts roughly 970,000–1,020,000 gas
+ * signed — at this allowance, not comfortably below it — and about 850,000
+ * when the merchant already holds the token. That prediction is an
+ * extrapolation, not a recorded charge, so the figure is left at 1,000,000.
  */
 export const SUBSCRIPTION_PULL_GAS_ALLOWANCE = 1_000_000n;
 
