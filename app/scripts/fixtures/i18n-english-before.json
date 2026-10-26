@@ -1,6 +1,6 @@
 {
  "base": "c5baff6",
- "about": "The English each migrated string-table entry had in the app at commit c5baff6, before the localisation groundwork (phase 22 item 6). Generated from that checkout: \"literal\" entries were found as a string literal, a folded string concatenation or a JSX text (whitespace collapsed as JSX does) at the places listed; \"template\" entries have their static parts (the text between placeholders) found in that order in a template literal, a string concatenation or a JSX element; \"composite\" entries were assembled from several pieces, described with their place; \"new\" entries did not exist (Settings → Language). scripts/check-i18n.mjs compares app/src/i18n/en.ts with this file. \"changed\" entries are migrated entries whose English was reworded on purpose after the migration: \"before\" is the text at c5baff6 (equal to the entry's own record above), \"en\" the text now, \"why\" the reason; the \"new\" list also holds the ids added since (the Settings → Language note on shared texts and the passphrase forms of the app-lock notes, phase 22 polish).",
+ "about": "The English each migrated string-table entry had in the app at commit c5baff6, before the localisation groundwork (phase 22 item 6). Generated from that checkout: \"literal\" entries were found as a string literal, a folded string concatenation or a JSX text (whitespace collapsed as JSX does) at the places listed; \"template\" entries have their static parts (the text between placeholders) found in that order in a template literal, a string concatenation or a JSX element; \"composite\" entries were assembled from several pieces, described with their place; \"new\" entries did not exist (Settings → Language). scripts/check-i18n.mjs compares app/src/i18n/en.ts with this file. \"changed\" entries are migrated entries whose English was reworded on purpose after the migration: \"before\" is the text at c5baff6 (equal to the entry's own record above), \"en\" the text now, \"why\" the reason; the \"new\" list also holds the ids added since (the Settings → Language note on shared texts and the passphrase forms of the app-lock notes, phase 22 polish). Phase 23 item 8 (the second localisation pass): entries carrying \"base\": \"5cb4601\" were located the same way in the checkout of commit 5cb4601, where the screens they come from stood when they were migrated (the base above applies to every entry without one).",
  "literal": {
   "common.cancel": {
    "en": "Cancel",
@@ -2148,6 +2148,3401 @@
     "src/components/PaymentRequestViews.tsx:198 literal",
     "src/components/PaymentRequestViews.tsx:209 jsx"
    ]
+  },
+  "send.aa.sent.title": {
+   "en": "Sent to bundler ✓",
+   "where": [
+    "src/screens/ColdSignScreen.tsx:824 jsx",
+    "src/screens/SendScreen.tsx:1747 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "send.aa.userOpHash": {
+   "en": "UserOperation hash",
+   "where": [
+    "src/components/WcApprovalSheet.tsx:599 literal",
+    "src/components/WcApprovalSheet.tsx:599 jsx",
+    "src/screens/BridgeScreen.tsx:776 literal",
+    "src/screens/ColdSignScreen.tsx:825 jsx",
+    "src/screens/GuardiansScreen.tsx:482 literal",
+    "src/screens/InheritanceScreen.tsx:397 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "send.aa.bundling": {
+   "en": "Bundling… waiting for the UserOperation receipt.",
+   "where": [
+    "src/screens/BridgeScreen.tsx:784 literal",
+    "src/screens/ColdSignScreen.tsx:832 jsx",
+    "src/screens/SendScreen.tsx:1758 jsx",
+    "src/screens/StakingScreen.tsx:694 literal",
+    "src/screens/SwapScreen.tsx:1035 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "send.aa.noReceipt": {
+   "en": "No receipt yet. The operation may still be included — keep the UserOperation hash above to look it up later.",
+   "where": [
+    "src/screens/ColdSignScreen.tsx:837 jsx",
+    "src/screens/SendScreen.tsx:1764 jsx",
+    "src/screens/StakingScreen.tsx:697 jsx",
+    "src/screens/SwapScreen.tsx:1041 jsx",
+    "src/wallet/wc-sent.ts:77 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "send.aa.reverted": {
+   "en": "The bundler reports the operation was included but reverted on-chain. The gas was still charged to the smart account.",
+   "where": [
+    "src/screens/ColdSignScreen.tsx:844 jsx",
+    "src/screens/SendScreen.tsx:1772 jsx",
+    "src/wallet/wc-sent.ts:80 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "send.aa.included.succeeded": {
+   "en": "Included on-chain — succeeded.",
+   "where": [
+    "src/screens/GuardiansScreen.tsx:491 jsx",
+    "src/screens/InheritanceScreen.tsx:404 jsx",
+    "src/screens/PasskeyScreen.tsx:472 jsx",
+    "src/screens/SessionsScreen.tsx:2004 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "send.aa.transaction": {
+   "en": "Transaction",
+   "where": [
+    "src/components/WcApprovalSheet.tsx:589 literal",
+    "src/components/WcApprovalSheet.tsx:589 jsx",
+    "src/screens/ColdSignScreen.tsx:851 jsx",
+    "src/screens/MultisigScreen.tsx:1084 literal",
+    "src/screens/SendScreen.tsx:1787 jsx",
+    "src/screens/StakingScreen.tsx:714 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "send.aa.noTxHash": {
+   "en": "The bundler's receipt did not include a recognizable transaction hash; look the UserOperation hash up in an ERC-4337 explorer you trust.",
+   "where": [
+    "src/screens/ColdSignScreen.tsx:865 jsx",
+    "src/screens/SendScreen.tsx:1807 jsx",
+    "src/screens/StakingScreen.tsx:730 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "send.aa.row.signer": {
+   "en": "Signer",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1161 literal",
+    "src/screens/PasskeyScreen.tsx:593 literal",
+    "src/screens/SendScreen.tsx:1936 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "send.aa.passkey.value": {
+   "en": "This phone's passkey (platform prompt follows)",
+   "where": [
+    "src/screens/PasskeyScreen.tsx:593 literal",
+    "src/screens/SendScreen.tsx:1937 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "send.aa.row.owner": {
+   "en": "Owner account (signs)",
+   "where": [
+    "src/screens/BridgeScreen.tsx:965 literal",
+    "src/screens/SendScreen.tsx:1943 literal",
+    "src/screens/StakingScreen.tsx:861 literal",
+    "src/screens/SwapScreen.tsx:1084 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "send.aa.row.deployment": {
+   "en": "Deployment",
+   "where": [
+    "src/components/WcApprovalSheet.tsx:1432 literal",
+    "src/screens/BridgeScreen.tsx:970 literal",
+    "src/screens/ColdSignViews.tsx:259 literal",
+    "src/screens/SendScreen.tsx:1965 literal",
+    "src/screens/StakingScreen.tsx:882 literal",
+    "src/screens/SwapScreen.tsx:1148 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "send.aa.row.rate": {
+   "en": "Rate",
+   "where": [
+    "src/screens/SendScreen.tsx:1980 literal",
+    "src/screens/SwapScreen.tsx:1510 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "send.aa.sponsoredNote": {
+   "en": "An ERC-7677 paymaster sponsors this operation’s gas: the smart account pays only the amount. The paymaster may still decline at send time; that shows up as a bundler error, not a charge.",
+   "where": "src/screens/SendScreen.tsx:2021 literal",
+   "base": "5cb4601"
+  },
+  "send.aa.estimatePassed": {
+   "en": "Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).",
+   "where": [
+    "src/components/WcApprovalSheet.tsx:1488 jsx",
+    "src/screens/BridgeScreen.tsx:986 jsx",
+    "src/screens/GuardiansScreen.tsx:590 jsx",
+    "src/screens/InheritanceScreen.tsx:477 jsx",
+    "src/screens/OwnerRotationScreen.tsx:487 jsx",
+    "src/screens/SendScreen.tsx:2067 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "send.aa.submitting": {
+   "en": "Signing and submitting to the bundler…",
+   "where": [
+    "src/screens/BridgeScreen.tsx:988 literal",
+    "src/screens/SendScreen.tsx:2075 jsx",
+    "src/screens/StakingScreen.tsx:911 literal",
+    "src/screens/SwapScreen.tsx:1201 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "aa.accountType.kernel7702": {
+   "en": "Kernel v3.3 via EIP-7702 (your own address)",
+   "where": "src/wallet/aa.ts:169 literal",
+   "base": "5cb4601"
+  },
+  "aa.accountType.multisig": {
+   "en": "Kernel v3.3 multi-signature account (transactions only)",
+   "where": "src/wallet/aa.ts:170 literal",
+   "base": "5cb4601"
+  },
+  "aa.accountType.kernel": {
+   "en": "Kernel v3.3 (ERC-7579)",
+   "where": "src/wallet/aa.ts:171 literal",
+   "base": "5cb4601"
+  },
+  "aa.accountType.simple": {
+   "en": "SimpleAccount (v0.7 sample)",
+   "where": "src/wallet/aa.ts:171 literal",
+   "base": "5cb4601"
+  },
+  "aa.sender.multisig": {
+   "en": "From multi-signature account (co-signers approved)",
+   "where": [
+    "src/screens/MultisigScreen.tsx:1026 literal",
+    "src/wallet/aa.ts:3789 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "aa.sender.7702": {
+   "en": "From (your own address)",
+   "where": "src/wallet/aa.ts:3790 literal",
+   "base": "5cb4601"
+  },
+  "aa.sender.recovered": {
+   "en": "From recovered smart account (not found from your recovery phrase alone)",
+   "where": "src/wallet/aa.ts:3791 literal",
+   "base": "5cb4601"
+  },
+  "aa.sender.smart": {
+   "en": "From smart account",
+   "where": "src/wallet/aa.ts:3792 literal",
+   "base": "5cb4601"
+  },
+  "aa.kernelNote.alchemy": {
+   "en": "Alchemy's bundler currently rejects Kernel DEPLOYMENT operations (ERC-7562 rules on CREATE2 use and unstaked factories) while accepting operations from Kernel accounts that are already deployed. With that bundler, the first operation of a new Kernel account (the one that deploys it) may fail until a bundler that accepts Kernel deployments is configured. The bundler’s error is shown exactly as it was returned.",
+   "where": "src/wallet/aa.ts:208 literal",
+   "base": "5cb4601"
+  },
+  "aa.kernelNote.neutral": {
+   "en": "Deployment goes through the configured bundler.",
+   "where": "src/wallet/aa.ts:3016 literal",
+   "base": "5cb4601"
+  },
+  "aa.kernelNote.noBundler": {
+   "en": "No bundler is configured yet; once one is saved, the first smart-account send deploys the account through it.",
+   "where": "src/wallet/aa.ts:3038 literal",
+   "base": "5cb4601"
+  },
+  "aa.fee.selfPaid": {
+   "en": "The smart account pays its own gas from its own balance.",
+   "where": "src/wallet/aa.ts:2959 literal",
+   "base": "5cb4601"
+  },
+  "aa.deposit.row": {
+   "en": "EntryPoint deposit (pays fees first)",
+   "where": [
+    "src/screens/DcaViews.tsx:394 literal",
+    "src/screens/SessionsScreen.tsx:2245 literal",
+    "src/wallet/aa.ts:2940 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "aa.deposit.note": {
+   "en": "The EntryPoint holds this deposit for the smart account and takes network fees from it first. It cannot be sent as an amount (Max leaves it out), and this wallet does not offer a way to withdraw it; later operations use it for their fees.",
+   "where": "src/wallet/aa.ts:2954 literal",
+   "base": "5cb4601"
+  },
+  "staking.success.aaTitle": {
+   "en": "Sent to the bundler ✓",
+   "where": [
+    "src/screens/BridgeScreen.tsx:774 literal",
+    "src/screens/StakingScreen.tsx:679 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "staking.success.reverted": {
+   "en": "The bundler reports the operation was included but reverted on-chain. The gas was still charged to the smart account. None of the operation’s calls took effect.",
+   "where": "src/screens/StakingScreen.tsx:704 jsx",
+   "base": "5cb4601"
+  },
+  "settings.endpoint.invalid": {
+   "en": "Invalid endpoint",
+   "where": "src/screens/SettingsScreen.tsx:304 literal",
+   "base": "5cb4601"
+  },
+  "settings.endpoint.couldNotSave": {
+   "en": "Could not save.",
+   "where": "src/screens/SettingsScreen.tsx:304 literal",
+   "base": "5cb4601"
+  },
+  "settings.save": {
+   "en": "Save",
+   "where": [
+    "src/components/AccountsSection.tsx:316 literal",
+    "src/components/Contacts.tsx:205 literal",
+    "src/screens/ContactsScreen.tsx:287 literal",
+    "src/screens/SettingsScreen.tsx:340 literal",
+    "src/screens/SettingsScreen.tsx:2757 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.resetToDefault": {
+   "en": "Reset to default",
+   "where": "src/screens/SettingsScreen.tsx:350 literal",
+   "base": "5cb4601"
+  },
+  "settings.notConfigured": {
+   "en": "Not configured",
+   "where": [
+    "src/screens/SettingsScreen.tsx:363 literal",
+    "src/screens/SettingsScreen.tsx:519 literal",
+    "src/screens/SettingsScreen.tsx:753 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.endpoint.defaultInstead": {
+   "en": "The default endpoint is used instead; Edit, then Reset to default, removes it.",
+   "where": "src/screens/SettingsScreen.tsx:372 literal",
+   "base": "5cb4601"
+  },
+  "settings.edit": {
+   "en": "Edit",
+   "where": [
+    "src/screens/SettingsScreen.tsx:379 literal",
+    "src/screens/SettingsScreen.tsx:535 literal",
+    "src/screens/SettingsScreen.tsx:765 literal",
+    "src/screens/SpendingLimitsScreen.tsx:370 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.noWalletAddress": {
+   "en": "No wallet address is available to verify the endpoint with.",
+   "where": [
+    "src/screens/SettingsScreen.tsx:430 literal",
+    "src/screens/SettingsScreen.tsx:1113 literal",
+    "src/screens/SettingsScreen.tsx:1175 literal",
+    "src/wallet/blockbook.ts:140 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.notSavedVerification": {
+   "en": "Not saved — verification failed",
+   "where": [
+    "src/screens/SettingsScreen.tsx:438 literal",
+    "src/screens/SettingsScreen.tsx:705 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.verificationFailed": {
+   "en": "Verification failed.",
+   "where": [
+    "src/screens/SettingsScreen.tsx:439 literal",
+    "src/screens/SettingsScreen.tsx:706 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.notSet": {
+   "en": "not set",
+   "where": [
+    "src/screens/SettingsScreen.tsx:458 literal",
+    "src/screens/SettingsScreen.tsx:1097 literal",
+    "src/screens/SettingsScreen.tsx:1158 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.blockbook.url": {
+   "en": "Blockbook base URL",
+   "where": [
+    "src/screens/SettingsScreen.tsx:463 literal",
+    "src/screens/SettingsScreen.tsx:463 jsx",
+    "src/screens/SettingsScreen.tsx:465 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.blockbook.key": {
+   "en": "API key (optional)",
+   "where": [
+    "src/screens/SettingsScreen.tsx:478 literal",
+    "src/screens/SettingsScreen.tsx:479 jsx",
+    "src/screens/SettingsScreen.tsx:482 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.blockbook.keyPlaceholder": {
+   "en": "Provider API key, if required",
+   "where": "src/screens/SettingsScreen.tsx:485 literal",
+   "base": "5cb4601"
+  },
+  "settings.verifyingBeforeSaving": {
+   "en": "Verifying before saving…",
+   "where": [
+    "src/screens/SettingsScreen.tsx:502 jsx",
+    "src/screens/SettingsScreen.tsx:736 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.verifyAndSave.amp": {
+   "en": "Verify & save",
+   "where": [
+    "src/screens/SettingsScreen.tsx:506 literal",
+    "src/screens/SettingsScreen.tsx:639 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.blockbook.keySet": {
+   "en": "API key set.",
+   "where": "src/screens/SettingsScreen.tsx:525 literal",
+   "base": "5cb4601"
+  },
+  "settings.blockbook.noKey": {
+   "en": "No API key.",
+   "where": "src/screens/SettingsScreen.tsx:525 literal",
+   "base": "5cb4601"
+  },
+  "settings.clearRemoves": {
+   "en": "Clear removes it.",
+   "where": [
+    "src/screens/SettingsScreen.tsx:529 literal",
+    "src/screens/SettingsScreen.tsx:760 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.clear": {
+   "en": "Clear",
+   "where": [
+    "src/screens/ImportKeyScreen.tsx:169 literal",
+    "src/screens/SettingsScreen.tsx:538 literal",
+    "src/screens/SettingsScreen.tsx:624 literal",
+    "src/screens/SettingsScreen.tsx:780 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.clear.body": {
+   "en": "It is removed from this phone. To use it again you will need to paste it and verify it again.",
+   "where": "src/screens/SettingsScreen.tsx:621 literal",
+   "base": "5cb4601"
+  },
+  "settings.aa.testOnly": {
+   "en": "test networks only",
+   "where": "src/screens/SettingsScreen.tsx:856 literal",
+   "base": "5cb4601"
+  },
+  "settings.aa.incomplete": {
+   "en": "incomplete",
+   "where": "src/screens/SettingsScreen.tsx:859 literal",
+   "base": "5cb4601"
+  },
+  "settings.aa.bundlerUrl": {
+   "en": "Bundler URL (ERC-4337 RPC)",
+   "where": "src/screens/SettingsScreen.tsx:868 literal",
+   "base": "5cb4601"
+  },
+  "settings.aa.type": {
+   "en": "Smart-account type",
+   "where": [
+    "src/screens/SettingsScreen.tsx:887 literal",
+    "src/screens/SettingsScreen.tsx:887 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.aa.kernelNote": {
+   "en": "Kernel v3.3 is an ERC-7579 modular account with this account's key as its owner (ECDSA validator). It supports message signing for dApps (ERC-1271; ERC-6492 before it is deployed).",
+   "where": "src/screens/SettingsScreen.tsx:902 jsx",
+   "base": "5cb4601"
+  },
+  "settings.aa.simpleNote": {
+   "en": "SimpleAccount (the eth-infinitism v0.7 sample) sends and batches calls, but it has no ERC-1271 support, so it cannot sign messages or logins for dApps.",
+   "where": "src/screens/SettingsScreen.tsx:908 jsx",
+   "base": "5cb4601"
+  },
+  "settings.aa.kernelFactory": {
+   "en": "KernelFactory address (Kernel v3.3)",
+   "where": "src/screens/SettingsScreen.tsx:936 literal",
+   "base": "5cb4601"
+  },
+  "settings.unknown": {
+   "en": "unknown",
+   "where": [
+    "src/components/AccountsSection.tsx:643 literal",
+    "src/components/PendingTransactions.tsx:351 literal",
+    "src/components/PendingTransactions.tsx:521 literal",
+    "src/components.tsx:377 literal",
+    "src/config/endpoint-probe.ts:90 literal",
+    "src/config/endpoint-probe.ts:243 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.aa.simpleFactory": {
+   "en": "SimpleAccountFactory address",
+   "where": "src/screens/SettingsScreen.tsx:976 literal",
+   "base": "5cb4601"
+  },
+  "settings.aa.paymasterUrl": {
+   "en": "Paymaster URL (ERC-7677, optional)",
+   "where": "src/screens/SettingsScreen.tsx:1015 literal",
+   "base": "5cb4601"
+  },
+  "settings.aa.paymasterContext": {
+   "en": "Paymaster context (JSON, optional)",
+   "where": "src/screens/SettingsScreen.tsx:1038 literal",
+   "base": "5cb4601"
+  },
+  "settings.aa.paymasterContextStatus": {
+   "en": "Sent verbatim to the paymaster with each sponsorship request.",
+   "where": "src/screens/SettingsScreen.tsx:1044 literal",
+   "base": "5cb4601"
+  },
+  "settings.notSaved": {
+   "en": "Not saved",
+   "where": [
+    "src/screens/GuardiansScreen.tsx:461 literal",
+    "src/screens/OwnerRotationScreen.tsx:333 literal",
+    "src/screens/RecoverAccountScreen.tsx:310 literal",
+    "src/screens/SettingsScreen.tsx:1057 literal",
+    "src/screens/UpgradeAccountScreen.tsx:137 literal",
+    "src/screens/UpgradeAccountScreen.tsx:149 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.ready": {
+   "en": "ready",
+   "where": [
+    "App.tsx:157 literal",
+    "App.tsx:381 literal",
+    "src/components/NotificationScheduler.tsx:70 literal",
+    "src/components/NotificationScheduler.tsx:212 literal",
+    "src/components/PendingTransactions.tsx:107 literal",
+    "src/components/PendingTransactions.tsx:231 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.indexer.url": {
+   "en": "History indexer URL (Transfers API)",
+   "where": "src/screens/SettingsScreen.tsx:1101 literal",
+   "base": "5cb4601"
+  },
+  "settings.nftIndexer.url": {
+   "en": "NFT indexer URL (NFT API base)",
+   "where": "src/screens/SettingsScreen.tsx:1162 literal",
+   "base": "5cb4601"
+  },
+  "settings.aa.customNoKernel": {
+   "en": "No Kernel v3.3 factory is pre-filled on this network: the wallet has not checked the deployment here. Paste the KernelFactory address if Kernel v3.3 is deployed on this network; saving checks on-chain, through your RPC endpoint, that the factory, implementation, meta factory and ECDSA validator have code, that the factory uses the pinned implementation, that entrypoint() is v0.7, that accountId() is the expected version, that the meta factory approves the factory and that the validator reports itself as a validator module. Nothing is saved if any check fails.",
+   "where": "src/screens/SettingsScreen.tsx:1228 literal",
+   "base": "5cb4601"
+  },
+  "settings.custom.added.title": {
+   "en": "Network added",
+   "where": "src/screens/SettingsScreen.tsx:1310 literal",
+   "base": "5cb4601"
+  },
+  "settings.custom.remove.title": {
+   "en": "Remove this network?",
+   "where": "src/screens/SettingsScreen.tsx:1325 literal",
+   "base": "5cb4601"
+  },
+  "settings.remove": {
+   "en": "Remove",
+   "where": [
+    "src/components/AccountsSection.tsx:367 jsx",
+    "src/components/AccountsSection.tsx:377 jsx",
+    "src/screens/MultisigScreen.tsx:890 literal",
+    "src/screens/PriceAlertsScreen.tsx:211 literal",
+    "src/screens/PriceAlertsScreen.tsx:306 literal",
+    "src/screens/SettingsScreen.tsx:1328 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.custom.nothingRemoved": {
+   "en": "Nothing was removed",
+   "where": [
+    "src/screens/SettingsScreen.tsx:1340 literal",
+    "src/screens/SettingsScreen.tsx:1353 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.custom.removed": {
+   "en": "Network removed",
+   "where": "src/screens/SettingsScreen.tsx:1349 literal",
+   "base": "5cb4601"
+  },
+  "settings.custom.notRemoved": {
+   "en": "Network not removed",
+   "where": "src/screens/SettingsScreen.tsx:1349 literal",
+   "base": "5cb4601"
+  },
+  "settings.custom.reset.title": {
+   "en": "Reset custom networks?",
+   "where": "src/screens/SettingsScreen.tsx:1366 literal",
+   "base": "5cb4601"
+  },
+  "settings.custom.resetBody": {
+   "en": "The list of networks you added is replaced by an empty one. Tokens, contacts and settings saved for those networks stay on this phone unused and come back if you add the same chain id again. If one of them is active, the wallet switches back to Ethereum mainnet.",
+   "where": "src/screens/SettingsScreen.tsx:1367 literal",
+   "base": "5cb4601"
+  },
+  "settings.custom.notReset": {
+   "en": "Not reset",
+   "where": [
+    "src/screens/SettingsScreen.tsx:1377 literal",
+    "src/screens/SpendingLimitsScreen.tsx:294 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.custom.heading": {
+   "en": "Networks you added",
+   "where": [
+    "src/screens/SettingsScreen.tsx:1389 jsx",
+    "src/wallet/records-backup.ts:382 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.networkChip.hint": {
+   "en": "Chooses which network the app's Ethereum account uses",
+   "where": [
+    "src/screens/SettingsScreen.tsx:1401 literal",
+    "src/screens/SettingsScreen.tsx:2918 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.custom.intro": {
+   "en": "Add any EVM network by its chain id and an RPC endpoint. The wallet checks before saving that the endpoint answers as that chain id and that its newest block is recent. A network you add is treated as a MAIN network — its funds may be real — unless you mark it as one of the well-known public test networks. Your addresses are the same on every EVM network.",
+   "where": "src/screens/SettingsScreen.tsx:1410 jsx",
+   "base": "5cb4601"
+  },
+  "settings.custom.reset": {
+   "en": "Reset custom networks",
+   "where": "src/screens/SettingsScreen.tsx:1421 literal",
+   "base": "5cb4601"
+  },
+  "settings.custom.treatedMain": {
+   "en": "Treated as a MAIN network: its funds may be real. Smart-account features are switched off here.",
+   "where": "src/screens/SettingsScreen.tsx:1435 literal",
+   "base": "5cb4601"
+  },
+  "settings.none": {
+   "en": "none",
+   "where": [
+    "App.tsx:183 literal",
+    "src/components/AccountsSection.tsx:459 literal",
+    "src/components/LockGate.tsx:431 literal",
+    "src/components/LockGate.tsx:562 literal",
+    "src/components/LockGate.tsx:563 literal",
+    "src/components/LockGate.tsx:570 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.removing": {
+   "en": "Removing…",
+   "where": "src/screens/SettingsScreen.tsx:1443 literal",
+   "base": "5cb4601"
+  },
+  "settings.custom.field.name": {
+   "en": "Network name",
+   "where": "src/screens/SettingsScreen.tsx:1453 literal",
+   "base": "5cb4601"
+  },
+  "settings.custom.field.chainId": {
+   "en": "Chain id (decimal)",
+   "where": "src/screens/SettingsScreen.tsx:1454 literal",
+   "base": "5cb4601"
+  },
+  "settings.custom.field.rpc": {
+   "en": "RPC endpoint (https)",
+   "where": "src/screens/SettingsScreen.tsx:1455 literal",
+   "base": "5cb4601"
+  },
+  "settings.custom.field.symbol": {
+   "en": "Coin symbol",
+   "where": "src/screens/SettingsScreen.tsx:1456 literal",
+   "base": "5cb4601"
+  },
+  "settings.custom.field.decimals": {
+   "en": "Coin decimals",
+   "where": "src/screens/SettingsScreen.tsx:1458 literal",
+   "base": "5cb4601"
+  },
+  "settings.custom.field.explorer": {
+   "en": "Block explorer (https, optional)",
+   "where": "src/screens/SettingsScreen.tsx:1459 literal",
+   "base": "5cb4601"
+  },
+  "settings.custom.testSwitch": {
+   "en": "This is a test network",
+   "where": [
+    "src/screens/SettingsScreen.tsx:1461 jsx",
+    "src/screens/SettingsScreen.tsx:1463 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.verifying": {
+   "en": "Verifying…",
+   "where": "src/screens/SettingsScreen.tsx:1474 literal",
+   "base": "5cb4601"
+  },
+  "settings.verifyAndSave": {
+   "en": "Verify and save",
+   "where": "src/screens/SettingsScreen.tsx:1474 literal",
+   "base": "5cb4601"
+  },
+  "settings.custom.symbolNote": {
+   "en": "The coin’s symbol is your word: EVM networks do not publish their coin’s symbol on-chain, so the wallet cannot check it and shows it exactly as you type it.",
+   "where": "src/wallet/custom-networks.ts:209 literal",
+   "base": "5cb4601"
+  },
+  "settings.custom.readOnly": {
+   "en": "The saved custom networks could not be read, so nothing was changed. Use “Reset custom networks” in Settings → Developer to start a fresh list.",
+   "where": "src/wallet/custom-networks.ts:189 literal",
+   "base": "5cb4601"
+  },
+  "settings.appLock.kind.pin": {
+   "en": "6-digit PIN",
+   "where": "src/wallet/duress.ts:445 literal",
+   "base": "5cb4601"
+  },
+  "settings.appLock.kind.phr": {
+   "en": "Passphrase (15 to 128 characters)",
+   "where": "src/wallet/duress.ts:446 literal",
+   "base": "5cb4601"
+  },
+  "settings.appLock.kindLabel": {
+   "en": "Unlock with",
+   "where": "src/wallet/duress.ts:448 literal",
+   "base": "5cb4601"
+  },
+  "settings.appLock.offStatus": {
+   "en": "No app PIN or passphrase is set. The wallet unlocks with your fingerprint, face or device passcode.",
+   "where": "src/wallet/duress.ts:450 literal",
+   "base": "5cb4601"
+  },
+  "settings.appLock.backupNote": {
+   "en": "To turn the app PIN or passphrase on, first type two words of your recovery phrase from your written backup, to confirm you still have it.",
+   "where": "src/wallet/duress.ts:452 literal",
+   "base": "5cb4601"
+  },
+  "settings.appLock.strength": {
+   "en": "How hard each is to guess from a copy of this app's files: a 6-digit PIN is one of a million (about 20 bits), which one computer can try in about 3 days. Four random words picked with dice are about 52 bits, millions of years for the same computer. A sentence you make up may be much easier to guess than its length suggests: the 15-character minimum cannot measure that.",
+   "where": "src/wallet/duress.ts:460 literal",
+   "base": "5cb4601"
+  },
+  "settings.appLock.passphraseAdvice": {
+   "en": "A passphrase is typed on your keyboard each time the wallet opens. Use four or more random words, for example picked with dice, not a sentence or quotation someone could guess. Do not use words from your recovery phrase. Do not save it in a password manager: this wallet turns autofill off for it.",
+   "where": "src/wallet/duress.ts:463 literal",
+   "base": "5cb4601"
+  },
+  "settings.appLock.keyboardNote": {
+   "en": "Unlike the PIN pad, your keyboard sees what you type. Use a keyboard you trust.",
+   "where": "src/wallet/duress.ts:465 literal",
+   "base": "5cb4601"
+  },
+  "settings.appLock.sameKind": {
+   "en": "The duress secret is always the same kind as the app lock: a duress PIN with an app PIN, a duress passphrase with an app passphrase.",
+   "where": "src/wallet/duress.ts:468 literal",
+   "base": "5cb4601"
+  },
+  "settings.appLock.noCopy": {
+   "en": "Type the passphrase; do not copy it to the clipboard, where other apps can read it.",
+   "where": "src/wallet/duress.ts:470 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.funding": {
+   "en": "Fund the second wallet from an exchange or another source that has never sent to or received from this wallet. A transfer between the two wallets links them permanently on the blockchain.",
+   "where": "src/wallet/duress.ts:366 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.mustDiffer": {
+   "en": "The duress PIN must be different from your app PIN. Nothing was changed.",
+   "where": "src/wallet/duress.ts:372 literal",
+   "base": "5cb4601"
+  },
+  "settings.appLock.notCompleted": {
+   "en": "This could not be completed on this phone. Nothing was changed.",
+   "where": "src/wallet/duress.ts:379 literal",
+   "base": "5cb4601"
+  },
+  "settings.appLock.backupMismatch": {
+   "en": "Those words do not match your recovery phrase. Check your written backup; nothing was changed.",
+   "where": "src/wallet/duress.ts:414 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPin.what": {
+   "en": "With a PIN, the wallet's own lock screen asks for a 6-digit PIN each time the wallet is opened and after auto-lock, instead of your fingerprint or face. The PIN is an extra lock inside this app: your device's own lock still protects the secure storage that holds your recovery phrase, and sending still asks for your fingerprint, face or device passcode.",
+   "where": "src/wallet/duress.ts:322 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPin.limits": {
+   "en": "What the PIN does not protect against: someone who copies this app's storage from the phone can try every 6-digit PIN on a computer, so the PIN stops guessing at the screen only. After 5 wrong PINs the lock screen waits 30 seconds, and the wait doubles with each further wrong PIN up to 1 hour; it never wipes the wallet. There is no PIN reset: if you forget it, clear the app's data or reinstall it, and restore the wallet from your recovery phrase.",
+   "where": "src/wallet/duress.ts:324 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPin.costs": {
+   "en": "While the PIN is on, auto-lock cannot be turned off, screen protection stays on, and the wallet posts no notifications: no reminders for recurring payments or swaps, no price alerts, and no alert when someone starts a recovery or takeover of one of your accounts. You see those the next time you open the wallet.",
+   "where": "src/wallet/duress.ts:326 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPin.on": {
+   "en": "The app PIN is on.",
+   "where": "src/wallet/duress.ts:329 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPin.change": {
+   "en": "Change PIN",
+   "where": "src/wallet/duress.ts:509 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPin.switch": {
+   "en": "Use a passphrase instead",
+   "where": "src/wallet/duress.ts:510 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.pin.title": {
+   "en": "Duress PIN",
+   "where": "src/wallet/duress.ts:359 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.pin.explanation": {
+   "en": "A duress PIN opens a separate wallet instead of this one, for when someone forces you to open your wallet. Keep a small amount in it and use it now and then so it looks lived in.",
+   "where": "src/wallet/duress.ts:361 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.pin.claim": {
+   "en": "The duress PIN opens a separate wallet instead of this one, so someone looking at the screen sees an ordinary wallet. Anyone who copies this app's files from the phone can tell that two wallets exist, and a 6-digit PIN can be guessed from such a copy. Funding the second wallet from this wallet links them on-chain.",
+   "where": "src/wallet/duress.ts:364 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.pin.backup": {
+   "en": "The second wallet is derived from this wallet's recovery phrase (BIP-85, child index 0), so backing up that one phrase backs up both: restoring this phrase and setting a duress PIN again brings the same second wallet back. Its own recovery phrase does not reveal this wallet's: someone shown it learns nothing of this wallet.",
+   "where": "src/wallet/duress.ts:368 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.pin.needs": {
+   "en": "Turn the app PIN on first: a duress PIN works only on top of it.",
+   "where": "src/wallet/duress.ts:369 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.pin.set": {
+   "en": "A duress PIN is set.",
+   "where": "src/wallet/duress.ts:370 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.pin.notSet": {
+   "en": "No duress PIN is set.",
+   "where": "src/wallet/duress.ts:371 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.pin.add": {
+   "en": "Add a duress PIN",
+   "where": "src/wallet/duress.ts:518 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.pin.change": {
+   "en": "Change duress PIN",
+   "where": "src/wallet/duress.ts:519 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.pin.remove": {
+   "en": "Remove duress PIN",
+   "where": "src/wallet/duress.ts:520 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPin.remove.title": {
+   "en": "Remove the app PIN?",
+   "where": "src/wallet/duress.ts:381 literal",
+   "base": "5cb4601"
+  },
+  "settings.appLock.remove.body": {
+   "en": "The wallet will unlock with your fingerprint, face or device passcode again, and notifications can be turned back on.",
+   "where": [
+    "src/wallet/duress.ts:383 literal",
+    "src/wallet/duress.ts:558 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.appPin.remove.withDuress": {
+   "en": "The wallet will unlock with your fingerprint, face or device passcode again. Removing the app PIN also removes the duress PIN and deletes the second wallet from this phone; it can be brought back from this recovery phrase by setting a duress PIN again. Move any funds you want to keep out of the second wallet first.",
+   "where": "src/wallet/duress.ts:385 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.pin.remove.title": {
+   "en": "Remove the duress PIN?",
+   "where": "src/wallet/duress.ts:386 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.pin.remove.body": {
+   "en": "The duress PIN stops working and the second wallet is deleted from this phone. It can be brought back from this recovery phrase by setting a duress PIN again. Move any funds you want to keep out of the second wallet first.",
+   "where": "src/wallet/duress.ts:388 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPin.prompt.current": {
+   "en": "Type your current PIN",
+   "where": "src/wallet/duress.ts:406 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPin.prompt.choose": {
+   "en": "Choose a 6-digit PIN",
+   "where": "src/wallet/duress.ts:407 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPin.prompt.chooseAgain": {
+   "en": "Type the new PIN again",
+   "where": "src/wallet/duress.ts:408 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.pin.prompt.choose": {
+   "en": "Choose a 6-digit duress PIN",
+   "where": "src/wallet/duress.ts:409 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.pin.prompt.chooseAgain": {
+   "en": "Type the duress PIN again",
+   "where": "src/wallet/duress.ts:410 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPin.result.on": {
+   "en": "The app PIN is on. The wallet asks for it the next time it is opened or locks.",
+   "where": "src/wallet/duress.ts:416 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPin.result.changed": {
+   "en": "The PIN was changed.",
+   "where": "src/wallet/duress.ts:417 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPin.result.off": {
+   "en": "The app PIN is off.",
+   "where": "src/wallet/duress.ts:418 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.pin.result.set": {
+   "en": "The duress PIN is set. It opens the second wallet.",
+   "where": "src/wallet/duress.ts:419 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.pin.result.changed": {
+   "en": "The duress PIN was changed.",
+   "where": "src/wallet/duress.ts:420 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.pin.result.removed": {
+   "en": "The duress PIN was removed and the second wallet was deleted from this phone.",
+   "where": "src/wallet/duress.ts:421 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPin.result.switched": {
+   "en": "The app lock now uses a 6-digit PIN.",
+   "where": "src/wallet/duress.ts:529 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPassphrase.title": {
+   "en": "App passphrase",
+   "where": "src/wallet/duress.ts:532 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPassphrase.what": {
+   "en": "With a passphrase, the wallet's own lock screen asks for your passphrase each time the wallet is opened and after auto-lock, instead of your fingerprint or face. The passphrase is an extra lock inside this app: your device's own lock still protects the secure storage that holds your recovery phrase, and sending still asks for your fingerprint, face or device passcode.",
+   "where": "src/wallet/duress.ts:534 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPassphrase.limits": {
+   "en": "What the passphrase does not protect against: someone who copies this app's storage from the phone can try passphrases on a computer. A long, random passphrase makes that impractical; a short or common one does not. After 5 wrong passphrases the lock screen waits 30 seconds, and the wait doubles with each further wrong passphrase up to 1 hour; it never wipes the wallet. There is no passphrase reset: if you forget it, clear the app's data or reinstall it, and restore the wallet from your recovery phrase.",
+   "where": "src/wallet/duress.ts:537 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPassphrase.costs": {
+   "en": "While the app passphrase is on, auto-lock cannot be turned off, screen protection stays on, and the wallet posts no notifications: no reminders for recurring payments or swaps, no price alerts, and no alert when someone starts a recovery or takeover of one of your accounts. You see those the next time you open the wallet.",
+   "where": "src/wallet/duress.ts:539 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPassphrase.on": {
+   "en": "The app passphrase is on.",
+   "where": "src/wallet/duress.ts:540 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPassphrase.change": {
+   "en": "Change passphrase",
+   "where": "src/wallet/duress.ts:541 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPassphrase.switch": {
+   "en": "Use a PIN instead",
+   "where": "src/wallet/duress.ts:542 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.phr.title": {
+   "en": "Duress passphrase",
+   "where": "src/wallet/duress.ts:543 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.phr.explanation": {
+   "en": "A duress passphrase opens a separate wallet instead of this one, for when someone forces you to open your wallet. Keep a small amount in it and use it now and then so it looks lived in.",
+   "where": "src/wallet/duress.ts:545 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.phr.claim": {
+   "en": "The duress passphrase opens a separate wallet instead of this one, so someone looking at the screen sees an ordinary wallet. Anyone who copies this app's files from the phone can tell that two wallets exist and can try to guess both passphrases from such a copy: a long, random passphrase makes that impractical, a short or common one does not. Funding the second wallet from this wallet links them on-chain.",
+   "where": "src/wallet/duress.ts:548 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.phr.backup": {
+   "en": "The second wallet is derived from this wallet's recovery phrase (BIP-85, child index 0), so backing up that one phrase backs up both: restoring this phrase and setting a duress passphrase again brings the same second wallet back. Its own recovery phrase does not reveal this wallet's: someone shown it learns nothing of this wallet.",
+   "where": "src/wallet/duress.ts:550 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.phr.needs": {
+   "en": "Turn the app passphrase on first: a duress passphrase works only on top of it.",
+   "where": "src/wallet/duress.ts:551 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.phr.set": {
+   "en": "A duress passphrase is set.",
+   "where": "src/wallet/duress.ts:552 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.phr.notSet": {
+   "en": "No duress passphrase is set.",
+   "where": "src/wallet/duress.ts:553 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.phr.add": {
+   "en": "Add a duress passphrase",
+   "where": "src/wallet/duress.ts:554 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.phr.change": {
+   "en": "Change duress passphrase",
+   "where": "src/wallet/duress.ts:555 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.phr.remove": {
+   "en": "Remove duress passphrase",
+   "where": "src/wallet/duress.ts:556 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPassphrase.remove.title": {
+   "en": "Remove the app passphrase?",
+   "where": "src/wallet/duress.ts:557 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPassphrase.remove.withDuress": {
+   "en": "The wallet will unlock with your fingerprint, face or device passcode again. Removing the app passphrase also removes the duress passphrase and deletes the second wallet from this phone; it can be brought back from this recovery phrase by setting a duress passphrase again. Move any funds you want to keep out of the second wallet first.",
+   "where": "src/wallet/duress.ts:560 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.phr.remove.title": {
+   "en": "Remove the duress passphrase?",
+   "where": "src/wallet/duress.ts:561 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.phr.remove.body": {
+   "en": "The duress passphrase stops working and the second wallet is deleted from this phone. It can be brought back from this recovery phrase by setting a duress passphrase again. Move any funds you want to keep out of the second wallet first.",
+   "where": "src/wallet/duress.ts:563 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPassphrase.prompt.current": {
+   "en": "Type your current passphrase",
+   "where": "src/wallet/duress.ts:568 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPassphrase.prompt.choose": {
+   "en": "Choose a passphrase",
+   "where": "src/wallet/duress.ts:569 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPassphrase.prompt.chooseAgain": {
+   "en": "Type the passphrase again",
+   "where": "src/wallet/duress.ts:570 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.phr.prompt.choose": {
+   "en": "Choose a duress passphrase",
+   "where": "src/wallet/duress.ts:571 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.phr.prompt.chooseAgain": {
+   "en": "Type the duress passphrase again",
+   "where": "src/wallet/duress.ts:572 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPassphrase.result.on": {
+   "en": "The app passphrase is on. The wallet asks for it the next time it is opened or locks.",
+   "where": "src/wallet/duress.ts:575 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPassphrase.result.changed": {
+   "en": "The passphrase was changed.",
+   "where": "src/wallet/duress.ts:576 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPassphrase.result.off": {
+   "en": "The app passphrase is off.",
+   "where": "src/wallet/duress.ts:577 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.phr.result.set": {
+   "en": "The duress passphrase is set. It opens the second wallet.",
+   "where": "src/wallet/duress.ts:578 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.phr.result.changed": {
+   "en": "The duress passphrase was changed.",
+   "where": "src/wallet/duress.ts:579 literal",
+   "base": "5cb4601"
+  },
+  "settings.duress.phr.result.removed": {
+   "en": "The duress passphrase was removed and the second wallet was deleted from this phone.",
+   "where": "src/wallet/duress.ts:580 literal",
+   "base": "5cb4601"
+  },
+  "settings.appPassphrase.result.switched": {
+   "en": "The app lock now uses a passphrase.",
+   "where": "src/wallet/duress.ts:581 literal",
+   "base": "5cb4601"
+  },
+  "settings.appLock.pin.format": {
+   "en": "A PIN is exactly 6 digits.",
+   "where": "src/wallet/pin.ts:381 literal",
+   "base": "5cb4601"
+  },
+  "settings.appLock.pin.notUsable": {
+   "en": "This PIN cannot be used. Choose a different 6-digit PIN.",
+   "where": "src/wallet/pin.ts:388 literal",
+   "base": "5cb4601"
+  },
+  "settings.appLock.pin.mismatch": {
+   "en": "The two PINs you typed are different. Nothing was changed.",
+   "where": "src/wallet/pin.ts:389 literal",
+   "base": "5cb4601"
+  },
+  "settings.appLock.phr.length": {
+   "en": "A passphrase has 15 to 128 characters.",
+   "where": "src/wallet/pin.ts:417 literal",
+   "base": "5cb4601"
+  },
+  "settings.appLock.phr.edgeSpace": {
+   "en": "A passphrase cannot begin or end with a space.",
+   "where": "src/wallet/pin.ts:418 literal",
+   "base": "5cb4601"
+  },
+  "settings.appLock.phr.control": {
+   "en": "A passphrase cannot contain line breaks or other control characters.",
+   "where": "src/wallet/pin.ts:419 literal",
+   "base": "5cb4601"
+  },
+  "settings.appLock.phr.invalidText": {
+   "en": "This passphrase contains a character that is not valid text. Type it again.",
+   "where": "src/wallet/pin.ts:421 literal",
+   "base": "5cb4601"
+  },
+  "settings.appLock.phr.notUsable": {
+   "en": "This passphrase cannot be used. Choose a different passphrase.",
+   "where": "src/wallet/pin.ts:429 literal",
+   "base": "5cb4601"
+  },
+  "settings.appLock.phr.phraseWords": {
+   "en": "Do not use words from your recovery phrase in your passphrase.",
+   "where": "src/wallet/pin.ts:422 literal",
+   "base": "5cb4601"
+  },
+  "settings.appLock.phr.mismatch": {
+   "en": "The two passphrases you typed are different. Nothing was changed.",
+   "where": "src/wallet/pin.ts:430 literal",
+   "base": "5cb4601"
+  },
+  "settings.appLock.phraseNotOpened": {
+   "en": "The recovery phrase could not be opened. Nothing was changed.",
+   "where": "src/screens/SettingsScreen.tsx:1616 literal",
+   "base": "5cb4601"
+  },
+  "settings.appLock.phraseNotOpen": {
+   "en": "The recovery phrase is no longer open. Nothing was changed.",
+   "where": "src/screens/SettingsScreen.tsx:1666 literal",
+   "base": "5cb4601"
+  },
+  "settings.continue": {
+   "en": "Continue",
+   "where": [
+    "src/components/AccountsSection.tsx:192 literal",
+    "src/screens/SettingsScreen.tsx:1734 literal",
+    "src/screens/SettingsScreen.tsx:1872 literal",
+    "src/screens/SettingsScreen.tsx:2231 literal",
+    "src/screens/SwapScreen.tsx:1547 literal",
+    "src/screens/UpgradeAccountScreen.tsx:133 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.check": {
+   "en": "Check",
+   "where": "src/screens/SettingsScreen.tsx:1864 literal",
+   "base": "5cb4601"
+  },
+  "settings.nothingChanged": {
+   "en": "Nothing was changed.",
+   "where": [
+    "src/screens/SettingsScreen.tsx:1865 literal",
+    "src/screens/SettingsScreen.tsx:1877 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.protect.button": {
+   "en": "Protect",
+   "where": "src/screens/SettingsScreen.tsx:2118 literal",
+   "base": "5cb4601"
+  },
+  "settings.reveal.title": {
+   "en": "Show recovery phrase?",
+   "where": "src/screens/SettingsScreen.tsx:2139 literal",
+   "base": "5cb4601"
+  },
+  "settings.reveal.body": {
+   "en": "Make sure no one can see your screen. Anyone who sees these words can steal the funds of every account in this wallet.",
+   "where": "src/screens/SettingsScreen.tsx:2140 literal",
+   "base": "5cb4601"
+  },
+  "settings.reveal.showIt": {
+   "en": "Show it",
+   "where": [
+    "src/components/AccountsSection.tsx:233 literal",
+    "src/screens/SettingsScreen.tsx:2144 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.reveal.notRevealed": {
+   "en": "Not revealed",
+   "where": [
+    "src/components/AccountsSection.tsx:243 literal",
+    "src/components/AccountsSection.tsx:250 literal",
+    "src/screens/SettingsScreen.tsx:2155 literal",
+    "src/wallet/phrase-protection-copy.ts:306 literal",
+    "src/wallet/phrase-protection-copy.ts:313 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.wipe.export.title": {
+   "en": "Export your recovery records first?",
+   "where": "src/screens/SettingsScreen.tsx:2190 literal",
+   "base": "5cb4601"
+  },
+  "settings.export": {
+   "en": "Export",
+   "where": "src/screens/SettingsScreen.tsx:2197 literal",
+   "base": "5cb4601"
+  },
+  "settings.wipe.continueWithout": {
+   "en": "Continue without exporting",
+   "where": "src/screens/SettingsScreen.tsx:2205 literal",
+   "base": "5cb4601"
+  },
+  "settings.wipe.title": {
+   "en": "Wipe wallet?",
+   "where": "src/screens/SettingsScreen.tsx:2216 literal",
+   "base": "5cb4601"
+  },
+  "settings.wipe.sure.title": {
+   "en": "Are you absolutely sure?",
+   "where": "src/screens/SettingsScreen.tsx:2235 literal",
+   "base": "5cb4601"
+  },
+  "settings.wipe.sure.body": {
+   "en": "Without your written recovery phrase, the funds controlled by this wallet will be unrecoverable by anyone, forever.",
+   "where": "src/screens/SettingsScreen.tsx:2236 literal",
+   "base": "5cb4601"
+  },
+  "settings.wipe.keep": {
+   "en": "Keep my wallet",
+   "where": "src/screens/SettingsScreen.tsx:2238 literal",
+   "base": "5cb4601"
+  },
+  "settings.wipe.confirm": {
+   "en": "Wipe wallet",
+   "where": "src/screens/SettingsScreen.tsx:2240 literal",
+   "base": "5cb4601"
+  },
+  "settings.backup.all": {
+   "en": "One recovery phrase backs up ALL of your accounts — every account in the list above, including hidden ones, on every chain.",
+   "where": "src/screens/SettingsScreen.tsx:2275 literal",
+   "base": "5cb4601"
+  },
+  "settings.backup.keyed": {
+   "en": "One recovery phrase backs up every account in the list above that this wallet holds a key for, including hidden ones, on every chain.",
+   "where": "src/screens/SettingsScreen.tsx:2276 literal",
+   "base": "5cb4601"
+  },
+  "settings.backup.fromPhrase": {
+   "en": "One recovery phrase backs up every account in the list above that comes from it, including hidden ones, on every chain.",
+   "where": "src/screens/SettingsScreen.tsx:2281 jsx",
+   "base": "5cb4601"
+  },
+  "settings.backup.watchOnly": {
+   "en": "Watch-only addresses have no key in this wallet, so the recovery phrase does not back them up and is not needed for them: to watch one again on another phone, add its address again.",
+   "where": "src/screens/SettingsScreen.tsx:2293 jsx",
+   "base": "5cb4601"
+  },
+  "settings.reveal.warning": {
+   "en": "Never share these words. They control every account in this wallet, not just the active one. Shiba Wallet support will never ask for them. Hide them again as soon as you are done.",
+   "where": "src/screens/SettingsScreen.tsx:2304 literal",
+   "base": "5cb4601"
+  },
+  "settings.reveal.noCopy": {
+   "en": "These words are shown only — there is deliberately no copy button, because anything on the clipboard can be read by other apps. Write them down on paper.",
+   "where": "src/screens/SettingsScreen.tsx:2326 jsx",
+   "base": "5cb4601"
+  },
+  "settings.reveal.hide": {
+   "en": "Hide recovery phrase",
+   "where": "src/screens/SettingsScreen.tsx:2330 literal",
+   "base": "5cb4601"
+  },
+  "settings.reveal.show": {
+   "en": "Show recovery phrase",
+   "where": "src/screens/SettingsScreen.tsx:2333 literal",
+   "base": "5cb4601"
+  },
+  "settings.protect.protecting": {
+   "en": "Protecting…",
+   "where": "src/screens/SettingsScreen.tsx:2355 literal",
+   "base": "5cb4601"
+  },
+  "settings.prices.fiat": {
+   "en": "Show fiat values (USD)",
+   "where": [
+    "src/screens/SettingsScreen.tsx:2486 jsx",
+    "src/screens/SettingsScreen.tsx:2488 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.prices.fiatNote": {
+   "en": "Shows an approximate US-dollar value next to balances and on the send and swap confirmation screens. Prices are fetched from CoinGecko (api.coingecko.com), which sees your IP address and which assets are being priced — never your addresses or balances. Turning this off stops all price requests. Prices are indicative only; the exact crypto amount is always the one that counts, and test-network assets are never priced.",
+   "where": "src/screens/SettingsScreen.tsx:2496 jsx",
+   "base": "5cb4601"
+  },
+  "settings.prices.keyNote": {
+   "en": "Optional: a free CoinGecko Demo API key (from your CoinGecko developer dashboard) gives a higher rate limit than keyless requests. It is stored only on this device and sent only to api.coingecko.com. Saving runs one live price request with the key first, and nothing is saved if it fails. CoinGecko does not offer a way to confirm a Demo key is genuine, so a pass means the request with the key worked.",
+   "where": "src/screens/SettingsScreen.tsx:2507 jsx",
+   "base": "5cb4601"
+  },
+  "settings.prices.keyLabel": {
+   "en": "CoinGecko Demo API key (optional)",
+   "where": "src/screens/SettingsScreen.tsx:2516 literal",
+   "base": "5cb4601"
+  },
+  "settings.prices.keyPlaceholder": {
+   "en": "Demo API key from CoinGecko",
+   "where": "src/screens/SettingsScreen.tsx:2517 literal",
+   "base": "5cb4601"
+  },
+  "settings.endpoints.intro": {
+   "en": "Where balances are fetched from and where transactions are broadcast. Endpoint URLs are public configuration; Dogecoin's Blockbook endpoint may additionally need a provider API key, which is stored only on this device and sent only to that host. Balances refresh with the new endpoint on the next pull-to-refresh. Without a custom endpoint, each chain uses the first of its built-in public defaults that answers; if that one stops answering, the next is tried automatically.",
+   "where": "src/screens/SettingsScreen.tsx:2542 jsx",
+   "base": "5cb4601"
+  },
+  "settings.indexer.intro": {
+   "en": "Transaction history on the Activity screen needs an indexer: a standard JSON-RPC endpoint cannot list transactions by address. Paste an endpoint that serves the Transfers API (alchemy_getAssetTransfers). The URL usually contains your own API key — it is stored only on this device and sent only to the endpoint itself. Saving verifies the endpoint first and refuses URLs for the wrong chain.",
+   "where": "src/screens/SettingsScreen.tsx:2577 jsx",
+   "base": "5cb4601"
+  },
+  "settings.nftIndexer.intro": {
+   "en": "The NFTs screen needs an indexer that lists the NFTs an address owns (ERC-721 and ERC-1155). Paste the base URL of an endpoint that serves Alchemy's NFT API v3 — it looks like https://eth-mainnet.g.alchemy.com/nft/v3/your-key (Sepolia: eth-sepolia). This is a separate URL from the history indexer above, even when both use the same API key. It is stored only on this device and sent only to that host. Saving checks that the indexer answers and that it is indexing this network. NFT images load from the indexer's image cache when possible, otherwise from the NFT's own host or the public ipfs.io gateway, which see your IP address.",
+   "where": "src/screens/SettingsScreen.tsx:2599 jsx",
+   "base": "5cb4601"
+  },
+  "settings.aa.mainnetLimit": {
+   "en": "Smart accounts, their modules and gas sponsorship are limited to test networks (see Mainnet readiness above): on a main network these settings cannot be saved and the smart-account options do not appear on the Send, Swap and WalletConnect screens. Clearing a setting saved earlier still works.",
+   "where": "src/screens/SettingsScreen.tsx:2642 jsx",
+   "base": "5cb4601"
+  },
+  "settings.aa.intro": {
+   "en": "Optional ERC-4337 setup per EVM chain: a bundler endpoint, a smart-account type (Kernel v3.3 or SimpleAccount) and its factory. Everything is verified before saving — the bundler must answer eth_chainId with this network's chain id and support EntryPoint v0.7, and the factory is checked on-chain through your configured RPC endpoint. When set, the Send and Swap screens offer an experimental \"from smart account\" toggle (token sends and swaps run as one atomic batch), and WalletConnect can connect dApps to the smart account. Off by default; nothing changes for regular sends.",
+   "where": "src/screens/SettingsScreen.tsx:2648 jsx",
+   "base": "5cb4601"
+  },
+  "settings.upgrade.note": {
+   "en": "Turns the active account into a Kernel v3.3 smart account at the same address, on the active network, and shows its current status. You can undo it at any time. The wallet only ever delegates to the pinned Kernel v3.3 contract and never signs an account delegation for a dApp.",
+   "where": "src/screens/SettingsScreen.tsx:2669 jsx",
+   "base": "5cb4601"
+  },
+  "settings.upgrade.button": {
+   "en": "Upgrade this account",
+   "where": [
+    "App.tsx:337 literal",
+    "src/screens/SettingsScreen.tsx:2675 literal",
+    "src/screens/UpgradeAccountScreen.tsx:98 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.sessions.note": {
+   "en": "Let a separate key on this device (or a dApp, over WalletConnect) make only the calls you list, until a deadline you choose. Your Kernel account enforces the limits on-chain, and you can revoke a session at any time. Needs a deployed Kernel v3.3 smart account or an upgraded account. Sessions and their keys are not part of the recovery phrase: they do not survive a wipe or a restore, so revoke them before wiping.",
+   "where": "src/screens/SettingsScreen.tsx:2684 jsx",
+   "base": "5cb4601"
+  },
+  "settings.guardians.note": {
+   "en": "Let people you choose replace the key of your deployed Kernel smart account if you lose your recovery phrase. This is a trade-off, not a safety guarantee: enough guardians together could also take the account, and guardians can sign messages as the account from the moment they are installed (with no delay and no veto). Not available for an account upgraded with EIP-7702. The guardian modules have no published audit of their deployed versions.",
+   "where": "src/screens/SettingsScreen.tsx:2700 jsx",
+   "base": "5cb4601"
+  },
+  "settings.guardians.button": {
+   "en": "Guardians for this account",
+   "where": "src/screens/SettingsScreen.tsx:2707 literal",
+   "base": "5cb4601"
+  },
+  "settings.guardians.approve": {
+   "en": "Approve a recovery (as a guardian)",
+   "where": [
+    "src/screens/ApproveRecoveryScreen.tsx:494 literal",
+    "src/screens/SettingsScreen.tsx:2722 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.passkey.needs": {
+   "en": "Needs a deployed Kernel v3.3 smart account (not an EIP-7702 upgrade).",
+   "where": "src/screens/SettingsScreen.tsx:2733 jsx",
+   "base": "5cb4601"
+  },
+  "settings.passkey.button": {
+   "en": "Passkey for this account",
+   "where": "src/screens/SettingsScreen.tsx:2739 literal",
+   "base": "5cb4601"
+  },
+  "settings.wc.relay": {
+   "en": "Requires a relay project id — create one for free at dashboard.reown.com. The id is public app configuration, not a secret; no account or personal data from this wallet is involved. If a connection was already opened this session, a changed id takes effect after the app restarts.",
+   "where": "src/screens/SettingsScreen.tsx:2746 jsx",
+   "base": "5cb4601"
+  },
+  "settings.wc.projectId": {
+   "en": "Reown / WalletConnect project id",
+   "where": "src/screens/SettingsScreen.tsx:2753 literal",
+   "base": "5cb4601"
+  },
+  "settings.wc.projectIdPlaceholder": {
+   "en": "32-character id from dashboard.reown.com",
+   "where": "src/screens/SettingsScreen.tsx:2754 literal",
+   "base": "5cb4601"
+  },
+  "settings.connectedApps": {
+   "en": "Connected apps",
+   "where": [
+    "App.tsx:324 literal",
+    "src/screens/ConnectionsScreen.tsx:18 literal",
+    "src/screens/SettingsScreen.tsx:2777 literal",
+    "src/wallet/WalletConnectContext.tsx:1237 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.apps.note": {
+   "en": "A short, fixed list of apps that open inside the wallet, on test networks only. They connect through the same approval sheet as WalletConnect. Their connections are listed on the Connected apps screen (open it with the \"Connected apps\" button in the WalletConnect section above, or with \"Manage connections\" in Apps), and a site that is open can be disconnected from the Connection button on its browser bar.",
+   "where": "src/screens/SettingsScreen.tsx:2786 jsx",
+   "base": "5cb4601"
+  },
+  "settings.apps.open": {
+   "en": "Open Apps",
+   "where": "src/screens/SettingsScreen.tsx:2791 literal",
+   "base": "5cb4601"
+  },
+  "settings.contacts.note": {
+   "en": "Named addresses for each chain, picked from the Send screen. A name is shown only for an exact address match, always with the full address; look-alike addresses get a warning instead.",
+   "where": "src/screens/SettingsScreen.tsx:2803 jsx",
+   "base": "5cb4601"
+  },
+  "settings.contacts.manage": {
+   "en": "Manage contacts",
+   "where": [
+    "src/components/Contacts.tsx:121 literal",
+    "src/screens/SettingsScreen.tsx:2808 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.proof.note": {
+   "en": "Sign a challenge you were given (or your own statement) with this account or its smart account, and share a proof anyone can check. Website logins are not signed here — they go through WalletConnect.",
+   "where": "src/screens/SettingsScreen.tsx:2817 jsx",
+   "base": "5cb4601"
+  },
+  "settings.proof.button": {
+   "en": "Prove ownership",
+   "where": [
+    "App.tsx:354 literal",
+    "src/screens/ProveOwnershipScreen.tsx:82 literal",
+    "src/screens/SettingsScreen.tsx:2822 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.tokens.track": {
+   "en": "Track ERC-20 tokens on the Home screen: balances, and sending them.",
+   "where": "src/screens/SettingsScreen.tsx:2831 jsx",
+   "base": "5cb4601"
+  },
+  "settings.spending.button": {
+   "en": "Spending limits",
+   "where": [
+    "App.tsx:358 literal",
+    "src/screens/SettingsScreen.tsx:2848 literal",
+    "src/screens/SpendingLimitsScreen.tsx:102 literal",
+    "src/wallet/records-backup.ts:390 literal",
+    "src/wallet/watch-only.ts:197 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.approvals.note": {
+   "en": "See which contracts may move your tracked tokens and NFT collections without asking you again, and revoke them. Revoking is an ordinary transaction with a normal network fee.",
+   "where": "src/screens/SettingsScreen.tsx:2857 jsx",
+   "base": "5cb4601"
+  },
+  "settings.swaps.note": {
+   "en": "Swapping (the Swap link on the Home screen) is priced by the 0x aggregator and needs your own API key — create one for free at dashboard.0x.org. The key is stored only on this device and sent only to api.0x.org with quote requests; it is never bundled or committed anywhere. Saving verifies the key first with one live quote request (nothing is traded), and a rejected key is not saved. The feature stays off until a key is saved here.",
+   "where": "src/screens/SettingsScreen.tsx:2871 jsx",
+   "base": "5cb4601"
+  },
+  "settings.swaps.keyLabel": {
+   "en": "0x API key",
+   "where": "src/screens/SettingsScreen.tsx:2880 literal",
+   "base": "5cb4601"
+  },
+  "settings.swaps.keyPlaceholder": {
+   "en": "API key from dashboard.0x.org",
+   "where": "src/screens/SettingsScreen.tsx:2881 literal",
+   "base": "5cb4601"
+  },
+  "settings.swaps.noAddress": {
+   "en": "No Ethereum address is available to verify the key with.",
+   "where": "src/screens/SettingsScreen.tsx:2893 literal",
+   "base": "5cb4601"
+  },
+  "settings.dev.testNetwork": {
+   "en": "Test network",
+   "where": "src/screens/SettingsScreen.tsx:2907 jsx",
+   "base": "5cb4601"
+  },
+  "settings.dev.offMainnet": {
+   "en": "Off (mainnet)",
+   "where": "src/screens/SettingsScreen.tsx:2910 literal",
+   "base": "5cb4601"
+  },
+  "settings.danger.note": {
+   "en": "Wiping removes the recovery phrase from this device's secure storage. Your written backup remains the only way to restore the wallet.",
+   "where": "src/screens/SettingsScreen.tsx:2987 jsx",
+   "base": "5cb4601"
+  },
+  "settings.danger.wipe": {
+   "en": "Wipe wallet from this device",
+   "where": "src/screens/SettingsScreen.tsx:2991 literal",
+   "base": "5cb4601"
+  },
+  "settings.about": {
+   "en": "Shiba Wallet is non-custodial: keys are generated, stored and used only on this device.",
+   "where": "src/screens/SettingsScreen.tsx:2995 jsx",
+   "base": "5cb4601"
+  },
+  "settings.insecureEndpoint": {
+   "en": "Endpoints must use https:// (plain http:// is accepted only for localhost or 10.0.2.2 during development).",
+   "where": "src/config/endpoint-url.ts:31 literal",
+   "base": "5cb4601"
+  },
+  "settings.passkey.explanation": {
+   "en": "A passkey becomes an ADDITIONAL signer on your smart account, protected by this phone’s biometrics. Your recovery phrase stays in control: it can remove the passkey at any time, and your smart-account address does not change. One passkey per account.",
+   "where": "src/wallet/passkeys.ts:150 literal",
+   "base": "5cb4601"
+  },
+  "settings.passkey.risk": {
+   "en": "Risk: anyone who can use this passkey can spend from the smart account. The account contract would also let the passkey change the account’s own settings — even replace your recovery phrase as the owner. This wallet refuses to let the passkey do that, but the refusal is in this app, not enforced on-chain. Protect the passkey like your recovery phrase.",
+   "where": "src/wallet/passkeys.ts:155 literal",
+   "base": "5cb4601"
+  },
+  "settings.passkey.audit": {
+   "en": "The WebAuthn validator version this wallet uses (ZeroDev WebAuthnValidator v0.0.3) has no published audit; the audited version had a flaw that this version fixes. Treat passkeys as experimental with real funds.",
+   "where": "src/wallet/passkeys.ts:161 literal",
+   "base": "5cb4601"
+  },
+  "settings.multisig.listHint": {
+   "en": "Multi-signature accounts have no key of their own: this wallet holds one of their signers, a recovery-phrase account, and every operation also needs the co-signers. On another phone, add one again from its record on the Multisig screen.",
+   "where": "src/wallet/watch-only.ts:423 literal",
+   "base": "5cb4601"
+  },
+  "settings.multisig.blurb": {
+   "en": "Accounts that need several signers for every operation: this wallet’s account plus co-signers on other phones. Transactions only: a multi-signature account never signs messages, logins or token permits. Test networks only; the signer module has no published audit.",
+   "where": "src/wallet/multisig.ts:137 literal",
+   "base": "5cb4601"
+  },
+  "settings.spending.hint": {
+   "en": "Set a maximum per token over a time window (for example 0.1 ETH per 24 hours) for this account on this network. The app checks it before it signs a send, swap, smart-account operation or WalletConnect transaction.",
+   "where": "src/wallet/spending-policy.ts:109 literal",
+   "base": "5cb4601"
+  },
+  "settings.spending.honesty": {
+   "en": "Enforced by this app only. Anyone with your recovery phrase, and keys used outside this app, are not limited.",
+   "where": "src/wallet/spending-policy.ts:104 literal",
+   "base": "5cb4601"
+  },
+  "settings.dev.minFee.switch": {
+   "en": "Send the next regular-account transaction at the minimum fee (to rehearse Speed up / Cancel)",
+   "where": "src/wallet/send.ts:318 literal",
+   "base": "5cb4601"
+  },
+  "settings.dev.minFee.hint": {
+   "en": "Test networks only. The next native-coin or token send from the Send screen, with the smart account off, is priced at a max fee of 1 wei and a priority fee of 1 wei per gas. A block can include a transaction only if its max fee is at least the block’s base fee, so while the base fee is above 1 wei this one stays in the network’s pool until you speed it up or cancel it from Activity; the speed-up or cancellation is priced at the node’s normal fee suggestion, so a block can include it. The option turns itself off once that transaction is sent; going back from the confirm screen leaves it on, and it is off again whenever the app restarts. NFT sends, swaps, staking, app requests and smart-account operations are always priced normally. The node may refuse such an under-priced transaction outright (\"transaction underpriced\"); that is expected, because the nodes behind one endpoint address can apply different minimums, and the option then stays on until a send goes through or you turn it off. On the layer-2 test networks the transaction goes to the network’s sequencer, which may refuse it rather than hold it; that has not been tried.",
+   "where": "src/wallet/send.ts:322 literal",
+   "base": "5cb4601"
+  },
+  "settings.protect.title": {
+   "en": "Protect with biometrics?",
+   "where": "src/wallet/phrase-protection-copy.ts:33 literal",
+   "base": "5cb4601"
+  },
+  "settings.protect.titleButton": {
+   "en": "Protect with biometrics",
+   "where": "src/wallet/phrase-protection-copy.ts:32 literal",
+   "base": "5cb4601"
+  },
+  "settings.protect.message": {
+   "en": "After this, opening your recovery phrase needs your fingerprint or face. If you ever add or remove a fingerprint or face, or turn off the screen lock, this phone will no longer be able to open the phrase and you will need your written backup. Make sure your written recovery phrase is safe before continuing.",
+   "where": "src/wallet/phrase-protection-copy.ts:35 literal",
+   "base": "5cb4601"
+  },
+  "settings.protect.cancelled": {
+   "en": "Moving your phrase to biometric protection was cancelled.",
+   "where": "src/wallet/phrase-protection-copy.ts:97 literal",
+   "base": "5cb4601"
+  },
+  "settings.protect.notAttempted": {
+   "en": "Your recovery phrase is in standard secure storage. You can move it into biometric-protected storage below.",
+   "where": "src/wallet/phrase-protection-copy.ts:95 literal",
+   "base": "5cb4601"
+  },
+  "settings.protect.noStrongBiometrics": {
+   "en": "This phone has no strong fingerprint or face unlock enrolled, so the phrase is in standard secure storage: code inside the app can read it while the phone is unlocked, and your screen lock is the main protection.",
+   "where": "src/wallet/phrase-protection-copy.ts:91 literal",
+   "base": "5cb4601"
+  },
+  "settings.protect.policyOff": {
+   "en": "Biometric protection is turned off for this build.",
+   "where": "src/wallet/phrase-protection-copy.ts:100 literal",
+   "base": "5cb4601"
+  },
+  "settings.protect.reverted": {
+   "en": "The protected copy stopped working after a biometric change; the wallet is using its standard copy.",
+   "where": "src/wallet/phrase-protection-copy.ts:99 literal",
+   "base": "5cb4601"
+  },
+  "settings.protect.standardCopy": {
+   "en": "An unprotected copy is still being removed; it goes the next time you approve something.",
+   "where": "src/wallet/phrase-protection-copy.ts:64 literal",
+   "base": "5cb4601"
+  },
+  "settings.wc.status.saved": {
+   "en": "Saved — used to reach the WalletConnect relay.",
+   "where": "src/wallet/walletconnect.ts:177 literal",
+   "base": "5cb4601"
+  },
+  "settings.wc.status.builtIn": {
+   "en": "Built-in project id — used to reach the WalletConnect relay. You can replace it with your own.",
+   "where": "src/wallet/walletconnect.ts:181 literal",
+   "base": "5cb4601"
+  },
+  "settings.wc.clear.label": {
+   "en": "Use the built-in id",
+   "where": "src/wallet/walletconnect.ts:197 literal",
+   "base": "5cb4601"
+  },
+  "settings.wc.clear.a11y": {
+   "en": "Use the built-in WalletConnect project id instead of the saved one",
+   "where": "src/wallet/walletconnect.ts:199 literal",
+   "base": "5cb4601"
+  },
+  "settings.wc.clear.title": {
+   "en": "Use the built-in project id?",
+   "where": "src/wallet/walletconnect.ts:200 literal",
+   "base": "5cb4601"
+  },
+  "settings.wc.clear.message": {
+   "en": "The project id you saved is removed from this phone, and the wallet's built-in project id is used again to reach the WalletConnect relay. If a connection was already opened this session, the change takes effect after the app restarts.",
+   "where": "src/wallet/walletconnect.ts:202 literal",
+   "base": "5cb4601"
+  },
+  "settings.notifications.switch": {
+   "en": "Remind me when something is due",
+   "where": "src/wallet/notifications.ts:143 literal",
+   "base": "5cb4601"
+  },
+  "settings.notifications.what": {
+   "en": "When this is on, this phone shows a reminder when one of your recurring payments falls due or one of your recurring swaps does, a notice when a price alert on your watchlist is reached, and an alert when the takeover check on the Inheritance screen finds that a recovery of one of your accounts was started. A reminder never sends anything: each payment or swap is still sent only after you confirm it in the wallet, and a price alert never buys, sells or sends.",
+   "where": "src/wallet/notifications.ts:145 literal",
+   "base": "5cb4601"
+  },
+  "settings.notifications.privacy": {
+   "en": "The reminders are scheduled on this phone by the wallet itself. No notification service is used and nothing about them leaves the device. They say only what kind of event happened, never an amount, an address or a name, because notifications can appear on the lock screen.",
+   "where": "src/wallet/notifications.ts:151 literal",
+   "base": "5cb4601"
+  },
+  "settings.notifications.limits": {
+   "en": "Reminders are worked out from what the wallet read the last time it was open, so a change made elsewhere is picked up the next time you open it. After a force stop, Android drops the scheduled reminders until you open the wallet again. Not included: merchant subscriptions (the merchant collects those payments, not this wallet) and auto-lock reminders.",
+   "where": "src/wallet/notifications.ts:155 literal",
+   "base": "5cb4601"
+  },
+  "settings.notifications.statusOff": {
+   "en": "Reminders are off. Nothing is scheduled.",
+   "where": "src/wallet/notifications.ts:788 literal",
+   "base": "5cb4601"
+  },
+  "settings.notifications.statusOn": {
+   "en": "Reminders are on.",
+   "where": "src/wallet/notifications.ts:790 literal",
+   "base": "5cb4601"
+  },
+  "settings.notifications.denied": {
+   "en": "Notifications are turned off for Shiba Wallet in this phone’s settings, so no reminder can be shown. Allow notifications for Shiba Wallet in the system settings, then turn this on again.",
+   "where": "src/wallet/notifications.ts:718 literal",
+   "base": "5cb4601"
+  },
+  "accounts.unknownError": {
+   "en": "Unknown error.",
+   "where": [
+    "src/components/AccountSwitcher.tsx:131 literal",
+    "src/components/AccountSwitcher.tsx:148 literal",
+    "src/components/AccountsSection.tsx:104 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "accounts.error.add": {
+   "en": "Could not add account",
+   "where": [
+    "src/components/AccountSwitcher.tsx:148 literal",
+    "src/components/AccountsSection.tsx:113 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "accounts.error.watch": {
+   "en": "Could not watch this address",
+   "where": "src/components/AccountsSection.tsx:124 literal",
+   "base": "5cb4601"
+  },
+  "accounts.error.remove": {
+   "en": "Could not remove account",
+   "where": [
+    "src/components/AccountsSection.tsx:149 literal",
+    "src/components/AccountsSection.tsx:214 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "accounts.error.rename": {
+   "en": "Could not rename account",
+   "where": "src/components/AccountsSection.tsx:155 literal",
+   "base": "5cb4601"
+  },
+  "accounts.error.hide": {
+   "en": "Could not hide account",
+   "where": "src/components/AccountsSection.tsx:169 literal",
+   "base": "5cb4601"
+  },
+  "accounts.error.show": {
+   "en": "Could not show account",
+   "where": "src/components/AccountsSection.tsx:334 literal",
+   "base": "5cb4601"
+  },
+  "accounts.error.switch": {
+   "en": "Could not switch account",
+   "where": [
+    "src/components/AccountSwitcher.tsx:131 literal",
+    "src/components/AccountsSection.tsx:343 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "accounts.paste.none": {
+   "en": "Nothing pasted",
+   "where": "src/components/AccountsSection.tsx:137 literal",
+   "base": "5cb4601"
+  },
+  "accounts.paste.unreadable": {
+   "en": "The clipboard could not be read. Type the address instead.",
+   "where": "src/components/AccountsSection.tsx:137 literal",
+   "base": "5cb4601"
+  },
+  "accounts.unknownAddress": {
+   "en": "unknown address",
+   "where": [
+    "src/components/AccountSwitcher.tsx:263 literal",
+    "src/components/AccountsSection.tsx:144 literal",
+    "src/components/AccountsSection.tsx:188 literal",
+    "src/components/AccountsSection.tsx:286 literal",
+    "src/wallet/multisig.ts:195 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "accounts.keepIt": {
+   "en": "Keep it",
+   "where": [
+    "src/components/AccountsSection.tsx:145 literal",
+    "src/components/AccountsSection.tsx:190 literal",
+    "src/components/AccountsSection.tsx:196 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "accounts.stopWatching": {
+   "en": "Stop watching",
+   "where": [
+    "src/components/AccountsSection.tsx:147 literal",
+    "src/screens/GuardiansScreen.tsx:858 literal",
+    "src/screens/InheritanceScreen.tsx:694 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "accounts.hide.body": {
+   "en": "Hiding only removes it from the lists. Its addresses, funds and keys are unchanged, it stays recoverable from your recovery phrase, and you can show it again here at any time.",
+   "where": "src/components/AccountsSection.tsx:162 literal",
+   "base": "5cb4601"
+  },
+  "accounts.hide": {
+   "en": "Hide",
+   "where": [
+    "src/components/AccountsSection.tsx:168 literal",
+    "src/components/AccountsSection.tsx:382 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "accounts.deleteKey": {
+   "en": "Delete the key",
+   "where": "src/components/AccountsSection.tsx:198 literal",
+   "base": "5cb4601"
+  },
+  "accounts.notRemoved": {
+   "en": "Not removed",
+   "where": [
+    "src/components/AccountsSection.tsx:211 literal",
+    "src/screens/PasskeyScreen.tsx:384 literal",
+    "src/screens/PasskeyScreen.tsx:391 literal",
+    "src/screens/PasskeyScreen.tsx:421 literal",
+    "src/screens/SpendingLimitsScreen.tsx:263 literal",
+    "src/screens/SpendingLimitsScreen.tsx:269 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "accounts.keyNotOpened": {
+   "en": "The key could not be opened.",
+   "where": "src/components/AccountsSection.tsx:250 literal",
+   "base": "5cb4601"
+  },
+  "accounts.tag.active": {
+   "en": "Active",
+   "where": [
+    "src/components/AccountsSection.tsx:274 literal",
+    "src/wallet/sessions.ts:1459 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "accounts.tag.hidden": {
+   "en": "Hidden",
+   "where": "src/components/AccountsSection.tsx:276 literal",
+   "base": "5cb4601"
+  },
+  "accounts.tag.imported": {
+   "en": "Imported",
+   "where": "src/components/AccountsSection.tsx:278 literal",
+   "base": "5cb4601"
+  },
+  "accounts.tag.watchOnly": {
+   "en": "Watch-only",
+   "where": "src/components/AccountsSection.tsx:280 literal",
+   "base": "5cb4601"
+  },
+  "accounts.row.importedNote": {
+   "en": "imported private key, Ethereum only — NOT backed up by your recovery phrase",
+   "where": "src/components/AccountsSection.tsx:291 jsx",
+   "base": "5cb4601"
+  },
+  "accounts.field.name": {
+   "en": "Account name",
+   "where": [
+    "src/components/AccountsSection.tsx:300 literal",
+    "src/components/AccountsSection.tsx:302 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "accounts.field.namePlaceholder": {
+   "en": "For example Savings",
+   "where": [
+    "src/components/AccountsSection.tsx:307 literal",
+    "src/components/AccountsSection.tsx:411 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "accounts.showAgain": {
+   "en": "Show again",
+   "where": "src/components/AccountsSection.tsx:331 literal",
+   "base": "5cb4601"
+  },
+  "accounts.use": {
+   "en": "Use",
+   "where": "src/components/AccountsSection.tsx:347 jsx",
+   "base": "5cb4601"
+  },
+  "accounts.rename": {
+   "en": "Rename",
+   "where": [
+    "src/components/AccountsSection.tsx:358 jsx",
+    "src/screens/ContactsScreen.tsx:306 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "accounts.showKey": {
+   "en": "Show private key",
+   "where": "src/components/AccountsSection.tsx:362 jsx",
+   "base": "5cb4601"
+  },
+  "accounts.derivationNote": {
+   "en": "Account addresses from the phrase follow the common conventions: Ethereum m/44'/60'/0'/0/N (as MetaMask), Solana m/44'/501'/N'/0' (as Phantom), Bitcoin m/84'/0'/N'/0/0 and Dogecoin m/44'/3'/N'/0/0. After restoring the phrase on a new device, add accounts again in the same order to get the same addresses back.",
+   "where": "src/components/AccountsSection.tsx:395 jsx",
+   "base": "5cb4601"
+  },
+  "accounts.field.newName": {
+   "en": "New account name (optional)",
+   "where": [
+    "src/components/AccountsSection.tsx:405 literal",
+    "src/components/AccountsSection.tsx:407 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "accounts.add": {
+   "en": "Add account",
+   "where": [
+    "src/components/AccountSwitcher.tsx:342 literal",
+    "src/components/AccountsSection.tsx:418 literal",
+    "src/screens/RecoverAccountScreen.tsx:201 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "accounts.importKey": {
+   "en": "Import a private key (Ethereum only)",
+   "where": "src/components/AccountsSection.tsx:420 literal",
+   "base": "5cb4601"
+  },
+  "accounts.importKey.hint": {
+   "en": "Adds an account from a single Ethereum private key. It is not backed up by your recovery phrase.",
+   "where": "src/components/AccountsSection.tsx:424 literal",
+   "base": "5cb4601"
+  },
+  "accounts.watchOnly.heading": {
+   "en": "Watch-only accounts",
+   "where": "src/components/AccountsSection.tsx:429 jsx",
+   "base": "5cb4601"
+  },
+  "accounts.watch.heading": {
+   "en": "Watch an address",
+   "where": [
+    "src/components/AccountsSection.tsx:451 jsx",
+    "src/components/AccountsSection.tsx:503 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "accounts.field.watchAddress": {
+   "en": "Ethereum address to watch",
+   "where": [
+    "src/components/AccountsSection.tsx:454 literal",
+    "src/components/AccountsSection.tsx:456 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "accounts.field.watchAddressPlaceholder": {
+   "en": "Ethereum address (0x…)",
+   "where": "src/components/AccountsSection.tsx:462 literal",
+   "base": "5cb4601"
+  },
+  "accounts.paste": {
+   "en": "Paste",
+   "where": [
+    "src/components/AccountsSection.tsx:470 literal",
+    "src/screens/ImportKeyScreen.tsx:166 literal",
+    "src/screens/ProveOwnershipScreen.tsx:277 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "accounts.scanQr": {
+   "en": "Scan QR",
+   "where": "src/components/AccountsSection.tsx:471 literal",
+   "base": "5cb4601"
+  },
+  "accounts.field.watchName": {
+   "en": "Name for the watched address",
+   "where": [
+    "src/components/AccountsSection.tsx:473 literal",
+    "src/components/AccountsSection.tsx:475 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "accounts.field.watchNamePlaceholder": {
+   "en": "Name (optional)",
+   "where": [
+    "src/components/AccountsSection.tsx:479 literal",
+    "src/screens/DcaViews.tsx:131 literal",
+    "src/screens/MultisigScreen.tsx:715 literal",
+    "src/screens/MultisigScreen.tsx:717 literal",
+    "src/screens/SessionsScreen.tsx:2503 literal",
+    "src/screens/SessionsScreen.tsx:2503 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "accounts.watch.confirm": {
+   "en": "Watch this address",
+   "where": "src/components/AccountsSection.tsx:487 literal",
+   "base": "5cb4601"
+  },
+  "accounts.hiddenHide": {
+   "en": "Hide hidden accounts",
+   "where": "src/components/AccountsSection.tsx:523 literal",
+   "base": "5cb4601"
+  },
+  "accounts.watchedWas": {
+   "en": "You were watching this address",
+   "where": "src/wallet/watch-only.ts:123 literal",
+   "base": "5cb4601"
+  },
+  "accounts.stopWatching.title": {
+   "en": "Stop watching this address?",
+   "where": "src/wallet/watch-only.ts:372 literal",
+   "base": "5cb4601"
+  },
+  "accounts.watch.buttonHint": {
+   "en": "Follows an Ethereum address without its key. The wallet cannot sign for it; a send for it can be prepared for an off-line signer.",
+   "where": "src/wallet/watch-only.ts:359 literal",
+   "base": "5cb4601"
+  },
+  "accounts.watch.intro": {
+   "en": "Follow any Ethereum address without its key: its balances, tokens, activity and NFTs appear like an account’s, but the wallet cannot sign, swap or recover anything for it. A send on an Ethereum network can still be prepared here and signed by an off-line signer that holds its key.",
+   "where": "src/wallet/watch-only.ts:344 literal",
+   "base": "5cb4601"
+  },
+  "accounts.watch.privacy": {
+   "en": "Watching an address reveals your interest in it to the network endpoints and indexers this wallet uses (Settings → Network endpoints and the history and NFT indexers), because the wallet asks them about this address.",
+   "where": "src/wallet/watch-only.ts:363 literal",
+   "base": "5cb4601"
+  },
+  "accounts.watchOnly.rowNote": {
+   "en": "watch-only, no key in this wallet — it cannot sign; a send can be prepared for an off-line signer",
+   "where": "src/wallet/watch-only.ts:356 literal",
+   "base": "5cb4601"
+  },
+  "accounts.watchOnly.listHint": {
+   "en": "Watch-only accounts are addresses this wallet follows without a key; your recovery phrase has nothing to back up for them.",
+   "where": "src/wallet/watch-only.ts:369 literal",
+   "base": "5cb4601"
+  },
+  "accounts.importedWas": {
+   "en": "This key was already imported",
+   "where": "src/wallet/imported-keys.ts:117 literal",
+   "base": "5cb4601"
+  },
+  "accounts.removeImported.confirmMessage": {
+   "en": "Only continue if you have the private key written down or stored elsewhere, or the account is empty.",
+   "where": "src/wallet/imported-keys.ts:305 literal",
+   "base": "5cb4601"
+  },
+  "accounts.removeImported.confirmTitle": {
+   "en": "Delete the private key?",
+   "where": "src/wallet/imported-keys.ts:303 literal",
+   "base": "5cb4601"
+  },
+  "accounts.removeImported.title": {
+   "en": "Remove this imported account?",
+   "where": "src/wallet/imported-keys.ts:242 literal",
+   "base": "5cb4601"
+  },
+  "accounts.revealImported.message": {
+   "en": "Make sure no one can see your screen. Anyone who sees this key controls the account. Keeping a copy of it is the only backup this account has.",
+   "where": "src/wallet/imported-keys.ts:309 literal",
+   "base": "5cb4601"
+  },
+  "accounts.revealImported.title": {
+   "en": "Show this private key?",
+   "where": "src/wallet/imported-keys.ts:307 literal",
+   "base": "5cb4601"
+  },
+  "accounts.multisig.listHint": {
+   "en": "Listed here for reference only. They are managed on the Multisig screen (Settings → Multi-signature accounts) and cannot be hidden here.",
+   "where": "src/wallet/multisig.ts:146 literal",
+   "base": "5cb4601"
+  },
+  "recordsBackup.restore": {
+   "en": "Restore",
+   "where": "src/screens/RecordsBackupSection.tsx:156 literal",
+   "base": "5cb4601"
+  },
+  "recordsBackup.confirmTitle": {
+   "en": "Restore records from this backup?",
+   "where": "src/wallet/records-backup.ts:231 literal",
+   "base": "5cb4601"
+  },
+  "recordsBackup.what": {
+   "en": "A records backup is one file with the records this wallet keeps on this phone: contacts, transaction notes, networks you added, tracked tokens, guardian recovery records, multi-signature account records, bridge transfers, price alerts and spending limits. It contains no private key, no recovery phrase and no PIN.",
+   "where": "src/wallet/records-backup.ts:179 literal",
+   "base": "5cb4601"
+  },
+  "recordsBackup.key": {
+   "en": "The file is encrypted with a key made from this wallet’s recovery phrase, so only this recovery phrase can open it — on this phone, or on another phone after you restore the phrase there. If you lose the recovery phrase, this backup is lost with it.",
+   "where": "src/wallet/records-backup.ts:184 literal",
+   "base": "5cb4601"
+  },
+  "recordsBackup.notIncluded": {
+   "en": "Not in the backup and not restored by it: session keys (they never leave this phone; a payment, subscription or recurring swap must be revoked and set up again), imported private keys (only the copy of the key you kept yourself can restore such an account) and passkeys (the phone’s passkey provider holds them, not this wallet). Account names, watched addresses, connected apps, pending transactions and spending history are not included either.",
+   "where": "src/wallet/records-backup.ts:189 literal",
+   "base": "5cb4601"
+  },
+  "recordsBackup.merge": {
+   "en": "Restoring adds only the records that are not on this phone yet. A record that is already here — the same contact address, note, network, token, account, transfer, alert or limit — is kept exactly as it is and never overwritten. Each record is checked as when it was first saved, and a network you added is checked again through its RPC address. A multi-signature account comes back without its operation history.",
+   "where": "src/wallet/records-backup.ts:196 literal",
+   "base": "5cb4601"
+  },
+  "recordsBackup.preparing": {
+   "en": "Preparing the backup…",
+   "where": "src/screens/RecordsBackupSection.tsx:168 literal",
+   "base": "5cb4601"
+  },
+  "recordsBackup.export": {
+   "en": "Export records backup",
+   "where": "src/wallet/records-backup.ts:205 literal",
+   "base": "5cb4601"
+  },
+  "recordsBackup.file": {
+   "en": "The file is shared through the share sheet (for example to your cloud drive). The temporary copy on this phone is deleted a minute after the share sheet closes.",
+   "where": "src/wallet/records-backup.ts:202 literal",
+   "base": "5cb4601"
+  },
+  "recordsBackup.restoring": {
+   "en": "Restoring…",
+   "where": "src/screens/RecordsBackupSection.tsx:175 literal",
+   "base": "5cb4601"
+  },
+  "recordsBackup.import": {
+   "en": "Restore from a records backup",
+   "where": "src/wallet/records-backup.ts:206 literal",
+   "base": "5cb4601"
+  },
+  "sessions.notGranted": {
+   "en": "Not granted",
+   "where": [
+    "src/screens/SessionsScreen.tsx:816 literal",
+    "src/screens/SessionsScreen.tsx:1118 literal",
+    "src/screens/SessionsScreen.tsx:1422 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.swapNow.title": {
+   "en": "Swap now?",
+   "where": "src/screens/SessionsScreen.tsx:1505 literal",
+   "base": "5cb4601"
+  },
+  "sessions.swapNow": {
+   "en": "Swap now",
+   "where": [
+    "src/screens/DcaViews.tsx:502 literal",
+    "src/screens/SessionsScreen.tsx:1509 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.notShown": {
+   "en": "Not shown",
+   "where": "src/screens/SessionsScreen.tsx:1591 literal",
+   "base": "5cb4601"
+  },
+  "sessions.keyNotAvailable": {
+   "en": "Key not available",
+   "where": "src/screens/SessionsScreen.tsx:1599 literal",
+   "base": "5cb4601"
+  },
+  "sessions.handover.title": {
+   "en": "Delete the key from this device?",
+   "where": "src/screens/SessionsScreen.tsx:1607 literal",
+   "base": "5cb4601"
+  },
+  "sessions.handover.body": {
+   "en": "Only do this once the merchant has the key. It cannot be shown again; if it was lost, revoke the subscription and create a new one.",
+   "where": "src/screens/SessionsScreen.tsx:1608 literal",
+   "base": "5cb4601"
+  },
+  "sessions.handover.confirm": {
+   "en": "The merchant has it",
+   "where": "src/screens/SessionsScreen.tsx:1613 literal",
+   "base": "5cb4601"
+  },
+  "sessions.notChanged": {
+   "en": "Not changed",
+   "where": "src/screens/SessionsScreen.tsx:1622 literal",
+   "base": "5cb4601"
+  },
+  "sessions.test.title": {
+   "en": "Test this session?",
+   "where": "src/screens/SessionsScreen.tsx:1637 literal",
+   "base": "5cb4601"
+  },
+  "sessions.test.noData": {
+   "en": "no data",
+   "where": "src/screens/SessionsScreen.tsx:1639 literal",
+   "base": "5cb4601"
+  },
+  "sessions.test.send": {
+   "en": "Send test",
+   "where": "src/screens/SessionsScreen.tsx:1645 literal",
+   "base": "5cb4601"
+  },
+  "sessions.test.refused": {
+   "en": "Session test refused",
+   "where": "src/screens/SessionsScreen.tsx:1675 literal",
+   "base": "5cb4601"
+  },
+  "sessions.notSent": {
+   "en": "Not sent",
+   "where": [
+    "src/components/PendingTransactions.tsx:287 literal",
+    "src/components/SpendingPolicyViews.tsx:98 literal",
+    "src/screens/ApprovalsScreen.tsx:425 literal",
+    "src/screens/ApproveRecoveryScreen.tsx:261 literal",
+    "src/screens/BridgeScreen.tsx:599 literal",
+    "src/screens/BridgeScreen.tsx:642 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.pay.title": {
+   "en": "Send this payment now?",
+   "where": "src/screens/SessionsScreen.tsx:1709 literal",
+   "base": "5cb4601"
+  },
+  "sessions.pay.confirm": {
+   "en": "Send payment",
+   "where": "src/screens/SessionsScreen.tsx:1713 literal",
+   "base": "5cb4601"
+  },
+  "sessions.notRevoked": {
+   "en": "Not revoked",
+   "where": "src/screens/SessionsScreen.tsx:1815 literal",
+   "base": "5cb4601"
+  },
+  "sessions.forget.title": {
+   "en": "Forget this session?",
+   "where": "src/screens/SessionsScreen.tsx:1896 literal",
+   "base": "5cb4601"
+  },
+  "sessions.forget.body": {
+   "en": "It is removed from this list (and its key from this device).",
+   "where": "src/screens/SessionsScreen.tsx:1896 literal",
+   "base": "5cb4601"
+  },
+  "sessions.kept": {
+   "en": "Kept",
+   "where": "src/screens/SessionsScreen.tsx:1908 literal",
+   "base": "5cb4601"
+  },
+  "sessions.reset.title": {
+   "en": "Reset the session list?",
+   "where": "src/screens/SessionsScreen.tsx:1920 literal",
+   "base": "5cb4601"
+  },
+  "sessions.reset.body": {
+   "en": "The unreadable list is cleared. This does NOT revoke anything on-chain: grants stay active until they expire, and the session keys the old list referenced stay unused in secure storage.",
+   "where": "src/screens/SessionsScreen.tsx:1921 literal",
+   "base": "5cb4601"
+  },
+  "sessions.row.owner": {
+   "en": "Owner account (installs and revokes)",
+   "where": "src/screens/SessionsScreen.tsx:1953 literal",
+   "base": "5cb4601"
+  },
+  "sessions.row.kernelUpgraded": {
+   "en": "Kernel account (your upgraded address)",
+   "where": "src/screens/SessionsScreen.tsx:1957 literal",
+   "base": "5cb4601"
+  },
+  "sessions.signed.sessionKey": {
+   "en": "Signed by the session key only.",
+   "where": "src/screens/SessionsScreen.tsx:1979 jsx",
+   "base": "5cb4601"
+  },
+  "sessions.signed.recurring": {
+   "en": "Signed by this recurring payment’s own key only, not by your account key.",
+   "where": "src/screens/SessionsScreen.tsx:1983 jsx",
+   "base": "5cb4601"
+  },
+  "sessions.signed.dca": {
+   "en": "Signed by this recurring swap’s own key only, not by your account key.",
+   "where": "src/screens/SessionsScreen.tsx:1988 jsx",
+   "base": "5cb4601"
+  },
+  "sessions.bundling": {
+   "en": "Bundling… waiting for the receipt.",
+   "where": [
+    "src/screens/ApproveRecoveryScreen.tsx:315 jsx",
+    "src/screens/GuardiansScreen.tsx:486 jsx",
+    "src/screens/InheritanceScreen.tsx:401 jsx",
+    "src/screens/PasskeyScreen.tsx:467 jsx",
+    "src/screens/SessionsScreen.tsx:1999 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.reverted": {
+   "en": "Included, but the operation reverted.",
+   "where": [
+    "src/screens/ApproveRecoveryScreen.tsx:321 literal",
+    "src/screens/GuardiansScreen.tsx:494 jsx",
+    "src/screens/InheritanceScreen.tsx:405 jsx",
+    "src/screens/PasskeyScreen.tsx:476 jsx",
+    "src/screens/SessionsScreen.tsx:2009 jsx",
+    "src/wallet/pending-transactions.ts:1590 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.notIncluded": {
+   "en": "Not included within two minutes. It may still be included; the list reads the status from the chain.",
+   "where": "src/screens/SessionsScreen.tsx:2014 jsx",
+   "base": "5cb4601"
+  },
+  "sessions.viewBundle": {
+   "en": "View bundle transaction",
+   "where": [
+    "src/screens/ApproveRecoveryScreen.tsx:330 literal",
+    "src/screens/GuardiansScreen.tsx:502 literal",
+    "src/screens/InheritanceScreen.tsx:412 literal",
+    "src/screens/OwnerRotationScreen.tsx:370 literal",
+    "src/screens/PasskeyScreen.tsx:485 literal",
+    "src/screens/SessionsScreen.tsx:2019 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.grant.title": {
+   "en": "Grant this session?",
+   "where": "src/screens/SessionsScreen.tsx:2049 jsx",
+   "base": "5cb4601"
+  },
+  "sessions.row.install": {
+   "en": "Install operation",
+   "where": [
+    "src/screens/PasskeyScreen.tsx:554 literal",
+    "src/screens/SessionsScreen.tsx:2062 literal",
+    "src/screens/SessionsScreen.tsx:2226 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.install.signed": {
+   "en": "Signed by your account key as the account's root validator.",
+   "where": [
+    "src/screens/DcaViews.tsx:379 literal",
+    "src/screens/GuardiansScreen.tsx:582 literal",
+    "src/screens/InheritanceScreen.tsx:470 literal",
+    "src/screens/SessionsScreen.tsx:2064 literal",
+    "src/screens/SessionsScreen.tsx:2228 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.sponsored": {
+   "en": "Sponsored — the account pays 0",
+   "where": [
+    "src/screens/DcaViews.tsx:383 literal",
+    "src/screens/GuardiansScreen.tsx:585 literal",
+    "src/screens/InheritanceScreen.tsx:473 literal",
+    "src/screens/OwnerRotationScreen.tsx:482 literal",
+    "src/screens/PasskeyScreen.tsx:506 literal",
+    "src/screens/SessionsScreen.tsx:2069 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.row.balance": {
+   "en": "Account balance",
+   "where": [
+    "src/screens/DcaViews.tsx:392 literal",
+    "src/screens/GuardiansScreen.tsx:587 literal",
+    "src/screens/InheritanceScreen.tsx:475 literal",
+    "src/screens/OwnerRotationScreen.tsx:484 literal",
+    "src/screens/SessionsScreen.tsx:2072 literal",
+    "src/screens/SessionsScreen.tsx:2243 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.install.estimatePassed": {
+   "en": "Bundler gas estimate passed (eth_estimateUserOperationGas simulated the install).",
+   "where": [
+    "src/components/WcApprovalSheet.tsx:1661 jsx",
+    "src/screens/SessionsScreen.tsx:2075 jsx",
+    "src/screens/SessionsScreen.tsx:2280 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.signingSending": {
+   "en": "Signing and sending…",
+   "where": [
+    "src/screens/DcaViews.tsx:434 literal",
+    "src/screens/GuardiansScreen.tsx:595 jsx",
+    "src/screens/InheritanceScreen.tsx:481 jsx",
+    "src/screens/OwnerRotationScreen.tsx:492 jsx",
+    "src/screens/PasskeyScreen.tsx:518 jsx",
+    "src/screens/SessionsScreen.tsx:2080 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.grant.button": {
+   "en": "Grant session",
+   "where": "src/screens/SessionsScreen.tsx:2084 literal",
+   "base": "5cb4601"
+  },
+  "sessions.handover.button": {
+   "en": "Hand the key to the merchant",
+   "where": "src/screens/SessionsScreen.tsx:2103 jsx",
+   "base": "5cb4601"
+  },
+  "sessions.handover.done": {
+   "en": "The merchant has the key — delete it here",
+   "where": "src/screens/SessionsScreen.tsx:2111 literal",
+   "base": "5cb4601"
+  },
+  "sessions.handover.notNow": {
+   "en": "Not now (keep it on this device)",
+   "where": "src/screens/SessionsScreen.tsx:2113 literal",
+   "base": "5cb4601"
+  },
+  "sessions.enforces": {
+   "en": "Your account enforces on-chain:",
+   "where": [
+    "src/screens/DcaViews.tsx:358 jsx",
+    "src/screens/SessionsScreen.tsx:2202 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.technical": {
+   "en": "Technical details (the grant as installed)",
+   "where": [
+    "src/screens/DcaViews.tsx:365 jsx",
+    "src/screens/SessionsScreen.tsx:2214 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.start.recurring": {
+   "en": "Start this recurring payment?",
+   "where": "src/screens/SessionsScreen.tsx:2186 literal",
+   "base": "5cb4601"
+  },
+  "sessions.start.subscriptionTitle": {
+   "en": "Start this subscription?",
+   "where": "src/screens/SessionsScreen.tsx:2186 literal",
+   "base": "5cb4601"
+  },
+  "sessions.requote": {
+   "en": "Starting the clock now and asking the bundler again…",
+   "where": [
+    "src/screens/DcaViews.tsx:434 literal",
+    "src/screens/SessionsScreen.tsx:2287 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.newSubscription": {
+   "en": "New subscription",
+   "where": [
+    "src/screens/SessionsScreen.tsx:2350 literal",
+    "src/screens/SessionsScreen.tsx:2751 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.newRecurring": {
+   "en": "New recurring payment",
+   "where": [
+    "src/screens/SessionsScreen.tsx:2350 literal",
+    "src/screens/SessionsScreen.tsx:2757 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.newDca": {
+   "en": "New recurring swap",
+   "where": [
+    "src/screens/DcaViews.tsx:134 jsx",
+    "src/screens/SessionsScreen.tsx:2763 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.subscription.intro": {
+   "en": "Lets one merchant take up to a fixed amount once per period, until the payments run out or you revoke. A new key is created for the merchant; your account enforces the limits on-chain.",
+   "where": "src/screens/SessionsScreen.tsx:2361 jsx",
+   "base": "5cb4601"
+  },
+  "sessions.field.payTo": {
+   "en": "Pay to (receives the payments)",
+   "where": [
+    "src/screens/SessionsScreen.tsx:2365 literal",
+    "src/screens/SessionsScreen.tsx:2366 literal",
+    "src/screens/SessionsScreen.tsx:2369 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.field.merchant": {
+   "en": "Merchant (receives the payments)",
+   "where": [
+    "src/screens/SessionsScreen.tsx:2365 literal",
+    "src/screens/SessionsScreen.tsx:2366 literal",
+    "src/screens/SessionsScreen.tsx:2369 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.field.recipientPlaceholder": {
+   "en": "Recipient address (0x…)",
+   "where": "src/screens/SessionsScreen.tsx:2372 literal",
+   "base": "5cb4601"
+  },
+  "sessions.field.merchantPlaceholder": {
+   "en": "Merchant address (0x…)",
+   "where": "src/screens/SessionsScreen.tsx:2372 literal",
+   "base": "5cb4601"
+  },
+  "sessions.pickContact": {
+   "en": "Pick from contacts",
+   "where": [
+    "src/screens/GuardiansScreen.tsx:654 literal",
+    "src/screens/InheritanceScreen.tsx:529 literal",
+    "src/screens/SessionsScreen.tsx:2381 literal",
+    "src/screens/SessionsScreen.tsx:2613 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.field.paidIn": {
+   "en": "Paid in",
+   "where": "src/screens/SessionsScreen.tsx:2382 jsx",
+   "base": "5cb4601"
+  },
+  "sessions.field.mostPerPayment": {
+   "en": "Most per payment",
+   "where": [
+    "src/screens/SessionsScreen.tsx:2393 literal",
+    "src/screens/SessionsScreen.tsx:2393 jsx",
+    "src/screens/SessionsScreen.tsx:2395 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.field.onceEvery": {
+   "en": "Once every",
+   "where": [
+    "src/screens/DcaViews.tsx:179 jsx",
+    "src/screens/SessionsScreen.tsx:2403 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.custom": {
+   "en": "Custom",
+   "where": [
+    "src/screens/DcaViews.tsx:194 literal",
+    "src/screens/SessionsScreen.tsx:2418 literal",
+    "src/screens/SpendingLimitsScreen.tsx:433 literal",
+    "src/screens/SwapScreen.tsx:1744 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.field.howMany": {
+   "en": "How many",
+   "where": [
+    "src/screens/DcaViews.tsx:207 literal",
+    "src/screens/SessionsScreen.tsx:2431 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.field.namePlaceholderRent": {
+   "en": "e.g. rent",
+   "where": "src/screens/SessionsScreen.tsx:2508 literal",
+   "base": "5cb4601"
+  },
+  "sessions.field.namePlaceholderService": {
+   "en": "e.g. the service’s name",
+   "where": "src/screens/SessionsScreen.tsx:2508 literal",
+   "base": "5cb4601"
+  },
+  "sessions.reading": {
+   "en": "Reading the account and asking the bundler…",
+   "where": [
+    "src/components/WcApprovalSheet.tsx:1639 jsx",
+    "src/screens/GuardiansScreen.tsx:738 jsx",
+    "src/screens/InheritanceScreen.tsx:598 jsx",
+    "src/screens/OwnerRotationScreen.tsx:622 jsx",
+    "src/screens/PasskeyScreen.tsx:666 literal",
+    "src/screens/SessionsScreen.tsx:2517 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.row.permissionId": {
+   "en": "Permission id",
+   "where": [
+    "src/screens/DcaViews.tsx:512 literal",
+    "src/screens/SessionsScreen.tsx:2555 literal",
+    "src/screens/SessionsScreen.tsx:2843 literal",
+    "src/screens/SessionsScreen.tsx:2950 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.row.operation": {
+   "en": "Operation",
+   "where": [
+    "src/screens/ApproveRecoveryScreen.tsx:352 literal",
+    "src/screens/GuardiansScreen.tsx:582 literal",
+    "src/screens/InheritanceScreen.tsx:470 literal",
+    "src/screens/OwnerRotationScreen.tsx:472 literal",
+    "src/screens/PasskeyScreen.tsx:621 literal",
+    "src/screens/SessionsScreen.tsx:2557 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.revoke.call": {
+   "en": "One call to your own account: uninstallValidation for this permission",
+   "where": "src/screens/SessionsScreen.tsx:2558 literal",
+   "base": "5cb4601"
+  },
+  "sessions.estimatePassed": {
+   "en": "Bundler gas estimate passed.",
+   "where": [
+    "src/screens/ApproveRecoveryScreen.tsx:361 jsx",
+    "src/screens/SessionsScreen.tsx:2568 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.grant.heading": {
+   "en": "Grant a session",
+   "where": "src/screens/SessionsScreen.tsx:2591 jsx",
+   "base": "5cb4601"
+  },
+  "sessions.grant.intro": {
+   "en": "A session key is a new key on this device that may make ONLY the calls you list, until it expires. Your account enforces the limits on-chain. Each value cap is per call, not a total.",
+   "where": "src/screens/SessionsScreen.tsx:2594 jsx",
+   "base": "5cb4601"
+  },
+  "sessions.call.targetPlaceholder": {
+   "en": "Target address (0x…)",
+   "where": "src/screens/SessionsScreen.tsx:2604 literal",
+   "base": "5cb4601"
+  },
+  "sessions.call.capPlaceholder": {
+   "en": "Empty means 0",
+   "where": "src/screens/SessionsScreen.tsx:2630 literal",
+   "base": "5cb4601"
+  },
+  "sessions.call.remove": {
+   "en": "Remove this call",
+   "where": "src/screens/SessionsScreen.tsx:2637 literal",
+   "base": "5cb4601"
+  },
+  "sessions.call.add": {
+   "en": "Add another allowed call",
+   "where": "src/screens/SessionsScreen.tsx:2644 literal",
+   "base": "5cb4601"
+  },
+  "sessions.field.expires": {
+   "en": "Expires after (required)",
+   "where": "src/screens/SessionsScreen.tsx:2645 jsx",
+   "base": "5cb4601"
+  },
+  "sessions.field.gasBudget": {
+   "en": "Gas budget (optional)",
+   "where": [
+    "src/screens/SessionsScreen.tsx:2656 literal",
+    "src/screens/SessionsScreen.tsx:2656 jsx",
+    "src/screens/SessionsScreen.tsx:2658 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.noAddress": {
+   "en": "No Ethereum address for this account.",
+   "where": [
+    "src/screens/GuardiansScreen.tsx:770 jsx",
+    "src/screens/InheritanceScreen.tsx:633 jsx",
+    "src/screens/OwnerRotationScreen.tsx:522 jsx",
+    "src/screens/PasskeyScreen.tsx:657 jsx",
+    "src/screens/SessionsScreen.tsx:686 literal",
+    "src/screens/SessionsScreen.tsx:2735 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.grant.new": {
+   "en": "Grant a new session",
+   "where": "src/screens/SessionsScreen.tsx:2743 literal",
+   "base": "5cb4601"
+  },
+  "sessions.list.unreadable": {
+   "en": "The saved session list could not be read. Nothing was changed. Grants on-chain are not affected.",
+   "where": "src/screens/SessionsScreen.tsx:2778 jsx",
+   "base": "5cb4601"
+  },
+  "sessions.list.reset": {
+   "en": "Reset session list",
+   "where": "src/screens/SessionsScreen.tsx:2781 literal",
+   "base": "5cb4601"
+  },
+  "sessions.list.partial": {
+   "en": "Some saved sessions could not be read and are not shown.",
+   "where": "src/screens/SessionsScreen.tsx:2785 jsx",
+   "base": "5cb4601"
+  },
+  "sessions.recurring.heading": {
+   "en": "Recurring payments",
+   "where": "src/screens/SessionsScreen.tsx:2788 jsx",
+   "base": "5cb4601"
+  },
+  "sessions.none": {
+   "en": "None on this device.",
+   "where": [
+    "src/screens/DcaViews.tsx:453 literal",
+    "src/screens/SessionsScreen.tsx:2790 jsx",
+    "src/screens/SessionsScreen.tsx:2897 jsx",
+    "src/screens/SessionsScreen.tsx:2973 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.payNow": {
+   "en": "Send the payment now",
+   "where": "src/screens/SessionsScreen.tsx:2827 literal",
+   "base": "5cb4601"
+  },
+  "sessions.payNow.hint": {
+   "en": "Checks the payment with the network, then asks you to confirm before anything is sent.",
+   "where": "src/screens/SessionsScreen.tsx:2828 literal",
+   "base": "5cb4601"
+  },
+  "sessions.refresh": {
+   "en": "Refresh status",
+   "where": [
+    "src/screens/DcaViews.tsx:508 literal",
+    "src/screens/PasskeyScreen.tsx:696 literal",
+    "src/screens/RecoverAccountScreen.tsx:630 literal",
+    "src/screens/SessionsScreen.tsx:2834 literal",
+    "src/screens/SessionsScreen.tsx:2933 literal",
+    "src/screens/SessionsScreen.tsx:3035 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.row.setupHash": {
+   "en": "Set-up UserOperation hash",
+   "where": [
+    "src/screens/DcaViews.tsx:513 literal",
+    "src/screens/SessionsScreen.tsx:2845 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.row.revocationHash": {
+   "en": "Revocation UserOperation hash",
+   "where": [
+    "src/screens/DcaViews.tsx:514 literal",
+    "src/screens/SessionsScreen.tsx:2848 literal",
+    "src/screens/SessionsScreen.tsx:2955 literal",
+    "src/screens/SessionsScreen.tsx:3005 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.revokeAndForget": {
+   "en": "Revoke and forget",
+   "where": [
+    "src/screens/DcaViews.tsx:519 literal",
+    "src/screens/SessionsScreen.tsx:2854 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.revokeRecurring": {
+   "en": "Revoke (stop the recurring payment)",
+   "where": "src/screens/SessionsScreen.tsx:2862 literal",
+   "base": "5cb4601"
+  },
+  "sessions.subscriptions.heading": {
+   "en": "Subscriptions",
+   "where": "src/screens/SessionsScreen.tsx:2895 jsx",
+   "base": "5cb4601"
+  },
+  "sessions.row.installHash": {
+   "en": "Install UserOperation hash",
+   "where": [
+    "src/screens/SessionsScreen.tsx:2952 literal",
+    "src/screens/SessionsScreen.tsx:3002 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.handover.once": {
+   "en": "Hand the key to the merchant (shown once)",
+   "where": "src/screens/SessionsScreen.tsx:2958 literal",
+   "base": "5cb4601"
+  },
+  "sessions.revokeSubscription": {
+   "en": "Revoke (stop the subscription)",
+   "where": "src/screens/SessionsScreen.tsx:2962 literal",
+   "base": "5cb4601"
+  },
+  "sessions.onAccount.heading": {
+   "en": "Sessions on this account",
+   "where": "src/screens/SessionsScreen.tsx:2971 jsx",
+   "base": "5cb4601"
+  },
+  "sessions.revoke": {
+   "en": "Revoke",
+   "where": [
+    "src/screens/ApprovalsScreen.tsx:570 literal",
+    "src/screens/ApprovalsScreen.tsx:706 literal",
+    "src/screens/SessionsScreen.tsx:3027 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.readingStatus": {
+   "en": "Reading status…",
+   "where": [
+    "src/screens/DcaViews.tsx:476 literal",
+    "src/screens/PasskeyScreen.tsx:674 literal",
+    "src/screens/SessionsScreen.tsx:2806 literal",
+    "src/screens/SessionsScreen.tsx:2920 literal",
+    "src/screens/SessionsScreen.tsx:2997 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.card.keyHere": {
+   "en": "on this device",
+   "where": "src/screens/SessionsScreen.tsx:2989 literal",
+   "base": "5cb4601"
+  },
+  "sessions.card.keyDapp": {
+   "en": "held by the dApp",
+   "where": "src/screens/SessionsScreen.tsx:2989 literal",
+   "base": "5cb4601"
+  },
+  "sessions.card.keyDeleted": {
+   "en": "deleted",
+   "where": "src/screens/SessionsScreen.tsx:2989 literal",
+   "base": "5cb4601"
+  },
+  "sessions.audit": {
+   "en": "The session permission modules (ZeroDev ECDSASigner, CallPolicy v0.0.4, TimestampPolicy, GasPolicy) have no published security audit that names them. Treat sessions as experimental with real funds.",
+   "where": "src/wallet/sessions.ts:161 literal",
+   "base": "5cb4601"
+  },
+  "sessions.wipeWarning": {
+   "en": "Sessions are enforced by your account on-chain, but this list and the session keys exist only on this device. Wiping the wallet or restoring it from the recovery phrase loses both, while the grants stay active on-chain until they expire. Revoke sessions you no longer need before wiping, and revoke everything you no longer recognise.",
+   "where": "src/wallet/sessions.ts:150 literal",
+   "base": "5cb4601"
+  },
+  "sessions.installMode": {
+   "en": "Installed with an ordinary operation signed by your account key, so the permission is live on-chain before the session key signs anything. (The alternative \"enable mode\" signature is not used: an unused enable signature cannot be cancelled before it expires.)",
+   "where": "src/wallet/sessions.ts:156 literal",
+   "base": "5cb4601"
+  },
+  "sessions.subscription.keyWarning": {
+   "en": "This is the subscription key. Whoever holds it can take payments from your account within the limits above until you revoke or it expires. Give it only to the merchant, over a channel you trust. It is shown once: after you confirm the hand-over it is deleted from this device.",
+   "where": "src/wallet/subscriptions.ts:237 literal",
+   "base": "5cb4601"
+  },
+  "sessions.installedPermissionId": {
+   "en": "Kernel permission id (installed)",
+   "where": "src/wallet/subscriptions.ts:530 literal",
+   "base": "5cb4601"
+  },
+  "sessions.subscription.expiredUnhanded": {
+   "en": "This subscription expired before its key was handed to the merchant, so there is nothing left to hand over: no payment can be taken any more. Revoke it to remove the permission from your account (the key is deleted from this device too), then Forget it.",
+   "where": "src/wallet/subscriptions.ts:1064 literal",
+   "base": "5cb4601"
+  },
+  "sessions.recurring.cardNote": {
+   "en": "Sent only while this wallet is open, and only after you confirm each payment; no payment is ever sent in the background. With reminders on (Settings → Privacy → Notifications), this phone can remind you when a payment falls due, even while the wallet is closed; the payment still waits for you.",
+   "where": "src/wallet/recurring.ts:159 literal",
+   "base": "5cb4601"
+  },
+  "sessions.recurring.completed": {
+   "en": "No more payments can be sent. Revoke it to remove the permission from your account (the payment key is deleted from this phone too); it is then forgotten here.",
+   "where": "src/wallet/recurring.ts:202 literal",
+   "base": "5cb4601"
+  },
+  "sessions.recurring.intro": {
+   "en": "Pays one recipient up to a fixed amount once per period from your smart account, until the payments run out or you revoke. A new payment key is created on this phone and never leaves it; your account enforces the limits on-chain.",
+   "where": "src/wallet/recurring.ts:124 literal",
+   "base": "5cb4601"
+  },
+  "sessions.recurring.reminders": {
+   "en": "Reminders: with \"Remind me when something is due\" on (Settings → Privacy → Notifications), this phone shows a reminder when a payment falls due, even while the wallet is closed. Reminders need the wallet’s own build of the app; they do not work inside Expo Go. A reminder never sends anything: sending while the wallet is closed would need a decision on whether a payment may ever go out without you confirming it, so this version always asks you first.",
+   "where": "src/wallet/recurring.ts:188 literal",
+   "base": "5cb4601"
+  },
+  "sessions.recurring.payPrompt": {
+   "en": "You confirm each payment in the wallet. The payment key signs it, not your account key, so your recovery phrase is never opened for it. If the payment key is protected by biometrics (it is when your recovery phrase was protected at set-up), the phone also asks once: \"Use the session key\".",
+   "where": "src/wallet/recurring.ts:141 literal",
+   "base": "5cb4601"
+  },
+  "sessions.recurring.spending": {
+   "en": "Your spending limits (this app only) are checked before each payment, by the payment amount: a payment that would go over a limit is not sent. The network fee of a recurring payment is not counted against limits; the fee budget caps it on-chain.",
+   "where": "src/wallet/recurring.ts:147 literal",
+   "base": "5cb4601"
+  },
+  "sessions.recurring.whileOpen": {
+   "en": "Payments are sent only while this wallet is open. When one is due, the wallet shows it on this screen (and in a banner when you open the app) and sends it only after you confirm. Nothing is sent in the background or while the wallet is closed. A payment missed while the wallet was closed is not lost: your account allows it to be sent later, until the end date.",
+   "where": "src/wallet/recurring.ts:130 literal",
+   "base": "5cb4601"
+  },
+  "sessions.dca.reservation": {
+   "en": "A recurring swap’s set-up is unusually large (about 7 million gas), and the bundler asks the smart account to hold its worst-case fee before it will estimate it — about 0.012 ETH on 2026-10-11, more when fees are higher. Fund the smart account, then review again.",
+   "where": "src/wallet/dca.ts:334 literal",
+   "base": "5cb4601"
+  },
+  "dca.getQuote": {
+   "en": "Get a live quote",
+   "where": "src/screens/DcaViews.tsx:165 literal",
+   "base": "5cb4601"
+  },
+  "dca.floorNote": {
+   "en": "The minimum is fixed when you start and never follows the price afterwards. Review reads a fresh quote and computes the minimum from it at this percentage.",
+   "where": "src/screens/DcaViews.tsx:176 jsx",
+   "base": "5cb4601"
+  },
+  "dca.namePlaceholder": {
+   "en": "e.g. weekly USDC",
+   "where": "src/screens/DcaViews.tsx:279 literal",
+   "base": "5cb4601"
+  },
+  "dca.reading": {
+   "en": "Reading the pool, the account and asking the bundler…",
+   "where": "src/screens/DcaViews.tsx:288 jsx",
+   "base": "5cb4601"
+  },
+  "dca.start.title": {
+   "en": "Start this recurring swap?",
+   "where": "src/screens/DcaViews.tsx:332 jsx",
+   "base": "5cb4601"
+  },
+  "dca.estimatePassed": {
+   "en": "Bundler gas estimate passed (eth_estimateUserOperationGas simulated the set-up).",
+   "where": "src/screens/DcaViews.tsx:428 jsx",
+   "base": "5cb4601"
+  },
+  "dca.list.heading": {
+   "en": "Recurring swaps",
+   "where": "src/screens/DcaViews.tsx:452 jsx",
+   "base": "5cb4601"
+  },
+  "dca.swapNow.hint": {
+   "en": "Checks the swap with the network and reads a fresh quote, then asks you to confirm before anything is sent.",
+   "where": "src/screens/DcaViews.tsx:503 literal",
+   "base": "5cb4601"
+  },
+  "dca.row.lastSwapHash": {
+   "en": "Last swap UserOperation hash",
+   "where": "src/screens/DcaViews.tsx:515 literal",
+   "base": "5cb4601"
+  },
+  "dca.revoke": {
+   "en": "Revoke (stop the recurring swap)",
+   "where": "src/screens/DcaViews.tsx:522 literal",
+   "base": "5cb4601"
+  },
+  "dca.cardNote": {
+   "en": "Sent only while this wallet is open, and only after you confirm each swap; no swap is ever sent in the background. With reminders on (Settings → Privacy → Notifications), this phone can remind you when a swap falls due, even while the wallet is closed; the swap still waits for you.",
+   "where": "src/wallet/dca.ts:208 literal",
+   "base": "5cb4601"
+  },
+  "dca.completed": {
+   "en": "No more swaps can be sent. Revoke it to remove the permission from your account (the swap key is deleted from this phone too); it is then forgotten here.",
+   "where": "src/wallet/dca.ts:241 literal",
+   "base": "5cb4601"
+  },
+  "subscriptionKey.shareFile": {
+   "en": "Share as a file (.json)",
+   "where": "src/components/SubscriptionKeyHandover.tsx:96 literal",
+   "base": "5cb4601"
+  },
+  "subscriptionKey.fileNote": {
+   "en": "Sends the key as a .json file through the share sheet. Choose a channel you trust; the temporary copy on this phone is deleted a few seconds after the share sheet closes.",
+   "where": "src/components/SubscriptionKeyHandover.tsx:111 jsx",
+   "base": "5cb4601"
+  },
+  "subscriptionKey.copied": {
+   "en": "Copied ✓",
+   "where": [
+    "src/components/PaymentRequestViews.tsx:283 literal",
+    "src/components/RecoveryViews.tsx:225 literal",
+    "src/components/SubscriptionKeyHandover.tsx:115 literal",
+    "src/screens/ProveOwnershipScreen.tsx:186 literal",
+    "src/screens/ReceiveScreen.tsx:263 literal",
+    "src/screens/ReceiveScreen.tsx:325 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "subscriptionKey.copy": {
+   "en": "Copy",
+   "where": [
+    "src/components/RecoveryViews.tsx:225 literal",
+    "src/components/SubscriptionKeyHandover.tsx:115 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "subscriptionKey.notCopied": {
+   "en": "Not copied",
+   "where": "src/components/SubscriptionKeyHandover.tsx:119 literal",
+   "base": "5cb4601"
+  },
+  "swap.noAccount": {
+   "en": "No Ethereum account.",
+   "where": [
+    "src/screens/BridgeScreen.tsx:421 jsx",
+    "src/screens/StakingScreen.tsx:396 jsx",
+    "src/screens/SwapScreen.tsx:448 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "swap.off": {
+   "en": "Swapping trades one asset for another directly from this wallet, priced by the 0x aggregator. It is off because no 0x API key is configured. Create a free key at dashboard.0x.org, then save it under Settings → Swaps — saving verifies the key with one live quote request. The key is stored only on this device and sent only to api.0x.org.",
+   "where": "src/screens/SwapScreen.tsx:465 jsx",
+   "base": "5cb4601"
+  },
+  "swap.openSettings": {
+   "en": "Open Settings",
+   "where": [
+    "src/screens/BrowserScreen.tsx:536 literal",
+    "src/screens/ConnectionsScreen.tsx:139 literal",
+    "src/screens/SwapScreen.tsx:472 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "swap.notApproved": {
+   "en": "Not approved",
+   "where": [
+    "src/screens/ApproveRecoveryScreen.tsx:184 literal",
+    "src/screens/ApproveRecoveryScreen.tsx:192 literal",
+    "src/screens/BridgeScreen.tsx:605 literal",
+    "src/screens/MultisigScreen.tsx:595 literal",
+    "src/screens/StakingScreen.tsx:524 literal",
+    "src/screens/SwapScreen.tsx:727 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "swap.approval.notConfirmed.title": {
+   "en": "Approval not confirmed yet",
+   "where": "src/screens/SwapScreen.tsx:752 literal",
+   "base": "5cb4601"
+  },
+  "swap.sessionExpired": {
+   "en": "Smart-account session expired; go back and quote again.",
+   "where": [
+    "src/screens/SwapScreen.tsx:645 literal",
+    "src/screens/SwapScreen.tsx:894 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "swap.aa.sent": {
+   "en": "Swap sent to bundler ✓",
+   "where": "src/screens/SwapScreen.tsx:1017 jsx",
+   "base": "5cb4601"
+  },
+  "swap.aa.reverted": {
+   "en": "The bundler reports the operation was included but reverted on-chain: none of the batch took effect, and the gas was still charged to the smart account.",
+   "where": "src/screens/SwapScreen.tsx:1048 jsx",
+   "base": "5cb4601"
+  },
+  "swap.youSell": {
+   "en": "You sell",
+   "where": [
+    "src/screens/SwapScreen.tsx:1097 literal",
+    "src/screens/SwapScreen.tsx:1372 literal",
+    "src/screens/SwapScreen.tsx:1487 literal",
+    "src/screens/SwapScreen.tsx:1637 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "swap.youReceiveEstimated": {
+   "en": "You receive (estimated)",
+   "where": [
+    "src/screens/SwapScreen.tsx:1103 literal",
+    "src/screens/SwapScreen.tsx:1378 literal",
+    "src/screens/SwapScreen.tsx:1493 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "swap.guaranteedMinimum": {
+   "en": "Guaranteed minimum",
+   "where": [
+    "src/screens/SwapScreen.tsx:1109 literal",
+    "src/screens/SwapScreen.tsx:1384 literal",
+    "src/screens/SwapScreen.tsx:1499 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "swap.willDeploy": {
+   "en": "Will deploy with this swap",
+   "where": "src/screens/SwapScreen.tsx:1149 literal",
+   "base": "5cb4601"
+  },
+  "swap.aa.single": {
+   "en": "One operation with a single call: the swap (selling the native coin needs no approval).",
+   "where": "src/screens/SwapScreen.tsx:1120 literal",
+   "base": "5cb4601"
+  },
+  "swap.sent": {
+   "en": "Swap sent ✓",
+   "where": "src/screens/SwapScreen.tsx:1221 jsx",
+   "base": "5cb4601"
+  },
+  "swap.step1": {
+   "en": "Step 1 of 2 — Approve",
+   "where": [
+    "src/screens/StakingScreen.tsx:776 jsx",
+    "src/screens/SwapScreen.tsx:1260 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "swap.approve.amount": {
+   "en": "Approve amount",
+   "where": "src/screens/SwapScreen.tsx:1276 literal",
+   "base": "5cb4601"
+  },
+  "swap.spender": {
+   "en": "Spender (swap contract)",
+   "where": "src/screens/SwapScreen.tsx:1281 literal",
+   "base": "5cb4601"
+  },
+  "swap.approve.signing": {
+   "en": "Signing and broadcasting the approval…",
+   "where": "src/screens/SwapScreen.tsx:1334 literal",
+   "base": "5cb4601"
+  },
+  "swap.step2": {
+   "en": "Step 2 of 2 — Swap",
+   "where": "src/screens/SwapScreen.tsx:1359 jsx",
+   "base": "5cb4601"
+  },
+  "swap.minimumEnforced": {
+   "en": "The guaranteed minimum is enforced by the swap transaction itself: if the market moves past your slippage setting, the transaction fails instead of filling for less.",
+   "where": "src/screens/SwapScreen.tsx:1390 jsx",
+   "base": "5cb4601"
+  },
+  "swap.contract": {
+   "en": "Swap contract",
+   "where": "src/screens/SwapScreen.tsx:1394 literal",
+   "base": "5cb4601"
+  },
+  "swap.totalSpent": {
+   "en": "Total spent (worst case)",
+   "where": "src/screens/SwapScreen.tsx:1407 literal",
+   "base": "5cb4601"
+  },
+  "swap.noGasEstimate": {
+   "en": "The quote carried no gas estimate; the exact fee is shown at the confirm step.",
+   "where": "src/screens/SwapScreen.tsx:1525 literal",
+   "base": "5cb4601"
+  },
+  "swap.checkingAllowance": {
+   "en": "Checking allowance and preparing the transaction…",
+   "where": "src/screens/SwapScreen.tsx:1542 jsx",
+   "base": "5cb4601"
+  },
+  "swap.refreshQuote": {
+   "en": "Refresh quote",
+   "where": "src/screens/SwapScreen.tsx:1549 literal",
+   "base": "5cb4601"
+  },
+  "swap.ownFee": {
+   "en": "Our own worst-case fee — priced exactly like a regular send — is shown on the confirm screen before anything is signed.",
+   "where": "src/screens/SwapScreen.tsx:1531 jsx",
+   "base": "5cb4601"
+  },
+  "swap.resolving": {
+   "en": "(resolving…)",
+   "where": "src/screens/SwapScreen.tsx:1589 literal",
+   "base": "5cb4601"
+  },
+  "swap.aa.toggle": {
+   "en": "Swap from smart account",
+   "where": "src/screens/SwapScreen.tsx:1596 literal",
+   "base": "5cb4601"
+  },
+  "swap.aa.toggleExperimental": {
+   "en": "Swap from smart account (experimental)",
+   "where": "src/screens/SwapScreen.tsx:1608 jsx",
+   "base": "5cb4601"
+  },
+  "swap.unavailable": {
+   "en": "Swapping unavailable — no configured Ethereum endpoint.",
+   "where": "src/screens/SwapScreen.tsx:1623 jsx",
+   "base": "5cb4601"
+  },
+  "swap.balance.label": {
+   "en": "Balance:",
+   "where": [
+    "src/screens/SwapScreen.tsx:1667 jsx",
+    "src/screens/TokensScreen.tsx:405 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "swap.balance.failed": {
+   "en": "could not be loaded right now.",
+   "where": "src/screens/SwapScreen.tsx:1673 literal",
+   "base": "5cb4601"
+  },
+  "swap.retryBalance": {
+   "en": "Retry loading the balance",
+   "where": "src/screens/SwapScreen.tsx:1680 literal",
+   "base": "5cb4601"
+  },
+  "swap.youReceive": {
+   "en": "You receive",
+   "where": [
+    "src/screens/SwapScreen.tsx:1692 jsx",
+    "src/wallet/staking.ts:826 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "swap.maxSlippage": {
+   "en": "Max slippage",
+   "where": "src/screens/SwapScreen.tsx:1723 jsx",
+   "base": "5cb4601"
+  },
+  "swap.slippagePlaceholder": {
+   "en": "basis points, e.g. 75 (= 0.75%)",
+   "where": "src/screens/SwapScreen.tsx:1764 literal",
+   "base": "5cb4601"
+  },
+  "swap.slippageRange": {
+   "en": "100 bps = 1%. Allowed range: 1–1000 bps (0.01%–10%).",
+   "where": "src/screens/SwapScreen.tsx:1770 jsx",
+   "base": "5cb4601"
+  },
+  "swap.fetching": {
+   "en": "Fetching quote…",
+   "where": "src/screens/SwapScreen.tsx:1784 jsx",
+   "base": "5cb4601"
+  },
+  "swap.getQuote": {
+   "en": "Get quote",
+   "where": "src/screens/SwapScreen.tsx:1788 literal",
+   "base": "5cb4601"
+  },
+  "swap.quotesNote": {
+   "en": "Quotes come from the 0x aggregator using your API key (Settings → Swaps). Nothing is signed or sent until you confirm on the next screens; a quote older than a minute is refreshed before anything executes.",
+   "where": "src/screens/SwapScreen.tsx:1795 jsx",
+   "base": "5cb4601"
+  },
+  "staking.token": {
+   "en": "Token",
+   "where": [
+    "src/screens/SpendingLimitsScreen.tsx:388 jsx",
+    "src/screens/StakingScreen.tsx:783 literal",
+    "src/wallet/typed-data-summary.ts:358 literal",
+    "src/wallet/typed-data-summary.ts:398 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "staking.spender": {
+   "en": "Spender",
+   "where": [
+    "src/screens/ApprovalsScreen.tsx:503 literal",
+    "src/screens/ApprovalsScreen.tsx:680 literal",
+    "src/screens/StakingScreen.tsx:784 literal",
+    "src/wallet/typed-data-summary.ts:360 literal",
+    "src/wallet/typed-data-summary.ts:400 literal",
+    "src/wallet/typed-data-summary.ts:462 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "staking.approving": {
+   "en": "Approving, then waiting for the approval to take effect…",
+   "where": [
+    "src/screens/BridgeScreen.tsx:905 literal",
+    "src/screens/StakingScreen.tsx:793 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "staking.step2": {
+   "en": "Step 2 of 2",
+   "where": "src/screens/StakingScreen.tsx:809 jsx",
+   "base": "5cb4601"
+  },
+  "staking.willDeploy": {
+   "en": "Will deploy with this operation",
+   "where": [
+    "src/components/WcApprovalSheet.tsx:1433 literal",
+    "src/screens/BridgeScreen.tsx:970 literal",
+    "src/screens/StakingScreen.tsx:882 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "staking.intro": {
+   "en": "Staking puts test ETH into a liquid-staking protocol and gives you a token for it. These are test networks: the tokens have no value.",
+   "where": "src/screens/StakingScreen.tsx:939 jsx",
+   "base": "5cb4601"
+  },
+  "staking.useSmartAccount": {
+   "en": "Use the smart account",
+   "where": [
+    "src/screens/StakingScreen.tsx:966 literal",
+    "src/screens/StakingScreen.tsx:971 jsx"
+   ],
+   "base": "5cb4601"
+  },
+  "staking.unreadable": {
+   "en": "The staking contracts could not be read right now.",
+   "where": "src/screens/StakingScreen.tsx:980 jsx",
+   "base": "5cb4601"
+  },
+  "staking.tryAgain": {
+   "en": "Try again",
+   "where": [
+    "src/components/BalanceChangePreview.tsx:163 jsx",
+    "src/screens/ApprovalsScreen.tsx:648 literal",
+    "src/screens/ConnectionsScreen.tsx:175 literal",
+    "src/screens/InboxScreen.tsx:137 literal",
+    "src/screens/NftDetailScreen.tsx:151 literal",
+    "src/screens/NftsScreen.tsx:394 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "staking.whatToDo": {
+   "en": "What to do",
+   "where": "src/screens/StakingScreen.tsx:994 jsx",
+   "base": "5cb4601"
+  },
+  "staking.claim.note": {
+   "en": "Claims every finalized Lido withdrawal request of this account.",
+   "where": "src/screens/StakingScreen.tsx:1032 jsx",
+   "base": "5cb4601"
+  },
+  "staking.reading": {
+   "en": "Reading the protocol and preparing the quote…",
+   "where": "src/screens/StakingScreen.tsx:1040 literal",
+   "base": "5cb4601"
+  },
+  "staking.source.hint": {
+   "en": "Opens the source in the browser",
+   "where": "src/screens/StakingViews.tsx:104 literal",
+   "base": "5cb4601"
+  },
+  "staking.balances": {
+   "en": "Your staking balances",
+   "where": "src/screens/StakingViews.tsx:151 jsx",
+   "base": "5cb4601"
+  },
+  "staking.withdrawals": {
+   "en": "Lido withdrawal requests",
+   "where": "src/screens/StakingViews.tsx:165 jsx",
+   "base": "5cb4601"
+  },
+  "staking.claimed": {
+   "en": "Claimed.",
+   "where": "src/screens/StakingViews.tsx:171 literal",
+   "base": "5cb4601"
+  },
+  "staking.simulating": {
+   "en": "Simulating the outcome…",
+   "where": "src/screens/StakingViews.tsx:217 jsx",
+   "base": "5cb4601"
+  },
+  "staking.simulation.unavailable": {
+   "en": "The outcome simulation is not available from this endpoint right now.",
+   "where": "src/screens/StakingViews.tsx:219 jsx",
+   "base": "5cb4601"
+  },
+  "broadcast.unknown.title": {
+   "en": "No answer from the network in time.",
+   "where": "src/wallet/broadcast-outcome.ts:24 literal",
+   "base": "5cb4601"
+  },
+  "broadcast.handedOver.title": {
+   "en": "Already handed to the network once.",
+   "where": "src/wallet/broadcast-outcome.ts:55 literal",
+   "base": "5cb4601"
+  },
+  "broadcast.handedOver": {
+   "en": "This transaction was already handed to the network endpoint once and whether it was accepted is still unknown, so this wallet did not hand it over a second time. Check Pending on this phone in Activity; review a new send only if that list says it was dropped.",
+   "where": "src/wallet/broadcast-outcome.ts:59 literal",
+   "base": "5cb4601"
+  },
+  "coldAa.requestCaption": {
+   "en": "Smart-account signing request",
+   "where": [
+    "src/screens/ColdSignScreen.tsx:889 literal",
+    "src/wallet/cold-aa.ts:118 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "coldAa.switch": {
+   "en": "Send from the smart account",
+   "where": [
+    "src/screens/BridgeScreen.tsx:1030 literal",
+    "src/screens/BridgeScreen.tsx:1032 jsx",
+    "src/wallet/cold-aa.ts:561 literal"
+   ],
+   "base": "5cb4601"
+  },
+  "coldAa.switch.hint": {
+   "en": "Sends from the watched address’s own Kernel v3.3 smart account instead; the off-line signer signs the operation as its owner",
+   "where": "src/wallet/cold-aa.ts:564 literal",
+   "base": "5cb4601"
+  },
+  "coldAa.accountNote": {
+   "en": "The smart account is the watched address’s Kernel v3.3 account at CREATE2 index 0, the address that follows from the owner alone. The off-line signer holds the owner key and signs the operation; the smart account pays its own network fee from its balance and EntryPoint deposit (no paymaster, no fee in a token).",
+   "where": "src/wallet/cold-aa.ts:568 literal",
+   "base": "5cb4601"
+  },
+  "coldAa.paymasterNotUsed": {
+   "en": "The sponsorship paymaster saved for this network is not used here: with an off-line signer the smart account pays its own network fee.",
+   "where": "src/wallet/cold-aa.ts:573 literal",
+   "base": "5cb4601"
+  },
+  "coldAa.ownerRow": {
+   "en": "Owner (signs off-line)",
+   "where": "src/wallet/cold-aa.ts:576 literal",
+   "base": "5cb4601"
+  },
+  "coldAa.qrContents": {
+   "en": "These QR codes contain only the unsigned smart-account operation (the network, the EntryPoint, the smart account, its owner, the nonce, the gas limits, the fees and the calls), a plain summary, the userOpHash, the digest to sign and a request number. They contain no key and no secret: anyone who sees them learns what you plan to send, but cannot send it.",
+   "where": "src/wallet/cold-aa.ts:582 literal",
+   "base": "5cb4601"
+  },
+  "coldAa.checkOnSigner": {
+   "en": "Before signing, check on the off-line signer that it decodes the same recipient, amount, network, smart account and worst-case fee as this screen. Sign only if they match.",
+   "where": "src/wallet/cold-aa.ts:588 literal",
+   "base": "5cb4601"
+  },
+  "coldAa.formatNote": {
+   "en": "This is Shiba Wallet’s own request format (shiba-wallet/cold-sign-userop-request, version 1), not the EIP-4527 format some hardware signers read, so the off-line signer must understand this format.",
+   "where": "src/wallet/cold-aa.ts:592 literal",
+   "base": "5cb4601"
+  },
+  "coldAa.feesFixed": {
+   "en": "The network fees are fixed now: the owner’s signature covers them, so they cannot be raised after signing. If the bundler’s minimum fee rises above them before you submit, the wallet refuses to submit, and you review the send again and have a new request signed.",
+   "where": "src/wallet/cold-aa.ts:596 literal",
+   "base": "5cb4601"
+  },
+  "coldAa.scanNote": {
+   "en": "Scan the signature the off-line signer shows. A signature for a different request, from a key other than the owner’s or over a changed operation is refused. The wallet submits to the bundler only after it has checked that the owner signed exactly the operation shown above.",
+   "where": "src/wallet/cold-aa.ts:601 literal",
+   "base": "5cb4601"
+  },
+  "coldAa.reviewAgain": {
+   "en": "The request is kept only while this screen is open, and only until it expires. If you leave, review the send again and have the new request signed; an old signature is refused for a new request.",
+   "where": "src/wallet/cold-aa.ts:606 literal",
+   "base": "5cb4601"
+  },
+  "coldAa.submit": {
+   "en": "Submit to the bundler",
+   "where": "src/wallet/cold-aa.ts:609 literal",
+   "base": "5cb4601"
+  },
+  "coldAa.scanRationale": {
+   "en": "The camera reads the signature QR code the off-line signer shows. Nothing is sent until the wallet has checked it.",
+   "where": [
+    "src/wallet/cold-aa.ts:612 literal",
+    "src/wallet/cold-signing.ts:724 literal"
+   ],
+   "base": "5cb4601"
   }
  },
  "template": {
@@ -2644,6 +6039,1114 @@
     "Pre-flight simulation failed: ",
     ". This transaction would very likely fail on-chain and still cost the fee."
    ]
+  },
+  "send.aa.confirm.tag": {
+   "en": "EXPERIMENTAL · ERC-4337 smart account · {type}",
+   "where": "src/screens/ColdSignViews.tsx:235 jsx",
+   "old": [
+    "EXPERIMENTAL · ERC-4337 smart account · ",
+    ""
+   ],
+   "base": "5cb4601"
+  },
+  "send.aa.row.smartBalance": {
+   "en": "Smart account {symbol} balance",
+   "where": "src/screens/BridgeScreen.tsx:969 expr",
+   "old": [
+    "Smart account ",
+    " balance"
+   ],
+   "base": "5cb4601"
+  },
+  "send.aa.token.noteTokenGas": {
+   "en": "One transfer call executed by the smart account: it sends its own {symbol}, so no approval is needed. The network fee is paid in {feeSymbol} through {through} (see below).",
+   "where": "src/screens/SendScreen.tsx:1907 expr",
+   "old": [
+    "One transfer call executed by the smart account: it sends its own ",
+    ", so no approval is needed. The network fee is paid in ",
+    " through ",
+    " (see below)."
+   ],
+   "base": "5cb4601"
+  },
+  "send.aa.token.note": {
+   "en": "One transfer call executed by the smart account: it sends its own {symbol}, so no approval is needed. Gas is paid in {native} by the smart account (or the paymaster, when sponsored).",
+   "where": "src/screens/SendScreen.tsx:1910 expr",
+   "old": [
+    "One transfer call executed by the smart account: it sends its own ",
+    ", so no approval is needed. Gas is paid in ",
+    " by the smart account (or the paymaster, when sponsored)."
+   ],
+   "base": "5cb4601"
+  },
+  "send.aa.passkey.sub": {
+   "en": "An additional signer on this smart account; your recovery phrase is not used. Owner account: {name}",
+   "where": "src/screens/SendScreen.tsx:1938 expr",
+   "old": [
+    "An additional signer on this smart account; your recovery phrase is not used. Owner account: ",
+    ""
+   ],
+   "base": "5cb4601"
+  },
+  "send.aa.row.totalOfWorst": {
+   "en": "Total {symbol} (worst case)",
+   "where": "src/screens/ColdSignViews.tsx:267 expr",
+   "old": [
+    "Total ",
+    " (worst case)"
+   ],
+   "base": "5cb4601"
+  },
+  "send.aa.row.totalOf": {
+   "en": "Total {symbol}",
+   "where": "src/screens/ColdSignViews.tsx:267 expr",
+   "old": [
+    "Total ",
+    " (worst case)"
+   ],
+   "base": "5cb4601"
+  },
+  "send.aa.worstCase": {
+   "en": "Worst case at {gwei} gwei max fee × {gas} gas (bundler eth_estimateUserOperationGas).",
+   "where": "src/screens/ColdSignViews.tsx:263 expr",
+   "old": [
+    "Worst case at ",
+    " gwei max fee × ",
+    " gas (bundler eth_estimateUserOperationGas).",
+    ""
+   ],
+   "base": "5cb4601"
+  },
+  "send.aa.button.passkey": {
+   "en": "Sign with passkey and send {symbol}",
+   "where": "src/screens/SendScreen.tsx:2083 expr",
+   "old": [
+    "Sign with passkey and send ",
+    ""
+   ],
+   "base": "5cb4601"
+  },
+  "send.aa.button.send": {
+   "en": "Send {symbol} from smart account",
+   "where": "src/screens/SendScreen.tsx:2084 expr",
+   "old": [
+    "Send ",
+    " from smart account"
+   ],
+   "base": "5cb4601"
+  },
+  "aa.fee.depositCovers": {
+   "en": "The smart account's EntryPoint deposit ({deposit}) covers this whole worst-case fee, so nothing for gas comes from its balance; the deposit is reduced by what the operation actually uses.",
+   "where": "src/wallet/aa.ts:2978 expr",
+   "old": [
+    "The smart account's EntryPoint deposit (",
+    ") covers this whole worst-case fee, so nothing for gas comes from its balance; the deposit is reduced by what the operation actually uses."
+   ],
+   "base": "5cb4601"
+  },
+  "aa.fee.depositFirst": {
+   "en": "The fee comes first from the smart account's EntryPoint deposit ({deposit}); its balance tops the deposit up by the rest of the worst case, up to {rest}. What the operation does not use stays in the deposit for later fees; it does not return to the balance.",
+   "where": "src/wallet/aa.ts:2983 expr",
+   "old": [
+    "The fee comes first from the smart account's EntryPoint deposit (",
+    "); its balance tops the deposit up by the rest of the worst case, up to ",
+    ". What the operation does not use stays in the deposit for later fees; it does not return to the balance."
+   ],
+   "base": "5cb4601"
+  },
+  "staking.success.approvalTx": {
+   "en": "Approval transaction: {hash}",
+   "where": "src/screens/BridgeScreen.tsx:783 jsx",
+   "old": [
+    "Approval transaction: ",
+    ""
+   ],
+   "base": "5cb4601"
+  },
+  "settings.ignoredUrl": {
+   "en": "A saved URL is not used: {reason} {hint}",
+   "where": "src/screens/SettingsScreen.tsx:263 expr",
+   "old": [
+    "A saved URL is not used: ",
+    " ",
+    ""
+   ],
+   "base": "5cb4601"
+  },
+  "settings.endpoint.urlCaption": {
+   "en": "{network} endpoint URL",
+   "where": "src/screens/SettingsScreen.tsx:324 expr",
+   "old": [
+    "",
+    " endpoint URL"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.clear.customEndpoint": {
+   "en": "custom {network} endpoint",
+   "where": "src/screens/SettingsScreen.tsx:354 expr",
+   "old": [
+    "custom ",
+    " endpoint"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.endpoint.editLabel": {
+   "en": "Edit the {network} endpoint",
+   "where": "src/screens/SettingsScreen.tsx:379 expr",
+   "old": [
+    "Edit the ",
+    " endpoint"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.blockbook.keyNote": {
+   "en": "The key is stored only on this device and sent only to this host, as the \"{header}\" request header (the header NOWNodes uses). Saving verifies the endpoint first with a UTXO query for your own {symbol} address.",
+   "where": "src/screens/SettingsScreen.tsx:494 jsx",
+   "old": [
+    "The key is stored only on this device and sent only to this host, as the \"",
+    "\" request header (the header NOWNodes uses). Saving verifies the endpoint first with a UTXO query for your own ",
+    " address."
+   ],
+   "base": "5cb4601"
+  },
+  "settings.blockbook.verified": {
+   "en": "Verified ✓ — /api/v2/utxo answered for your address (checked {date}).",
+   "where": "src/screens/SettingsScreen.tsx:522 jsx",
+   "old": [
+    "Verified ✓ — /api/v2/utxo answered for your address (checked ",
+    "). ",
+    ""
+   ],
+   "base": "5cb4601"
+  },
+  "settings.blockbook.editLabel": {
+   "en": "Edit the {network} Blockbook endpoint",
+   "where": "src/screens/SettingsScreen.tsx:535 expr",
+   "old": [
+    "Edit the ",
+    " Blockbook endpoint"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.blockbook.clearLabel": {
+   "en": "Clear the {network} Blockbook endpoint",
+   "where": "src/screens/SettingsScreen.tsx:540 expr",
+   "old": [
+    "Clear the ",
+    " Blockbook endpoint"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.clear.blockbook": {
+   "en": "{network} Blockbook endpoint and API key",
+   "where": "src/screens/SettingsScreen.tsx:541 expr",
+   "old": [
+    "",
+    " Blockbook endpoint and API key"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.clear.title": {
+   "en": "Clear the {what}?",
+   "where": "src/screens/SettingsScreen.tsx:620 expr",
+   "old": [
+    "Clear the ",
+    "?"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.field.editLabel": {
+   "en": "Edit the {what}",
+   "where": "src/screens/SettingsScreen.tsx:379 expr",
+   "old": [
+    "Edit the ",
+    " endpoint"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.field.clearLabel": {
+   "en": "Clear {what}",
+   "where": "src/screens/SettingsScreen.tsx:782 expr",
+   "old": [
+    "Clear ",
+    ""
+   ],
+   "base": "5cb4601"
+  },
+  "settings.aa.ready": {
+   "en": "ready · {type}",
+   "where": "src/screens/SettingsScreen.tsx:858 expr",
+   "old": [
+    "ready · ",
+    ""
+   ],
+   "base": "5cb4601"
+  },
+  "settings.aa.otherType": {
+   "en": "This network is currently set up as {current}. Saving a {next} factory replaces that setup (a different smart-account address; funds at the old one stay there).",
+   "where": "src/screens/SettingsScreen.tsx:922 jsx",
+   "old": [
+    "This network is currently set up as ",
+    ". Saving a ",
+    " factory replaces that setup (a different smart-account address; funds at the old one stay there)."
+   ],
+   "base": "5cb4601"
+  },
+  "settings.aa.kernelPrefill": {
+   "en": "Pinned Kernel v3.3 deployment from the wallet engine (the same addresses on {chains}, each checked on-chain): implementation {implementation}, meta factory {metaFactory}, ECDSA validator {validator}. Saving re-runs the full on-chain verification through your RPC endpoint.",
+   "where": "src/screens/SettingsScreen.tsx:942 expr",
+   "old": [
+    "Pinned Kernel v3.3 deployment from the wallet engine (the same addresses on ",
+    ", each checked on-chain): implementation ",
+    ", meta factory ",
+    ", ECDSA validator ",
+    ". Saving re-runs the full on-chain verification through your RPC endpoint."
+   ],
+   "base": "5cb4601"
+  },
+  "settings.aa.kernelVerified": {
+   "en": "Verified ✓ — factory, implementation {implementation}, meta factory and ECDSA validator have code; entrypoint() is v0.7; accountId() is {accountId}; the meta factory approves the factory (checked {date})",
+   "where": "src/screens/SettingsScreen.tsx:950 expr",
+   "old": [
+    "Verified ✓ — factory, implementation ",
+    ", meta factory and ECDSA validator have code; entrypoint() is v0.7; accountId() is ",
+    "; the meta factory approves the factory (checked ",
+    ")"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.aa.kernelNoEndpoint": {
+   "en": "No {network} RPC endpoint is configured; the Kernel deployment is verified on-chain through it. Configure the endpoint above first.",
+   "where": "src/screens/SettingsScreen.tsx:961 expr",
+   "old": [
+    "No ",
+    " RPC endpoint is configured; the Kernel deployment is verified on-chain through it. Configure the endpoint above first."
+   ],
+   "base": "5cb4601"
+  },
+  "settings.aa.simplePrefill": {
+   "en": "Pinned Sepolia default (verified on-chain 2026-09-27; implementation {implementation}, EntryPoint v0.7 {entryPoint}). Saving re-runs the full on-chain verification through your RPC endpoint.",
+   "where": "src/screens/SettingsScreen.tsx:983 expr",
+   "old": [
+    "Pinned Sepolia default (verified on-chain 2026-09-27; implementation ",
+    ", EntryPoint v0.7 ",
+    "). Saving re-runs the full on-chain verification through your RPC endpoint."
+   ],
+   "base": "5cb4601"
+  },
+  "settings.aa.simpleVerified": {
+   "en": "Verified ✓ — has code; implementation {implementation} has code and its entryPoint() is v0.7 (checked {date})",
+   "where": "src/screens/SettingsScreen.tsx:990 expr",
+   "old": [
+    "Verified ✓ — has code; implementation ",
+    " has code and its entryPoint() is v0.7 (checked ",
+    ")"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.aa.factoryNoEndpoint": {
+   "en": "No {network} RPC endpoint is configured; the factory is verified on-chain through it. Configure the endpoint above first.",
+   "where": "src/screens/SettingsScreen.tsx:1001 expr",
+   "old": [
+    "No ",
+    " RPC endpoint is configured; the factory is verified on-chain through it. Configure the endpoint above first."
+   ],
+   "base": "5cb4601"
+  },
+  "settings.aa.paymasterVerified": {
+   "en": "Verified ✓ — answers pm_getPaymasterStubData (checked {date}). Gas on smart-account sends is sponsored.",
+   "where": "src/screens/SettingsScreen.tsx:1022 expr",
+   "old": [
+    "Verified ✓ — answers pm_getPaymasterStubData (checked ",
+    "). Gas on smart-account sends is sponsored."
+   ],
+   "base": "5cb4601"
+  },
+  "settings.indexer.verified": {
+   "en": "Verified ✓ — chain id matches and alchemy_getAssetTransfers answered with a well-formed response (checked {date})",
+   "where": "src/screens/SettingsScreen.tsx:1107 expr",
+   "old": [
+    "Verified ✓ — chain id matches and alchemy_getAssetTransfers answered with a well-formed response (checked ",
+    ")"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.nftIndexer.verified": {
+   "en": "Verified ✓ — getNFTsForOwner answered and its block {block} matches {network} (checked {date})",
+   "where": "src/screens/SettingsScreen.tsx:1168 expr",
+   "old": [
+    "Verified ✓ — getNFTsForOwner answered and its block ",
+    " matches ",
+    " (checked ",
+    ")"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.nftIndexer.noEndpoint": {
+   "en": "No {network} RPC endpoint is configured; the indexer's network is confirmed through it. Configure the endpoint above first.",
+   "where": "src/screens/SettingsScreen.tsx:1180 expr",
+   "old": [
+    "No ",
+    " RPC endpoint is configured; the indexer's network is confirmed through it. Configure the endpoint above first."
+   ],
+   "base": "5cb4601"
+  },
+  "settings.aa.builtInNoKernel": {
+   "en": "No Kernel v3.3 factory is pre-filled on {network}: the wallet checked this network and found the Kernel v3.3 factory and implementation have no code there, so smart-account features are not available on it. If a deployment appears later, paste the KernelFactory address; saving checks it on-chain and nothing is saved if any check fails.",
+   "where": "src/screens/SettingsScreen.tsx:1216 expr",
+   "old": [
+    "No Kernel v3.3 factory is pre-filled on ",
+    ": the wallet checked this network and found the Kernel v3.3 factory and implementation have no code there, so smart-account features are not available on it. If a deployment appears later, paste the KernelFactory address; saving checks it on-chain and nothing is saved if any check fails."
+   ],
+   "base": "5cb4601"
+  },
+  "settings.custom.forExample": {
+   "en": "For example {example}",
+   "where": "src/wallet/custom-networks.ts:236 expr",
+   "old": [
+    "For example ",
+    ""
+   ],
+   "base": "5cb4601"
+  },
+  "settings.custom.added": {
+   "en": "{name} (chain id {chainId}) answered as that chain, and its newest block (block {block}) was {seconds} s old. {blockTime} Choose it under “Networks you added” to use it.",
+   "where": "src/screens/SettingsScreen.tsx:1311 expr",
+   "old": [
+    "",
+    " (chain id ",
+    ") answered as that chain, and its newest block (block ",
+    ") was ",
+    " s old. ",
+    " Choose it under “Networks you added” to use it."
+   ],
+   "base": "5cb4601"
+  },
+  "settings.custom.chainId": {
+   "en": "chain id {chainId}",
+   "where": "src/config/defaults.ts:273 expr",
+   "old": [
+    "",
+    " (a test network you added, chain id ",
+    ") — balances and sends here are test funds, not real funds."
+   ],
+   "base": "5cb4601"
+  },
+  "settings.custom.treatedTest": {
+   "en": "Treated as a TEST network ({symbol} here has no value).",
+   "where": "src/screens/SettingsScreen.tsx:1434 expr",
+   "old": [
+    "Treated as a TEST network (",
+    " here has no value)."
+   ],
+   "base": "5cb4601"
+  },
+  "settings.custom.facts": {
+   "en": "Coin: {symbol}, {decimals} decimals (the symbol is your word). RPC endpoint: {rpc}. Explorer: {explorer}. Verified and added {date}.",
+   "where": "src/screens/SettingsScreen.tsx:1438 expr",
+   "old": [
+    "Coin: ",
+    ", ",
+    " decimals (the symbol is your word). RPC endpoint: ",
+    ". Explorer: ",
+    ". Verified and added ",
+    "."
+   ],
+   "base": "5cb4601"
+  },
+  "settings.appLock.typeWords": {
+   "en": "Type {words} of your recovery phrase, from your written backup.",
+   "where": "src/screens/SettingsScreen.tsx:1841 expr",
+   "old": [
+    "Type ",
+    " of your recovery phrase, from your written backup."
+   ],
+   "base": "5cb4601"
+  },
+  "settings.appLock.wordN": {
+   "en": "word {n}",
+   "where": "src/wallet/duress.ts:312 expr",
+   "old": [
+    "word ",
+    ""
+   ],
+   "base": "5cb4601"
+  },
+  "settings.appLock.wordCaption": {
+   "en": "Word {n} of your recovery phrase",
+   "where": "src/screens/SettingsScreen.tsx:1844 expr",
+   "old": [
+    "Word ",
+    " of your recovery phrase"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.wipe.exportBody": {
+   "en": "This device holds {count} recovery record(s). They contain no secrets, but a wallet restored from a recovery phrase needs them to find accounts whose owner changed. Wiping deletes them from this device (nothing on-chain changes: guardians stay installed).",
+   "where": "src/screens/SettingsScreen.tsx:2191 expr",
+   "old": [
+    "This device holds ",
+    " recovery record(s). They contain no secrets, but a wallet restored from a recovery phrase needs them to find accounts whose owner changed. Wiping deletes them from this device (nothing on-chain changes: guardians stay installed)."
+   ],
+   "base": "5cb4601"
+  },
+  "settings.wipe.imported": {
+   "en": "This also deletes the private keys of your imported accounts ({names}). Your recovery phrase cannot bring them back: they are lost unless you kept each private key yourself.",
+   "where": "src/screens/SettingsScreen.tsx:2218 expr",
+   "old": [
+    "This also deletes the private keys of your imported accounts (",
+    "). Your recovery phrase cannot bring them back: they are lost unless you kept each private key yourself. "
+   ],
+   "base": "5cb4601"
+  },
+  "settings.wipe.body": {
+   "en": "This deletes the recovery phrase from this device. The app returns to onboarding. Session keys and the session list are deleted too, but sessions granted on-chain stay active until they expire — revoke them first (Settings → Session keys) if you still can. Recovery records and recovered-account links are deleted from this device; guardians stay installed on-chain. Passkey details are deleted from this device too, but an installed passkey stays installed in your smart account — remove it first (Settings → Passkey) if you no longer want it.",
+   "where": "src/screens/SettingsScreen.tsx:2217 expr",
+   "old": [
+    "",
+    "This deletes the recovery phrase from this device. The app returns to onboarding. Session keys and the session list are deleted too, but sessions granted on-chain stay active until they expire — revoke them first (Settings → Session keys) if you still can. Recovery records and recovered-account links are deleted from this device; guardians stay installed on-chain. Passkey details are deleted from this device too, but an installed passkey stays installed in your smart account — remove it first (Settings → Passkey) if you no longer want it.",
+    ""
+   ],
+   "base": "5cb4601"
+  },
+  "settings.backup.importedNotBackedUp": {
+   "en": "It does NOT back up your imported accounts ({names}). Each one is lost with this phone unless you keep its private key yourself: use Show private key in the list above to make a copy.",
+   "where": "src/screens/SettingsScreen.tsx:2285 expr",
+   "old": [
+    "It does NOT back up your imported accounts (",
+    "). Each one is lost with this phone unless you keep its private key yourself: use Show private key in the list above to make a copy."
+   ],
+   "base": "5cb4601"
+  },
+  "settings.reveal.warningImported": {
+   "en": "Never share these words. They control every account in this wallet that comes from them, not just the active one. Shiba Wallet support will never ask for them. Hide them again as soon as you are done. They do not restore your imported accounts ({names}).",
+   "where": "src/screens/SettingsScreen.tsx:2307 expr",
+   "old": [
+    "Never share these words. They control every account in this wallet that comes from them, not just the active one. Shiba Wallet support will never ask for them. Hide them again as soon as you are done. They do not restore your imported accounts (",
+    ")."
+   ],
+   "base": "5cb4601"
+  },
+  "settings.prices.keyChecked": {
+   "en": "Checked ✓ — a live price request with this key succeeded ({date})",
+   "where": "src/screens/SettingsScreen.tsx:2521 expr",
+   "old": [
+    "Checked ✓ — a live price request with this key succeeded (",
+    ")"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.wc.intro": {
+   "en": "Lets external dApps connect to this wallet on the active EVM chain ({mainnet} mainnet, or {testNetworks} while test mode is on).",
+   "where": "src/screens/SettingsScreen.tsx:2745 expr",
+   "old": [
+    "Lets external dApps connect to this wallet on the active EVM chain (",
+    " mainnet, or ",
+    " while test mode is on). "
+   ],
+   "base": "5cb4601"
+  },
+  "settings.tokens.perNetwork": {
+   "en": "Each network has its own list ({network} now), and Find my tokens lists what your address holds when a history indexer is configured.",
+   "where": "src/screens/SettingsScreen.tsx:2830 jsx",
+   "old": [
+    "Track ERC-20 tokens on the Home screen: balances, and sending them. ",
+    " Each network has its own list (",
+    " now), and Find my tokens lists what your address holds when a history indexer is configured."
+   ],
+   "base": "5cb4601"
+  },
+  "settings.swaps.keyVerified": {
+   "en": "Verified ✓ — a live quote request succeeded (checked {date})",
+   "where": "src/screens/SettingsScreen.tsx:2885 expr",
+   "old": [
+    "Verified ✓ — a live quote request succeeded (checked ",
+    ")"
+   ],
+   "base": "5cb4601"
+  },
+  "settings.dev.testModeOn": {
+   "en": "Test mode is ON ({network}). Your addresses are the same on {network} as on mainnet — but anything sent here is {symbol} with no value.",
+   "where": "src/screens/SettingsScreen.tsx:2928 jsx",
+   "old": [
+    "Test mode is ON (",
+    "). Your addresses are the same on ",
+    " as on mainnet — but anything sent here is ",
+    " with no value."
+   ],
+   "base": "5cb4601"
+  },
+  "settings.dev.customMain": {
+   "en": "{network} is a network you added and is treated as a MAIN network: amounts here may be real funds. Smart-account features are switched off on it, as on Ethereum mainnet.",
+   "where": "src/screens/SettingsScreen.tsx:2936 expr",
+   "old": [
+    "",
+    " is a network you added and is treated as a MAIN network: amounts here may be real funds. Smart-account features are switched off on it, as on Ethereum mainnet."
+   ],
+   "base": "5cb4601"
+  },
+  "settings.dev.l2Note": {
+   "en": "{network} is a layer-2 network: every transaction also pays a layer 1 data fee for publishing its data on Ethereum. Send confirm screens show it as a separate line — the network's fee-oracle estimate plus 50% headroom, because this fee cannot be capped — and include it in the max network fee, the total and Max. Smart-account sends pay it through the bundler's gas estimate instead.",
+   "where": "src/screens/SettingsScreen.tsx:2946 jsx",
+   "old": [
+    "",
+    " is a layer-2 network: every transaction also pays a layer 1 data fee for publishing its data on Ethereum. Send confirm screens show it as a separate line — the network's fee-oracle estimate plus 50% headroom, because this fee cannot be capped — and include it in the max network fee, the total and Max. Smart-account sends pay it through the bundler's gas estimate instead.",
+    ""
+   ],
+   "base": "5cb4601"
+  },
+  "settings.dev.noSwaps": {
+   "en": "Swaps are not offered here (0x does not support {network}).",
+   "where": "src/config/evm-chain.ts:921 expr",
+   "old": [
+    " Swaps are not offered here (0x does not support ",
+    ")."
+   ],
+   "base": "5cb4601"
+  },
+  "accounts.hide.title": {
+   "en": "Hide {name}?",
+   "where": "src/components/AccountsSection.tsx:161 expr",
+   "old": [
+    "Hide ",
+    "?"
+   ],
+   "base": "5cb4601"
+  },
+  "accounts.nothingDeleted": {
+   "en": "Nothing was deleted.",
+   "where": "src/components/AccountsSection.tsx:211 expr",
+   "old": [
+    "",
+    " Nothing was deleted."
+   ],
+   "base": "5cb4601"
+  },
+  "accounts.row.keyUnreadable": {
+   "en": "Key record unreadable",
+   "where": "src/components/AccountsSection.tsx:290 literal",
+   "old": [
+    "Key record unreadable · "
+   ],
+   "base": "5cb4601"
+  },
+  "accounts.row.derivation": {
+   "en": "{address} · derivation index {index}",
+   "where": "src/components/AccountsSection.tsx:294 jsx",
+   "old": [
+    "",
+    " · derivation index ",
+    ""
+   ],
+   "base": "5cb4601"
+  },
+  "accounts.importedNotRestored": {
+   "en": "Restoring the phrase does not bring imported accounts back.",
+   "where": "src/components/AccountsSection.tsx:401 literal",
+   "old": [
+    " Restoring the phrase does not bring imported accounts back."
+   ],
+   "base": "5cb4601"
+  },
+  "accounts.showHidden": {
+   "en": "Show hidden accounts ({count})",
+   "where": "src/components/AccountsSection.tsx:523 expr",
+   "old": [
+    "Show hidden accounts (",
+    ")"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.test.body": {
+   "en": "The SESSION key (not your account key) signs one operation: call {target} with {data} and 0 {symbol}. Gas is paid by {account}. A call with a selector but no arguments may be refused by the target contract; the bundler’s message is shown as returned.",
+   "where": "src/screens/SessionsScreen.tsx:1638 expr",
+   "old": [
+    "The SESSION key (not your account key) signs one operation: call ",
+    " with ",
+    " and 0 ",
+    ". Gas is paid by ",
+    ". A call with a selector but no arguments may be refused by the target contract; the bundler’s message is shown as returned."
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.test.selector": {
+   "en": "only the selector {selector} (no arguments)",
+   "where": "src/screens/SessionsScreen.tsx:1639 expr",
+   "old": [
+    "only the selector ",
+    " (no arguments)"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.test.button": {
+   "en": "Test this session (allowed call {n})",
+   "where": "src/screens/SessionsScreen.tsx:3019 expr",
+   "old": [
+    "Test this session (allowed call ",
+    ")"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.chainId": {
+   "en": "chain id {chainId}",
+   "where": "src/config/defaults.ts:273 expr",
+   "old": [
+    "",
+    " (a test network you added, chain id ",
+    ") — balances and sends here are test funds, not real funds."
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.statusDetail": {
+   "en": "Status: {detail}.",
+   "where": "src/screens/SessionsScreen.tsx:2004 expr",
+   "old": [
+    " Status: ",
+    "."
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.feeBudget.lowered": {
+   "en": "The suggested fee budget was lowered from {from} to {to} {symbol} so that {keptBack} {symbol} stays in the account for this install's own worst-case network fee.",
+   "where": "src/screens/SessionsScreen.tsx:2252 expr",
+   "old": [
+    "The suggested fee budget was lowered from ",
+    " to ",
+    " ",
+    " so that ",
+    " ",
+    " stays in the account for this install's own worst-case network fee."
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.field.payments": {
+   "en": "Number of payments (1–{max}; sets the expiry)",
+   "where": "src/screens/SessionsScreen.tsx:2450 jsx",
+   "old": [
+    "Number of payments (1–",
+    "; sets the expiry)"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.field.feeBudget": {
+   "en": "Fee budget ({symbol}, all payments together)",
+   "where": "src/screens/SessionsScreen.tsx:2458 jsx",
+   "old": [
+    "Fee budget (",
+    ", all payments together)"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.feeBudget.merchantNote": {
+   "en": "Each payment’s network fee is paid by your account. The budget caps the total; without it a merchant could pay itself high fees from your {symbol}.",
+   "where": "src/screens/SessionsScreen.tsx:2473 jsx",
+   "old": [
+    "Each payment’s network fee is paid by your account. The budget caps the total; without it a merchant could pay itself high fees from your ",
+    "."
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.call.heading": {
+   "en": "Allowed call {n}",
+   "where": "src/screens/SessionsScreen.tsx:2599 jsx",
+   "old": [
+    "Allowed call ",
+    ""
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.call.targetLabel": {
+   "en": "Allowed call {n}: target address",
+   "where": "src/screens/SessionsScreen.tsx:2599 expr",
+   "old": [
+    "Allowed call ",
+    ": target address"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.call.function": {
+   "en": "Call {n}: function (optional)",
+   "where": "src/screens/SessionsScreen.tsx:2614 expr",
+   "old": [
+    "Call ",
+    ": function (optional)"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.call.cap": {
+   "en": "Call {n}: most {symbol} per call",
+   "where": "src/screens/SessionsScreen.tsx:2625 expr",
+   "old": [
+    "Call ",
+    ": most ",
+    " per call"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.dca.hint": {
+   "en": "Swap a fixed amount of {symbol} for USDC once per period, each swap after you confirm it.",
+   "where": "src/screens/SessionsScreen.tsx:2765 expr",
+   "old": [
+    "Swap a fixed amount of ",
+    " for USDC once per period, each swap after you confirm it."
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.card.erc7715": {
+   "en": "requested over WalletConnect (ERC-7715)",
+   "where": "src/screens/SessionsScreen.tsx:2985 literal",
+   "old": [
+    " · requested over WalletConnect (ERC-7715)"
+   ],
+   "base": "5cb4601"
+  },
+  "sessions.card.created": {
+   "en": "Created {date} · key {key}",
+   "where": "src/screens/SessionsScreen.tsx:2987 jsx",
+   "old": [
+    "Created ",
+    " · key ",
+    ""
+   ],
+   "base": "5cb4601"
+  },
+  "dca.feeBudget.lowered": {
+   "en": "The suggested fee budget was lowered from {from} to {to} {symbol} so that {keptBack} {symbol} stays in the account for this set-up's own worst-case network fee.",
+   "where": "src/screens/DcaViews.tsx:399 expr",
+   "old": [
+    "The suggested fee budget was lowered from ",
+    " to ",
+    " ",
+    " so that ",
+    " ",
+    " stays in the account for this set-up's own worst-case network fee."
+   ],
+   "base": "5cb4601"
+  },
+  "swap.approval.notConfirmed": {
+   "en": "The approval was broadcast (transaction {txid}) but has not taken effect on-chain within the waiting window. Nothing further was sent. Wait for it to confirm, then start the swap again — the allowance will already be in place.",
+   "where": "src/screens/SwapScreen.tsx:753 expr",
+   "old": [
+    "The approval was broadcast (transaction ",
+    ") but has not taken effect on-chain within the waiting window. Nothing further was sent. Wait for it to confirm, then start the swap again — the allowance will already be in place."
+   ],
+   "base": "5cb4601"
+  },
+  "swap.aa.selling": {
+   "en": "Selling {sell} {sellSymbol} from your smart account for at least {minBuy} {buySymbol} (guaranteed minimum after slippage), as one operation.",
+   "where": "src/screens/SwapScreen.tsx:1019 jsx",
+   "old": [
+    "Selling ",
+    " ",
+    " from your smart account for at least ",
+    " ",
+    " (guaranteed minimum after slippage), as one operation."
+   ],
+   "base": "5cb4601"
+  },
+  "swap.aa.title": {
+   "en": "Smart-account swap · {type}",
+   "where": "src/screens/SwapScreen.tsx:1079 jsx",
+   "old": [
+    "Smart-account swap · ",
+    ""
+   ],
+   "base": "5cb4601"
+  },
+  "swap.aa.batch": {
+   "en": "One operation, two calls, all-or-nothing: (1) approve exactly {amount} {symbol} — not unlimited — for the swap contract, (2) the swap. If the swap would fail, the approval is undone with it.",
+   "where": "src/screens/SwapScreen.tsx:1116 expr",
+   "old": [
+    "One operation, two calls, all-or-nothing: (1) approve exactly ",
+    " ",
+    " — not unlimited — for the swap contract, (2) the swap. If the swap would fail, the approval is undone with it."
+   ],
+   "base": "5cb4601"
+  },
+  "swap.sold": {
+   "en": "Sold {sell} {sellSymbol} for at least {minBuy} {buySymbol} (guaranteed minimum after slippage). The exact amount received is on the transaction.",
+   "where": "src/screens/SwapScreen.tsx:1223 jsx",
+   "old": [
+    "Sold ",
+    " ",
+    " for at least ",
+    " ",
+    " (guaranteed minimum after slippage). The exact amount received is on the transaction."
+   ],
+   "base": "5cb4601"
+  },
+  "swap.approve.intro": {
+   "en": "Before the swap contract can take your {symbol}, it needs a spending allowance. This approves exactly {amount} {symbol} — the amount you are swapping, not an unlimited allowance — for this swap's contract. The swap itself is a second transaction you confirm afterwards.",
+   "where": "src/screens/SwapScreen.tsx:1268 jsx",
+   "old": [
+    "Before the swap contract can take your ",
+    ", it needs a spending allowance. This approves exactly ",
+    " ",
+    " — the amount you are swapping, not an unlimited allowance — for this swap's contract. The swap itself is a second transaction you confirm afterwards."
+   ],
+   "base": "5cb4601"
+  },
+  "swap.approve.amountValue": {
+   "en": "{amount} {symbol} (exact, not unlimited)",
+   "where": "src/screens/SwapScreen.tsx:1277 expr",
+   "old": [
+    "",
+    " ",
+    " (exact, not unlimited)"
+   ],
+   "base": "5cb4601"
+  },
+  "swap.approve.broadcast": {
+   "en": "Approval broadcast ({txid}…). Waiting for it to take effect on-chain…",
+   "where": "src/screens/SwapScreen.tsx:1333 expr",
+   "old": [
+    "Approval broadcast (",
+    "…). Waiting for it to take effect on-chain…"
+   ],
+   "base": "5cb4601"
+  },
+  "swap.minimumNote": {
+   "en": "The guaranteed minimum is the least you can receive after your slippage setting ({bps} bps); the swap fails rather than fill below it.",
+   "where": "src/screens/SwapScreen.tsx:1504 jsx",
+   "old": [
+    "The guaranteed minimum is the least you can receive after your slippage setting (",
+    " bps); the swap fails rather than fill below it."
+   ],
+   "base": "5cb4601"
+  },
+  "swap.approvalFirst": {
+   "en": "Selling {symbol} may need a one-time approval first; if so, the next step explains it.",
+   "where": "src/screens/SwapScreen.tsx:1534 expr",
+   "old": [
+    " Selling ",
+    " may need a one-time approval first; if so, the next step explains it."
+   ],
+   "base": "5cb4601"
+  },
+  "swap.header.from": {
+   "en": "powered by 0x · from {from}",
+   "where": "src/screens/SwapScreen.tsx:1587 jsx",
+   "old": [
+    "",
+    " · ",
+    " · powered by 0x · from ",
+    ""
+   ],
+   "base": "5cb4601"
+  },
+  "swap.header.smartAccount": {
+   "en": "smart account {address}",
+   "where": "src/components/WcApprovalSheet.tsx:1325 jsx",
+   "old": [
+    "Signed by your smart account ",
+    " through its validator (ERC-1271",
+    "). Your account key signs Kernel's wrapper — a hash of this exact request bound to the smart account and this chain — so a hardware or external signer would show only that hash. What you are approving is the content shown above."
+   ],
+   "base": "5cb4601"
+  },
+  "swap.aa.hint": {
+   "en": "Swaps the smart account's own funds ({type}) as ONE operation: for a token sale, approve exactly the amount and swap in a single all-or-nothing batch — no separate approval step. Gas comes from the smart account (or the paymaster when sponsored).",
+   "where": "src/screens/SwapScreen.tsx:1611 jsx",
+   "old": [
+    "Swaps the smart account's own funds (",
+    ") as ONE operation: for a token sale, approve exactly the amount and swap in a single all-or-nothing batch — no separate approval step. Gas comes from the smart account (or the paymaster when sponsored)."
+   ],
+   "base": "5cb4601"
+  },
+  "swap.noTokens": {
+   "en": "Swapping needs at least one tracked token on {network} as the other side of the pair. Add one under Manage tokens on Home.",
+   "where": "src/screens/SwapScreen.tsx:1628 expr",
+   "old": [
+    "Swapping needs at least one tracked token on ",
+    " as the other side of the pair. Add one under Manage tokens on Home.",
+    ""
+   ],
+   "base": "5cb4601"
+  },
+  "swap.testnetNote": {
+   "en": "(Note: 0x's published supported-chain list covers mainnets only, so quotes may be refused on a test network.)",
+   "where": "src/screens/SwapScreen.tsx:1631 literal",
+   "old": [
+    " (Note: 0x's published supported-chain list covers mainnets only, so quotes may be refused on a test network.)"
+   ],
+   "base": "5cb4601"
+  },
+  "swap.balance.spoken": {
+   "en": "Balance {amount} {symbol}",
+   "where": "src/screens/SwapScreen.tsx:1662 expr",
+   "old": [
+    "Balance ",
+    " ",
+    ""
+   ],
+   "base": "5cb4601"
+  },
+  "staking.preflightFailed": {
+   "en": "The pre-flight simulation failed: {reason}. Nothing was sent.",
+   "where": "src/screens/BridgeScreen.tsx:599 expr",
+   "old": [
+    "The pre-flight simulation failed: ",
+    ". Nothing was sent."
+   ],
+   "base": "5cb4601"
+  },
+  "staking.approve.intro": {
+   "en": "{contract} pulls the {symbol} with a token approval. This approves exactly {amount} {symbol}, never more, and the next step uses all of it.",
+   "where": "src/screens/StakingScreen.tsx:779 jsx",
+   "old": [
+    "",
+    " pulls the ",
+    " with a token approval. This approves exactly ",
+    " ",
+    ", never more, and the next step uses all of it."
+   ],
+   "base": "5cb4601"
+  },
+  "staking.simulation.failed": {
+   "en": "Pre-flight simulation failed: {reason}. Nothing will be sent.",
+   "where": "src/screens/BridgeScreen.tsx:902 jsx",
+   "old": [
+    "Pre-flight simulation failed: ",
+    ". Nothing will be sent."
+   ],
+   "base": "5cb4601"
+  },
+  "staking.worstCase": {
+   "en": "Worst case at {gwei} gwei max fee × {gas} gas; the actual fee is usually lower.",
+   "where": "src/screens/ApprovalsScreen.tsx:519 jsx",
+   "old": [
+    "Worst case at ",
+    " gwei max fee × ",
+    " gas; the actual fee is usually lower. Revoking is a normal transaction and costs this fee even though no tokens move."
+   ],
+   "base": "5cb4601"
+  },
+  "staking.aa.title": {
+   "en": "Smart account · {type}",
+   "where": "src/screens/BridgeScreen.tsx:964 jsx",
+   "old": [
+    "Smart account · ",
+    ""
+   ],
+   "base": "5cb4601"
+  },
+  "staking.aa.batch": {
+   "en": "One operation, all-or-nothing: (1) approve exactly {amount} {symbol} for {contract}, (2) the action itself. If the action would fail, the approval is undone with it.",
+   "where": "src/screens/StakingScreen.tsx:866 jsx",
+   "old": [
+    "One operation, all-or-nothing: (1) approve exactly ",
+    " ",
+    " for ",
+    ", (2) the action itself. If the action would fail, the approval is undone with it."
+   ],
+   "base": "5cb4601"
+  },
+  "staking.aa.call": {
+   "en": "Call {n} of {count}",
+   "where": "src/components/WcApprovalSheet.tsx:1114 expr",
+   "old": [
+    "Call ",
+    " of ",
+    " · "
+   ],
+   "base": "5cb4601"
+  },
+  "staking.aa.button": {
+   "en": "{action} from smart account",
+   "where": "src/screens/SendScreen.tsx:2084 expr",
+   "old": [
+    "Send ",
+    " from smart account"
+   ],
+   "base": "5cb4601"
+  },
+  "staking.rocket.minimum": {
+   "en": "Minimum deposit {minimum} {symbol}; deposit fee {fee}% (both read just now).",
+   "where": "src/screens/StakingScreen.tsx:1013 jsx",
+   "old": [
+    "Minimum deposit ",
+    " ",
+    "; deposit fee ",
+    "% (both read just now)."
+   ],
+   "base": "5cb4601"
+  },
+  "staking.source": {
+   "en": "Source: {source}, read {read}.",
+   "where": "src/screens/StakingViews.tsx:103 expr",
+   "old": [
+    "Source: ",
+    ", read ",
+    ". ",
+    ""
+   ],
+   "base": "5cb4601"
+  },
+  "staking.rethLocked": {
+   "en": "Rocket Pool blocks moving or redeeming this account’s rETH until block {block}.",
+   "where": "src/screens/StakingViews.tsx:159 jsx",
+   "old": [
+    "Rocket Pool blocks moving or redeeming this account’s rETH until block ",
+    "."
+   ],
+   "base": "5cb4601"
+  },
+  "broadcast.tx.unknown": {
+   "en": "The network endpoint did not answer within {seconds} seconds, so this wallet does not know whether the transaction was sent. It is listed under Pending on this phone in Activity, which checks it every {poll} seconds; do not send it again until that list says what happened.",
+   "where": "src/wallet/broadcast-outcome.ts:28 expr",
+   "old": [
+    "The network endpoint did not answer within ",
+    " seconds, so this wallet does not know whether the transaction was sent. It is listed under Pending on this phone in Activity, which checks it every ",
+    " seconds; do not send it again until that list says what happened."
+   ],
+   "base": "5cb4601"
+  },
+  "broadcast.tx.unknownUnlisted": {
+   "en": "The network endpoint did not answer within {seconds} seconds, so this wallet does not know whether the transaction was sent, and it could not add it to Pending on this phone. Look the transaction up in a block explorer before sending anything again.",
+   "where": "src/wallet/broadcast-outcome.ts:34 expr",
+   "old": [
+    "The network endpoint did not answer within ",
+    " seconds, so this wallet does not know whether the transaction was sent, and it could not add it to Pending on this phone. Look the transaction up in a block explorer before sending anything again."
+   ],
+   "base": "5cb4601"
+  },
+  "broadcast.userop.unknown": {
+   "en": "The bundler did not answer within {seconds} seconds, so this wallet does not know whether it received the operation. It is listed under Pending on this phone in Activity; tap Check status there, and do not send it again until that list says what happened.",
+   "where": "src/wallet/broadcast-outcome.ts:40 expr",
+   "old": [
+    "The bundler did not answer within ",
+    " seconds, so this wallet does not know whether it received the operation. It is listed under Pending on this phone in Activity; tap Check status there, and do not send it again until that list says what happened."
+   ],
+   "base": "5cb4601"
+  },
+  "broadcast.userop.unknownUnlisted": {
+   "en": "The bundler did not answer within {seconds} seconds, so this wallet does not know whether it received the operation, and it could not add it to Pending on this phone. Look the operation up in an ERC-4337 explorer before sending anything again.",
+   "where": "src/wallet/broadcast-outcome.ts:46 expr",
+   "old": [
+    "The bundler did not answer within ",
+    " seconds, so this wallet does not know whether it received the operation, and it could not add it to Pending on this phone. Look the operation up in an ERC-4337 explorer before sending anything again."
+   ],
+   "base": "5cb4601"
+  },
+  "broadcast.unknown": {
+   "en": "The network did not answer within {seconds} seconds, so this wallet does not know whether it was sent. Check this account in a block explorer before sending anything again.",
+   "where": "src/wallet/broadcast-outcome.ts:52 expr",
+   "old": [
+    "The network did not answer within ",
+    " seconds, so this wallet does not know whether it was sent. Check this account in a block explorer before sending anything again."
+   ],
+   "base": "5cb4601"
+  },
+  "broadcast.detail": {
+   "en": "{sentence}\n\nTechnical detail: {technical}",
+   "where": "src/screens/ConnectionsScreen.tsx:82 expr",
+   "old": [
+    "",
+    "\n\nTechnical detail: ",
+    ""
+   ],
+   "base": "5cb4601"
   }
  },
  "composite": {
@@ -2726,6 +7229,90 @@
    "en": "{rate} sat/vB (target: {blocks} blocks)",
    "where": "src/screens/SendScreen.tsx:2325",
    "old": "the same with feeTarget > 1"
+  },
+  "send.aa.included": {
+   "en": "Included on-chain.",
+   "where": "src/screens/SendScreen.tsx:1777 jsx; src/screens/StakingScreen.tsx:709 jsx",
+   "old": "'Included on-chain' followed by the ternary's '.' (the not-succeeded branch of {aaResult.success === true ? ' — succeeded.' : '.'})",
+   "base": "5cb4601"
+  },
+  "settings.aa.7702owners.one": {
+   "en": "One account uses its own address as the smart account on this network (EIP-7702, Kernel v3.3; see Upgrade this account). Those accounts need only the bundler; the type below applies to every other account.",
+   "where": "src/screens/SettingsScreen.tsx:915 jsx",
+   "old": "'One account uses' (the ternary's first branch), {' '}, then the JSX text 'its own address as the smart account on this network (EIP-7702, Kernel v3.3; see Upgrade this account). Those accounts need only the bundler; the type below applies to every other account.'",
+   "base": "5cb4601"
+  },
+  "settings.aa.7702owners": {
+   "en": "{count} accounts use its own address as the smart account on this network (EIP-7702, Kernel v3.3; see Upgrade this account). Those accounts need only the bundler; the type below applies to every other account.",
+   "where": "src/screens/SettingsScreen.tsx:915 jsx",
+   "old": "`${count} accounts use` (the ternary's second branch), {' '}, then the same JSX text as settings.aa.7702owners.one",
+   "base": "5cb4601"
+  },
+  "settings.custom.chipTest": {
+   "en": "{label} (test)",
+   "where": "src/screens/SettingsScreen.tsx:1394 expr",
+   "old": "`${p.label}${p.testnet ? ' (test)' : ''}` (the label, then ' (test)' for a test network)",
+   "base": "5cb4601"
+  },
+  "sessions.balance": {
+   "en": "The smart account holds {balance} {symbol} (read just now).",
+   "where": "src/screens/SessionsScreen.tsx:2496 expr",
+   "old": "`The smart account holds ${balance} ${symbol}` + '' + ' (read just now).' (the sentence without a deposit)",
+   "base": "5cb4601"
+  },
+  "sessions.balance.withDeposit": {
+   "en": "The smart account holds {balance} {symbol} plus an EntryPoint deposit of {deposit} {symbol} (read just now).",
+   "where": "src/screens/SessionsScreen.tsx:2496 expr",
+   "old": "`The smart account holds ${balance} ${symbol}` + ` plus an EntryPoint deposit of ${deposit} ${symbol}` + ' (read just now).'",
+   "base": "5cb4601"
+  },
+  "swap.aa.callApprove": {
+   "en": "Call {n} of {count} — approve",
+   "where": "src/screens/SwapScreen.tsx:1125 expr",
+   "old": "`Call ${i + 1} of ${count}${batch && i === 0 ? ' — approve' : ' — swap'}` (the approve branch)",
+   "base": "5cb4601"
+  },
+  "swap.aa.callSwap": {
+   "en": "Call {n} of {count} — swap",
+   "where": "src/screens/SwapScreen.tsx:1125 expr",
+   "old": "`Call ${i + 1} of ${count}${batch && i === 0 ? ' — approve' : ' — swap'}` (the swap branch)",
+   "base": "5cb4601"
+  },
+  "swap.aa.calldata": {
+   "en": "{bytes} bytes of calldata",
+   "where": "src/screens/SwapScreen.tsx:1127 expr",
+   "old": "`${bytes} bytes of calldata${value > 0n ? `, value …` : ''}` (no value)",
+   "base": "5cb4601"
+  },
+  "swap.aa.calldataValue": {
+   "en": "{bytes} bytes of calldata, value {value} {symbol}",
+   "where": "src/screens/SwapScreen.tsx:1127 expr",
+   "old": "`${bytes} bytes of calldata${value > 0n ? `, value ${value} ${symbol}` : ''}` (with a value)",
+   "base": "5cb4601"
+  },
+  "staking.skippedLog": {
+   "en": "1 event could not be read, so this may be incomplete.",
+   "where": "src/screens/StakingViews.tsx:231 jsx",
+   "old": "{preview.skippedLogs} event{skippedLogs === 1 ? '' : 's'} could not be read, so this may be incomplete. (one event)",
+   "base": "5cb4601"
+  },
+  "staking.skippedLogs": {
+   "en": "{count} events could not be read, so this may be incomplete.",
+   "where": "src/screens/StakingViews.tsx:231 jsx",
+   "old": "{preview.skippedLogs} event{skippedLogs === 1 ? '' : 's'} could not be read, so this may be incomplete. (several events)",
+   "base": "5cb4601"
+  },
+  "staking.simulation.failedPlain": {
+   "en": "The simulation of these calls failed.",
+   "where": "src/screens/StakingViews.tsx:236 jsx",
+   "old": "The simulation of these calls failed{revertReason ? `: ${revertReason}` : ''}. (without a reason)",
+   "base": "5cb4601"
+  },
+  "staking.simulation.failedReason": {
+   "en": "The simulation of these calls failed: {reason}.",
+   "where": "src/screens/StakingViews.tsx:236 jsx",
+   "old": "The simulation of these calls failed{revertReason ? `: ${revertReason}` : ''}. (with a reason)",
+   "base": "5cb4601"
   }
  },
  "new": [

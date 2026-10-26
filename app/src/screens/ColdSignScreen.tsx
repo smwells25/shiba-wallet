@@ -5,6 +5,8 @@ import { formatAssetId, type FungibleAsset } from '@shiba-wallet/core';
 import { randomBytes } from '@noble/hashes/utils.js';
 import type { RootStackParamList } from '../navigation';
 import { Button, WarningBox, WatchOnlyNotice, screenStyle, switchColors, useFieldLabels } from '../components';
+import { localize } from '../i18n/index';
+import { useI18n } from '../i18n/useI18n';
 import { ShareActions } from '../components/RecoveryViews';
 import { QrScanner } from '../components/QrScanner';
 import { BalanceChangePreview } from '../components/BalanceChangePreview';
@@ -206,6 +208,9 @@ function isReplacement(q: ColdQuote | null): q is EvmReplacementQuote {
  */
 export function ColdSignScreen({ route, navigation }: Props) {
   const theme = useTheme();
+  // The off-line smart-account texts (cold-aa.ts) through the string table
+  // (phase 23 item 8); the rest of this screen is not migrated yet.
+  useI18n();
   const field = useFieldLabels();
   const { accounts, activeAccount } = useWallet();
   const { evmChain } = usePrefs();
@@ -882,23 +887,23 @@ export function ColdSignScreen({ route, navigation }: Props) {
       <ScrollView key="cold-aa-show" style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <Text accessibilityRole="header" style={[styles.heading, { color: theme.text }]}>For the off-line signer</Text>
         <Text style={[styles.body, { color: theme.text }]}>{aaRequest.summary}</Text>
-        <Text style={[styles.hint, { color: theme.textMuted }]}>{COLD_AA_QR_CONTENTS}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(COLD_AA_QR_CONTENTS)}</Text>
         <WarningBox>{COLD_AA_CHECK_ON_SIGNER}</WarningBox>
-        <ColdSignPayloadQr payload={payload} caption={COLD_AA_REQUEST_CAPTION} kind={COLD_AA_QR_KIND} />
-        <Text style={[styles.hint, { color: theme.textMuted }]}>{COLD_AA_FORMAT_NOTE}</Text>
+        <ColdSignPayloadQr payload={payload} caption={localize(COLD_AA_REQUEST_CAPTION)} kind={COLD_AA_QR_KIND} />
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(COLD_AA_FORMAT_NOTE)}</Text>
         <ShareActions text={payload} shareTitle="Smart-account signing request" />
         <Row label="Worst-case network fee in the signed operation" value={`${fmt(details.worstCaseFee)} ${symbol}`} theme={theme} />
-        <Text style={[styles.hint, { color: theme.textMuted }]}>{COLD_AA_FEES_FIXED_NOTE}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(COLD_AA_FEES_FIXED_NOTE)}</Text>
         <Text style={[styles.body, { color: theme.text }]}>{coldAaExpiryLine(aaRequest)}</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           Request {aaRequest.requestId} · userOpHash {aaRequest.userOpHash} · digest to sign {aaRequest.signingDigest}
         </Text>
 
         <Text accessibilityRole="header" style={[styles.heading, { color: theme.text }]}>The signature</Text>
-        <Text style={[styles.hint, { color: theme.textMuted }]}>{COLD_AA_SCAN_NOTE}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(COLD_AA_SCAN_NOTE)}</Text>
         <ColdSignScanButton
           title={COLD_SIGN_SCAN_BUTTON}
-          rationale={COLD_AA_SCAN_RATIONALE}
+          rationale={localize(COLD_AA_SCAN_RATIONALE)}
           onComplete={onAaSignatureText}
           onError={(message) => {
             setAaSignature(null);
@@ -947,7 +952,7 @@ export function ColdSignScreen({ route, navigation }: Props) {
             <Button title="Back" variant="secondary" onPress={aaBackToForm} />
           </>
         )}
-        <Text style={[styles.hint, { color: theme.textMuted }]}>{COLD_AA_REVIEW_AGAIN_NOTE}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(COLD_AA_REVIEW_AGAIN_NOTE)}</Text>
       </ScrollView>
     );
   }
@@ -1191,8 +1196,8 @@ export function ColdSignScreen({ route, navigation }: Props) {
             <>
               <View style={styles.overrideRow}>
                 <Switch {...switchColors(theme)}
-                  accessibilityLabel={COLD_AA_SWITCH_LABEL}
-                  accessibilityHint={COLD_AA_SWITCH_HINT}
+                  accessibilityLabel={localize(COLD_AA_SWITCH_LABEL)}
+                  accessibilityHint={localize(COLD_AA_SWITCH_HINT)}
                   value={smartAccount}
                   onValueChange={(v) => {
                     setSmartAccount(v);
@@ -1200,7 +1205,7 @@ export function ColdSignScreen({ route, navigation }: Props) {
                     lastAaMax.current = null;
                   }}
                 />
-                <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.body, { color: theme.text, flex: 1 }]}>{COLD_AA_SWITCH_LABEL}</Text>
+                <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.body, { color: theme.text, flex: 1 }]}>{localize(COLD_AA_SWITCH_LABEL)}</Text>
               </View>
               {aaActive ? (
                 <ColdAaAccountCard

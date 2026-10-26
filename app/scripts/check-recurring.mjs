@@ -509,10 +509,11 @@ console.log('check-recurring: the key is never handed over');
     `Session key (held by ${RECURRING_KEY_HOLDER_TEXT})`.match(/\(/g).length === 1 && /never shown or exported/.test(RECURRING_KEY_HOLDER_TEXT));
   check('key status line', recurringKeyStatusText(record) === 'Payment key on this phone only (never shown or exported); deleted from this phone when you revoke.');
   const screen = src('../src/screens/SessionsScreen.tsx');
-  const section = body(screen, 'Recurring payments</Text>', '>Subscriptions</Text>');
+  // Phase 23 item 8: the headings go through the string table (<T>).
+  const section = body(screen, 'Recurring payments</T></Text>', '<T>Subscriptions</T></Text>');
   check('the recurring cards offer no key hand-over, no key screen and no Test button (source)',
     section.length > 500 && !/onShowKey|Hand the key|onTest\(|SubscriptionKeyHandover/.test(section));
-  check('the recurring card states "only while the wallet is open" (source)', screen.includes('{RECURRING_CARD_NOTE}') && screen.includes('<WarningBox>{RECURRING_WHILE_OPEN_NOTE}</WarningBox>'));
+  check('the recurring card states "only while the wallet is open" (source)', screen.includes('{localize(RECURRING_CARD_NOTE)}') && screen.includes('<WarningBox>{RECURRING_WHILE_OPEN_NOTE}</WarningBox>'));
 }
 
 // ---------------------------------------------------------------------------
@@ -790,7 +791,8 @@ console.log('check-recurring: confirm before submit');
     (screen.match(/payRecurringPayment\(/g) ?? []).length === 1 && /runRecurringPayment\(\{[\s\S]{0,200}plan: \(\) => activeEvmNodeRunner\(\(node\) => planRecurringPayment\(\{ node, record \}\), \{ isFailure: isRecurringNodeFailure \}\),[\s\S]{0,40}confirm: \(plan\) => \{[\s\S]{0,120}return confirmPaymentDialog\(plan\);[\s\S]{0,80}\},\s*pay: \(plan\) => \{[\s\S]{0,80}return quoteOnNode\(\(b\) => payRecurringPayment\(\{ bundle: b, plan, vault: sessionKeyVault \}\)\)/.test(screen));
   const dialog = body(screen, 'const confirmPaymentDialog =', 'const onPayNow =');
   check('the dialog resolves true only from "Send payment"; Cancel and dismiss resolve false (source)',
-    /text: 'Cancel', style: 'cancel', onPress: \(\) => resolve\(false\)/.test(dialog) && /text: 'Send payment', onPress: \(\) => resolve\(true\)/.test(dialog) && /onDismiss: \(\) => resolve\(false\)/.test(dialog) && (dialog.match(/resolve\(true\)/g) ?? []).length === 1);
+    // Phase 23 item 8: the button words through the string table (tx).
+    /text: tx\('Cancel'\), style: 'cancel', onPress: \(\) => resolve\(false\)/.test(dialog) && /text: tx\('Send payment'\), onPress: \(\) => resolve\(true\)/.test(dialog) && /onDismiss: \(\) => resolve\(false\)/.test(dialog) && (dialog.match(/resolve\(true\)/g) ?? []).length === 1);
   const refresh = body(screen, 'const refreshRecord = useCallback(', 'const reloadList = useCallback(');
   const reload = body(screen, 'const reloadList = useCallback(', 'useFocusEffect(reloadList)');
   check('loading, focusing and refreshing never pay (source)', refresh.length > 100 && reload.length > 50 && !/onPayNow|runRecurringPayment|payRecurringPayment/.test(refresh + reload));

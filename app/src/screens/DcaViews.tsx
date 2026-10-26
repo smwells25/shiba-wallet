@@ -3,6 +3,8 @@ import { ActivityIndicator, StyleSheet, Text, TextInput, View } from 'react-nati
 import { describePeriod, type DcaTerms, type SessionKeyGrant } from '@shiba-wallet/chains-evm';
 import { Button, WarningBox, useFieldLabels } from '../components';
 import { GrantReview } from '../components/SessionGrantViews';
+import { localize, t, tx } from '../i18n/index';
+import { T } from '../i18n/T';
 import { useTheme } from '../theme';
 import { formatUnits } from '../wallet/balances';
 import type { AaSendQuote } from '../wallet/aa';
@@ -131,7 +133,7 @@ export function DcaFormView(props: {
   const nameField = field('name', 'Name (optional)');
   return (
     <>
-      <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>New recurring swap</Text>
+      <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}><T>New recurring swap</T></Text>
       {props.header}
       <Text style={[styles.hint, { color: theme.textMuted }]}>{DCA_FORM_INTRO}</Text>
       <WarningBox>{DCA_WHILE_OPEN_NOTE}</WarningBox>
@@ -173,10 +175,10 @@ export function DcaFormView(props: {
         style={input}
       />
       <Text style={[styles.hint, { color: theme.textMuted }]}>
-        The minimum is fixed when you start and never follows the price afterwards. Review reads a fresh quote and
-        computes the minimum from it at this percentage.
+        <T>The minimum is fixed when you start and never follows the price afterwards. Review reads a fresh quote and
+        computes the minimum from it at this percentage.</T>
       </Text>
-      <Text style={[styles.label, { color: theme.textMuted }]}>Once every</Text>
+      <Text style={[styles.label, { color: theme.textMuted }]}><T>Once every</T></Text>
       <View style={styles.rowButtons}>
         {subscriptionPeriodPresets(props.testnet).map((p) => {
           const chosen = !form.periodCustom && form.periodSeconds === p.seconds;
@@ -204,7 +206,7 @@ export function DcaFormView(props: {
             {...field('custom-period', 'Custom period length').input}
             value={form.customCount}
             onChangeText={(t) => setForm((prev) => ({ ...prev, customCount: t }))}
-            placeholder="How many"
+            placeholder={tx('How many')}
             placeholderTextColor={theme.textMuted}
             keyboardType="number-pad"
             style={input}
@@ -264,11 +266,13 @@ export function DcaFormView(props: {
         : null}
       {props.feeFacts.balance !== null ? (
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          {`The smart account holds ${formatUnits(props.feeFacts.balance, 18, 18)} ${props.symbol}` +
-            (props.feeFacts.deposit !== null && props.feeFacts.deposit > 0n
-              ? ` plus an EntryPoint deposit of ${formatUnits(props.feeFacts.deposit, 18, 18)} ${props.symbol}`
-              : '') +
-            ' (read just now).'}
+          {props.feeFacts.deposit !== null && props.feeFacts.deposit > 0n
+            ? t('sessions.balance.withDeposit', {
+                balance: formatUnits(props.feeFacts.balance, 18, 18),
+                deposit: formatUnits(props.feeFacts.deposit, 18, 18),
+                symbol: props.symbol,
+              })
+            : t('sessions.balance', { balance: formatUnits(props.feeFacts.balance, 18, 18), symbol: props.symbol })}
         </Text>
       ) : null}
       <Text {...nameField.label} style={[styles.label, { color: theme.textMuted }]}>{nameField.text}</Text>
@@ -276,7 +280,7 @@ export function DcaFormView(props: {
         {...nameField.input}
         value={form.label}
         onChangeText={(t) => setForm((prev) => ({ ...prev, label: t }))}
-        placeholder="e.g. weekly USDC"
+        placeholder={tx('e.g. weekly USDC')}
         placeholderTextColor={theme.textMuted}
         maxLength={64}
         style={input}
@@ -285,7 +289,7 @@ export function DcaFormView(props: {
       {props.busy ? (
         <View style={styles.center}>
           <ActivityIndicator color={theme.accent} />
-          <Text style={[styles.hint, { color: theme.textMuted }]}>Reading the pool, the account and asking the bundler…</Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}><T>Reading the pool, the account and asking the bundler…</T></Text>
         </View>
       ) : (
         <>
@@ -329,7 +333,7 @@ export function DcaReviewView(props: {
   return (
     <>
       {props.badge}
-      <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>Start this recurring swap?</Text>
+      <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}><T>Start this recurring swap?</T></Text>
       {props.header}
       {/* The design note's order: the batching box, then "THE MINIMUM DOES NOT
           FOLLOW THE PRICE", no deadline, a reverting swap uses up its period,
@@ -355,14 +359,14 @@ export function DcaReviewView(props: {
       <Text style={[styles.hint, { color: theme.textMuted }]}>{DCA_PAY_PROMPT_NOTE}</Text>
       <Text style={[styles.hint, { color: theme.textMuted }]}>{DCA_SPENDING_NOTE}</Text>
       {shortWindow ? <WarningBox>{shortWindow}</WarningBox> : null}
-      <Text style={[styles.label, { color: theme.textMuted }]}>Your account enforces on-chain:</Text>
+      <Text style={[styles.label, { color: theme.textMuted }]}><T>Your account enforces on-chain:</T></Text>
       {review.enforced.map((line) => (
         <Text key={line} style={[styles.hint, { color: theme.text }]}>
           • {line}
         </Text>
       ))}
       <Text style={[styles.hint, { color: theme.textMuted }]}>{DCA_AUDIT_NOTE}</Text>
-      <Text style={[styles.label, { color: theme.textMuted }]}>Technical details (the grant as installed)</Text>
+      <Text style={[styles.label, { color: theme.textMuted }]}><T>Technical details (the grant as installed)</T></Text>
       <GrantReview
         grant={props.grant}
         account={props.account}
@@ -396,9 +400,12 @@ export function DcaReviewView(props: {
       {funding.depositNote ? <Text style={[styles.hint, { color: theme.textMuted }]}>{funding.depositNote}</Text> : null}
       {lowered ? (
         <WarningBox>
-          {`The suggested fee budget was lowered from ${formatUnits(lowered.from, 18, 18)} to ` +
-            `${formatUnits(lowered.to, 18, 18)} ${symbol} so that ${formatUnits(lowered.keptBack, 18, 18)} ` +
-            `${symbol} stays in the account for this set-up's own worst-case network fee.`}
+          {t('dca.feeBudget.lowered', {
+            from: formatUnits(lowered.from, 18, 18),
+            to: formatUnits(lowered.to, 18, 18),
+            symbol,
+            keptBack: formatUnits(lowered.keptBack, 18, 18),
+          })}
         </WarningBox>
       ) : null}
       {funding.shortfall ? <WarningBox>{funding.shortfall}</WarningBox> : null}
@@ -425,13 +432,13 @@ export function DcaReviewView(props: {
         })}
       </Text>
       <Text style={[styles.ok, { color: theme.success }]}>
-        Bundler gas estimate passed (eth_estimateUserOperationGas simulated the set-up).
+        <T>Bundler gas estimate passed (eth_estimateUserOperationGas simulated the set-up).</T>
       </Text>
       {props.sending ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color={theme.accent} />
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            {props.sendStage === 'requote' ? 'Starting the clock now and asking the bundler again…' : 'Signing and sending…'}
+            {props.sendStage === 'requote' ? tx('Starting the clock now and asking the bundler again…') : tx('Signing and sending…')}
           </Text>
         </View>
       ) : (
@@ -449,8 +456,8 @@ export function DcaListHeading({ count }: { count: number }) {
   const theme = useTheme();
   return (
     <>
-      <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Recurring swaps</Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{count === 0 ? 'None on this device.' : DCA_CARD_NOTE}</Text>
+      <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Recurring swaps</T></Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{count === 0 ? tx('None on this device.') : localize(DCA_CARD_NOTE)}</Text>
     </>
   );
 }

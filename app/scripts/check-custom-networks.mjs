@@ -28,6 +28,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as cn from '../src/wallet/custom-networks.ts';
+import { en as EN_TABLE } from '../src/i18n/en.ts';
 import * as evm from '../src/config/evm-chain.ts';
 import { FEATURE_READINESS, FeatureNotAllowedError, assertFeatureAllowed, isFeatureAllowed, isTestNetwork } from '../src/config/readiness.ts';
 import { loadPrefs, savePrefs } from '../src/config/prefs.ts';
@@ -168,7 +169,8 @@ console.log('Validation and refusal sentences (no network)');
     v({ chainId: '1' }) === 'Chain id 1 is already built in as Ethereum mainnet; choose Off (mainnet) in the network list above instead. Nothing was saved.', v({ chainId: '1' }));
   {
     const settingsSrc = readFileSync(join(HERE, '../src/screens/SettingsScreen.tsx'), 'utf8');
-    check('…and that chip really reads "Off (mainnet)" in Settings → Developer', settingsSrc.includes("{ label: 'Off (mainnet)', value: null },"));
+    // Phase 23 item 8: the chip's label goes through the string table; its English is unchanged.
+    check('…and that chip really reads "Off (mainnet)" in Settings → Developer', settingsSrc.includes("{ label: tx('Off (mainnet)'), value: null },") && EN_TABLE['settings.dev.offMainnet'] === 'Off (mainnet)');
   }
   for (const p of evm.EVM_TEST_PROFILES) {
     check(`collision with ${p.label} refused`, v({ chainId: p.chainIdDecimal }) === `Chain id ${p.chainIdDecimal} is already built in as ${p.label}; choose it in the network list above instead. Nothing was saved.`);
@@ -379,7 +381,7 @@ const store = memoryStore();
       testNote.includes('No smart-account deployment is pre-filled (paste a factory under Account Abstraction and the wallet checks it on-chain before saving)') && !testNote.includes(refusal));
     const settingsSrc = readFileSync(join(HERE, '../src/screens/SettingsScreen.tsx'), 'utf8');
     check('Settings → Developer passes the kernel-smart-account refusal to the note',
-      settingsSrc.includes("{customNetworkNote(evmChain, { smartAccountRefusal: readinessRefusal('kernel-smart-account') })}"));
+      settingsSrc.includes("{localize(customNetworkNote(evmChain, { smartAccountRefusal: readinessRefusal('kernel-smart-account') }))}"));
   }
 
   // The single read path: a store with a saved network and choice, read cold.
@@ -576,7 +578,10 @@ console.log('Settings source checks');
 {
   const settings = readFileSync(join(HERE, '../src/screens/SettingsScreen.tsx'), 'utf8');
   check('the Kernel pre-fill follows the profile (none on a custom network)', settings.includes('prefill={aaKernelPrefillFor(network.chainId)}') && !settings.includes('prefill={KERNEL_PREFILL.factory}'));
-  check('"Test mode is ON" is shown from evmChain.testnet, never the sepolia flag', settings.includes('{evmChain.testnet ? (\n          <Text style={[styles.hint, { color: theme.testnetFill }]}>\n            Test mode is ON') && !/\{sepolia \? \(/.test(settings));
+  // Phase 23 item 8: the sentence comes from the string table (its English "Test mode is ON (…" unchanged).
+  check('"Test mode is ON" is shown from evmChain.testnet, never the sepolia flag',
+    settings.includes("{evmChain.testnet ? (\n          <Text style={[styles.hint, { color: theme.testnetFill }]}>\n            {t('settings.dev.testModeOn', { network: evmChain.label, symbol: evmChain.displaySymbol })}") &&
+      EN_TABLE['settings.dev.testModeOn'].startsWith('Test mode is ON ({network}).') && !/\{sepolia \? \(/.test(settings));
   check('Developer shows the custom networks section with chips', settings.includes('<CustomNetworksSection customNetworks={customNetworks} choice={testNetwork} onChoose={setTestNetwork} />') && settings.includes('style={styles.choiceChip}'));
   check('removal asks for the device check when spending limits would be deleted', settings.includes("requireLocalAuth('Remove the network and its spending limits')"));
   check('the Developer intro mentions a test network you added (finding 9)',

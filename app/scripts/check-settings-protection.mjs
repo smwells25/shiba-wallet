@@ -221,7 +221,8 @@ console.log('check-settings-protection: source rules');
   const src = readFileSync(new URL('../src/screens/SettingsScreen.tsx', import.meta.url), 'utf8');
   check('Settings no longer says "No recovery phrase found"', !/No recovery phrase found/.test(src));
   check('Settings calls upgradePhraseProtection only from the confirm dialog',
-    (src.match(/upgradePhraseProtection\(/g) ?? []).length === 1 && /Alert\.alert\(PROTECT_CONFIRM_TITLE, protectConfirmMessage\(protection\)/.test(src));
+    // Phase 23 item 8: the dialog's title and message are shown through the string table (localize).
+    (src.match(/upgradePhraseProtection\(/g) ?? []).length === 1 && /Alert\.alert\(localize\(PROTECT_CONFIRM_TITLE\), localize\(protectConfirmMessage\(protection\)\)/.test(src));
   // Feature 12: the dialog text is PROTECT_CONFIRM_MESSAGE itself unless
   // imported keys would move too (check-key-import.mjs pins the extension).
   check('the confirm message is PROTECT_CONFIRM_MESSAGE when no imported key is in standard storage',

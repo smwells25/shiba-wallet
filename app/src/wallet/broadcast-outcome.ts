@@ -14,6 +14,7 @@
 
 import { BROADCAST_TIMEOUT_MS, isBroadcastTimeoutError } from '@shiba-wallet/chains-evm';
 import { PENDING_POLL_MS } from './pending-transactions.ts';
+import { t } from '../i18n/index.ts';
 
 /** What was handed over: a regular transaction or a smart-account operation. */
 export type BroadcastKind = 'tx' | 'userop';
@@ -121,26 +122,39 @@ export function isBroadcastAlreadyHandedOver(error: unknown): boolean {
  * describeAaError and the recurring-payment and recurring-swap describers.
  */
 export function describeBroadcastOutcome(error: unknown): { title: string; detail: string; technical?: string } | null {
+  // The title and the sentence through the string table (phase 23 item 8):
+  // in English exactly the constants above (scripts/check-i18n.mjs); the
+  // technical line (the hash and the engine's own message) stays as written.
   if (isBroadcastAlreadyHandedOver(error)) {
-    return { title: BROADCAST_ALREADY_HANDED_OVER_TITLE, detail: BROADCAST_ALREADY_HANDED_OVER_SENTENCE };
+    return { title: t('broadcast.handedOver.title'), detail: t('broadcast.handedOver') };
   }
   if (nameOf(error) === 'BroadcastOutcomeUnknownError') {
     const e = error as BroadcastOutcomeUnknownError;
     const label = e.kind === 'tx' ? 'Transaction hash' : 'UserOperation hash';
     const technical = `${label}: ${e.hash}. ${e.technical}`;
     return {
-      title: BROADCAST_OUTCOME_UNKNOWN_TITLE,
-      detail: `${broadcastOutcomeSentence(e.kind, e.recorded)}\n\nTechnical detail: ${technical}`,
+      title: t('broadcast.unknown.title'),
+      detail: t('broadcast.detail', { sentence: localizedOutcomeSentence(e.kind, e.recorded), technical }),
       technical,
     };
   }
   if (isBroadcastTimeoutError(error)) {
     const technical = (error as Error).message;
     return {
-      title: BROADCAST_OUTCOME_UNKNOWN_TITLE,
-      detail: `${BROADCAST_UNKNOWN_SENTENCE}\n\nTechnical detail: ${technical}`,
+      title: t('broadcast.unknown.title'),
+      detail: t('broadcast.detail', { sentence: t('broadcast.unknown', { seconds: WAIT_SECONDS }), technical }),
       technical,
     };
   }
   return null;
+}
+
+/** broadcastOutcomeSentence in the chosen language (the same English). */
+function localizedOutcomeSentence(kind: BroadcastKind, recorded: boolean): string {
+  if (kind === 'tx') {
+    return recorded
+      ? t('broadcast.tx.unknown', { seconds: WAIT_SECONDS, poll: POLL_SECONDS })
+      : t('broadcast.tx.unknownUnlisted', { seconds: WAIT_SECONDS });
+  }
+  return recorded ? t('broadcast.userop.unknown', { seconds: WAIT_SECONDS }) : t('broadcast.userop.unknownUnlisted', { seconds: WAIT_SECONDS });
 }

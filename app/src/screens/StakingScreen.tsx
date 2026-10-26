@@ -11,6 +11,8 @@ import { callWithFailover, getEndpoint, reportEndpointFailure, withEndpoint, typ
 import { readinessGate } from '../config/readiness';
 import { sanitizeEndpointMessage } from '../config/endpoint-probe';
 import { useTheme } from '../theme';
+import { T } from '../i18n/T';
+import { useI18n } from '../i18n/useI18n';
 import { BalanceChangePreview } from '../components/BalanceChangePreview';
 import { RiskWarnings } from '../components/RiskWarnings';
 import { SpendingPolicyNotice, spendingGateForQuote } from '../components/SpendingPolicyViews';
@@ -218,6 +220,7 @@ async function isStethTracked(chainCaip2: string): Promise<boolean | null> {
 
 export function StakingScreen({ navigation }: Props) {
   const theme = useTheme();
+  const { t, tx, localize } = useI18n();
   const fieldLabel = useFieldLabels();
   const { accounts, signWith, activeAccount } = useWallet();
   const { evmChain, hideAmounts } = usePrefs();
@@ -393,7 +396,7 @@ export function StakingScreen({ navigation }: Props) {
   if (!account) {
     return (
       <View style={[screenStyle(theme), styles.center]}>
-        <Text style={{ color: theme.textMuted }}>No Ethereum account.</Text>
+        <Text style={{ color: theme.textMuted }}><T>No Ethereum account.</T></Text>
       </View>
     );
   }
@@ -516,12 +519,12 @@ export function StakingScreen({ navigation }: Props) {
       return;
     }
     if (!eoaQuote.simulation.ok) {
-      Alert.alert('Not sent', `The pre-flight simulation failed: ${eoaQuote.simulation.reason}. Nothing was sent.`);
+      Alert.alert(tx('Not sent'), t('staking.preflightFailed', { reason: eoaQuote.simulation.reason }));
       return;
     }
     const auth = await requireLocalAuth(`Approve exactly ${exact18(approval.amount)} ${approval.symbol} for ${plan.contractLabel}`);
     if (!auth.ok) {
-      Alert.alert('Not approved', auth.message);
+      Alert.alert(tx('Not approved'), auth.message);
       return;
     }
     setPhase('approving');
@@ -564,7 +567,7 @@ export function StakingScreen({ navigation }: Props) {
       return;
     }
     if (!eoaQuote.simulation.ok) {
-      Alert.alert('Not sent', `The pre-flight simulation failed: ${eoaQuote.simulation.reason}. Nothing was sent.`);
+      Alert.alert(tx('Not sent'), t('staking.preflightFailed', { reason: eoaQuote.simulation.reason }));
       return;
     }
     const withinLimits = await spendingGateForQuote({
@@ -578,7 +581,7 @@ export function StakingScreen({ navigation }: Props) {
     if (!withinLimits) return;
     const auth = await requireLocalAuth(stakingActionTitle(plan.action, symbol));
     if (!auth.ok) {
-      Alert.alert('Not sent', auth.message);
+      Alert.alert(tx('Not sent'), auth.message);
       return;
     }
     setPhase('sending');
@@ -631,7 +634,7 @@ export function StakingScreen({ navigation }: Props) {
     if (!withinLimits) return;
     const auth = await requireLocalAuth(`${stakingActionTitle(plan.action, symbol)} from your smart account`);
     if (!auth.ok) {
-      Alert.alert('Not sent', auth.message);
+      Alert.alert(tx('Not sent'), auth.message);
       return;
     }
     setPhase('aa-sending');
@@ -676,10 +679,10 @@ export function StakingScreen({ navigation }: Props) {
   if (phase === 'success' && (result || aaResult) && plan) {
     return (
       <ScrollView key="staking-success" style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
-        <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}>{aaResult ? 'Sent to the bundler ✓' : 'Sent ✓'}</Text>
+        <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}>{aaResult ? tx('Sent to the bundler ✓') : tx('Sent ✓')}</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>{stakingActionTitle(plan.action, symbol)}.</Text>
-        {approveTxid ? <Text style={[styles.hint, { color: theme.textMuted }]}>Approval transaction: {approveTxid}</Text> : null}
-        <Text style={[styles.label, { color: theme.textMuted }]}>{aaResult ? 'UserOperation hash' : 'Transaction id'}</Text>
+        {approveTxid ? <Text style={[styles.hint, { color: theme.textMuted }]}>{t('staking.success.approvalTx', { hash: approveTxid })}</Text> : null}
+        <Text style={[styles.label, { color: theme.textMuted }]}>{aaResult ? tx('UserOperation hash') : tx('Transaction id')}</Text>
         <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <Text selectable style={[styles.monoText, { color: theme.text }]}>
             {aaResult ? aaResult.userOpHash : result!.txid}
@@ -691,10 +694,10 @@ export function StakingScreen({ navigation }: Props) {
         {/* Smart account: the receipt poll, the bundle transaction and its
             explorer link, mirroring SendScreen's smart-account success view
             (waitForAaReceipt / summarizeAaReceipt in wallet/aa.ts). */}
-        {aaResult?.receiptState === 'pending' ? sendingView('Bundling… waiting for the UserOperation receipt.') : null}
+        {aaResult?.receiptState === 'pending' ? sendingView(tx('Bundling… waiting for the UserOperation receipt.')) : null}
         {aaResult?.receiptState === 'timeout' ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            No receipt yet. The operation may still be included — keep the UserOperation hash above to look it up later.
+            <T>No receipt yet. The operation may still be included — keep the UserOperation hash above to look it up later.</T>
           </Text>
         ) : null}
         {aaResult?.receiptState === 'found' ? (
@@ -706,12 +709,12 @@ export function StakingScreen({ navigation }: Props) {
               </WarningBox>
             ) : (
               <Text style={[styles.simulationOk, { color: theme.success }]}>
-                Included on-chain{aaResult.success === true ? ' — succeeded.' : '.'}
+                {aaResult.success === true ? tx('Included on-chain — succeeded.') : tx('Included on-chain.')}
               </Text>
             )}
             {aaResult.txHash ? (
               <>
-                <Text style={[styles.label, { color: theme.textMuted }]}>Transaction</Text>
+                <Text style={[styles.label, { color: theme.textMuted }]}><T>Transaction</T></Text>
                 <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
                   <Text selectable style={[styles.monoText, { color: theme.text }]}>
                     {aaResult.txHash}
@@ -727,8 +730,10 @@ export function StakingScreen({ navigation }: Props) {
               </>
             ) : (
               <Text style={[styles.hint, { color: theme.textMuted }]}>
+                <T>
                 The bundler&apos;s receipt did not include a recognizable transaction hash; look the UserOperation hash
                 up in an ERC-4337 explorer you trust.
+                </T>
               </Text>
             )}
           </>
@@ -773,24 +778,23 @@ export function StakingScreen({ navigation }: Props) {
     return (
       <ScrollView key="staking-approve" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
-        <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>Step 1 of 2 — Approve</Text>
+        <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}><T>Step 1 of 2 — Approve</T></Text>
         <Row label="From account" value={activeAccount?.name ?? '—'} sub={account.address} spoken={`From account: ${activeAccount?.name ?? 'unknown'}, ${spokenShortAddress(account.address)}`} theme={theme} />
         <ImportedKeyNotice show={activeAccount?.imported === true} />
         <Text style={[styles.hint, { color: theme.text }]}>
-          {plan.contractLabel} pulls the {plan.approval.symbol} with a token approval. This approves exactly{' '}
-          {exact18(plan.approval.amount)} {plan.approval.symbol}, never more, and the next step uses all of it.
+          {t('staking.approve.intro', { contract: plan.contractLabel, symbol: plan.approval.symbol, amount: exact18(plan.approval.amount) })}
         </Text>
         <Row label="Token" value={plan.approval.token} mono theme={theme} />
         <Row label="Spender" value={plan.approval.spender} mono theme={theme} />
-        <Row label={`Max network fee (paid in ${symbol})`} value={`${exact18(eoaQuote.fee)} ${symbol}`} theme={theme} />
+        <Row label={t('send.row.maxFeePaidIn', { symbol })} value={`${exact18(eoaQuote.fee)} ${symbol}`} theme={theme} />
         <RiskWarnings url={quotedUrl} wallet={account.address} to={eoaQuote.to} data={eoaQuote.data} />
         {eoaQuote.simulation.ok ? (
-          <Text style={[styles.simulationOk, { color: theme.success }]}>Pre-flight simulation passed (eth_call).</Text>
+          <Text style={[styles.simulationOk, { color: theme.success }]}><T>Pre-flight simulation passed (eth_call).</T></Text>
         ) : (
-          <WarningBox>Pre-flight simulation failed: {eoaQuote.simulation.reason}. Nothing will be sent.</WarningBox>
+          <WarningBox>{t('staking.simulation.failed', { reason: eoaQuote.simulation.reason })}</WarningBox>
         )}
         {phase === 'approving' ? (
-          sendingView('Approving, then waiting for the approval to take effect…')
+          sendingView(tx('Approving, then waiting for the approval to take effect…'))
         ) : (
           <>
             <Button title={`Approve ${plan.approval.symbol}`} onPress={() => void onApprove()} disabled={!eoaQuote.simulation.ok} />
@@ -806,16 +810,15 @@ export function StakingScreen({ navigation }: Props) {
     return (
       <ScrollView key="staking-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
-        {plan.approval ? <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>Step 2 of 2</Text> : null}
+        {plan.approval ? <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}><T>Step 2 of 2</T></Text> : null}
         {notice ? <Text style={[styles.notice, { color: theme.accent }]}>{notice}</Text> : null}
         <Row label="From account" value={activeAccount?.name ?? '—'} sub={account.address} spoken={`From account: ${activeAccount?.name ?? 'unknown'}, ${spokenShortAddress(account.address)}`} theme={theme} />
         <ImportedKeyNotice show={activeAccount?.imported === true} />
         <StakeOutcomeCard url={quotedUrl} plan={plan} theme={theme} nativeSymbol={symbol} />
         <Row label={plan.contractLabel} value={eoaQuote.to} mono theme={theme} />
-        <Row label={`Max network fee (paid in ${symbol})`} value={`${exact18(eoaQuote.fee)} ${symbol}`} theme={theme} />
+        <Row label={t('send.row.maxFeePaidIn', { symbol })} value={`${exact18(eoaQuote.fee)} ${symbol}`} theme={theme} />
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Worst case at {formatUnits(eoaQuote.maxFeePerGas, 9, 9)} gwei max fee × {eoaQuote.gasLimit.toString()} gas;
-          the actual fee is usually lower.
+          {t('staking.worstCase', { gwei: formatUnits(eoaQuote.maxFeePerGas, 9, 9), gas: eoaQuote.gasLimit.toString() })}
         </Text>
         {eoaQuote.amount > 0n ? <Row label="Total (worst case)" value={`${exact18(eoaQuote.total)} ${symbol}`} theme={theme} /> : null}
         {planNotes}
@@ -835,12 +838,12 @@ export function StakingScreen({ navigation }: Props) {
           {...(plan.tokenOutflow ? { quoteOutflows: [plan.tokenOutflow] } : {})}
         />
         {eoaQuote.simulation.ok ? (
-          <Text style={[styles.simulationOk, { color: theme.success }]}>Pre-flight simulation passed (eth_call).</Text>
+          <Text style={[styles.simulationOk, { color: theme.success }]}><T>Pre-flight simulation passed (eth_call).</T></Text>
         ) : (
-          <WarningBox>Pre-flight simulation failed: {eoaQuote.simulation.reason}. Nothing will be sent.</WarningBox>
+          <WarningBox>{t('staking.simulation.failed', { reason: eoaQuote.simulation.reason })}</WarningBox>
         )}
         {phase === 'sending' ? (
-          sendingView('Signing and broadcasting…')
+          sendingView(tx('Signing and broadcasting…'))
         ) : (
           <>
             <Button title={stakingActionTitle(plan.action, symbol)} onPress={() => void onSend()} disabled={!eoaQuote.simulation.ok} />
@@ -857,23 +860,24 @@ export function StakingScreen({ navigation }: Props) {
     return (
       <ScrollView key="staking-aa-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
-        <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>Smart account · {aaAccountTypeLabel(aaQuote.accountType)}</Text>
+        <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>{t('staking.aa.title', { type: localize(aaAccountTypeLabel(aaQuote.accountType)) })}</Text>
         <Row label="Owner account (signs)" value={activeAccount?.name ?? '—'} sub={account.address} spoken={`Owner account (signs): ${activeAccount?.name ?? 'unknown'}, ${spokenShortAddress(account.address)}`} theme={theme} />
         <ImportedKeyNotice show={activeAccount?.imported === true} />
         <Row label={aaSenderLabel(aaQuote)} value={aaQuote.sender} mono theme={theme} />
         <StakeOutcomeCard url={url} plan={plan} theme={theme} nativeSymbol={symbol} />
         {batch && plan.approval ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            One operation, all-or-nothing: (1) approve exactly {exact18(plan.approval.amount)} {plan.approval.symbol} for{' '}
-            {plan.contractLabel}, (2) the action itself. If the action would fail, the approval is undone with it.
+            {t('staking.aa.batch', { amount: exact18(plan.approval.amount), symbol: plan.approval.symbol, contract: plan.contractLabel })}
           </Text>
         ) : null}
         {aaQuote.calls.map((c, i) => (
           <Row
             key={`${i}-${c.to}`}
-            label={`Call ${i + 1} of ${aaQuote.calls.length}`}
+            label={t('staking.aa.call', { n: i + 1, count: aaQuote.calls.length })}
             value={c.to}
-            sub={`${c.data.length} bytes of calldata${c.value > 0n ? `, value ${exact18(c.value)} ${symbol}` : ''}`}
+            sub={c.value > 0n
+              ? t('swap.aa.calldataValue', { bytes: c.data.length, value: exact18(c.value), symbol })
+              : t('swap.aa.calldata', { bytes: c.data.length })}
             mono
             theme={theme}
           />
@@ -905,13 +909,13 @@ export function StakingScreen({ navigation }: Props) {
           {...(plan.tokenOutflow ? { quoteOutflows: [plan.tokenOutflow] } : {})}
         />
         <Text style={[styles.simulationOk, { color: theme.success }]}>
-          Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).
+          <T>Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).</T>
         </Text>
         {phase === 'aa-sending' ? (
-          sendingView('Signing and submitting to the bundler…')
+          sendingView(tx('Signing and submitting to the bundler…'))
         ) : (
           <>
-            <Button title={`${stakingActionTitle(plan.action, symbol)} from smart account`} onPress={() => void onAaSend()} />
+            <Button title={t('staking.aa.button', { action: stakingActionTitle(plan.action, symbol) })} onPress={() => void onAaSend()} />
             <Button title="Back" variant="secondary" onPress={() => backToForm('')} />
           </>
         )}
@@ -936,8 +940,8 @@ export function StakingScreen({ navigation }: Props) {
     <ScrollView key="staking-form" style={screenStyle(theme)} contentContainerStyle={styles.content}>
       <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
       <Text style={[styles.hint, { color: theme.text }]}>
-        Staking puts test ETH into a liquid-staking protocol and gives you a token for it. These are test networks: the
-        tokens have no value.
+        <T>Staking puts test ETH into a liquid-staking protocol and gives you a token for it. These are test networks: the
+        tokens have no value.</T>
       </Text>
 
       {lidoOffered ? (
@@ -963,12 +967,12 @@ export function StakingScreen({ navigation }: Props) {
           {/* Read once (pass p20c finding 6): the switch carries the visible
               label, and the label text itself is hidden from screen readers. */}
           <Switch {...switchColors(theme)}
-            accessibilityLabel="Use the smart account"
+            accessibilityLabel={tx('Use the smart account')}
             value={aaEnabled}
             onValueChange={setAaEnabled}
           />
           <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text }]}>
-            Use the smart account
+            <T>Use the smart account</T>
           </Text>
         </View>
       ) : null}
@@ -991,7 +995,7 @@ export function StakingScreen({ navigation }: Props) {
         />
       ) : null}
 
-      <Text accessibilityRole="header" style={[styles.label, { color: theme.textMuted }]}>What to do</Text>
+      <Text accessibilityRole="header" style={[styles.label, { color: theme.textMuted }]}><T>What to do</T></Text>
       <View style={styles.choiceRow}>
         {choices.map((c) => (
           <Button
@@ -1011,15 +1015,14 @@ export function StakingScreen({ navigation }: Props) {
       {rocketRefusal ? <WarningBox>{rocketRefusal}</WarningBox> : null}
       {choice === 'rocket' && rocket ? (
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Minimum deposit {exact18(rocket.state.minimumDeposit)} {symbol}; deposit fee{' '}
-          {formatUnits(rocket.state.depositFee, 16, 16)}% (both read just now).
+          {t('staking.rocket.minimum', { minimum: exact18(rocket.state.minimumDeposit), symbol, fee: formatUnits(rocket.state.depositFee, 16, 16) })}
         </Text>
       ) : null}
       {unit !== 'none' ? (
         <>
-          <Text {...fieldLabel('amount', `Amount (${unit})`).label} style={[styles.label, { color: theme.textMuted }]}>Amount ({unit})</Text>
+          <Text {...fieldLabel('amount', t('send.field.amount', { symbol: unit })).label} style={[styles.label, { color: theme.textMuted }]}>{t('send.field.amount', { symbol: unit })}</Text>
           <TextInput
-            {...fieldLabel('amount', `Amount (${unit})`).input}
+            {...fieldLabel('amount', t('send.field.amount', { symbol: unit })).input}
             style={inputStyle}
             value={amountText}
             onChangeText={setAmountText}
@@ -1029,7 +1032,7 @@ export function StakingScreen({ navigation }: Props) {
           />
         </>
       ) : (
-        <Text style={[styles.hint, { color: theme.textMuted }]}>Claims every finalized Lido withdrawal request of this account.</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}><T>Claims every finalized Lido withdrawal request of this account.</T></Text>
       )}
       {formError ? (
         <Text accessibilityLiveRegion="polite" style={[styles.fieldError, { color: theme.danger }]}>
@@ -1037,7 +1040,7 @@ export function StakingScreen({ navigation }: Props) {
         </Text>
       ) : null}
       {phase === 'preparing' ? (
-        sendingView('Reading the protocol and preparing the quote…')
+        sendingView(tx('Reading the protocol and preparing the quote…'))
       ) : (
         <Button title="Review" onPress={() => void onReview()} disabled={lidoRefusal !== null || rocketRefusal !== null} />
       )}

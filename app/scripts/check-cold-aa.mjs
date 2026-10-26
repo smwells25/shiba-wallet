@@ -718,20 +718,21 @@ console.log('check-cold-aa: the screen wiring (source)');
       onAaSubmit.includes("if (d.back) aaBackToForm();"));
   check('a scanned or pasted signature is checked against the STORED request', screen.includes('verifyColdAaSignature(text, aaRequest, nowSeconds());'));
   check('the request\'s codes use the smart-account kind ("SW-CU:") and its caption; the scanner too',
-    screen.includes('<ColdSignPayloadQr payload={payload} caption={COLD_AA_REQUEST_CAPTION} kind={COLD_AA_QR_KIND} />') &&
+    // Phase 23 item 8: the cold-aa sentences are shown through the string table (localize).
+    screen.includes('<ColdSignPayloadQr payload={payload} caption={localize(COLD_AA_REQUEST_CAPTION)} kind={COLD_AA_QR_KIND} />') &&
       /<ColdSignScanButton[\s\S]{0,200}onComplete=\{onAaSignatureText\}/.test(screen) && screen.includes('kind={COLD_AA_QR_KIND}'));
-  check('…the scanner of the smart-account view passes the SW-CU kind', /rationale=\{COLD_AA_SCAN_RATIONALE\}[\s\S]{0,120}/.test(screen));
+  check('…the scanner of the smart-account view passes the SW-CU kind', /rationale=\{localize\(COLD_AA_SCAN_RATIONALE\)\}[\s\S]{0,120}/.test(screen));
   check('the switch is offered only when coldOwnerAaRefusal allows it, never in replacement mode', screen.includes('const aaOffered = aaConfig !== null && from !== null && aaRefusal === null && !replace;') &&
-    screen.includes('accessibilityLabel={COLD_AA_SWITCH_LABEL}'));
+    screen.includes('accessibilityLabel={localize(COLD_AA_SWITCH_LABEL)}'));
   check('Review and Max follow the switch', screen.includes('onPress={() => void (aaActive ? onAaReview() : onReview())}') && screen.includes('if (aaActive) return onAaMax();'));
   check('the confirm shows the Send screen\'s smart-account rows: "Will deploy with this send", the deposit note, the preview with every call, the risk card, the spending notice',
-    ['Will deploy with this send', '<AaDepositNote', 'batch={quote.calls.map(', '<RiskWarnings url={url} wallet={quote.sender} {...aaRiskWarningTarget(quote)} />', '<SpendingPolicyNotice owner={owner} quote={quote} from={owner} />', '{COLD_AA_ESTIMATE_PASSED}'].every((s) => views.includes(s)));
+    ['Will deploy with this send', '<AaDepositNote', 'batch={quote.calls.map(', '<RiskWarnings url={url} wallet={quote.sender} {...aaRiskWarningTarget(quote)} />', '<SpendingPolicyNotice owner={owner} quote={quote} from={owner} />', '{localize(COLD_AA_ESTIMATE_PASSED)}'].every((s) => views.includes(s)));
   check('"Bundler gas estimate passed" is byte-identical to the Send screen\'s line', send.includes(ca.COLD_AA_ESTIMATE_PASSED));
   check('the success view: "Sent to bundler ✓", the userOpHash, the receipt states, the note field with the userOpHash',
     screen.includes('Sent to bundler ✓') && screen.includes('<TransactionNoteField network={evmChain.caip2} txid={aaResult.txHash} userOpHash={aaResult.userOpHash} />') &&
       screen.includes('Bundling… waiting for the UserOperation receipt.'));
   check('the request view shows the expiry line, the fixed-fees note and the worst case decoded from the request', screen.includes('{coldAaExpiryLine(aaRequest)}') &&
-    screen.includes('{COLD_AA_FEES_FIXED_NOTE}') && screen.includes('coldUserOpDetails(aaRequest)'));
+    screen.includes('{localize(COLD_AA_FEES_FIXED_NOTE)}') && screen.includes('coldUserOpDetails(aaRequest)'));
   check('the regular flow is untouched: its codes keep the default "SW-CS:" kind', screen.includes('<ColdSignPayloadQr payload={payload} caption="Unsigned transaction for the off-line signer" />'));
   check('the views default to the regular kind', views.includes('kind = COLD_SIGN_QR_KIND') && views.includes('split: splitColdSignQrParts,') && views.includes('split: splitColdAaQrParts,'));
 }

@@ -982,11 +982,13 @@ console.log('check-staking: success notes, the balances holder line and the smar
     'Bundling… waiting for the UserOperation receipt.',
     'No receipt yet. The operation may still be included — keep the UserOperation hash above to look it up later.',
     'The bundler reports the operation was included but reverted on-chain. The gas was still charged to the smart account.',
-    "Included on-chain{aaResult.success === true ? ' — succeeded.' : '.'}",
+    // Phase 23 item 8: the receipt lines go through the string table in both
+    // screens (the English unchanged, scripts/check-i18n.mjs).
+    "{aaResult.success === true ? tx('Included on-chain — succeeded.') : tx('Included on-chain.')}",
     'The bundler&apos;s receipt did not include a recognizable transaction hash; look the UserOperation hash up in an ERC-4337 explorer you trust.',
     '{evmChain.explorerTxBase ? (',
     'void Linking.openURL(`${evmChain.explorerTxBase}${aaResult.txHash}`)',
-    '<Text style={[styles.label, { color: theme.textMuted }]}>Transaction</Text>',
+    '<Text style={[styles.label, { color: theme.textMuted }]}><T>Transaction</T></Text>',
   ];
   const missing = shared.filter((t) => !flat(screen).includes(flat(t)) || !flat(send).includes(flat(t)));
   check('the smart-account success view carries SendScreen’s receipt texts, the bundle transaction and the gated explorer link', missing.length === 0, missing.join(' | '));
@@ -1127,20 +1129,22 @@ console.log('\ncheck-staking: pass p20c finding 6 (what TalkBack says on the Sta
     withShortAddresses('Balances of your regular account 0x772eF8c0b0A9E1d3b2C4D5e6F7a8B9c0d1E2F44F') === 'Balances of your regular account 0x772e…F44F');
   const views = readSrc('../src/screens/StakingViews.tsx');
   const screen = readSrc('../src/screens/StakingScreen.tsx');
+  // Phase 23 item 8: the source line comes from the string table ("Source: {source}, read {read}.").
   const viewsOk = (src) =>
-    src.includes('accessibilityLabel={`Source: ${statement.source}, read ${statement.read}. ${spokenSiteName(statement.url)}`}') &&
+    src.includes("accessibilityLabel={`${t('staking.source', { source: statement.source, read: statement.read })} ${spokenSiteName(statement.url)}`}") &&
     src.includes('`${spokenTokenName(symbol, stakingTokenName(symbol))}: ${hidden ? \'amount hidden\' : exact18(amount)}${sub ? `. ${sub}` : \'\'}`') &&
     src.includes('<Row key={l.label} label={l.label} value={l.value} sub={l.sub ?? null} spoken={l.spoken} theme={theme} />') &&
     src.includes('accessibilityLabel={withShortAddresses(holderLine)}');
   check('StakingViews: balance rows read as one sentence with the full token name; the source link and holder line as above (source)', viewsOk(views));
   check('…mutant caught: the old source link read as the raw URL',
-    !viewsOk(views.replace('accessibilityLabel={`Source: ${statement.source}, read ${statement.read}. ${spokenSiteName(statement.url)}`}', '')));
+    !viewsOk(views.replace("accessibilityLabel={`${t('staking.source', { source: statement.source, read: statement.read })} ${spokenSiteName(statement.url)}`}", '')));
   const switchOk = (src) =>
-    /<Switch \{\.\.\.switchColors\(theme\)\}\s+accessibilityLabel="Use the smart account"/.test(src) &&
-    /<Text importantForAccessibility="no" accessibilityElementsHidden style=\{\[styles\.toggleLabel, \{ color: theme\.text \}\]\}>\s*Use the smart account\s*<\/Text>/.test(src);
+    // Phase 23 item 8: both through the string table (tx / <T>), English unchanged.
+    /<Switch \{\.\.\.switchColors\(theme\)\}\s+accessibilityLabel=\{tx\('Use the smart account'\)\}/.test(src) &&
+    /<Text importantForAccessibility="no" accessibilityElementsHidden style=\{\[styles\.toggleLabel, \{ color: theme\.text \}\]\}>\s*<T>Use the smart account<\/T>\s*<\/Text>/.test(src);
   check('the smart-account switch is read once: it carries the visible label, the label text is hidden (source)', switchOk(screen));
   check('…mutant caught: the old pair (switch "Stake from the smart account" + a spoken label)',
-    !switchOk(screen.replace('accessibilityLabel="Use the smart account"', 'accessibilityLabel="Stake from the smart account"')));
+    !switchOk(screen.replace("accessibilityLabel={tx('Use the smart account')}", 'accessibilityLabel="Stake from the smart account"')));
   check('the From / Owner account rows speak the address short (source)',
     (screen.match(/spoken=\{`(From account|Owner account \(signs\)): \$\{activeAccount\?\.name \?\? 'unknown'\}, \$\{spokenShortAddress\(account\.address\)\}`\}/g) ?? []).length === 3);
   // Pass p20d finding 3: TalkBack stopped a second time on the amount

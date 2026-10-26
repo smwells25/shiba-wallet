@@ -1701,14 +1701,15 @@ console.log('check-multisig: Settings → Accounts lists multisigs read-only (ph
     const accSrc = read('src/components/AccountsSection.tsx');
     const settingsSrc = read('src/screens/SettingsScreen.tsx');
     const backupOk = (acc, settings) =>
-      acc.includes('{accountsBackupHint(importedCount > 0, { watchOnly: watchOnlyAccounts.length > 0, multisig: multisigAccounts.length > 0 })}') &&
+      acc.includes('{localize(accountsBackupHint(importedCount > 0, { watchOnly: watchOnlyAccounts.length > 0, multisig: multisigAccounts.length > 0 }))}') &&
       settings.includes('const keylessListed = watchOnlyAccounts.length > 0 || multisigAccounts.length > 0;') &&
-      settings.includes("{!keylessListed\n              ? 'One recovery phrase backs up ALL of your accounts") &&
-      settings.includes('{multisigAccounts.length > 0 ? (\n          <Text style={[styles.hint, { color: theme.textMuted }]}>{MULTISIG_LIST_HINT}</Text>');
+      // Phase 23 item 8: both through the string table, English unchanged.
+      settings.includes("{!keylessListed\n              ? tx('One recovery phrase backs up ALL of your accounts") &&
+      settings.includes('{multisigAccounts.length > 0 ? (\n          <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(MULTISIG_LIST_HINT)}</Text>');
     check('Settings → Accounts passes the listed keyless kinds; the Backup text says "ALL" only without watch-only or multisig accounts and explains multisigs (source)',
       backupOk(accSrc, settingsSrc));
     check('…the old Accounts call (imported only) fails the check',
-      !backupOk(accSrc.replace('{accountsBackupHint(importedCount > 0, { watchOnly: watchOnlyAccounts.length > 0, multisig: multisigAccounts.length > 0 })}', '{accountsBackupHint(importedCount > 0)}'), settingsSrc));
+      !backupOk(accSrc.replace('{localize(accountsBackupHint(importedCount > 0, { watchOnly: watchOnlyAccounts.length > 0, multisig: multisigAccounts.length > 0 }))}', '{localize(accountsBackupHint(importedCount > 0))}'), settingsSrc));
     check('…and the old Backup condition (watch-only only) fails it too',
       !backupOk(accSrc, settingsSrc.replace('const keylessListed = watchOnlyAccounts.length > 0 || multisigAccounts.length > 0;', 'const keylessListed = watchOnlyAccounts.length > 0;')));
     const ik = await import('../src/wallet/imported-keys.ts');
@@ -1763,8 +1764,9 @@ console.log('check-multisig: Settings → Accounts lists multisigs read-only (ph
     const block = src.slice(start, src.indexOf(') : null}', start));
     return (
       src.includes('    multisigAccounts,\n  } = useWallet();') &&
-      block.includes('{MULTISIG_ACCOUNTS_HEADING}</Text>') &&
-      block.includes('{MULTISIG_ACCOUNTS_LIST_HINT}</Text>') &&
+      // Phase 23 item 8: the heading and the hint through the string table (localize).
+      block.includes('{localize(MULTISIG_ACCOUNTS_HEADING)}</Text>') &&
+      block.includes('{localize(MULTISIG_ACCOUNTS_LIST_HINT)}</Text>') &&
       block.includes('{multisigAccounts.map((account) => (') &&
       block.includes('{multisigAccountListLine(account)}') &&
       // Read-only: no buttons, links, switches or handlers in the list.

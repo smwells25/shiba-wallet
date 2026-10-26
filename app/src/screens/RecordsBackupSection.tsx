@@ -34,6 +34,7 @@ import {
   parseRecordsBackupFile,
 } from '../wallet/records-backup';
 import { T } from '../i18n/T';
+import { useI18n } from '../i18n/useI18n';
 
 /** "The file was not restored: <sentence>" — every refusal is a plain sentence. */
 export const RECORDS_BACKUP_IMPORT_REFUSED_PREFIX = 'The file was not restored:';
@@ -71,6 +72,9 @@ async function pickBackupFile(): Promise<string | null> {
 /** Settings → Records backup (feature 47): export and restore of the wallet's records. */
 export function RecordsBackupSection() {
   const theme = useTheme();
+  // The section's notes through the string table (phase 23 item 8); the
+  // status lines (counts per kind of record) stay as written.
+  const { localize, tx } = useI18n();
   const { activeAccount, accountList, deriveRecordsBackupKey } = useWallet();
   const [busy, setBusy] = useState<'export' | 'import' | null>(null);
   const [status, setStatus] = useState<{ lines: string[]; warning: boolean } | null>(null);
@@ -151,26 +155,26 @@ export function RecordsBackupSection() {
       return;
     }
     const chosen = text;
-    Alert.alert(RECORDS_BACKUP_CONFIRM_TITLE, RECORDS_BACKUP_MERGE_NOTE, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Restore', onPress: () => void restore(chosen) },
+    Alert.alert(localize(RECORDS_BACKUP_CONFIRM_TITLE), localize(RECORDS_BACKUP_MERGE_NOTE), [
+      { text: tx('Cancel'), style: 'cancel' },
+      { text: tx('Restore'), onPress: () => void restore(chosen) },
     ]);
   };
 
   return (
     <View style={styles.section}>
       <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>{RECORDS_BACKUP_SECTION_TITLE}</T></Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{RECORDS_BACKUP_WHAT_NOTE}</Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{RECORDS_BACKUP_KEY_NOTE}</Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{RECORDS_BACKUP_NOT_INCLUDED_NOTE}</Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{RECORDS_BACKUP_MERGE_NOTE}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(RECORDS_BACKUP_WHAT_NOTE)}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(RECORDS_BACKUP_KEY_NOTE)}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(RECORDS_BACKUP_NOT_INCLUDED_NOTE)}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(RECORDS_BACKUP_MERGE_NOTE)}</Text>
       <Button
         title={busy === 'export' ? 'Preparing the backup…' : RECORDS_BACKUP_EXPORT_BUTTON}
         variant="secondary"
         disabled={busy !== null}
         onPress={() => void onExport()}
       />
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{RECORDS_BACKUP_FILE_NOTE}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(RECORDS_BACKUP_FILE_NOTE)}</Text>
       <Button
         title={busy === 'import' ? 'Restoring…' : RECORDS_BACKUP_IMPORT_BUTTON}
         variant="secondary"

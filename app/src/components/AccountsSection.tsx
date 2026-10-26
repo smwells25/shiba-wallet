@@ -41,6 +41,7 @@ import {
   watchAddressFromScan,
 } from '../wallet/watch-only';
 import { T } from '../i18n/T';
+import { localize, t, tx } from '../i18n/index';
 
 /**
  * Settings → Accounts (phase 6 item 3): list, add, rename, hide and show
@@ -101,7 +102,8 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
       await task();
       return true;
     } catch (e) {
-      Alert.alert(title, e instanceof Error ? e.message : 'Unknown error.');
+      // The titles below are English table entries, shown in the chosen language.
+      Alert.alert(localize(title), e instanceof Error ? localize(e.message) : tx('Unknown error.'));
       return false;
     } finally {
       setBusy(false);
@@ -115,9 +117,9 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
     });
     if (ok) setNewName('');
     const sameKey = out.created ? phraseAccountSameAsImportedNote(out.created, accountList) : null;
-    if (sameKey) Alert.alert(PHRASE_ACCOUNT_WAS_IMPORTED_TITLE, sameKey);
+    if (sameKey) Alert.alert(localize(PHRASE_ACCOUNT_WAS_IMPORTED_TITLE), sameKey);
     const watched = out.created ? phraseAccountSameAsWatchedNote(out.created, watchOnlyAccounts) : null;
-    if (watched) Alert.alert(PHRASE_ACCOUNT_WAS_WATCHED_TITLE, watched);
+    if (watched) Alert.alert(localize(PHRASE_ACCOUNT_WAS_WATCHED_TITLE), watched);
   };
 
   const onWatch = async () => {
@@ -134,17 +136,17 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
       const text = await Clipboard.getStringAsync();
       setWatchAddress(text.trim());
     } catch {
-      Alert.alert('Nothing pasted', 'The clipboard could not be read. Type the address instead.');
+      Alert.alert(tx('Nothing pasted'), tx('The clipboard could not be read. Type the address instead.'));
     }
   };
 
   // No device check: a watch-only account has no secret to delete. One
   // confirmation that says exactly that.
   const onRemoveWatchOnly = (account: AccountView) => {
-    Alert.alert(REMOVE_WATCH_ONLY_TITLE, removeWatchOnlyMessage(account.name, account.evmAddress ?? 'unknown address'), [
-      { text: 'Keep it', style: 'cancel' },
+    Alert.alert(localize(REMOVE_WATCH_ONLY_TITLE), removeWatchOnlyMessage(account.name, account.evmAddress ?? tx('unknown address')), [
+      { text: tx('Keep it'), style: 'cancel' },
       {
-        text: 'Stop watching',
+        text: tx('Stop watching'),
         style: 'destructive',
         onPress: () => void run('Could not remove account', () => removeWatchOnly(account.index)),
       },
@@ -158,14 +160,12 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
 
   const onHide = (account: AccountView) => {
     Alert.alert(
-      `Hide ${account.name}?`,
-      'Hiding only removes it from the lists. Its addresses, funds and keys are ' +
-        'unchanged, it stays recoverable from your recovery phrase, and you can ' +
-        'show it again here at any time.',
+      t('accounts.hide.title', { name: account.name }),
+      t('accounts.hide.body'),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: tx('Cancel'), style: 'cancel' },
         {
-          text: 'Hide',
+          text: tx('Hide'),
           onPress: () => void run('Could not hide account', () => hideAccount(account.index)),
         },
       ],
@@ -184,18 +184,18 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
       setBusy(false);
     }
     Alert.alert(
-      REMOVE_IMPORTED_TITLE,
-      removeImportedMessage(account.name, account.evmAddress ?? 'unknown address', stranded),
+      localize(REMOVE_IMPORTED_TITLE),
+      removeImportedMessage(account.name, account.evmAddress ?? tx('unknown address'), stranded),
       [
-        { text: 'Keep it', style: 'cancel' },
+        { text: tx('Keep it'), style: 'cancel' },
         {
-          text: 'Continue',
+          text: tx('Continue'),
           style: 'destructive',
           onPress: () =>
-            Alert.alert(REMOVE_IMPORTED_CONFIRM_TITLE, REMOVE_IMPORTED_CONFIRM_MESSAGE, [
-              { text: 'Keep it', style: 'cancel' },
+            Alert.alert(localize(REMOVE_IMPORTED_CONFIRM_TITLE), localize(REMOVE_IMPORTED_CONFIRM_MESSAGE), [
+              { text: tx('Keep it'), style: 'cancel' },
               {
-                text: 'Delete the key',
+                text: tx('Delete the key'),
                 style: 'destructive',
                 onPress: async () => {
                   // Deleting the only copy of a key needs the device check
@@ -208,7 +208,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
                     slot: importedSlotOf(account.index),
                   });
                   if (!auth.ok) {
-                    Alert.alert('Not removed', `${auth.message} Nothing was deleted.`);
+                    Alert.alert(tx('Not removed'), `${auth.message} ${tx('Nothing was deleted.')}`);
                     return;
                   }
                   void run('Could not remove account', async () => {
@@ -227,10 +227,10 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
   };
 
   const onRevealImported = (account: AccountView) => {
-    Alert.alert(REVEAL_IMPORTED_TITLE, REVEAL_IMPORTED_MESSAGE, [
-      { text: 'Cancel', style: 'cancel' },
+    Alert.alert(localize(REVEAL_IMPORTED_TITLE), localize(REVEAL_IMPORTED_MESSAGE), [
+      { text: tx('Cancel'), style: 'cancel' },
       {
-        text: 'Show it',
+        text: tx('Show it'),
         style: 'destructive',
         onPress: async () => {
           // The same gate as the phrase reveal, opening THIS key (one prompt
@@ -240,14 +240,14 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
             slot: importedSlotOf(account.index),
           });
           if (!auth.ok) {
-            Alert.alert('Not revealed', auth.message);
+            Alert.alert(tx('Not revealed'), auth.message);
             return;
           }
           try {
             const key = await revealImportedKey(account.index);
             setRevealed({ name: account.name, address: account.evmAddress ?? '', key });
           } catch (e) {
-            Alert.alert('Not revealed', e instanceof Error ? e.message : 'The key could not be opened.');
+            Alert.alert(tx('Not revealed'), e instanceof Error ? localize(e.message) : tx('The key could not be opened.'));
           }
         },
       },
@@ -271,28 +271,28 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
           </Text>
           <Text style={[styles.tag, { color: active ? theme.accent : theme.textMuted }]}>
             {active
-              ? 'Active'
+              ? tx('Active')
               : account.hidden
-                ? 'Hidden'
+                ? tx('Hidden')
                 : account.imported
-                  ? 'Imported'
+                  ? tx('Imported')
                   : account.watchOnly
-                    ? 'Watch-only'
+                    ? tx('Watch-only')
                     : `#${account.index}`}
           </Text>
         </View>
         {account.watchOnly ? (
           <Text style={[styles.address, { color: theme.warningText }]}>
-            {account.evmAddress ?? 'unknown address'} · {WATCH_ONLY_ACCOUNTS_ROW_NOTE}
+            {account.evmAddress ?? tx('unknown address')} · {localize(WATCH_ONLY_ACCOUNTS_ROW_NOTE)}
           </Text>
         ) : account.imported ? (
           <Text style={[styles.address, { color: theme.warningText }]}>
-            {account.evmAddress ? `${shortAccountAddress(account.evmAddress)} · ` : 'Key record unreadable · '}
-            imported private key, Ethereum only — NOT backed up by your recovery phrase
+            {account.evmAddress ? `${shortAccountAddress(account.evmAddress)} · ` : `${tx('Key record unreadable')} · `}
+            <T>imported private key, Ethereum only — NOT backed up by your recovery phrase</T>
           </Text>
         ) : account.evmAddress ? (
           <Text style={[styles.address, { color: theme.textMuted }]}>
-            {shortAccountAddress(account.evmAddress)} · derivation index {account.index}
+            {t('accounts.row.derivation', { address: shortAccountAddress(account.evmAddress), index: account.index })}
           </Text>
         ) : null}
         {isEditing ? (
@@ -304,7 +304,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
               onChangeText={setDraft}
               autoFocus
               maxLength={MAX_ACCOUNT_NAME_LENGTH * 2}
-              placeholder="For example Savings"
+              placeholder={tx('For example Savings')}
               placeholderTextColor={theme.textMuted}
               style={[
                 styles.input,
@@ -344,7 +344,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
                 }
                 hitSlop={8}
               >
-                <Text style={[styles.link, { color: theme.accent }]}>Use</Text>
+                <Text style={[styles.link, { color: theme.accent }]}><T>Use</T></Text>
               </Pressable>
             ) : null}
             <Pressable
@@ -355,16 +355,16 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
               }}
               hitSlop={8}
             >
-              <Text style={[styles.link, { color: theme.accent }]}>Rename</Text>
+              <Text style={[styles.link, { color: theme.accent }]}><T>Rename</T></Text>
             </Pressable>
             {account.imported ? (
               <Pressable accessibilityRole="button" onPress={() => onRevealImported(account)} hitSlop={8}>
-                <Text style={[styles.link, { color: theme.accent }]}>Show private key</Text>
+                <Text style={[styles.link, { color: theme.accent }]}><T>Show private key</T></Text>
               </Pressable>
             ) : null}
             {account.imported && !active ? (
               <Pressable accessibilityRole="button" onPress={() => void onRemoveImported(account)} hitSlop={8}>
-                <Text style={[styles.link, { color: theme.danger }]}>Remove</Text>
+                <Text style={[styles.link, { color: theme.danger }]}><T>Remove</T></Text>
               </Pressable>
             ) : null}
             {account.watchOnly && !active ? (
@@ -374,12 +374,12 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
                 onPress={() => onRemoveWatchOnly(account)}
                 hitSlop={8}
               >
-                <Text style={[styles.link, { color: theme.danger }]}>Remove</Text>
+                <Text style={[styles.link, { color: theme.danger }]}><T>Remove</T></Text>
               </Pressable>
             ) : null}
             {!account.imported && !account.watchOnly && account.index !== 0 && !active ? (
               <Pressable accessibilityRole="button" onPress={() => onHide(account)} hitSlop={8}>
-                <Text style={[styles.link, { color: theme.accent }]}>Hide</Text>
+                <Text style={[styles.link, { color: theme.accent }]}><T>Hide</T></Text>
               </Pressable>
             ) : null}
           </View>
@@ -392,13 +392,16 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
     <View style={styles.section}>
       <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Accounts</T></Text>
       <Text style={[styles.hint, { color: theme.textMuted }]}>
-        {accountsBackupHint(importedCount > 0, { watchOnly: watchOnlyAccounts.length > 0, multisig: multisigAccounts.length > 0 })} Account addresses from the
+        {localize(accountsBackupHint(importedCount > 0, { watchOnly: watchOnlyAccounts.length > 0, multisig: multisigAccounts.length > 0 }))}{' '}
+        <T>
+        Account addresses from the
         phrase follow the common conventions: Ethereum m/44&apos;/60&apos;/0&apos;/0/N (as
         MetaMask), Solana m/44&apos;/501&apos;/N&apos;/0&apos; (as Phantom), Bitcoin
         m/84&apos;/0&apos;/N&apos;/0/0 and Dogecoin m/44&apos;/3&apos;/N&apos;/0/0. After restoring the
         phrase on a new device, add accounts again in the same order to get the
         same addresses back.
-        {importedCount > 0 ? ' Restoring the phrase does not bring imported accounts back.' : ''}
+        </T>
+        {importedCount > 0 ? ` ${tx('Restoring the phrase does not bring imported accounts back.')}` : ''}
       </Text>
       {visible.map(renderRow)}
       <View style={styles.editor}>
@@ -408,7 +411,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
           value={newName}
           onChangeText={setNewName}
           maxLength={MAX_ACCOUNT_NAME_LENGTH * 2}
-          placeholder="For example Savings"
+          placeholder={tx('For example Savings')}
           placeholderTextColor={theme.textMuted}
           style={[
             styles.input,
@@ -426,8 +429,8 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
       </View>
       {watchOnlyAccounts.length > 0 ? (
         <>
-          <Text accessibilityRole="header" style={[styles.subTitle, { color: theme.text }]}>Watch-only accounts</Text>
-          <Text style={[styles.hint, { color: theme.textMuted }]}>{WATCH_ONLY_LIST_HINT}</Text>
+          <Text accessibilityRole="header" style={[styles.subTitle, { color: theme.text }]}><T>Watch-only accounts</T></Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(WATCH_ONLY_LIST_HINT)}</Text>
           <WatchOnlyNotice />
           {watchOnlyAccounts.map(renderRow)}
         </>
@@ -437,8 +440,8 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
           is shown when there are none. */}
       {multisigAccounts.length > 0 ? (
         <>
-          <Text accessibilityRole="header" style={[styles.subTitle, { color: theme.text }]}>{MULTISIG_ACCOUNTS_HEADING}</Text>
-          <Text style={[styles.hint, { color: theme.textMuted }]}>{MULTISIG_ACCOUNTS_LIST_HINT}</Text>
+          <Text accessibilityRole="header" style={[styles.subTitle, { color: theme.text }]}>{localize(MULTISIG_ACCOUNTS_HEADING)}</Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(MULTISIG_ACCOUNTS_LIST_HINT)}</Text>
           {multisigAccounts.map((account) => (
             <Text key={account.index} style={[styles.address, { color: theme.textMuted }]}>
               {multisigAccountListLine(account)}
@@ -448,9 +451,9 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
       ) : null}
       {watchOpen ? (
         <View style={styles.editor}>
-          <Text accessibilityRole="header" style={[styles.subTitle, { color: theme.text }]}>Watch an address</Text>
-          <Text style={[styles.hint, { color: theme.textMuted }]}>{WATCH_ADDRESS_INTRO}</Text>
-          <Text style={[styles.hint, { color: theme.textMuted }]}>{WATCH_ADDRESS_PRIVACY_NOTE}</Text>
+          <Text accessibilityRole="header" style={[styles.subTitle, { color: theme.text }]}><T>Watch an address</T></Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(WATCH_ADDRESS_INTRO)}</Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(WATCH_ADDRESS_PRIVACY_NOTE)}</Text>
           <Text {...fieldLabel('watch-address', 'Ethereum address to watch').label} style={[styles.hint, { color: theme.textMuted }]}>{fieldLabel('watch-address', 'Ethereum address to watch').text}</Text>
           <TextInput
             {...fieldLabel('watch-address', 'Ethereum address to watch').input}
@@ -459,7 +462,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
             autoCapitalize="none"
             autoCorrect={false}
             spellCheck={false}
-            placeholder="Ethereum address (0x…)"
+            placeholder={tx('Ethereum address (0x…)')}
             placeholderTextColor={theme.textMuted}
             style={[
               styles.input,
@@ -476,7 +479,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
             value={watchName}
             onChangeText={setWatchName}
             maxLength={MAX_ACCOUNT_NAME_LENGTH * 2}
-            placeholder="Name (optional)"
+            placeholder={tx('Name (optional)')}
             placeholderTextColor={theme.textMuted}
             style={[
               styles.input,
@@ -520,7 +523,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
         <>
           <Pressable accessibilityRole="button" onPress={() => setShowHidden((v) => !v)} hitSlop={8}>
             <Text style={[styles.link, { color: theme.accent }]}>
-              {showHidden ? 'Hide hidden accounts' : `Show hidden accounts (${hidden.length})`}
+              {showHidden ? tx('Hide hidden accounts') : t('accounts.showHidden', { count: hidden.length })}
             </Text>
           </Pressable>
           {showHidden ? hidden.map(renderRow) : null}

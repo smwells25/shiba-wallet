@@ -76,6 +76,7 @@ import { suggestFeesRetryingOnce } from './fee-read.ts';
 // broadcast-outcome.ts imports only the engine and pending-transactions.ts
 // (which imports only types from this module), so no cycle.
 import { BroadcastOutcomeUnknownError, describeBroadcastOutcome, isBroadcastOutcomeUnknown } from './broadcast-outcome.ts';
+import { t } from '../i18n/index.ts';
 
 /**
  * ERC-4337 smart-account glue for the app (experimental, off by default):
@@ -2971,19 +2972,13 @@ export function aaSelfPaidFeeSentence(
   p: { fee: bigint; deposit?: bigint | null },
   format: (wei: bigint) => string,
 ): string {
+  // The sentences come from the string table (phase 23 item 8, the second
+  // localisation pass); in English they are exactly the earlier text
+  // (scripts/check-i18n.mjs), and AA_SELF_PAID_FEE_SENTENCE is the first.
   const deposit = p.deposit ?? 0n;
-  if (deposit <= 0n) return AA_SELF_PAID_FEE_SENTENCE;
-  if (deposit >= p.fee) {
-    return (
-      `The smart account's EntryPoint deposit (${format(deposit)}) covers this whole worst-case fee, so ` +
-      'nothing for gas comes from its balance; the deposit is reduced by what the operation actually uses.'
-    );
-  }
-  return (
-    `The fee comes first from the smart account's EntryPoint deposit (${format(deposit)}); its balance tops ` +
-    `the deposit up by the rest of the worst case, up to ${format(p.fee - deposit)}. What the operation ` +
-    'does not use stays in the deposit for later fees; it does not return to the balance.'
-  );
+  if (deposit <= 0n) return t('aa.fee.selfPaid');
+  if (deposit >= p.fee) return t('aa.fee.depositCovers', { deposit: format(deposit) });
+  return t('aa.fee.depositFirst', { deposit: format(deposit), rest: format(p.fee - deposit) });
 }
 
 /**

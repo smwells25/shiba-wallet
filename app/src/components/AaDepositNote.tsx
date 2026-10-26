@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '../theme';
 import { formatUnits } from '../wallet/balances';
 import { AA_DEPOSIT_NOTE, AA_DEPOSIT_ROW_LABEL, aaSelfPaidFeeSentence } from '../wallet/aa';
+import { useI18n } from '../i18n/useI18n';
 
 /**
  * The smart account's EntryPoint deposit on a self-paid smart-account
@@ -27,16 +28,19 @@ export function AaDepositNote({
   symbol: string;
 }) {
   const theme = useTheme();
+  // The label and the note are table entries (phase 23 item 8); the fee
+  // sentence comes translated from aaSelfPaidFeeSentence.
+  const { localize } = useI18n();
   if (sponsored || tokenGas || deposit === undefined || deposit <= 0n) return null;
   const format = (wei: bigint) => `${formatUnits(wei, 18, 18)} ${symbol}`;
   return (
     <View style={[styles.row, { borderColor: theme.border }]}>
-      <Text accessibilityLabel={AA_DEPOSIT_ROW_LABEL} style={[styles.label, { color: theme.textMuted }]}>{AA_DEPOSIT_ROW_LABEL}</Text>
+      <Text accessibilityLabel={localize(AA_DEPOSIT_ROW_LABEL)} style={[styles.label, { color: theme.textMuted }]}>{localize(AA_DEPOSIT_ROW_LABEL)}</Text>
       <Text selectable style={[styles.value, { color: theme.text }]}>
         {format(deposit)}
       </Text>
       <Text style={[styles.sub, { color: theme.textMuted }]}>
-        {`${aaSelfPaidFeeSentence({ fee, deposit }, format)} ${AA_DEPOSIT_NOTE}`}
+        {`${aaSelfPaidFeeSentence({ fee, deposit }, format)} ${localize(AA_DEPOSIT_NOTE)}`}
       </Text>
     </View>
   );

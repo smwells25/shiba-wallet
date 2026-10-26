@@ -429,7 +429,7 @@ export function PinPad({
       </View>
       {busy ? <ActivityIndicator color={theme.accent} accessibilityLabel={tx('Checking the PIN')} /> : null}
       <Text accessibilityLiveRegion={ticking ? 'none' : 'polite'} style={[styles.error, { color: theme.danger }]}>
-        {line ?? ''}
+        {line === null ? '' : localize(line)}
       </Text>
     </View>
   );
@@ -568,7 +568,7 @@ export function PassphraseField({
       <Button title={submitLabel} onPress={submit} disabled={busy || text.length === 0} style={styles.button} />
       {busy ? <ActivityIndicator color={theme.accent} accessibilityLabel={localize(lockCopy('phr').checking)} /> : null}
       <Text accessibilityLiveRegion={ticking ? 'none' : 'polite'} style={[styles.error, { color: theme.danger }]}>
-        {line ?? ''}
+        {line === null ? '' : localize(line)}
       </Text>
     </View>
   );

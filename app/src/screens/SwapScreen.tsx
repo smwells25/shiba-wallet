@@ -18,6 +18,9 @@ import type { FungibleAsset } from '@shiba-wallet/core';
 import type { SwapQuote } from '@shiba-wallet/chains-evm';
 import type { RootStackParamList } from '../navigation';
 import { Button, ImportedKeyNotice, WarningBox, screenStyle, switchColors, useFieldLabels } from '../components';
+import { T } from '../i18n/T';
+import { useI18n } from '../i18n/useI18n';
+import { localize, t, tx } from '../i18n/index';
 import {
   callWithFailover,
   getEndpoint,
@@ -129,14 +132,14 @@ function NetworkBadge({ label, testnet, theme }: { label: string; testnet: boole
     return (
       <View style={[styles.badge, { backgroundColor: theme.testnetFill, borderColor: theme.testnetFill }]}>
         <Text style={[styles.badgeText, { color: theme.onTestnetFill }]}>
-          {label} TESTNET — test funds only
+          {t('send.badge.testnet', { label })}
         </Text>
       </View>
     );
   }
   return (
     <View style={[styles.badge, { backgroundColor: theme.dangerSurface, borderColor: theme.danger }]}>
-      <Text style={[styles.badgeText, { color: theme.danger }]}>{label} Mainnet — real funds</Text>
+      <Text style={[styles.badgeText, { color: theme.danger }]}>{t('send.badge.mainnet', { label })}</Text>
     </View>
   );
 }
@@ -164,6 +167,8 @@ function NetworkBadge({ label, testnet, theme }: { label: string; testnet: boole
  */
 export function SwapScreen({ navigation }: Props) {
   const theme = useTheme();
+  // The screen's texts go through the string table (phase 23 item 8).
+  useI18n();
   const fieldLabel = useFieldLabels();
   const { accounts, signWith, activeAccount } = useWallet();
   const { evmChain, hideAmounts } = usePrefs();
@@ -445,7 +450,7 @@ export function SwapScreen({ navigation }: Props) {
   if (!account) {
     return (
       <View style={[screenStyle(theme), styles.center]}>
-        <Text style={{ color: theme.textMuted }}>No Ethereum account.</Text>
+        <Text style={{ color: theme.textMuted }}><T>No Ethereum account.</T></Text>
       </View>
     );
   }
@@ -462,12 +467,12 @@ export function SwapScreen({ navigation }: Props) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Swapping trades one asset for another directly from this wallet,
+          <T>Swapping trades one asset for another directly from this wallet,
           priced by the 0x aggregator. It is off because no 0x API key is
           configured. Create a free key at dashboard.0x.org, then save it
           under Settings → Swaps — saving verifies the key with one live
           quote request. The key is stored only on this device and sent
-          only to api.0x.org.
+          only to api.0x.org.</T>
         </Text>
         <Button title="Open Settings" onPress={() => navigation.navigate('Settings')} />
       </ScrollView>
@@ -724,7 +729,7 @@ export function SwapScreen({ navigation }: Props) {
       `Approve ${exact(quote.sellAmount, sellDecimals)} ${sellSymbol} for the swap contract`,
     );
     if (!auth.ok) {
-      Alert.alert('Not approved', auth.message);
+      Alert.alert(tx('Not approved'), auth.message);
       return;
     }
     setPhase('approving');
@@ -749,11 +754,8 @@ export function SwapScreen({ navigation }: Props) {
       );
       if (!confirmed) {
         Alert.alert(
-          'Approval not confirmed yet',
-          `The approval was broadcast (transaction ${sent.txid}) but has not ` +
-            'taken effect on-chain within the waiting window. Nothing further ' +
-            'was sent. Wait for it to confirm, then start the swap again — ' +
-            'the allowance will already be in place.',
+          tx('Approval not confirmed yet'),
+          t('swap.approval.notConfirmed', { txid: sent.txid }),
         );
         setPhase('review');
         return;
@@ -862,7 +864,7 @@ export function SwapScreen({ navigation }: Props) {
       `Swap ${exact(quote.sellAmount, sellDecimals)} ${sellSymbol} for ${buySymbol}`,
     );
     if (!auth.ok) {
-      Alert.alert('Not sent', auth.message);
+      Alert.alert(tx('Not sent'), auth.message);
       return;
     }
     setPhase('sending');
@@ -891,7 +893,7 @@ export function SwapScreen({ navigation }: Props) {
     if (!url || !aaQuote || !quoteView || !quote) return;
     const bundle = aaBundle.current;
     if (!bundle) {
-      Alert.alert('Not sent', 'Smart-account session expired; go back and quote again.');
+      Alert.alert(tx('Not sent'), tx('Smart-account session expired; go back and quote again.'));
       return;
     }
     if (isQuoteStale(quoteView.quotedAt)) {
@@ -969,7 +971,7 @@ export function SwapScreen({ navigation }: Props) {
       `Swap ${exact(quote.sellAmount, sellDecimals)} ${sellSymbol} for ${buySymbol} from your smart account`,
     );
     if (!auth.ok) {
-      Alert.alert('Not sent', auth.message);
+      Alert.alert(tx('Not sent'), auth.message);
       return;
     }
     setPhase('aa-sending');
@@ -1014,15 +1016,18 @@ export function SwapScreen({ navigation }: Props) {
   if (phase === 'success' && aaResult) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
-        <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}>Swap sent to bundler ✓</Text>
+        <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}><T>Swap sent to bundler ✓</T></Text>
         {quote ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            Selling {exact(quote.sellAmount, sellDecimals)} {sellSymbol} from your smart account
-            for at least {exact(quote.minBuyAmount, buyDecimals)} {buySymbol} (guaranteed
-            minimum after slippage), as one operation.
+            {t('swap.aa.selling', {
+              sell: exact(quote.sellAmount, sellDecimals),
+              sellSymbol,
+              minBuy: exact(quote.minBuyAmount, buyDecimals),
+              buySymbol,
+            })}
           </Text>
         ) : null}
-        <Text style={[styles.label, { color: theme.textMuted }]}>UserOperation hash</Text>
+        <Text style={[styles.label, { color: theme.textMuted }]}><T>UserOperation hash</T></Text>
         <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <Text selectable style={[styles.monoText, { color: theme.text }]}>
             {aaResult.userOpHash}
@@ -1032,14 +1037,14 @@ export function SwapScreen({ navigation }: Props) {
           <View style={styles.center}>
             <ActivityIndicator size="large" color={theme.accent} />
             <Text style={[styles.hint, { color: theme.textMuted }]}>
-              Bundling… waiting for the UserOperation receipt.
+              <T>Bundling… waiting for the UserOperation receipt.</T>
             </Text>
           </View>
         ) : null}
         {aaResult.receiptState === 'timeout' ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            No receipt yet. The operation may still be included — keep the
-            UserOperation hash above to look it up later.
+            <T>No receipt yet. The operation may still be included — keep the
+            UserOperation hash above to look it up later.</T>
           </Text>
         ) : null}
         {aaResult.receiptState === 'found' ? (
@@ -1051,7 +1056,7 @@ export function SwapScreen({ navigation }: Props) {
             </WarningBox>
           ) : (
             <Text style={[styles.simulationOk, { color: theme.success }]}>
-              Included on-chain{aaResult.success === true ? ' — succeeded.' : '.'}
+              {aaResult.success === true ? tx('Included on-chain — succeeded.') : tx('Included on-chain.')}
             </Text>
           )
         ) : null}
@@ -1077,7 +1082,7 @@ export function SwapScreen({ navigation }: Props) {
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
         <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>
-          Smart-account swap · {aaAccountTypeLabel(aaQuote.accountType)}
+          {t('swap.aa.title', { type: localize(aaAccountTypeLabel(aaQuote.accountType)) })}
         </Text>
         {notice ? <Text style={[styles.notice, { color: theme.accent }]}>{notice}</Text> : null}
         <Row
@@ -1113,18 +1118,19 @@ export function SwapScreen({ navigation }: Props) {
         />
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           {batch
-            ? `One operation, two calls, all-or-nothing: (1) approve exactly ` +
-              `${exact(quote.sellAmount, sellDecimals)} ${sellSymbol} — not unlimited — for the ` +
-              `swap contract, (2) the swap. If the swap would fail, the approval is undone ` +
-              'with it.'
-            : 'One operation with a single call: the swap (selling the native coin needs no approval).'}
+            ? t('swap.aa.batch', { amount: exact(quote.sellAmount, sellDecimals), symbol: sellSymbol })
+            : tx('One operation with a single call: the swap (selling the native coin needs no approval).')}
         </Text>
         {aaQuote.calls.map((c, i) => (
           <Row
             key={`${i}-${c.to}`}
-            label={`Call ${i + 1} of ${aaQuote.calls.length}${batch && i === 0 ? ' — approve' : ' — swap'}`}
+            label={batch && i === 0
+              ? t('swap.aa.callApprove', { n: i + 1, count: aaQuote.calls.length })
+              : t('swap.aa.callSwap', { n: i + 1, count: aaQuote.calls.length })}
             value={c.to}
-            sub={`${c.data.length} bytes of calldata${c.value > 0n ? `, value ${exact(c.value, 18)} ${evmChain.displaySymbol}` : ''}`}
+            sub={c.value > 0n
+              ? t('swap.aa.calldataValue', { bytes: c.data.length, value: exact(c.value, 18), symbol: evmChain.displaySymbol })
+              : t('swap.aa.calldata', { bytes: c.data.length })}
             mono
             theme={theme}
           />
@@ -1192,13 +1198,13 @@ export function SwapScreen({ navigation }: Props) {
           {...(sellAsset === 'native' ? {} : { quoteOutflows: [{ token: sellAsset.assetId.reference, amount: quote.sellAmount }] })}
         />
         <Text style={[styles.simulationOk, { color: theme.success }]}>
-          Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).
+          <T>Bundler gas estimate passed (eth_estimateUserOperationGas simulated the operation).</T>
         </Text>
         {phase === 'aa-sending' ? (
           <View style={styles.center}>
             <ActivityIndicator size="large" color={theme.accent} />
             <Text style={[styles.hint, { color: theme.textMuted }]}>
-              Signing and submitting to the bundler…
+              <T>Signing and submitting to the bundler…</T>
             </Text>
           </View>
         ) : (
@@ -1218,20 +1224,23 @@ export function SwapScreen({ navigation }: Props) {
   if (phase === 'success' && result) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
-        <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}>Swap sent ✓</Text>
+        <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}><T>Swap sent ✓</T></Text>
         {quote ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            Sold {exact(quote.sellAmount, sellDecimals)} {sellSymbol} for at least{' '}
-            {exact(quote.minBuyAmount, buyDecimals)} {buySymbol} (guaranteed minimum after
-            slippage). The exact amount received is on the transaction.
+            {t('swap.sold', {
+              sell: exact(quote.sellAmount, sellDecimals),
+              sellSymbol,
+              minBuy: exact(quote.minBuyAmount, buyDecimals),
+              buySymbol,
+            })}
           </Text>
         ) : null}
         {approveTxid ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            Approval transaction: {approveTxid}
+            {t('staking.success.approvalTx', { hash: approveTxid })}
           </Text>
         ) : null}
-        <Text style={[styles.label, { color: theme.textMuted }]}>Transaction id</Text>
+        <Text style={[styles.label, { color: theme.textMuted }]}><T>Transaction id</T></Text>
         <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <Text selectable style={[styles.monoText, { color: theme.text }]}>
             {result.txid}
@@ -1257,7 +1266,7 @@ export function SwapScreen({ navigation }: Props) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
-        <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>Step 1 of 2 — Approve</Text>
+        <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}><T>Step 1 of 2 — Approve</T></Text>
         <Row
           label="From account"
           value={activeAccount?.name ?? '—'}
@@ -1266,28 +1275,22 @@ export function SwapScreen({ navigation }: Props) {
         />
         <ImportedKeyNotice show={activeAccount?.imported === true} />
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Before the swap contract can take your {sellSymbol}, it needs a
-          spending allowance. This approves exactly{' '}
-          {exact(quote.sellAmount, sellDecimals)} {sellSymbol} — the amount you
-          are swapping, not an unlimited allowance — for this swap&apos;s contract.
-          The swap itself is a second transaction you confirm afterwards.
+          {t('swap.approve.intro', { symbol: sellSymbol, amount: exact(quote.sellAmount, sellDecimals) })}
         </Text>
         <Row
           label="Approve amount"
-          value={`${exact(quote.sellAmount, sellDecimals)} ${sellSymbol} (exact, not unlimited)`}
+          value={t('swap.approve.amountValue', { amount: exact(quote.sellAmount, sellDecimals), symbol: sellSymbol })}
           theme={theme}
         />
         <Row label="Token contract" value={approveQuote.to} mono theme={theme} />
         <Row label="Spender (swap contract)" value={quote.transaction.to} mono theme={theme} />
         <Row
-          label={`Max network fee (paid in ${evmChain.displaySymbol})`}
+          label={t('send.row.maxFeePaidIn', { symbol: evmChain.displaySymbol })}
           value={`${exact(approveQuote.fee, 18)} ${evmChain.displaySymbol}`}
           theme={theme}
         />
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Worst case at {exact(approveQuote.maxFeePerGas, 9)} gwei max fee ×{' '}
-          {approveQuote.gasLimit.toString()} gas; the actual fee is usually
-          lower, and the unused part is not charged.
+          {t('send.worstCase', { gwei: exact(approveQuote.maxFeePerGas, 9), gas: approveQuote.gasLimit.toString(), l1: '' })}
         </Text>
 
         <BalanceChangePreview
@@ -1303,23 +1306,21 @@ export function SwapScreen({ navigation }: Props) {
 
         {approveQuote.simulation.ok ? (
           <Text style={[styles.simulationOk, { color: theme.success }]}>
-            Pre-flight simulation passed (eth_call).
+            <T>Pre-flight simulation passed (eth_call).</T>
           </Text>
         ) : (
           <View style={styles.simulationBlock}>
             <WarningBox>
-              Pre-flight simulation failed:{' '}
-              {approveQuote.simulation.ok ? '' : approveQuote.simulation.reason}. This
-              transaction would very likely fail on-chain and still cost the fee.
+              {t('send.simulation.failed', { reason: approveQuote.simulation.ok ? '' : approveQuote.simulation.reason })}
             </WarningBox>
             <View style={styles.overrideRow}>
               <Switch {...switchColors(theme)}
-                accessibilityLabel="Send anyway, although the pre-flight simulation failed"
+                accessibilityLabel={tx('Send anyway, although the pre-flight simulation failed')}
                 value={overrideSimulation}
                 onValueChange={setOverrideSimulation}
               />
               <Text style={[styles.overrideLabel, { color: theme.text }]}>
-                Send anyway (I understand it will probably fail)
+                <T>Send anyway (I understand it will probably fail)</T>
               </Text>
             </View>
           </View>
@@ -1330,8 +1331,8 @@ export function SwapScreen({ navigation }: Props) {
             <ActivityIndicator size="large" color={theme.accent} />
             <Text style={[styles.hint, { color: theme.textMuted }]}>
               {approveTxid
-                ? `Approval broadcast (${approveTxid.slice(0, 18)}…). Waiting for it to take effect on-chain…`
-                : 'Signing and broadcasting the approval…'}
+                ? t('swap.approve.broadcast', { txid: approveTxid.slice(0, 18) })
+                : tx('Signing and broadcasting the approval…')}
             </Text>
           </View>
         ) : (
@@ -1356,7 +1357,7 @@ export function SwapScreen({ navigation }: Props) {
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
         {sellAsset !== 'native' ? (
-          <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>Step 2 of 2 — Swap</Text>
+          <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}><T>Step 2 of 2 — Swap</T></Text>
         ) : null}
         <Row
           label="From account"
@@ -1387,9 +1388,9 @@ export function SwapScreen({ navigation }: Props) {
           theme={theme}
         />
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          The guaranteed minimum is enforced by the swap transaction itself:
+          <T>The guaranteed minimum is enforced by the swap transaction itself:
           if the market moves past your slippage setting, the transaction
-          fails instead of filling for less.
+          fails instead of filling for less.</T>
         </Text>
         <Row label="Swap contract" value={sendQuote.to} mono theme={theme} />
         <Row
@@ -1398,9 +1399,7 @@ export function SwapScreen({ navigation }: Props) {
           theme={theme}
         />
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          Worst case at {exact(sendQuote.maxFeePerGas, 9)} gwei max fee ×{' '}
-          {sendQuote.gasLimit.toString()} gas; the actual fee is usually lower,
-          and the unused part is not charged.
+          {t('send.worstCase', { gwei: exact(sendQuote.maxFeePerGas, 9), gas: sendQuote.gasLimit.toString(), l1: '' })}
         </Text>
         {sellAsset === 'native' ? (
           <Row
@@ -1429,23 +1428,21 @@ export function SwapScreen({ navigation }: Props) {
 
         {sendQuote.simulation.ok ? (
           <Text style={[styles.simulationOk, { color: theme.success }]}>
-            Pre-flight simulation passed (eth_call).
+            <T>Pre-flight simulation passed (eth_call).</T>
           </Text>
         ) : (
           <View style={styles.simulationBlock}>
             <WarningBox>
-              Pre-flight simulation failed:{' '}
-              {sendQuote.simulation.ok ? '' : sendQuote.simulation.reason}. This
-              transaction would very likely fail on-chain and still cost the fee.
+              {t('send.simulation.failed', { reason: sendQuote.simulation.ok ? '' : sendQuote.simulation.reason })}
             </WarningBox>
             <View style={styles.overrideRow}>
               <Switch {...switchColors(theme)}
-                accessibilityLabel="Send anyway, although the pre-flight simulation failed"
+                accessibilityLabel={tx('Send anyway, although the pre-flight simulation failed')}
                 value={overrideSimulation}
                 onValueChange={setOverrideSimulation}
               />
               <Text style={[styles.overrideLabel, { color: theme.text }]}>
-                Send anyway (I understand it will probably fail)
+                <T>Send anyway (I understand it will probably fail)</T>
               </Text>
             </View>
           </View>
@@ -1454,7 +1451,7 @@ export function SwapScreen({ navigation }: Props) {
         {phase === 'sending' ? (
           <View style={styles.center}>
             <ActivityIndicator size="large" color={theme.accent} />
-            <Text style={[styles.hint, { color: theme.textMuted }]}>Signing and broadcasting…</Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}><T>Signing and broadcasting…</T></Text>
           </View>
         ) : (
           <>
@@ -1502,9 +1499,7 @@ export function SwapScreen({ navigation }: Props) {
           theme={theme}
         />
         <Text style={[styles.hint, { color: theme.textMuted }]}>
-          The guaranteed minimum is the least you can receive after your
-          slippage setting ({currentSlippageBps()} bps); the swap fails
-          rather than fill below it.
+          {t('swap.minimumNote', { bps: currentSlippageBps() })}
         </Text>
         <Row
           label="Rate"
@@ -1528,10 +1523,12 @@ export function SwapScreen({ navigation }: Props) {
           />
         ) : null}
         <Text style={[styles.hint, { color: theme.textMuted }]}>
+          <T>
           Our own worst-case fee — priced exactly like a regular send — is
           shown on the confirm screen before anything is signed.
+          </T>
           {sellAsset !== 'native'
-            ? ` Selling ${sellSymbol} may need a one-time approval first; if so, the next step explains it.`
+            ? ` ${t('swap.approvalFirst', { symbol: sellSymbol })}`
             : ''}
         </Text>
 
@@ -1539,7 +1536,7 @@ export function SwapScreen({ navigation }: Props) {
           <View style={styles.center}>
             <ActivityIndicator size="large" color={theme.accent} />
             <Text style={[styles.hint, { color: theme.textMuted }]}>
-              Checking allowance and preparing the transaction…
+              <T>Checking allowance and preparing the transaction…</T>
             </Text>
           </View>
         ) : (
@@ -1585,15 +1582,18 @@ export function SwapScreen({ navigation }: Props) {
       keyboardShouldPersistTaps="handled"
     >
       <Text style={[styles.networkLine, { color: evmChain.testnet ? theme.testnetFill : theme.textMuted }]}>
-        {evmChain.label} · {evmChain.testnet ? 'TESTNET' : 'Mainnet'} · powered by 0x · from{' '}
-        {aaActive ? `smart account ${aaSender ? `${aaSender.slice(0, 10)}…` : '(resolving…)'}` : `${account.address.slice(0, 10)}…`}
+        {evmChain.label} · {evmChain.testnet ? tx('TESTNET') : tx('Mainnet')} · {t('swap.header.from', {
+          from: aaActive
+            ? t('swap.header.smartAccount', { address: aaSender ? `${aaSender.slice(0, 10)}…` : tx('(resolving…)') })
+            : `${account.address.slice(0, 10)}…`,
+        })}
       </Text>
 
       {aaAvailable && aaConfig ? (
         <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border, gap: 8 }]}>
           <View style={styles.overrideRow}>
             <Switch {...switchColors(theme)}
-              accessibilityLabel="Swap from smart account"
+              accessibilityLabel={tx('Swap from smart account')}
               value={aaEnabled}
               onValueChange={(v) => {
                 // The taker (and therefore the quote) changes with the path.
@@ -1605,14 +1605,11 @@ export function SwapScreen({ navigation }: Props) {
               }}
             />
             <Text style={[styles.overrideLabel, { color: theme.text }]}>
-              Swap from smart account (experimental)
+              <T>Swap from smart account (experimental)</T>
             </Text>
           </View>
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            Swaps the smart account&apos;s own funds ({aaAccountTypeLabel(aaType ?? aaConfig.accountType)})
-            as ONE operation: for a token sale, approve exactly the amount and swap in a single
-            all-or-nothing batch — no separate approval step. Gas comes from the smart account
-            (or the paymaster when sponsored).
+            {t('swap.aa.hint', { type: localize(aaAccountTypeLabel(aaType ?? aaConfig.accountType)) })}
           </Text>
         </View>
       ) : null}
@@ -1625,16 +1622,11 @@ export function SwapScreen({ navigation }: Props) {
 
       {tokens.length === 0 ? (
         <WarningBox>
-          {`Swapping needs at least one tracked token on ${evmChain.label} as the ` +
-            'other side of the pair. Add one under Manage tokens on Home.' +
-            (evmChain.testnet
-              ? ' (Note: 0x\'s published supported-chain list covers mainnets only, so ' +
-                'quotes may be refused on a test network.)'
-              : '')}
+          {t('swap.noTokens', { network: evmChain.label }) + (evmChain.testnet ? ` ${tx('(Note: 0x\'s published supported-chain list covers mainnets only, so quotes may be refused on a test network.)')}` : '')}
         </WarningBox>
       ) : null}
 
-      <Text style={[styles.label, { color: theme.textMuted }]}>You sell</Text>
+      <Text style={[styles.label, { color: theme.textMuted }]}><T>You sell</T></Text>
       <View style={styles.choiceRow}>
         {pickable.map((a) => (
           <Button
@@ -1659,25 +1651,25 @@ export function SwapScreen({ navigation }: Props) {
       <Text
         accessibilityLabel={
           sellBalance !== null
-            ? `Balance ${spokenAmount(formatBalanceDisplay(sellBalance, sellDecimals))} ${sellSymbol}`
+            ? t('swap.balance.spoken', { amount: spokenAmount(formatBalanceDisplay(sellBalance, sellDecimals)), symbol: sellSymbol })
             : undefined
         }
         style={[styles.hint, { color: theme.textMuted }]}
       >
-        Balance:{' '}
+        {tx('Balance:')}{' '}
         {sellBalance !== null
           ? // formatBalanceDisplay: a non-zero dust balance reads
             // "< 0.000001", never "0" (phase 12 follow-up).
             `${formatBalanceDisplay(sellBalance, sellDecimals)} ${sellSymbol}`
           : sellBalanceFailed
-            ? 'could not be loaded right now.'
+            ? tx('could not be loaded right now.')
             : '…'}
       </Text>
       {sellBalanceFailed ? <TechnicalDetail text={sellBalanceDetail} /> : null}
       {sellBalanceFailed ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Retry loading the balance"
+          accessibilityLabel={tx('Retry loading the balance')}
           onPress={() => {
             setSellBalanceFailed(false);
             setSellBalanceDetail(null);
@@ -1685,11 +1677,11 @@ export function SwapScreen({ navigation }: Props) {
           }}
           hitSlop={8}
         >
-          <Text style={[styles.hint, { color: theme.accent }]}>Retry</Text>
+          <Text style={[styles.hint, { color: theme.accent }]}><T>Retry</T></Text>
         </Pressable>
       ) : null}
 
-      <Text style={[styles.label, { color: theme.textMuted }]}>You receive</Text>
+      <Text style={[styles.label, { color: theme.textMuted }]}><T>You receive</T></Text>
       <View style={styles.choiceRow}>
         {buyChoices.map((a) => (
           <Button
@@ -1706,9 +1698,9 @@ export function SwapScreen({ navigation }: Props) {
         ))}
       </View>
 
-      <Text {...fieldLabel('amount', `Amount (${sellSymbol})`).label} style={[styles.label, { color: theme.textMuted }]}>Amount ({sellSymbol})</Text>
+      <Text {...fieldLabel('amount', t('send.field.amount', { symbol: sellSymbol })).label} style={[styles.label, { color: theme.textMuted }]}>{t('send.field.amount', { symbol: sellSymbol })}</Text>
       <TextInput
-        {...fieldLabel('amount', `Amount (${sellSymbol})`).input}
+        {...fieldLabel('amount', t('send.field.amount', { symbol: sellSymbol })).input}
         value={amountText}
         onChangeText={(t) => {
           setAmountText(t);
@@ -1720,7 +1712,7 @@ export function SwapScreen({ navigation }: Props) {
         style={inputStyle}
       />
 
-      <Text style={[styles.label, { color: theme.textMuted }]}>Max slippage</Text>
+      <Text style={[styles.label, { color: theme.textMuted }]}><T>Max slippage</T></Text>
       <View style={styles.choiceRow}>
         {SLIPPAGE_CHOICES_BPS.map((bps) => (
           <Button
@@ -1761,13 +1753,13 @@ export function SwapScreen({ navigation }: Props) {
               setCustomBpsText(t);
               setFormError(null);
             }}
-            placeholder="basis points, e.g. 75 (= 0.75%)"
+            placeholder={tx('basis points, e.g. 75 (= 0.75%)')}
             placeholderTextColor={theme.textMuted}
             keyboardType="number-pad"
             style={inputStyle}
           />
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            100 bps = 1%. Allowed range: 1–1000 bps (0.01%–10%).
+            <T>100 bps = 1%. Allowed range: 1–1000 bps (0.01%–10%).</T>
           </Text>
         </>
       ) : null}
@@ -1781,7 +1773,7 @@ export function SwapScreen({ navigation }: Props) {
       {phase === 'quoting' ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color={theme.accent} />
-          <Text style={[styles.hint, { color: theme.textMuted }]}>Fetching quote…</Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}><T>Fetching quote…</T></Text>
         </View>
       ) : (
         <Button
@@ -1792,10 +1784,10 @@ export function SwapScreen({ navigation }: Props) {
       )}
 
       <Text style={[styles.hint, { color: theme.textMuted }]}>
-        Quotes come from the 0x aggregator using your API key (Settings →
+        <T>Quotes come from the 0x aggregator using your API key (Settings →
         Swaps). Nothing is signed or sent until you confirm on the next
         screens; a quote older than a minute is refreshed before anything
-        executes.
+        executes.</T>
       </Text>
     </ScrollView>
   );
@@ -1815,9 +1807,12 @@ function Row({
   mono?: boolean;
   theme: ReturnType<typeof useTheme>;
 }) {
+  // A label, value or note that is an English table entry is shown in the
+  // chosen language (phase 23 item 8); amounts and addresses pass unchanged.
+  const { localize: localized } = useI18n();
   return (
     <View style={[styles.row, { borderColor: theme.border }]}>
-      <Text accessibilityLabel={label} style={[styles.rowLabel, { color: theme.textMuted }]}>{label}</Text>
+      <Text accessibilityLabel={localized(label)} style={[styles.rowLabel, { color: theme.textMuted }]}>{localized(label)}</Text>
       <Text
         selectable
         style={[
@@ -1826,9 +1821,9 @@ function Row({
           monoFont ? { fontFamily: mono, fontSize: 13 } : null,
         ]}
       >
-        {value}
+        {localized(value)}
       </Text>
-      {sub ? <Text style={[styles.rowSub, { color: theme.textMuted }]}>{sub}</Text> : null}
+      {sub ? <Text style={[styles.rowSub, { color: theme.textMuted }]}>{localized(sub)}</Text> : null}
     </View>
   );
 }

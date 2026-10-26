@@ -883,7 +883,8 @@ console.log('check-token-gas: footnote, fee copy and funding titles');
   check('the screens use the helpers and the old absolute wording is gone',
     /\{tokenSendFeeSentence\(evmChain\.caip2, \{\s*keyless: activeAccount\?\.watchOnly === true \|\| activeAccount\?\.multisig === true,\s*\}\)\}/.test(tokensSrc) &&
       !tokensSrc.includes('the network fee for a token send is paid in') &&
-      settingsSrc.includes('{settingsTokensFeeSentence()}') && !settingsSrc.includes('with the network fee paid in ETH'));
+      // Phase 23 item 8: shown through the string table (localize).
+      settingsSrc.includes('{localize(settingsTokensFeeSentence())}') && !settingsSrc.includes('with the network fee paid in ETH'));
 
   // Funding titles with the USDC fee (Base Sepolia).
   const noEth = await rejection(() => prepareAaTokenGasSend(kernelBundle({ node: tgNode({ eth: 100n }) }).bundle, OWNER_0, RECIPIENT, 101n));

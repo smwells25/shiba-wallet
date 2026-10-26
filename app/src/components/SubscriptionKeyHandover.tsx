@@ -9,6 +9,8 @@ import * as Clipboard from 'expo-clipboard';
 import { Directory, File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { Button } from '../components';
+import { T } from '../i18n/T';
+import { tx } from '../i18n/index';
 import { useTheme } from '../theme';
 import {
   SUBSCRIPTION_KEY_CLIPBOARD_WARNING,
@@ -102,21 +104,21 @@ export function SubscriptionKeyHandoverActions({ text, fileName }: { text: strin
             () => setBusy(false),
             (e: unknown) => {
               setBusy(false);
-              Alert.alert('File not shared', e instanceof Error ? e.message : String(e));
+              Alert.alert(tx('File not shared'), e instanceof Error ? e.message : String(e));
             },
           );
         }}
       />
       <Text style={[styles.hint, { color: theme.textMuted }]}>
-        Sends the key as a .json file through the share sheet. Choose a channel you trust; the temporary copy on
-        this phone is deleted a few seconds after the share sheet closes.
+        <T>Sends the key as a .json file through the share sheet. Choose a channel you trust; the temporary copy on
+        this phone is deleted a few seconds after the share sheet closes.</T>
       </Text>
       <Button
         title={copied ? 'Copied ✓' : 'Copy'}
         variant="secondary"
         onPress={() => {
           keyClipboard.copy(text).catch((e: unknown) =>
-            Alert.alert('Not copied', e instanceof Error ? e.message : String(e)),
+            Alert.alert(tx('Not copied'), e instanceof Error ? e.message : String(e)),
           );
         }}
       />

@@ -737,7 +737,8 @@ console.log('check-watch-only: honesty and the screens (source checks)');
     !footerOk((name) => `${name} is an address you watch; this wallet holds no key for it, so it cannot send, swap or sign for it. Balances come from the RPC endpoints in Settings; pull down to refresh. Activity and NFTs read this address from the indexers in Settings.`));
   const acc = src('components/AccountsSection.tsx');
   check('Settings → Accounts: a "Watch an address" form with paste, scan, name and the privacy note',
-    /title="Watch an address"/.test(acc) && /Clipboard\.getStringAsync\(\)/.test(acc) && /setWatchAddress\(watchAddressFromScan\(data\)\)/.test(acc) && /\{WATCH_ADDRESS_PRIVACY_NOTE\}/.test(acc));
+    // Phase 23 item 8: the note through the string table (localize), English unchanged.
+    /title="Watch an address"/.test(acc) && /Clipboard\.getStringAsync\(\)/.test(acc) && /setWatchAddress\(watchAddressFromScan\(data\)\)/.test(acc) && /\{localize\(WATCH_ADDRESS_PRIVACY_NOTE\)\}/.test(acc));
   check('Settings → Accounts: the watch-only group shows the notice and a "Watch-only" tag', /<WatchOnlyNotice \/>/.test(acc) && /'Watch-only'/.test(acc));
   const removeBody = acc.slice(acc.indexOf('const onRemoveWatchOnly'), acc.indexOf('const onHide'));
   check('Remove: ONE confirmation, no device check (no secret exists)', (removeBody.match(/Alert\.alert\(/g) ?? []).length === 1 && !/requireLocalAuth/.test(removeBody) && /removeWatchOnly\(account\.index\)/.test(removeBody));
@@ -762,8 +763,9 @@ console.log('check-watch-only: honesty and the screens (source checks)');
   check('…mutant caught: the old intro that said it cannot send',
     !linesOk({ ...WO, WATCH_ADDRESS_INTRO: 'Follow any Ethereum address without its key: its balances, tokens, activity and NFTs appear like an account’s, but the wallet cannot send, sign or recover anything for it.' }));
   check('…and the screens use them (no "cannot send or sign" left in the switcher or Settings → Accounts)',
-    acc.includes("{account.evmAddress ?? 'unknown address'} · {WATCH_ONLY_ACCOUNTS_ROW_NOTE}") && acc.includes('accessibilityHint={WATCH_ADDRESS_BUTTON_HINT}') &&
-      acc.includes('{WATCH_ADDRESS_INTRO}') && !/cannot send or sign/.test(acc) && !/cannot send or sign/.test(sw));
+    // Phase 23 item 8: the row note and the intro through the string table (localize).
+    acc.includes("{account.evmAddress ?? tx('unknown address')} · {localize(WATCH_ONLY_ACCOUNTS_ROW_NOTE)}") && acc.includes('accessibilityHint={WATCH_ADDRESS_BUTTON_HINT}') &&
+      acc.includes('{localize(WATCH_ADDRESS_INTRO)}') && !/cannot send or sign/.test(acc) && !/cannot send or sign/.test(sw));
   const gate = src('components/WatchOnlyGate.tsx');
   check('the route gate refuses through watchOnlyRouteRefusal and renders the notice instead of the screen',
     /const refusal = activeAccount\?\.watchOnly\s*\? watchOnlyRouteRefusal\(routeName\)\s*: multisig\s*\? multisigRouteRefusal\(routeName\)\s*: null;/.test(gate) &&

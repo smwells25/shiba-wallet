@@ -1136,7 +1136,8 @@ console.log('check-pending: the minimum-fee rehearsal (Settings → Developer, p
       (sendScreen.match(/\{minimumFeeRehearsalFeeLine\(quote\)\}/g) ?? []).length === 2 &&
       sendScreen.includes("{quote.kind === 'evm' && minimumFeeRehearsalOf(quote) ? (") && sendScreen.includes('{minimumFeeRehearsalOf(quote) ? ('));
   const settingsSrc = readFileSync(join(HERE_M, '../src/screens/SettingsScreen.tsx'), 'utf8');
-  const gateOk = (src) => /\{minimumFeeRehearsalOffered\(evmChain\.caip2\) \? \(\s*<>\s*<View style=\{styles\.toggleRow\}>[\s\S]*?\{MINIMUM_FEE_REHEARSAL_SWITCH_LABEL\}[\s\S]*?onValueChange=\{\(v\) => void setMinimumFeeRehearsal\(evmChain\.caip2, v\)\}[\s\S]*?\{MINIMUM_FEE_REHEARSAL_HINT\}<\/Text>\s*<\/>\s*\) : null\}/.test(src) &&
+  // Phase 23 item 8: the label and the hint are shown through the string table (localize).
+  const gateOk = (src) => /\{minimumFeeRehearsalOffered\(evmChain\.caip2\) \? \(\s*<>\s*<View style=\{styles\.toggleRow\}>[\s\S]*?\{localize\(MINIMUM_FEE_REHEARSAL_SWITCH_LABEL\)\}[\s\S]*?onValueChange=\{\(v\) => void setMinimumFeeRehearsal\(evmChain\.caip2, v\)\}[\s\S]*?\{localize\(MINIMUM_FEE_REHEARSAL_HINT\)\}<\/Text>\s*<\/>\s*\) : null\}/.test(src) &&
     (src.match(/MINIMUM_FEE_REHEARSAL_SWITCH_LABEL/g) ?? []).length === 3;
   check('Settings → Developer renders the switch and its note only where minimumFeeRehearsalOffered (test networks)', gateOk(settingsSrc));
   const ungated = settingsSrc.replace('{minimumFeeRehearsalOffered(evmChain.caip2) ? (', '{true ? (');
