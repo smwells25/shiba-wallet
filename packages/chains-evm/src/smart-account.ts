@@ -230,6 +230,17 @@ const GET_NONCE_SELECTOR = keccak_256(utf8ToBytes('getNonce(address,uint192)')).
 /** balanceOf(address) selector on the EntryPoint (StakeManager deposit). */
 const BALANCE_OF_SELECTOR = keccak_256(utf8ToBytes('balanceOf(address)')).slice(0, 4);
 
+/**
+ * Called with the complete SIGNED operation and its userOpHash (lower-case
+ * 0x hex, the EntryPoint v0.7 getUserOpHash) immediately before
+ * eth_sendUserOperation, after every check and the signature. Callers use it
+ * to record the operation before it leaves the device (phase 23 item 8: a
+ * broadcast whose answer never arrives must still be listed). Throwing from
+ * it stops the send before the bundler is asked; it is not called when
+ * anything earlier fails.
+ */
+export type BeforeSendHook = (op: UserOperation, userOpHash: string) => void | Promise<void>;
+
 export class SmartAccountClient {
   private bundlerClient: BundlerClient;
   private paymasterClient?: PaymasterClient;
@@ -321,7 +332,7 @@ export class SmartAccountClient {
     owner: DerivedAccount,
     calls: Call[],
     fees: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
-    options: { beforeSign?: (op: UserOperation) => void | Promise<void> } = {},
+    options: { beforeSign?: (op: UserOperation) => void | Promise<void>; beforeSend?: BeforeSendHook } = {},
   ): Promise<{ userOpHash: string; userOp: UserOperation }> {
     const spec = this.config.spec;
     let op = await this.buildUnsignedOperation(owner, calls, fees, options.beforeSign);
@@ -336,6 +347,7 @@ export class SmartAccountClient {
     });
     op = { ...op, signature };
 
+    if (options.beforeSend) await options.beforeSend(op, bytesToHexStrict(hash));
     const userOpHash = await this.bundlerClient.sendUserOperation(op);
     return { userOpHash, userOp: op };
   }
@@ -544,7 +556,7 @@ export class SmartAccountClient {
   async submitPreparedUserOperation(
     prepared: PreparedExternalUserOperation,
     signature: ExternalSignature,
-    options: { beforeSign?: (op: UserOperation) => void | Promise<void> } = {},
+    options: { beforeSign?: (op: UserOperation) => void | Promise<void>; beforeSend?: BeforeSendHook } = {},
   ): Promise<{ userOpHash: string; userOp: UserOperation }> {
     const spec = this.config.spec;
     if (spec.getEip7702Authorization || prepared.userOp.eip7702Auth) throw new Error(EXTERNAL_SIGNER_7702_REFUSAL);
@@ -610,6 +622,7 @@ export class SmartAccountClient {
     if (options.beforeSign) await options.beforeSign(op);
 
     const signed: UserOperation = { ...op, signature: prepared.scheme.encodeSignature(signature) };
+    if (options.beforeSend) await options.beforeSend(signed, bytesToHexStrict(hash));
     const userOpHash = await this.bundlerClient.sendUserOperation(signed);
     return { userOpHash, userOp: signed };
   }

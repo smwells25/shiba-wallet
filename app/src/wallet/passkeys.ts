@@ -38,6 +38,8 @@ import {
   claimQuoteForSubmission,
   prepareAaCalls,
   signedFeeGuard,
+  submitWithPendingRecord,
+  type AaOperationBase,
   resolveAaSender,
   summarizeAaReceipt,
   type AaClientBundle,
@@ -1469,10 +1471,17 @@ export async function preparePasskeyCalls(
  * installed key before the client submits. signWith, the mnemonic and the
  * owner key are not reachable from here. `signature` is the passkey envelope
  * that was submitted.
+ *
+ * `listAs` (phase 23 item 8): when given, the operation is recorded in the
+ * pending registry BEFORE it is handed to the bundler (aa.ts
+ * submitWithPendingRecord), so a bundler that does not answer in time
+ * leaves it listed (BroadcastOutcomeUnknownError). The callers' own
+ * announcements after acceptance are unchanged.
  */
 export async function sendPasskeyCalls(
   bundle: PasskeyBundle,
   quote: AaSendQuote,
+  listAs?: AaOperationBase,
 ): Promise<{ userOpHash: string; signature: Uint8Array }> {
   assertFeatureAllowed('passkeys', eip155Caip2(bundle.chainId));
   if (!quote.passkey) throw new Error('This operation was not prepared for the passkey signer. Nothing was signed.');
@@ -1487,9 +1496,12 @@ export async function sendPasskeyCalls(
   claimQuoteForSubmission(quote);
   const fees = { maxFeePerGas: quote.maxFeePerGas, maxPriorityFeePerGas: quote.maxPriorityFeePerGas };
   await assertQuoteFeesMeetBundlerFloor(bundle.bundler, fees);
-  const { userOpHash, userOp } = await bundle.client.sendCalls(bundle.passkey.spec.signer, quote.calls, fees, {
-    beforeSign: signedFeeGuard(fees, quote.sponsored ? 0n : quote.fee),
-  });
+  const submit = (beforeSend?: (op: unknown, userOpHash: string) => Promise<void>) =>
+    bundle.client.sendCalls(bundle.passkey.spec.signer, quote.calls, fees, {
+      beforeSign: signedFeeGuard(fees, quote.sponsored ? 0n : quote.fee),
+      ...(beforeSend ? { beforeSend } : {}),
+    });
+  const { userOpHash, userOp } = listAs ? await submitWithPendingRecord(listAs, submit) : await submit();
   return { userOpHash, signature: userOp.signature };
 }
 

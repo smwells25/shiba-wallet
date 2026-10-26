@@ -1,9 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { ENTRYPOINT_V07, type UserOperation } from '../src/userop.js';
 import {
+  BROADCAST_METHODS,
+  BROADCAST_TIMEOUT_MS,
+  BroadcastTimeoutError,
   BundlerClient,
   NodeClient,
+  httpTransport,
+  isBroadcastTimeoutError,
   PaymasterClient,
   toRpcUserOperation,
   type JsonRpcTransport,
@@ -133,5 +138,108 @@ describe('NodeClient', () => {
   it('estimates gas and broadcasts raw transactions', async () => {
     expect(await node.estimateGas({ from: '0xabc', to: '0xdef', value: 1n })).toBe(21_000n);
     expect(await node.sendRawTransaction('0x02f8...')).toBe('0xtxhash');
+  });
+});
+
+
+describe('httpTransport: only broadcasts are bounded in time (phase 23 item 8)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** A fetch that never answers; records each request's method and whether it carried a signal. */
+  function silentFetch() {
+    const requests: Array<{ method: string; signal: AbortSignal | undefined; aborted: () => boolean }> = [];
+    const fetchFn = ((_url: string, init: RequestInit) => {
+      const { method } = JSON.parse(String(init.body)) as { method: string };
+      const signal = init.signal ?? undefined;
+      requests.push({ method, signal, aborted: () => signal?.aborted === true });
+      return new Promise<Response>(() => undefined);
+    }) as unknown as typeof fetch;
+    return { fetchFn, requests };
+  }
+
+  async function settledWithin(promise: Promise<unknown>): Promise<'pending' | 'resolved' | 'rejected'> {
+    let state: 'pending' | 'resolved' | 'rejected' = 'pending';
+    promise.then(
+      () => (state = 'resolved'),
+      () => (state = 'rejected'),
+    );
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    return state;
+  }
+
+  it('names the two broadcast methods and 60 seconds', () => {
+    expect([...BROADCAST_METHODS]).toEqual(['eth_sendRawTransaction', 'eth_sendUserOperation']);
+    expect(BROADCAST_TIMEOUT_MS).toBe(60_000);
+  });
+
+  for (const method of ['eth_sendRawTransaction', 'eth_sendUserOperation']) {
+    it(`${method}: rejects with BroadcastTimeoutError at 60 s and aborts the request`, async () => {
+      vi.useFakeTimers();
+      const { fetchFn, requests } = silentFetch();
+      const call = httpTransport('https://node.example', fetchFn)(method, ['0x00']);
+      const caught = call.catch((e: unknown) => e);
+      await vi.advanceTimersByTimeAsync(BROADCAST_TIMEOUT_MS - 1);
+      expect(await settledWithin(call)).toBe('pending');
+      expect(requests[0]!.aborted()).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      const error = await caught;
+      expect(error).toBeInstanceOf(BroadcastTimeoutError);
+      expect(isBroadcastTimeoutError(error)).toBe(true);
+      expect((error as BroadcastTimeoutError).method).toBe(method);
+      // Never worded as a failure the endpoint classifier would retry elsewhere.
+      expect((error as Error).message).not.toMatch(/timed out|timeout|aborted|not sent|nothing was sent/i);
+      expect(requests[0]!.signal).toBeDefined();
+      expect(requests[0]!.aborted()).toBe(true);
+    });
+  }
+
+  it('reads carry no signal and no timer: still waiting after ten minutes', async () => {
+    vi.useFakeTimers();
+    const { fetchFn, requests } = silentFetch();
+    const transport = httpTransport('https://node.example', fetchFn);
+    const reads = ['eth_call', 'eth_getTransactionReceipt', 'eth_estimateUserOperationGas', 'eth_chainId'].map((m) =>
+      transport(m, []),
+    );
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    for (const r of reads) expect(await settledWithin(r)).toBe('pending');
+    expect(requests.every((r) => r.signal === undefined)).toBe(true);
+  });
+
+  it('an answer before the limit passes through and clears the timer', async () => {
+    vi.useFakeTimers();
+    const fetchFn = (async (_url: string, init: RequestInit) => {
+      const { id } = JSON.parse(String(init.body)) as { id: number };
+      return { ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id, result: '0xabc' }) } as unknown as Response;
+    }) as unknown as typeof fetch;
+    const result = await httpTransport('https://node.example', fetchFn)('eth_sendRawTransaction', ['0x00']);
+    expect(result).toBe('0xabc');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('a node refusal before the limit is the node error, not a timeout', async () => {
+    vi.useFakeTimers();
+    const fetchFn = (async (_url: string, init: RequestInit) => {
+      const { id } = JSON.parse(String(init.body)) as { id: number };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ jsonrpc: '2.0', id, error: { code: -32000, message: 'transaction underpriced' } }),
+      } as unknown as Response;
+    }) as unknown as typeof fetch;
+    const error = await httpTransport('https://node.example', fetchFn)('eth_sendRawTransaction', ['0x00']).catch((e) => e);
+    expect(isBroadcastTimeoutError(error)).toBe(false);
+    expect((error as Error).message).toBe('RPC error -32000: transaction underpriced (eth_sendRawTransaction)');
+  });
+
+  it('a shorter limit can be set per transport', async () => {
+    vi.useFakeTimers();
+    const { fetchFn } = silentFetch();
+    const call = httpTransport('https://node.example', fetchFn, { broadcastTimeoutMs: 5_000 })('eth_sendUserOperation', []);
+    const caught = call.catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(isBroadcastTimeoutError(await caught)).toBe(true);
   });
 });

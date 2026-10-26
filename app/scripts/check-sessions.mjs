@@ -876,7 +876,7 @@ console.log('check-sessions: revoke and progress copy (phase 12 rehearsal findin
     (screen.match(/sendAa\(sendBundle, signer, q, \{ kind: 'session-setup' \}\)/g) ?? []).length === 4 && !/sendAa\([^)]*\bq\)\)/.test(screen));
   const sessSrcK = readFileSync(new URL('../src/wallet/sessions.ts', import.meta.url), 'utf8');
   check('sendSessionCalls announces the operation only after the bundler accepted it',
-    /const \{ userOpHash \} = await client\.sendCalls\(sessionAccount, args\.calls, fees\);\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*notifyAaOperationSent\(\{/.test(sessSrcK));
+    /\(beforeSend\) => client\.sendCalls\(sessionAccount, args\.calls, fees, \{ beforeSend \}\),\s*\);\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*notifyAaOperationSent\(\{/.test(sessSrcK));
   const subInstall = screen.slice(screen.indexOf('const onSubInstall = async'), screen.indexOf('const onShowKey = async'));
   check('the subscription install reports progress kind "subscription"; the screen title comes from sessionProgressTitle',
     /setProgress\(\{\s*kind: p\.mode === 'recurring' \? 'recurring' : 'subscription',/.test(subInstall) && /\{sessionProgressTitle\(progress\.kind\)\}/.test(screen) && !/\{what\} sent to the bundler/.test(screen));

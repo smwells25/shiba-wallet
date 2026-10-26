@@ -478,6 +478,37 @@ describe('request and signature payloads', () => {
     expect(recoverExternalSigner(prepared.signingDigest, signDigest(OWNER, prepared.signingDigest))).toBe(OWNER.address);
     expect(t.sent.length).toBe(1);
   });
+
+  it('beforeSend gets the signed operation and the request\'s userOpHash before it is sent (phase 23 item 8)', async () => {
+    const t = transports({ nonce: 5n, deployed: false, owner: OWNER.address });
+    const c = client(t);
+    const prepared = await c.prepareUserOperationForExternalSigner(OWNER.address, CALLS, FEES, {
+      scheme: KERNEL_V3_3_ECDSA_ROOT_SCHEME,
+    });
+    const req = buildColdUserOpRequest(prepared, { summary: 's', accountIndex: 0n, nowSeconds: NOW });
+    const sigText = buildColdUserOpSignature(req, OWNER.address, signDigest(OWNER, prepared.signingDigest));
+    const seen: Array<{ hash: string; sentThen: number; signature: string }> = [];
+    const sent = await submitColdUserOpRequest(c, req, sigText, {
+      nowSeconds: NOW,
+      beforeSend: (op, hash) => {
+        seen.push({ hash, sentThen: t.sent.length, signature: toHex(op.signature) });
+      },
+    });
+    expect(seen).toEqual([{ hash: req.userOpHash, sentThen: 0, signature: toHex(sent.userOp.signature) }]);
+    expect(t.sent.length).toBe(1);
+
+    const t2 = transports({ nonce: 5n, deployed: false, owner: OWNER.address });
+    const c2 = client(t2);
+    await expect(
+      submitColdUserOpRequest(c2, req, sigText, {
+        nowSeconds: NOW,
+        beforeSend: () => {
+          throw new Error('not recorded');
+        },
+      }),
+    ).rejects.toThrow('not recorded');
+    expect(t2.sent).toEqual([]);
+  });
 });
 
 describe('decodeKernelExecuteCalls', () => {

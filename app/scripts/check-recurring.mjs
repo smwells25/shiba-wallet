@@ -1171,6 +1171,65 @@ const noJava = (t) => !/java\.net|UnknownHostException/.test(t);
       'Last payment attempt refused: Your account refused this payment: it is not due yet, or the recurring payment has ended. Nothing was paid.' &&
       describeRecurringPaymentError(new Error('RPC error -32500: AA22 expired or not due'), { accountType: 'kernel-v3.3', symbol: 'x' }, describeSendError).outcome === 'refused');
 
+  // Phase 23 item 8: the bundler never answers eth_sendUserOperation (the
+  // engine's httpTransport gives up after BROADCAST_TIMEOUT_MS). The payment
+  // is listed before the request, the outcome is open, never "not sent", and
+  // it is never failed over (that would send it a second time).
+  {
+    const { mock } = await import('node:test');
+    const { httpTransport, BROADCAST_TIMEOUT_MS } = await import('@shiba-wallet/chains-evm');
+    const { addAaBroadcastRecorder } = await import('../src/wallet/aa.ts');
+    const { pendingUserOpBroadcastRecorder, parseRegistry } = await import('../src/wallet/pending-transactions.ts');
+    const { RECURRING_NO_ANSWER_SENTENCE } = await import('../src/wallet/recurring.ts');
+    const { describeDcaSwapError, DCA_NO_ANSWER_SENTENCE, DCA_OUTCOME_UNKNOWN_TITLE } = await import('../src/wallet/dca.ts');
+    const realSetTimeout = globalThis.setTimeout;
+    const pmap = new Map();
+    const pstore = { getItem: async (k) => pmap.get(k) ?? null, setItem: async (k, v) => void pmap.set(k, v), removeItem: async (k) => void pmap.delete(k) };
+    const stopRec = addAaBroadcastRecorder(pendingUserOpBroadcastRecorder(pstore));
+    let atSend = null;
+    let reachedResolve;
+    const reached = new Promise((r) => (reachedResolve = r));
+    const silentFetch = async (_url, init) => {
+      const { method, params, id } = JSON.parse(init.body);
+      if (method === 'eth_sendUserOperation') {
+        atSend = pmap.get('shiba-wallet.pending-tx.v1') ?? null;
+        reachedResolve();
+        return new Promise(() => undefined);
+      }
+      let body;
+      try {
+        body = { jsonrpc: '2.0', id, result: await b10(method, params) };
+      } catch (e) {
+        body = { jsonrpc: '2.0', id, error: { code: -32000, message: e.message } };
+      }
+      return { ok: true, status: 200, json: async () => body };
+    };
+    const silentBundler = Object.assign(httpTransport('https://bundler.example', silentFetch), { calls: b10.calls });
+    mock.timers.enable({ apis: ['setTimeout'] });
+    let noAnswer;
+    try {
+      const p = caught(() => payRecurringPayment({ bundle: kernelBundle(n10, silentBundler), plan: plan10, vault: v10, store: s10, now: NOW }));
+      await Promise.race([reached, new Promise((r) => realSetTimeout(r, 5_000))]);
+      mock.timers.tick(BROADCAST_TIMEOUT_MS);
+      noAnswer = await p;
+    } finally {
+      mock.timers.reset();
+    }
+    stopRec();
+    const listed = atSend ? parseRegistry(atSend).records.filter((r) => r.kind === 'userop') : [];
+    check('no answer to the payment\'s submission: listed BEFORE the request (origin recurring-payment), outcome unknown, the record kept',
+      listed.length === 1 && listed[0].origin === 'recurring-payment' && noAnswer?.name === 'BroadcastOutcomeUnknownError' && noAnswer.kind === 'userop' &&
+        parseRegistry(pmap.get('shiba-wallet.pending-tx.v1')).records.length === 1, noAnswer?.message);
+    const d5 = describeRecurringPaymentError(noAnswer, { accountType: 'kernel-v3.3', symbol: 'test ETH' }, describeSendError);
+    check('described as "Payment status unknown" with the no-answer sentence; never "not sent", "nothing was sent" or "refused"',
+      d5.outcome === 'outcome-unknown' && d5.title === RECURRING_OUTCOME_UNKNOWN_TITLE && d5.detail.startsWith(RECURRING_NO_ANSWER_SENTENCE) &&
+        /within 60 seconds/.test(d5.detail) && /Refresh status before sending again/.test(d5.detail) && !/not sent|nothing was sent|refused/i.test(d5.title + d5.detail), d5.detail);
+    check('…and never failed over (isRecurringNodeFailure / isEndpointFailure false)', !isRecurringNodeFailure(noAnswer) && !isEndpointFailure(noAnswer));
+    const dDca = describeDcaSwapError(noAnswer, { accountType: 'kernel-v3.3', symbol: 'test ETH' }, describeSendError);
+    check('a recurring swap with no answer: "Swap status unknown", its own no-answer sentence, never "not sent"',
+      dDca.outcome === 'outcome-unknown' && dDca.title === DCA_OUTCOME_UNKNOWN_TITLE && dDca.detail.startsWith(DCA_NO_ANSWER_SENTENCE) && !/not sent|nothing was sent|refused/i.test(dDca.title + dDca.detail));
+  }
+
   // The plan's status read does not answer: a network failure, not "Payment not sent … status could not be read".
   const deadRead = async () => { throw expoFetchError(); };
   const p1 = await caught(() => planRecurringPayment({ node: deadRead, record: r10.record, now: NOW }));

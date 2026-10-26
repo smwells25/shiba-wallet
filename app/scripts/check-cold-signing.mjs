@@ -866,5 +866,67 @@ console.log('check-cold-signing: mutation checks (broken copies must fail)');
     thrown(() => codec.accept(codec.accept(null, a[0]).scan, b[0])) === null);
 }
 
+// ===========================================================================
+console.log('check-cold-signing: a cold-signed broadcast with no answer (phase 23 item 8)');
+// ===========================================================================
+{
+  const { mock } = await import('node:test');
+  const { httpTransport, BROADCAST_TIMEOUT_MS } = await import('@shiba-wallet/chains-evm');
+  const outcome = await import('../src/wallet/broadcast-outcome.ts');
+  const realSetTimeout = globalThis.setTimeout;
+  const NOT_SENT = /not sent|nothing was sent|could not be sent|was not sent/i;
+  const node = fakeNode();
+  const store = memoryStore();
+  send.setPendingRecordStore(store);
+  const events = [];
+  const off = send.addEvmSentListener((e) => events.push(e));
+  const quote = { ...nativeQuote, nonce: 42n };
+  const request = requestFor(quote, 21);
+  const v = cs.verifyColdSignSignature(cs.buildColdSignSignature(request, WATCHED, signAs(watchedKey, request)), request);
+  let atSend = null;
+  let reachedResolve;
+  const reached = new Promise((r) => (reachedResolve = r));
+  let sendRequests = 0;
+  const silentFetch = async (_url, init) => {
+    const { method, params, id } = JSON.parse(init.body);
+    if (method === 'eth_sendRawTransaction') {
+      sendRequests += 1;
+      atSend = store.map.get(pending.PENDING_TX_KEY) ?? null;
+      reachedResolve();
+      return new Promise(() => undefined);
+    }
+    return { ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id, result: await node.transport(method, params) }) };
+  };
+  const transport = httpTransport(URL_A, silentFetch);
+  mock.timers.enable({ apis: ['setTimeout'] });
+  let err;
+  try {
+    const p = send.sendEvmWithSignature(URL_A, WATCHED, quote, v.signature, null, { transport }).then(() => null, (e) => e);
+    await Promise.race([reached, new Promise((r) => realSetTimeout(r, 5_000))]);
+    mock.timers.tick(BROADCAST_TIMEOUT_MS);
+    err = await p;
+  } finally {
+    mock.timers.reset();
+  }
+  const listed = atSend ? pending.parseRegistry(atSend).records : [];
+  check('the cold-signed transaction is recorded BEFORE the broadcast request (the watched sender, its own hash)',
+    listed.length === 1 && listed[0].hash === v.signed.txHash.toLowerCase() && listed[0].from === WATCHED.toLowerCase() && listed[0].nonce === '42');
+  check('no answer in 60 s: an unknown outcome under that hash, the record kept, no sent listener',
+    err?.name === 'BroadcastOutcomeUnknownError' && err.hash === v.signed.txHash.toLowerCase() && err.recorded === true &&
+      pending.parseRegistry(store.map.get(pending.PENDING_TX_KEY)).records.length === 1 && events.length === 0);
+  const d = send.describeSendError(err, 'test ETH', 'test ETH', { minimumFeeRehearsal: true });
+  check('the ColdSign screen\'s wording (describeSendError, even with the rehearsal option): the outcome-unknown title and sentence, never "not sent"',
+    d.title === outcome.BROADCAST_OUTCOME_UNKNOWN_TITLE && d.detail.startsWith(outcome.BROADCAST_TX_UNKNOWN_SENTENCE) && !NOT_SENT.test(d.title + d.detail) && !d.detail.includes(send.TX_UNDERPRICED_REHEARSAL_NOTE));
+  const again = await rejection(() => send.sendEvmWithSignature(URL_A, WATCHED, quote, v.signature, null, { transport }));
+  const twin = await rejection(() => send.sendEvmWithSignature(URL_A, WATCHED, { ...nativeQuote, nonce: 42n }, v.signature, null, { transport }));
+  check('the same signature cannot be broadcast again from this phone (same quote, or a new quote object for the same transaction)',
+    again?.name === 'BroadcastAlreadyHandedOverError' && twin?.name === 'BroadcastAlreadyHandedOverError' && sendRequests === 1);
+  const screen = readFileSync(new URL('../src/screens/ColdSignScreen.tsx', import.meta.url), 'utf8');
+  check('ColdSignScreen words every non-replacement failure through describeSendError (so the outcome-unknown mapping reaches it)',
+    /const d = describeSendError\(e, sendSymbol, feeSymbol, options\);/.test(screen));
+  off();
+  send.setPendingRecordStore(null);
+}
+
 console.log(`\ncheck-cold-signing: ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

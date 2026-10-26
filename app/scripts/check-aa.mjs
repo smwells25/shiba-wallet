@@ -749,6 +749,171 @@ stopAaState();
   check('operation-sent: an unsubscribed listener hears nothing more', events.length === 2);
 }
 
+// ---------------------------------------------------------------------------
+// Phase 23 item 8: a bundler that never answers eth_sendUserOperation. The
+// operation is recorded BEFORE the request leaves the device (the beforeSend
+// hook), the engine's httpTransport gives up after BROADCAST_TIMEOUT_MS, the
+// outcome is reported as unknown (never "not sent"), the record stays, the
+// quote cannot go out again; a bundler refusal removes the record this
+// attempt created. Fake timers (node:test) and a fetch that never answers.
+// ---------------------------------------------------------------------------
+{
+  console.log('\nPhase 23 item 8: the bounded eth_sendUserOperation');
+  const { mock } = await import('node:test');
+  const { httpTransport, BROADCAST_TIMEOUT_MS } = await import('@shiba-wallet/chains-evm');
+  const outcome = await import('../src/wallet/broadcast-outcome.ts');
+  const { addAaBroadcastRecorder } = await import('../src/wallet/aa.ts');
+  const { pendingUserOpBroadcastRecorder, parseRegistry } = await import('../src/wallet/pending-transactions.ts');
+  const realSetTimeout = globalThis.setTimeout;
+  const realDelay = (ms) => new Promise((r) => realSetTimeout(r, ms));
+  const flush = async () => {
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+  };
+  const NOT_SENT = /not sent|nothing was sent|could not be sent|was not sent/i;
+  const KEY = 'shiba-wallet.pending-tx.v1';
+  const pstore = () => {
+    const map = new Map();
+    return { map, getItem: async (k) => map.get(k) ?? null, setItem: async (k, v) => void map.set(k, v), removeItem: async (k) => void map.delete(k) };
+  };
+  const opsIn = (text) => (text ? parseRegistry(text).records.filter((r) => r.kind === 'userop') : []);
+
+  // The fake bundler behind the engine's real httpTransport: `send` decides
+  // eth_sendUserOperation ('silent' = never answers).
+  function bundlerOverFetch(send, store) {
+    const inner = fakeBundler({});
+    const seen = [];
+    let reachedResolve;
+    const reached = new Promise((r) => (reachedResolve = r));
+    const fetchFn = async (_url, init) => {
+      const { method, params, id } = JSON.parse(init.body);
+      const entry = { method, hasSignal: init.signal !== undefined, signal: init.signal, registryAtSend: null };
+      seen.push(entry);
+      let body;
+      if (method === 'eth_sendUserOperation') {
+        entry.registryAtSend = store.map.get(KEY) ?? null;
+        reachedResolve(entry);
+        if (send === 'silent') return new Promise(() => undefined);
+        try {
+          body = { jsonrpc: '2.0', id, result: send(params[0]) };
+        } catch (e) {
+          body = { jsonrpc: '2.0', id, error: { code: -32500, message: e.message } };
+        }
+      } else {
+        try {
+          body = { jsonrpc: '2.0', id, result: await inner(method, params) };
+        } catch (e) {
+          body = { jsonrpc: '2.0', id, error: { code: -32000, message: e.message } };
+        }
+      }
+      return { ok: true, status: 200, json: async () => body };
+    };
+    return { fetchFn, seen, reached };
+  }
+  function bundleWith(fetchFn) {
+    const node = fakeNode({});
+    return createAaClient({
+      nodeUrl: 'https://node.example',
+      bundlerUrl: 'https://bundler.example',
+      factory: FACTORY_INPUT,
+      transportFor: (url) => (url === 'https://node.example' ? node : httpTransport(url, fetchFn)),
+    });
+  }
+
+  const store = pstore();
+  const stopRecorder = addAaBroadcastRecorder(pendingUserOpBroadcastRecorder(store));
+  const accepted = [];
+  const stopOps = addAaOperationSentListener((e) => void accepted.push(e));
+  const silent = bundlerOverFetch('silent', store);
+  const silentBundle = bundleWith(silent.fetchFn);
+  const q = await prepareAaSend(silentBundle, owner.address, RECIPIENT, AMOUNT);
+  mock.timers.enable({ apis: ['setTimeout'] });
+  let err;
+  let entry;
+  try {
+    const p = sendAa(silentBundle, owner, q, { kind: 'swap' }).then(() => null, (e) => e);
+    entry = await Promise.race([silent.reached, realDelay(5_000).then(() => null)]);
+    const atSend = opsIn(entry?.registryAtSend);
+    check('the operation is recorded BEFORE eth_sendUserOperation is sent (the registry at the moment of the fetch)',
+      atSend.length === 1 && atSend[0].origin === 'swap' && same(atSend[0].owner, owner.address) && same(atSend[0].sender, q.sender));
+    check('…only the broadcast carries an abort signal (the estimate and the floor read did not)',
+      entry?.hasSignal === true && silent.seen.filter((x) => x.hasSignal).length === 1);
+    mock.timers.tick(BROADCAST_TIMEOUT_MS - 1);
+    await flush();
+    let settled = false;
+    p.then(() => (settled = true));
+    await flush();
+    check('…still waiting one millisecond before the limit', settled === false);
+    mock.timers.tick(1);
+    err = await p;
+    check('at 60 s: BroadcastOutcomeUnknownError for the operation, listed, under the recorded hash',
+      err?.name === 'BroadcastOutcomeUnknownError' && err.kind === 'userop' && err.recorded === true && err.hash === atSend[0]?.userOpHash);
+    check('…the request was aborted', entry?.signal.aborted === true);
+  } finally {
+    mock.timers.reset();
+  }
+  check('…the record stays (Pending on this phone lists it with Check status)', opsIn(store.map.get(KEY)).length === 1);
+  check('…no operation-sent event (that channel still means "the bundler accepted it")', accepted.length === 0);
+  const dAa = describeAaError(err, { accountType: q.accountType, deployed: q.deployed, sender: q.sender });
+  check('describeAaError: the outcome-unknown title and the operation sentence, never "not sent"',
+    dAa?.title === outcome.BROADCAST_OUTCOME_UNKNOWN_TITLE && dAa.detail.startsWith(outcome.BROADCAST_USEROP_UNKNOWN_SENTENCE) && !NOT_SENT.test(dAa.title + dAa.detail));
+  const again = await sendAa(silentBundle, owner, q, { kind: 'swap' }).then(() => null, (e) => e);
+  check('the same quote again: refused before anything is signed or sent (claimQuoteForSubmission)',
+    again?.message === AA_QUOTE_ALREADY_USED && silent.seen.filter((x) => x.method === 'eth_sendUserOperation').length === 1);
+  check('…and the check before approval refuses it too', (await checkAaQuoteBeforeApproval(silentBundle.bundler, q).then(() => null, (e) => e))?.message === AA_QUOTE_ALREADY_USED);
+
+  // A bundler refusal removes the record this attempt created.
+  const refStore = pstore();
+  const stopRef = addAaBroadcastRecorder(pendingUserOpBroadcastRecorder(refStore));
+  stopRecorder();
+  const refusing = bundlerOverFetch(() => {
+    throw new Error("AA21 didn't pay prefund");
+  }, refStore);
+  const refBundle = bundleWith(refusing.fetchFn);
+  const rq = await prepareAaSend(refBundle, owner.address, RECIPIENT, AMOUNT);
+  const refused = await sendAa(refBundle, owner, rq, { kind: 'staking' }).then(() => null, (e) => e);
+  const rEntry = refusing.seen.find((x) => x.method === 'eth_sendUserOperation');
+  check('a refused operation WAS recorded before the request…', opsIn(rEntry?.registryAtSend).length === 1);
+  check('…and is removed after the refusal: no card claims it was sent', opsIn(refStore.map.get(KEY)).length === 0);
+  check('…the bundler\'s error unchanged (describeAaError still names the prefund)', /AA21/.test(refused?.message ?? '') && describeAaError(refused, { accountType: rq.accountType, deployed: rq.deployed, sender: rq.sender })?.title === AA_FUNDING_TITLE);
+  check('…no operation-sent event', accepted.length === 0);
+
+  // A record that already existed (an earlier attempt whose outcome is
+  // unknown) is never removed by a later refusal of the same operation.
+  const keepStore = pstore();
+  keepStore.map.set(KEY, store.map.get(KEY));
+  const stopKeep = addAaBroadcastRecorder(pendingUserOpBroadcastRecorder(keepStore));
+  stopRef();
+  const known = bundlerOverFetch(() => {
+    throw new Error('AA25 invalid account nonce: User operation already present in mempool');
+  }, keepStore);
+  const knownBundle = bundleWith(known.fetchFn);
+  const kq = await prepareAaSend(knownBundle, owner.address, RECIPIENT, AMOUNT);
+  await sendAa(knownBundle, owner, kq, { kind: 'swap' }).then(() => null, (e) => e);
+  const kAt = opsIn(known.seen.find((x) => x.method === 'eth_sendUserOperation')?.registryAtSend);
+  check('the identical operation refused later ("already present"): the earlier record is kept',
+    kAt.length === 1 && kAt[0].userOpHash === err?.hash && opsIn(keepStore.map.get(KEY)).length === 1);
+
+  // With no recorder registered (the record could not be written), the
+  // sentence says it is not listed.
+  stopKeep();
+  const bare = bundlerOverFetch('silent', pstore());
+  const bareBundle = bundleWith(bare.fetchFn);
+  const bq = await prepareAaSend(bareBundle, owner.address, RECIPIENT, AMOUNT);
+  mock.timers.enable({ apis: ['setTimeout'] });
+  let bareErr;
+  try {
+    const p = sendAa(bareBundle, owner, bq).then(() => null, (e) => e);
+    await Promise.race([bare.reached, realDelay(5_000)]);
+    mock.timers.tick(BROADCAST_TIMEOUT_MS);
+    bareErr = await p;
+  } finally {
+    mock.timers.reset();
+  }
+  check('nothing recorded: the unlisted sentence (look it up in an explorer), still never "not sent"',
+    bareErr?.recorded === false && bareErr.message === outcome.BROADCAST_USEROP_UNKNOWN_UNLISTED_SENTENCE && !NOT_SENT.test(bareErr.message));
+  stopOps();
+}
+
 const op = sendBundlerT.lastOp;
 check('submitted op sender is the counterfactual account', same(op.sender, SENDER));
 check('undeployed send carries factory + factoryData', same(op.factory, FACTORY_INPUT) && typeof op.factoryData === 'string' && op.factoryData.length > 2);
@@ -1648,7 +1813,7 @@ await (async () => {
     const send = read('../src/screens/SendScreen.tsx');
     check('Send (owner and passkey paths): quote dropped, back to the form',
       (send.match(/setQuote\(null\);\s*setQuotedUrl\(null\);\s*setPhase\('form'\);/g) ?? []).length >= 3 &&
-        /if \(quote\.kind === 'aa'\) \{[\s\S]{0,400}setQuote\(null\);\s*setQuotedUrl\(null\);\s*setPhase\('form'\);\s*return;\s*\}\s*setPhase\('confirm'\);/.test(send));
+        /if \(quote\.kind === 'aa' \|\| isBroadcastOutcomeUnknown\(e\)\) \{[\s\S]{0,800}setQuote\(null\);\s*setQuotedUrl\(null\);\s*setPhase\('form'\);\s*return;\s*\}\s*setPhase\('confirm'\);/.test(send));
     check('Swap (smart account): quote dropped, back to the review',
       /describeSendError\(e, sellSymbol, evmChain\.displaySymbol\);\s*Alert\.alert\(title, detail\);[\s\S]{0,300}setAaQuote\(null\);\s*setPhase\('review'\);/.test(read('../src/screens/SwapScreen.tsx')));
     check('Guardians: operation dropped, back to where it was prepared',

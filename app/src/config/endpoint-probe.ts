@@ -783,12 +783,25 @@ function isEndpointHttpStatus(status: number): boolean {
  * token-history.ts and approvals.ts report verbatim as a depth limit),
  * HTTP 400, and every error the app's own code throws after reading an
  * answer. Retrying those elsewhere would only repeat the same answer.
+ *
+ * NEVER counted (phase 23 item 8): a broadcast that got no answer in time
+ * (the engine's BroadcastTimeoutError, the app's BroadcastOutcomeUnknownError)
+ * and the refusal to hand such a quote over again
+ * (BroadcastAlreadyHandedOverError). The broadcast may have reached the
+ * endpoint, so a failover would broadcast it a second time.
  */
 export function isEndpointFailure(error: unknown): boolean {
   if (error === null || typeof error !== 'object') return false;
   const e = error as { name?: unknown; message?: unknown; code?: unknown };
   const name = typeof e.name === 'string' ? e.name : '';
   const message = typeof e.message === 'string' ? e.message : '';
+  if (
+    name === 'BroadcastTimeoutError' ||
+    name === 'BroadcastOutcomeUnknownError' ||
+    name === 'BroadcastAlreadyHandedOverError'
+  ) {
+    return false;
+  }
   if (name === 'AbortError' || name === 'TimeoutError') return true;
   if (error instanceof SyntaxError) return true;
   if (error instanceof TypeError && /network request failed|fetch failed|failed to fetch|load failed/i.test(message)) {

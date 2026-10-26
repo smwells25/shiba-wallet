@@ -60,6 +60,7 @@ import {
   AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
   MULTISIG_CONFIG_BUNDLE_REFUSAL,
   notifyAaOperationSent,
+  submitWithPendingRecord,
   type AaOperationKind,
 } from './aa.ts';
 import { formatUnits, parseUnits } from './balances.ts';
@@ -1606,7 +1607,19 @@ export async function sendSessionCalls(args: {
     // whenever the account's deposit is below the required prefund.
     depositTopUpVerificationGas: AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
   });
-  const { userOpHash } = await client.sendCalls(sessionAccount, args.calls, fees);
+  // Listed in the pending registry before it is handed to the bundler
+  // (phase 23 item 8); kept when the bundler does not answer in time.
+  const { userOpHash } = await submitWithPendingRecord(
+    {
+      chain: record.chain,
+      sender: record.account,
+      owner: record.owner,
+      bundler: bundle.bundler,
+      kind: sessionOperationKind(record.source),
+      resend: null,
+    },
+    (beforeSend) => client.sendCalls(sessionAccount, args.calls, fees, { beforeSend }),
+  );
   // Accepted by the bundler: the pending-operation registry records it
   // (phase 20 item 3), exactly once, never for a refused operation.
   notifyAaOperationSent({

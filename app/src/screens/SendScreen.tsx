@@ -63,6 +63,7 @@ import {
   type SendQuote,
   type SendResult,
 } from '../wallet/send';
+import { isBroadcastOutcomeUnknown } from '../wallet/broadcast-outcome';
 import {
   AA_SELF_PAID_FEE_SENTENCE,
   aaAccountTypeLabel,
@@ -1562,7 +1563,14 @@ export function SendScreen({ route, navigation }: Props) {
       }
       setPhase('sending');
       try {
-        const { userOpHash } = await sendPasskeyCalls(bundle, quote);
+        const { userOpHash } = await sendPasskeyCalls(bundle, quote, {
+          chain: evmChain.caip2,
+          sender: quote.sender,
+          owner: quotedFrom,
+          bundler: bundle.bundler,
+          kind: 'send',
+          resend: resendFor(quote),
+        });
         // The passkey path bypasses sendAa's listeners: record the accepted
         // operation for the spending limits here.
         void recordAcceptedSpend({
@@ -1710,11 +1718,14 @@ export function SendScreen({ route, navigation }: Props) {
             })
           : null) ?? describeError(e, minimumFeeRehearsalOf(quote) !== null);
       Alert.alert(title, detail);
-      if (quote.kind === 'aa') {
+      if (quote.kind === 'aa' || isBroadcastOutcomeUnknown(e)) {
         // The smart-account quote was used up by this attempt (a bundler
         // refusal, or the fee rose since the review): the retry must
         // re-quote, so return to the form rather than to a confirm whose
-        // button would send the same figures again.
+        // button would send the same figures again. The same for a regular
+        // transaction whose broadcast got no answer in time (phase 23 item
+        // 8): its quote is never broadcast again (send.ts broadcastRecorded)
+        // and Activity's pending list says what happened.
         setQuote(null);
         setQuotedUrl(null);
         setPhase('form');

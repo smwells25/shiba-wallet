@@ -97,11 +97,11 @@ import {
   type SweepableStore,
 } from './duress';
 import { forgetAllSessions } from './sessions';
-import { addAaOperationSentListener, addAaSentListener } from './aa';
+import { addAaBroadcastRecorder, addAaOperationSentListener, addAaSentListener } from './aa';
 import { recoveryRecordListener, wipeRecoveryData } from './recovery';
 import { forgetBrowserConnections } from './browser-sites';
 import { wipeTransactionNotes } from './notes';
-import { pendingUserOpRecorder, resetPendingRegistry } from './pending-transactions';
+import { pendingUserOpBroadcastRecorder, pendingUserOpRecorder, resetPendingRegistry } from './pending-transactions';
 import { walletConnectFollowProfile } from './walletconnect';
 import { resetBridgeTransfers } from './bridge';
 import { wipeInbox } from './inbox';
@@ -615,6 +615,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   // browser, multisig submits — is recorded in the pending registry, so
   // Activity shows its status and "Check status". Registered once here.
   useEffect(() => addAaOperationSentListener(pendingUserOpRecorder(AsyncStorage)), []);
+  // Phase 23 item 8: the same registry lists each operation BEFORE it is
+  // handed to the bundler (a bundler that never answers leaves it listed)
+  // and removes it again when the bundler refuses it.
+  useEffect(() => addAaBroadcastRecorder(pendingUserOpBroadcastRecorder(AsyncStorage)), []);
 
   // App-enforced spending limits (phase 12 item 3): record what left the
   // account, but only after the node (sendEvm) or the bundler (sendAa)

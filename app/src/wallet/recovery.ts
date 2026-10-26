@@ -74,6 +74,7 @@ import {
   notifyAaOperationSent,
   quoteFeesOverFloor,
   signedFeeGuard,
+  submitWithPendingRecord,
   clearAllRecoveredAccounts,
   eip155ChainIdOf,
   isEip7702Owner,
@@ -2734,9 +2735,23 @@ export async function submitGuardianRecovery(args: {
     depositTopUpVerificationGas: AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
     estimateRetries: AA_ESTIMATE_RETRIES,
   });
-  const { userOpHash } = await client.sendCalls(args.signer, [recoveryCall(args.quote.request)], fees, {
-    beforeSign: signedFeeGuard(fees, args.quote.fee),
-  });
+  // Listed in the pending registry before it is handed to the bundler
+  // (phase 23 item 8); kept when the bundler does not answer in time.
+  const { userOpHash } = await submitWithPendingRecord(
+    {
+      chain: eip155Caip2(args.chainId),
+      sender: args.quote.request.account,
+      owner: args.signer.address,
+      bundler: args.bundler,
+      kind: 'other',
+      resend: null,
+    },
+    (beforeSend) =>
+      client.sendCalls(args.signer, [recoveryCall(args.quote.request)], fees, {
+        beforeSign: signedFeeGuard(fees, args.quote.fee),
+        beforeSend,
+      }),
+  );
   // Accepted by the bundler (eth_sendUserOperation returned a hash): the
   // pending-operation registry records it under the guardian's own account,
   // exactly once, so Activity's pending card lists it with "Check status".
