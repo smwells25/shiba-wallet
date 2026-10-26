@@ -13439,3 +13439,89 @@ to the Chairperson at once.
       mode, protection OFF, TalkBack OFF, IME ADBKeyboard, no test files on
       the device, Metro (pid 4972) at a1149f0, the emulator (qemu 36709) and
       caffeinate (36943) running with the window in place.
+- [x] Pass p23-cctp findings FIXED (commit b06c074; 7 files — HomeScreen.tsx (the
+      link only), bridge.ts, BridgeScreen.tsx, BridgeViews.tsx, risk.ts,
+      check-bridge 370 (was 345; mutants 28 → 31), check-approvals 247
+      (228); offline runner ALL GREEN in the CTO's isolated worktree on
+      HEAD bf9456e with --skip-bundle: engine 1,252, app 10,446 across 65
+      suites, lint 0/0, tsc clean; the staged patch id equals the verified
+      tree's; the scan clean; built beside the localisation agent with no
+      shared file; not seen on a device). (1) THE LINK: bridgeLinkShown
+      (caip2) (bridge.ts 696) is true when readiness allows bridging and
+      ANY asset in BRIDGE_ASSETS has a destination from that network;
+      HomeScreen uses it — shown on Ethereum, Arbitrum, OP AND Base Sepolia,
+      hidden on Hoodi, mainnet, a custom main and a custom test network,
+      zero requests (pinned); defaultBridgeAsset confirmed and pinned: usdc
+      on Base Sepolia, native on the other three. THE SWITCH BUTTON: the
+      navigator is keyed on the active account only (App.tsx 269) and
+      setTestNetwork simply writes the preference (PrefsContext.tsx 161),
+      so a switch from the Bridge screen keeps it open (both pinned);
+      BlockerWithSwitch (BridgeScreen 1419) serves the Mint and the Stargate
+      Retry panels with "Switch to Base Sepolia" (hint "Makes Base Sepolia
+      the active test network, as Settings → Developer does; this screen
+      stays open"; the same setTestNetwork as the Settings chip; one tap,
+      no dialog — matching the chip, CTO accepted); bridgeSwitchTarget
+      returns the receiving network only when it is a built-in test
+      profile, not already active, and readiness allows bridging there;
+      the blockers now end "To send it from this wallet, make Base Sepolia
+      the active network with the button below (the same choice as
+      Settings → Developer → Test network); this screen stays open and this
+      transfer stays listed here."; after a switch the form starts over
+      (asset, destination, provider, recipient, quotes, the smart-account
+      toggle) and the endpoint URL is used only when it belongs to the
+      current network — a LATENT BUG fixed: the first render after a
+      switch (also reachable from Settings over the screen) used the old
+      network's URL for the mint balance read and the tracking reader. (2)
+      bridgeAmountPlaceholder(asset): "Amount, for example 1" for USDC,
+      the test-ETH example unchanged. (3) The adapter adds the first-mint
+      paymaster note to every quote (cctp-v2.ts 692, engine unchanged);
+      quoteBridge now reads balanceOf(recipient) on Circle's USDC on the
+      RECEIVING network once through defaultChainTransport (failover) →
+      plan.recipientDestinationUsdc 'zero' | 'held' | 'unknown' | null;
+      cctpConfirmNotes strips the adapter's note and cctpFirstMintPaymasterNote
+      adds it back only for 'zero' (word for word) or 'unknown' (+ "Whether
+      the recipient holds USDC on <network> could not be read just now."),
+      never for 'held'; a check pins the wallet's copy equal to the engine's
+      note so the filter cannot drift (CTO: kept for every recipient, not
+      only a smart-account one). (4) RISK CARD: risk.ts pinnedBridgeContracts
+      (TokenMessengerV2 on the four CCTP test networks from the engine
+      tables), bridgeContractAt, pinnedSpenderApprovalTarget (exactly
+      approve(<pinned spender on this chain>, x) on a tracked or known token
+      or Circle's pinned USDC for that chain); gatherRiskFacts branches at
+      1350 / 1394 — code at the target still required, no age check or
+      first-transfer search; burn line "This transaction goes to Circle's
+      TokenMessengerV2 on Arbitrum Sepolia (0x8FE6…2DAA), pinned by this
+      wallet from Circle's published test-network addresses."; approval
+      line "This approves Circle's TokenMessengerV2 on Arbitrum Sepolia
+      (0x8FE6…), pinned by this wallet from Circle's published test-network
+      addresses, to take USDC from this account through its token contract
+      0x75fa…AA4d." (full addresses on screen); kept generic and pinned: an
+      unlimited approval's warning, a look-alike spender, the same address
+      on mainnet, a token without code, an unknown token; the confirm's
+      pinned-contract sentence now ends "The risk card below names it too."
+      (Stargate's pools still not named on the card — the confirm keeps its
+      own line; a later slice). (5) TALKBACK: the live region held heading +
+      " (checking…)" and every 15 s poll set and cleared it, announcing each
+      time — it now holds bridgeLiveStatusText(record), the heading alone,
+      with "(checking…)" a separate Text outside the region (pinned with
+      fake ticks: three idle polls change checkedAt, not the live text, one
+      announcement for waiting → attested); the record's "Through …" line,
+      the recipient sentences and the blockers spoken through
+      withShortAddresses, visible text unchanged. MUTANTS caught: the link
+      keyed on test ETH alone, the sentence unconditional, the approval card
+      generic, the chain not compared for the bridge contract, the live text
+      changing every poll, "(checking…)" back inside the region. UNVERIFIED
+      (device): that an identical re-render fires no live-region event; the
+      button's layout. RE-CHECK STEPS (the next emulator slot, Metro moved to
+      this HEAD): on Arbitrum Sepolia the attested 1 USDC record (Circle
+      nonce 0xd402ca89…f86b) shows the new sentence and "Switch to Base
+      Sepolia"; tapping it keeps the screen open on Base Sepolia with "✓
+      USDC", the three destination chips and "Amount, for example 1", and
+      the panel offers "Mint on Base Sepolia" (Account 1 holds ~0.0076 ETH
+      there); the mint (prompt "Mint the bridged USDC on Base Sepolia") →
+      usedNonces 0 → 1, Account 1's Base USDC 1,500,000 → 2,500,000,
+      "Delivered on Base Sepolia"; Home on Base Sepolia shows Bridge, Hoodi
+      and mainnet hide it; the paymaster sentence on a Base → Arbitrum review
+      (0 USDC there) and absent on Arbitrum → Base; the two risk-card lines;
+      TalkBack idle ~60 s with no re-announcement, short addresses, the
+      button's label and hint.
