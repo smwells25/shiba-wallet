@@ -13092,3 +13092,117 @@ to the Chairperson at once.
       P&L (whose balance and history count — a decision); Activity rows
       showing the contract or flagging a look-alike; FEATURE_UNIVERSE row
       97 at the refresh.
+- [x] Item 8, second slice — TOKEN PROFIT AND LOSS ON SCREEN THROUGH
+      COINGECKO'S PRICE HISTORY BY CONTRACT (commit 4325590; 8 files incl. the
+      new fixture packages/prices/test/fixtures/coingecko-usdc-ethereum-
+      contract-range-2026-10-23.json; engine 1,236 → 1,241 (prices 124 →
+      129), check-pnl 100 → 135; offline runner ALL GREEN in the CTO's
+      isolated worktree on HEAD 5038a9e with --skip-bundle: app 10,332
+      across 65 suites, lint 0/0, tsc clean; the staged patch id equals the
+      verified tree's; the scan clean — the fixture holds no hex run of 32+
+      characters, pinned with its sha256; the agent was cut once by the
+      session limit and resumed from its worktree, making no new request
+      after the reset; not seen on a device — the emulator wallet holds no
+      mainnet token, so on screen only the gap sentences would show). THE
+      ENDPOINT, from CoinGecko's documentation fetched 2026-10-26 04:19
+      UTC (quoted at the top of packages/prices/src/history.ts): the
+      Demo / keyless overview lists "/coins/{id}/contract/{contract_address}/
+      market_chart/range — Historical chart data within a time range by
+      asset platform and token contract address"; its page gives the
+      OpenAPI entry on https://api.coingecko.com/api/v3, path id = "Asset
+      platform ID. *refers to /asset_platforms", contract_address = "The
+      contract address of token.", required vs_currency / from / to (UNIX
+      timestamps), optional precision ("full" or 0–18), the same
+      CoinsMarketChart answer and automatic granularity as the coin-id
+      range, and "Historical data via the Demo API is restricted to the
+      past 365 days."; the "Cache / Update Frequency:" line is EMPTY on
+      both pages now (the 5-minute figure recorded on 2026-10-12 is not
+      re-confirmed; an observed response header read cache-control
+      "max-age=30, public, must-revalidate, s-maxage=300"); rate limits
+      "Demo plan: 100 calls/min.", "Keyless (no API key): IP-based rate
+      limiting — shared across all users on the same IP.", "All requests
+      count … including 4xx and 5xx errors."; PLATFORM IDS from ONE
+      keyless GET /asset_platforms at 04:20 UTC (470 platforms;
+      chain_identifier = "Chainlist's chain ID"): 1 ethereum, 8453 base,
+      42161 arbitrum-one, 10 optimistic-ethereum — only ethereum is used
+      (the existing COINGECKO_TOKEN_PLATFORMS table, which the spot token
+      price already uses; the wallet has no Base / Arbitrum One / OP
+      Mainnet profile, so the other three are recorded in the comment, not
+      mapped). ROUTE CHOSEN: by contract, not by coin id — the wallet
+      already prices tracked tokens by (platform, contract) through
+      /simple/token_price, holds no contract-to-coin-id table
+      (tokenPriceAssetId returns the CAIP-19 id eip155:1/erc20:0xA0b8…,
+      not "usd-coin"), and the contract route ties every history to the
+      exact contract; the coin-id endpoint is unchanged for native coins.
+      FIXTURE: one keyless GET at 2026-10-26 04:20:38 UTC (server date
+      04:20:39 GMT) for /coins/ethereum/contract/0xa0b8…eb48/market_chart/
+      range?vs_currency=usd&from=1792713600&to=1792886400&precision=full
+      (2026-10-23 00:00 → 2026-10-25 00:00 UTC), HTTP 200 saved byte for
+      byte (5,109 bytes, sha256 1823c7e3…dc24f), 49 price points exactly
+      3,600,000 ms apart plus market_caps and total_volumes. CODE:
+      history.ts tokenMarketChartRangeUrl (platform id checked by the
+      coin-id rule, the contract 0x + 40 hex, sent lowercase) and
+      fetchTokenMarketChartRange sharing one internal fetchChart and
+      query builder with the coin form (same errors, same strict parser);
+      prices.ts historySourceFor(assetId) → a coin id for the four native
+      coins or {token, platformId, contract} for an ERC-20 only when its
+      chain is a main network in COINGECKO_TOKEN_PLATFORMS, else null →
+      'unsupported' (historyCoinIdFor unchanged); fetchPriceHistory routes
+      tokens to the contract endpoint with the cache keyed
+      token:<platform>:<contract>|from|to; pnl.ts pnlTokenChoices(tokens,
+      activeEvmCaip2) — a button only when tokenPnlAsset accepts the token
+      AND historySourceFor answers token with the same contract, a contract
+      listed twice offered once, pnlTokenChipTitle adding the short
+      contract when another offered token or the network's coin shares the
+      symbol; PortfolioViews — token buttons only when the EVM slot is
+      priced on the active network, from listTokens(evmCaip2); the panel
+      takes a subject (native or token) and for a token uses
+      loadTokenBalance(contract, holder, {expectedChain}), pnlPriceRange
+      with the token asset, computeTokenPnl and the token's spot quote.
+      SENTENCES: PNL_INTRO "Profit and loss for the active account, worked
+      out on this phone from its loaded transaction history and CoinGecko's
+      prices. It is offered for the native coin of a main network and for
+      each ERC-20 token tracked on the active main network that CoinGecko
+      prices, a token counted only by its own contract: test-network coins
+      and tokens have no price, so they are not offered. Nothing is
+      guessed: where the history or a price is missing, the wallet says
+      what is missing instead of showing a figure. Working it out loads the
+      account's history and one price history from CoinGecko."; the native
+      panel's TOKEN_PNL_NOT_OFFERED became TOKEN_PNL_SEPARATE "Profit and
+      loss for a token is worked out separately, from that token's own
+      transfers: each ERC-20 token tracked on the active main network that
+      CoinGecko prices has its own button." (a note, its pin updated);
+      buttons "USDC on Ethereum" / "USDC (0xa0b8…eb48) on Ethereum" with
+      the hint "Works out profit and loss for the tracked USDC token,
+      contract 0x…; loads the history and a price history"; every
+      first-slice gap sentence unchanged and pinned again. PINS: the
+      token request to the documented URL with the contract lowercase; no
+      request for a Sepolia token, a Base-chain token, an NFT id or a
+      malformed id; a second contract its own request and the first served
+      from its own cache entry; USDC P&L driven by the fixture on a
+      synthetic history on three of its points, exact to the fraction
+      against hand arithmetic (1200 USDC, $1,199.76 value, $1,199.49 cost,
+      $1.00 average, +$0.27 unrealised, +$0.03 realised, 2 purchases and
+      1 sale); a look-alike "USDC" leaves the figures unchanged with its
+      note and does not widen the price range; a transfer outside the
+      fixture's range → the "no CoinGecko price was found within 3 hours"
+      gap; which tokens get a button (mainnet yes; none on a test network;
+      a test-network token never; NFTs and other chains never; duplicates
+      once; the title disambiguation); the fixture's hash, the URL and 6
+      refusals, the 49 points digit for digit, a malformed answer refused
+      three ways, 401 (the 365-day refusal) / 429 / 404. MUTANTS caught: a
+      token checked against its own chain instead of the active one, both
+      guards removed, a look-alike counted, the cache keyed without the
+      contract, the URL not lowercasing, the deduplication removed, the
+      contract replaced by a constant, the title never disambiguating;
+      two hand mutants equivalent today (the parser's number-type check —
+      a string price is refused further down; the platform-table check —
+      the main-network check already returns null outside the table).
+      OPEN (CTO): the 'unsupported' token gap sentence ("…does not read
+      CoinGecko's price history for tokens yet…") is now unreachable from
+      the screen and would be untrue if reached — reword at the refresh;
+      "…choose the coin again to retry" also shows for a token (left);
+      CoinGecko's answer for an unknown or spam contract not probed (any
+      non-2xx is the "price history could not be read" gap); Base /
+      Arbitrum One / OP Mainnet mapping only if main-network profiles
+      exist; the buttons not yet seen on a device.
