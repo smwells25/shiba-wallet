@@ -55,7 +55,7 @@ import type { AaAccountType } from './aa.ts';
 import type { KeyValueStore } from './tokens.ts';
 import { assertFeatureAllowed, isFeatureAllowed } from '../config/readiness.ts';
 import { NO_ANSWER_SENTENCE, sanitizeEndpointMessage } from '../config/endpoint-probe.ts';
-import { isBroadcastOutcomeUnknown } from './broadcast-outcome.ts';
+import { broadcastOutcomeReasonOf, isBroadcastOutcomeUnknown } from './broadcast-outcome.ts';
 import { BROADCAST_TIMEOUT_MS } from '@shiba-wallet/chains-evm';
 
 /**
@@ -930,7 +930,10 @@ export function recurringConfirmMessage(
  *      no "send anyway" is offered for recurring payments;
  *   3. sendSessionCalls (readiness, local grant check, key read, sign,
  *      submit);
- *   4. recordAcceptedSpend once the bundler accepted the operation.
+ *   4. the spend is counted just before the operation is handed to the
+ *      bundler (./broadcast-spend.ts; kept when the outcome is unknown,
+ *      released after a definite refusal), and recordAcceptedSpend runs once
+ *      the bundler accepted it (finding it counted, it adds nothing).
  */
 export async function payRecurringPayment(args: {
   bundle: Parameters<typeof sendSessionCalls>[0]['bundle'];
@@ -974,6 +977,9 @@ export async function payRecurringPayment(args: {
     calls: [plan.call],
     vault: args.vault,
     now,
+    // Counted before the broadcast, exactly as recordAcceptedSpend below
+    // counts it (which then adds nothing): an unknown outcome stays counted.
+    spend: { chain: scope.chain, owner: scope.owner, spender: record.account, calls: [plan.call], fee: 0n, now, ...(args.store ? { store: args.store } : {}) },
   });
   await recordAcceptedSpend({
     scope,
@@ -1025,6 +1031,22 @@ export type RecurringAttemptOutcome =
   | 'failed';
 
 /**
+ * Why an 'outcome-unknown' attempt is open (the bounded-broadcast follow-ups):
+ * no answer in time ('no-answer'), the bundler answered with a server error
+ * ('server-error'), or the connection failed while it was being sent
+ * ('connection'). The card's line names it (recurringAttemptLine).
+ */
+export type RecurringOutcomeCause = 'no-answer' | 'server-error' | 'connection';
+
+/** The cause of an open outcome for the card line, from the error (the broadcast-outcome reason). */
+export function recurringOutcomeCause(error: unknown): RecurringOutcomeCause {
+  const reason = broadcastOutcomeReasonOf(error);
+  if (reason === 'timeout') return 'no-answer';
+  if (reason === 'server-error') return 'server-error';
+  return 'connection';
+}
+
+/**
  * After a transport failure on the node (the status read, the chain check,
  * the fees, the nonce) or on a bundler request made before the submission.
  * Exact because every such request precedes eth_sendUserOperation (sessions.ts
@@ -1047,6 +1069,21 @@ export const RECURRING_NO_ANSWER_SENTENCE =
   'received the payment, it will be included and this card will count it as sent; if not, nothing was paid. ' +
   'Wait a minute, then tap Refresh status before sending again: if the first one went through, sending again ' +
   'would pay the next due payment as well. It is also listed under Pending on this phone in Activity.';
+
+/**
+ * The bundler answered eth_sendUserOperation with an HTTP 5xx (the engine's
+ * BroadcastUnansweredError, the bounded-broadcast follow-ups): it may have
+ * accepted the payment before its answer failed. Never worded as "not sent".
+ */
+export const RECURRING_SERVER_ERROR_SENTENCE =
+  'The bundler answered with a server error while the payment was being sent, so this wallet does not know ' +
+  'whether it received the payment: it may have accepted it. The account’s nonce for this payment key decides: if ' +
+  'the bundler received the payment, it will be included and this card will count it as sent; if not, nothing was ' +
+  'paid. Wait a minute, then tap Refresh status before sending again: if the first one went through, sending ' +
+  'again would pay the next due payment as well. It is also listed under Pending on this phone in Activity.';
+
+/** Appended to RECURRING_OUTCOME_UNKNOWN_SENTENCE when the operation was listed before it was handed over. */
+export const RECURRING_LISTED_SENTENCE = 'It is also listed under Pending on this phone in Activity.';
 
 /**
  * After a transport failure during the submission itself (or one the wallet
@@ -1116,7 +1153,7 @@ export function describeRecurringPaymentError(
   error: unknown,
   context: { accountType: AaAccountType; symbol: string },
   describeSend: (error: unknown, symbol: string) => { title: string; detail: string },
-): { title: string; detail: string; outcome: RecurringAttemptOutcome } {
+): { title: string; detail: string; outcome: RecurringAttemptOutcome; cause?: RecurringOutcomeCause } {
   if (error instanceof RecurringNotDueError) {
     // A status that could not be read for another reason (not an endpoint
     // failure) is not a refusal either.
@@ -1136,11 +1173,22 @@ export function describeRecurringPaymentError(
   // No answer to the submission itself in time (phase 23 item 8): checked
   // first, because the outcome is open whatever else the error says.
   if (isBroadcastOutcomeUnknown(error)) {
+    // No answer in time, a server error, or a connection that failed while
+    // it was being handed over (the bounded-broadcast follow-ups): each its
+    // own sentence, none of them "not sent".
     const technical = (error as { technical?: unknown }).technical;
+    const cause = recurringOutcomeCause(error);
+    const sentence =
+      cause === 'no-answer'
+        ? RECURRING_NO_ANSWER_SENTENCE
+        : cause === 'server-error'
+          ? RECURRING_SERVER_ERROR_SENTENCE
+          : `${RECURRING_OUTCOME_UNKNOWN_SENTENCE} ${RECURRING_LISTED_SENTENCE}`;
     return {
       title: RECURRING_OUTCOME_UNKNOWN_TITLE,
-      detail: withTechnical(RECURRING_NO_ANSWER_SENTENCE, sanitizeEndpointMessage(typeof technical === 'string' ? technical : message)),
+      detail: withTechnical(sentence, sanitizeEndpointMessage(typeof technical === 'string' ? technical : message)),
       outcome: 'outcome-unknown',
+      cause,
     };
   }
   if (isTransportFailure(error)) {
@@ -1156,6 +1204,7 @@ export function describeRecurringPaymentError(
       title: RECURRING_OUTCOME_UNKNOWN_TITLE,
       detail: withTechnical(RECURRING_OUTCOME_UNKNOWN_SENTENCE, technical),
       outcome: 'outcome-unknown',
+      cause: 'connection',
     };
   }
   const refusal = recurringRefusalSentence(message);
@@ -1168,11 +1217,20 @@ export function describeRecurringPaymentError(
   };
 }
 
+/** The parenthesis of an open outcome on the card, by its cause ('connection' and none: the original wording). */
+export function openOutcomeParenthesis(cause: RecurringOutcomeCause | undefined): string {
+  if (cause === 'no-answer') return 'the bundler did not answer in time';
+  if (cause === 'server-error') return 'the bundler answered with a server error while it was being sent';
+  return 'the connection failed while it was being sent';
+}
+
 /**
  * The card's one-line note after a payment attempt that did not go through
- * (the card stays). Only an actual refusal is called "refused".
+ * (the card stays). Only an actual refusal is called "refused". `cause`
+ * (describeRecurringPaymentError's) names why an open outcome is open; the
+ * line without it is the original "the connection failed" wording.
  */
-export function recurringAttemptLine(outcome: RecurringAttemptOutcome, detail: string): string {
+export function recurringAttemptLine(outcome: RecurringAttemptOutcome, detail: string, cause?: RecurringOutcomeCause): string {
   const first = detail.split('\n\n')[0];
   switch (outcome) {
     case 'refused':
@@ -1181,7 +1239,7 @@ export function recurringAttemptLine(outcome: RecurringAttemptOutcome, detail: s
       return 'Last payment attempt not sent: the network could not be reached before the payment was handed to the ' +
         'bundler, so nothing was sent. Try again once the connection is back.';
     case 'outcome-unknown':
-      return 'Last payment attempt: outcome unknown (the connection failed while it was being sent). Tap Refresh ' +
+      return `Last payment attempt: outcome unknown (${openOutcomeParenthesis(cause)}). Tap Refresh ` +
         'status and wait for the count before sending again.';
     case 'failed':
       return `Last payment attempt failed: ${first}`;

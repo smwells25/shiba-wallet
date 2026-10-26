@@ -11,6 +11,7 @@ export {
   BROADCAST_METHODS,
   BROADCAST_TIMEOUT_MS,
   BroadcastTimeoutError,
+  BroadcastUnansweredError,
   BundlerClient,
   DEFAULT_ESTIMATE_RETRIES,
   ImpossibleGasEstimateError,
@@ -20,9 +21,11 @@ export {
   gasLimitProblems,
   httpTransport,
   isBroadcastTimeoutError,
+  isBroadcastUnansweredError,
   toRpcUserOperation,
 } from './rpc.js';
 export type {
+  BroadcastUnansweredReason,
   EstimateRetryPolicy,
   GasEstimate,
   GasLimitFields,

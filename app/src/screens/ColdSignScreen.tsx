@@ -571,9 +571,18 @@ export function ColdSignScreen({ route, navigation }: Props) {
     if (!(await aaEndpointStillQuoted())) return;
     setPhase('aa-sending');
     try {
-      const { userOpHash } = await submitColdAa({ bundle, request: aaRequest, quote: aaQuote, signatureText: aaSignature, nowSeconds: nowSeconds() });
+      const { userOpHash } = await submitColdAa({
+        bundle,
+        request: aaRequest,
+        quote: aaQuote,
+        signatureText: aaSignature,
+        nowSeconds: nowSeconds(),
+        // Counted before the broadcast (kept when the outcome is unknown).
+        spend: { chain: evmChain.caip2, owner: from, ...spendingInputForQuote(aaQuote, from) },
+      });
       // Spending limits: recorded once the bundler accepted it (the
-      // passkey path's rule; this path bypasses sendAa's listeners).
+      // passkey path's rule; this path bypasses sendAa's listeners) — found
+      // already counted before the broadcast, so nothing is added twice.
       void recordAcceptedSpend({
         scope: { chain: evmChain.caip2, owner: from },
         ...spendingInputForQuote(aaQuote, from),

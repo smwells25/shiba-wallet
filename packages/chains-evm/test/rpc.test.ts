@@ -5,10 +5,12 @@ import {
   BROADCAST_METHODS,
   BROADCAST_TIMEOUT_MS,
   BroadcastTimeoutError,
+  BroadcastUnansweredError,
   BundlerClient,
   NodeClient,
   httpTransport,
   isBroadcastTimeoutError,
+  isBroadcastUnansweredError,
   PaymasterClient,
   toRpcUserOperation,
   type JsonRpcTransport,
@@ -241,5 +243,95 @@ describe('httpTransport: only broadcasts are bounded in time (phase 23 item 8)',
     const caught = call.catch((e: unknown) => e);
     await vi.advanceTimersByTimeAsync(5_000);
     expect(isBroadcastTimeoutError(await caught)).toBe(true);
+  });
+});
+
+describe('httpTransport: a broadcast whose answer never arrives intact is an open outcome', () => {
+  /** A fetch answering every request with `answer` (a Response-like object, or a rejection). */
+  function fetchAnswering(answer: () => Promise<unknown>) {
+    const methods: string[] = [];
+    const fetchFn = (async (_url: string, init: RequestInit) => {
+      methods.push((JSON.parse(String(init.body)) as { method: string }).method);
+      return answer();
+    }) as unknown as typeof fetch;
+    return { fetchFn, methods };
+  }
+  const status = (code: number) => async () =>
+    ({ ok: code >= 200 && code < 300, status: code, json: async () => ({ jsonrpc: '2.0', id: 1, error: { code: -32603, message: 'upstream' } }) });
+
+  for (const method of ['eth_sendRawTransaction', 'eth_sendUserOperation']) {
+    for (const code of [500, 502, 503, 504, 599]) {
+      it(`${method}: HTTP ${code} is BroadcastUnansweredError (server-error), not a refusal`, async () => {
+        const { fetchFn } = fetchAnswering(status(code));
+        const error = await httpTransport('https://node.example', fetchFn)(method, ['0x00']).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(BroadcastUnansweredError);
+        expect(isBroadcastUnansweredError(error)).toBe(true);
+        expect(isBroadcastTimeoutError(error)).toBe(false);
+        const e = error as BroadcastUnansweredError;
+        expect(e.reason).toBe('server-error');
+        expect(e.status).toBe(code);
+        expect(e.method).toBe(method);
+        expect(e.causeText).toBe(`RPC HTTP error ${code} for ${method}`);
+        expect(e.message).toBe(
+          `No usable answer to ${method} (the endpoint answered with a server error; cause: RPC HTTP error ${code} for ${method}), so whether it was accepted is unknown.`,
+        );
+        expect(e.message).not.toMatch(/^fetch failed|not sent|nothing was sent/i);
+      });
+    }
+    it(`${method}: a rejected fetch (a dropped connection) is BroadcastUnansweredError (connection) with the raw cause`, async () => {
+      const dropped = Object.assign(new Error('fetch failed: java.net.SocketException: Connection reset'), { name: 'FetchError' });
+      const { fetchFn } = fetchAnswering(async () => {
+        throw dropped;
+      });
+      const e = (await httpTransport('https://node.example', fetchFn)(method, ['0x00']).catch((x: unknown) => x)) as BroadcastUnansweredError;
+      expect(isBroadcastUnansweredError(e)).toBe(true);
+      expect(e.reason).toBe('connection');
+      expect(e.status).toBeNull();
+      expect(e.causeText).toBe('FetchError: fetch failed: java.net.SocketException: Connection reset');
+      expect(e.message).toBe(
+        `No usable answer to ${method} (the connection failed; cause: FetchError: fetch failed: java.net.SocketException: Connection reset), so whether it was accepted is unknown.`,
+      );
+      expect(/^fetch failed/.test(e.message)).toBe(false);
+    });
+    it(`${method}: an answer that is not JSON is BroadcastUnansweredError (connection)`, async () => {
+      const { fetchFn } = fetchAnswering(async () => ({ ok: true, status: 200, json: async () => JSON.parse('<html>') }));
+      const e = (await httpTransport('https://node.example', fetchFn)(method, ['0x00']).catch((x: unknown) => x)) as BroadcastUnansweredError;
+      expect(isBroadcastUnansweredError(e)).toBe(true);
+      expect(e.reason).toBe('connection');
+      expect(e.causeText.startsWith('the answer could not be read: SyntaxError')).toBe(true);
+    });
+    it(`${method}: an HTTP 4xx and a parsed JSON-RPC error stay definite refusals, worded as before`, async () => {
+      for (const code of [400, 403, 429]) {
+        const { fetchFn } = fetchAnswering(status(code));
+        const e = await httpTransport('https://node.example', fetchFn)(method, ['0x00']).catch((x: unknown) => x);
+        expect(isBroadcastUnansweredError(e)).toBe(false);
+        expect((e as Error).message).toBe(`RPC HTTP error ${code} for ${method}`);
+      }
+      const { fetchFn } = fetchAnswering(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ jsonrpc: '2.0', id: 1, error: { code: -32000, message: 'nonce too low' } }),
+      }));
+      const e = await httpTransport('https://node.example', fetchFn)(method, ['0x00']).catch((x: unknown) => x);
+      expect(isBroadcastUnansweredError(e)).toBe(false);
+      expect((e as Error).message).toBe(`RPC error -32000: nonce too low (${method})`);
+    });
+  }
+
+  it('every other method keeps its old errors: a 502 and a dropped connection are thrown unchanged', async () => {
+    const dropped = new TypeError('fetch failed');
+    for (const method of ['eth_call', 'eth_getTransactionReceipt', 'eth_estimateUserOperationGas', 'eth_chainId']) {
+      const { fetchFn } = fetchAnswering(status(502));
+      const e = await httpTransport('https://node.example', fetchFn)(method, []).catch((x: unknown) => x);
+      expect(isBroadcastUnansweredError(e)).toBe(false);
+      expect((e as Error).message).toBe(`RPC HTTP error 502 for ${method}`);
+      const drop = fetchAnswering(async () => {
+        throw dropped;
+      });
+      expect(await httpTransport('https://node.example', drop.fetchFn)(method, []).catch((x: unknown) => x)).toBe(dropped);
+      const html = fetchAnswering(async () => ({ ok: true, status: 200, json: async () => JSON.parse('<html>') }));
+      const syntax = await httpTransport('https://node.example', html.fetchFn)(method, []).catch((x: unknown) => x);
+      expect(syntax).toBeInstanceOf(SyntaxError);
+    }
   });
 });

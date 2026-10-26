@@ -7453,7 +7453,13 @@
   "handle.sub.reverseDone",
   "handle.primary.ok",
   "handle.primary.offchain",
-  "handle.primary.unsupported"
+  "handle.primary.unsupported",
+  "broadcast.open.title",
+  "broadcast.tx.open",
+  "broadcast.tx.openUnlisted",
+  "broadcast.userop.open",
+  "broadcast.userop.openUnlisted",
+  "broadcast.open"
  ],
  "changed": {
   "activity.note.privacy": {

@@ -57,8 +57,11 @@ import {
   RecurringSpendingError,
   RecurringStatusUnreachableError,
   dcaDueState,
+  openOutcomeParenthesis,
+  recurringOutcomeCause,
   type RecurringAttemptOutcome,
   type RecurringDue,
+  type RecurringOutcomeCause,
 } from './recurring.ts';
 import {
   SPENDING_BLOCK_TITLE,
@@ -1076,7 +1079,15 @@ export async function payDcaSwap(args: {
       ].join('\n\n'),
     );
   }
-  const sent = await sendSessionCalls({ bundle: args.bundle, record, calls: plan.calls, vault: args.vault, now });
+  const sent = await sendSessionCalls({
+    bundle: args.bundle,
+    record,
+    calls: plan.calls,
+    vault: args.vault,
+    now,
+    // Counted before the broadcast (./broadcast-spend.ts), as recordAcceptedSpend below counts it.
+    spend: { chain: scope.chain, owner: scope.owner, spender: record.account, calls: plan.calls, fee: 0n, now, ...(args.store ? { store: args.store } : {}) },
+  });
   await recordAcceptedSpend({
     scope,
     spender: record.account,
@@ -1195,6 +1206,18 @@ export const DCA_OUTCOME_UNKNOWN_SENTENCE =
   'again: if the first one went through, sending again would send the next due swap as well.';
 
 /**
+ * The bundler answered eth_sendUserOperation with an HTTP 5xx (the
+ * bounded-broadcast follow-ups): it may have accepted the swap. Never worded
+ * as "not sent".
+ */
+export const DCA_SERVER_ERROR_SENTENCE =
+  'The bundler answered with a server error while the swap was being sent, so this wallet does not know whether ' +
+  'it received the swap: it may have accepted it. The account’s nonce for this swap key decides: if the bundler ' +
+  'received the swap, it will be included and this card will count it as sent; if not, nothing was swapped. Wait ' +
+  'a minute, then tap Refresh status before sending again: if the first one went through, sending again would ' +
+  'send the next due swap as well. It is also listed under Pending on this phone in Activity.';
+
+/**
  * The bundler did not answer eth_sendUserOperation within the engine's
  * BROADCAST_TIMEOUT_MS (phase 23 item 8): the swap may or may not have
  * reached it. Never worded as "not sent".
@@ -1251,7 +1274,7 @@ export function describeDcaSwapError(
   error: unknown,
   context: { accountType: AaAccountType; symbol: string },
   describeSend: (error: unknown, symbol: string) => { title: string; detail: string },
-): { title: string; detail: string; outcome: RecurringAttemptOutcome } {
+): { title: string; detail: string; outcome: RecurringAttemptOutcome; cause?: RecurringOutcomeCause } {
   if (error instanceof RecurringNotDueError) {
     return { title: DCA_REFUSED_TITLE, detail: error.message, outcome: error.due.kind === 'unknown' ? 'failed' : 'refused' };
   }
@@ -1268,11 +1291,21 @@ export function describeDcaSwapError(
   const message = error instanceof Error ? error.message : String(error);
   // No answer to the submission itself in time (phase 23 item 8).
   if (isBroadcastOutcomeUnknown(error)) {
+    // No answer in time, a server error, or a connection that failed while it
+    // was handed over (the bounded-broadcast follow-ups): none "not sent".
     const technical = (error as { technical?: unknown }).technical;
+    const cause = recurringOutcomeCause(error);
+    const sentence =
+      cause === 'no-answer'
+        ? DCA_NO_ANSWER_SENTENCE
+        : cause === 'server-error'
+          ? DCA_SERVER_ERROR_SENTENCE
+          : `${DCA_OUTCOME_UNKNOWN_SENTENCE} It is also listed under Pending on this phone in Activity.`;
     return {
       title: DCA_OUTCOME_UNKNOWN_TITLE,
-      detail: withTechnical(DCA_NO_ANSWER_SENTENCE, sanitizeEndpointMessage(typeof technical === 'string' ? technical : message)),
+      detail: withTechnical(sentence, sanitizeEndpointMessage(typeof technical === 'string' ? technical : message)),
       outcome: 'outcome-unknown',
+      cause,
     };
   }
   if (isTransportFailure(error)) {
@@ -1280,7 +1313,7 @@ export function describeDcaSwapError(
     if (isNodeEndpointFailure(error) || isBundlerTransportFailureBeforeSubmit(error)) {
       return { title: SESSION_UNREACHABLE_TITLE, detail: withTechnical(`${NO_ANSWER_SENTENCE} ${DCA_NOT_SENT_SENTENCE}`, technical), outcome: 'not-sent' };
     }
-    return { title: DCA_OUTCOME_UNKNOWN_TITLE, detail: withTechnical(DCA_OUTCOME_UNKNOWN_SENTENCE, technical), outcome: 'outcome-unknown' };
+    return { title: DCA_OUTCOME_UNKNOWN_TITLE, detail: withTechnical(DCA_OUTCOME_UNKNOWN_SENTENCE, technical), outcome: 'outcome-unknown', cause: 'connection' };
   }
   const refusal = dcaRefusalSentence(message);
   if (refusal) return { title: DCA_REFUSED_TITLE, detail: withTechnical(refusal, sanitizeEndpointMessage(message)), outcome: 'refused' };
@@ -1290,8 +1323,12 @@ export function describeDcaSwapError(
   };
 }
 
-/** The card's one-line note after a swap attempt that did not go through. */
-export function dcaAttemptLine(outcome: RecurringAttemptOutcome, detail: string): string {
+/**
+ * The card's one-line note after a swap attempt that did not go through.
+ * `cause` (describeDcaSwapError's) names why an open outcome is open; the
+ * line without it is the original "the connection failed" wording.
+ */
+export function dcaAttemptLine(outcome: RecurringAttemptOutcome, detail: string, cause?: RecurringOutcomeCause): string {
   const first = detail.split('\n\n')[0];
   switch (outcome) {
     case 'refused':
@@ -1300,7 +1337,7 @@ export function dcaAttemptLine(outcome: RecurringAttemptOutcome, detail: string)
       return 'Last swap attempt not sent: the network could not be reached before the swap was handed to the bundler, ' +
         'so nothing was swapped. Try again once the connection is back.';
     case 'outcome-unknown':
-      return 'Last swap attempt: outcome unknown (the connection failed while it was being sent). Tap Refresh status ' +
+      return `Last swap attempt: outcome unknown (${openOutcomeParenthesis(cause)}). Tap Refresh status ` +
         'and wait for the count before sending again.';
     case 'failed':
       return `Last swap attempt failed: ${first}`;

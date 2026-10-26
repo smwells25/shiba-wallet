@@ -1263,6 +1263,12 @@ export const en = {
   'broadcast.handedOver.title': 'Already handed to the network once.',
   'broadcast.handedOver': 'This transaction was already handed to the network endpoint once and whether it was accepted is still unknown, so this wallet did not hand it over a second time. Check Pending on this phone in Activity; review a new send only if that list says it was dropped.',
   'broadcast.detail': '{sentence}\n\nTechnical detail: {technical}',
+  'broadcast.open.title': 'No usable answer from the network.',
+  'broadcast.tx.open': 'The network endpoint answered with a server error, or the connection failed before its answer arrived, so this wallet does not know whether the transaction was sent: the endpoint may have accepted it. It is listed under Pending on this phone in Activity, which checks it every {poll} seconds; do not send it again until that list says what happened.',
+  'broadcast.tx.openUnlisted': 'The network endpoint answered with a server error, or the connection failed before its answer arrived, so this wallet does not know whether the transaction was sent: the endpoint may have accepted it, and this wallet could not add it to Pending on this phone. Look the transaction up in a block explorer before sending anything again.',
+  'broadcast.userop.open': 'The bundler answered with a server error, or the connection failed before its answer arrived, so this wallet does not know whether it received the operation: it may have accepted it. It is listed under Pending on this phone in Activity; tap Check status there, and do not send it again until that list says what happened.',
+  'broadcast.userop.openUnlisted': 'The bundler answered with a server error, or the connection failed before its answer arrived, so this wallet does not know whether it received the operation: it may have accepted it, and this wallet could not add it to Pending on this phone. Look the operation up in an ERC-4337 explorer before sending anything again.',
+  'broadcast.open': 'The network answered with a server error, or the connection failed before its answer arrived, so this wallet does not know whether it was sent: it may have been accepted. Check this account in a block explorer before sending anything again.',
   // ---- Phase 23 item 8 (second pass): off-line signing for a smart account — the plain UI sentences of wallet/cold-aa.ts as the cold-signing screen shows them (screens/ColdSignScreen.tsx, ColdSignViews.tsx) ----
   'coldAa.requestCaption': 'Smart-account signing request',
   'coldAa.switch': 'Send from the smart account',

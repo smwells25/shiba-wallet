@@ -1023,7 +1023,7 @@ console.log('check-recurring: refusals in plain words');
   const screen = src('../src/screens/SessionsScreen.tsx');
   const refusal = body(screen, 'const showPayRefusal = (', 'const confirmPaymentDialog =');
   check('a refused payment: alert + reason kept on the card + status re-read; the record is not removed (source)',
-    /Alert\.alert\(title, detail\)/.test(refusal) && /setPayRefusals\(\(prev\) => \(\{ \.\.\.prev, \[key\]: recurringAttemptLine\(outcome, detail\) \}\)\)/.test(refusal) && /refreshRecord\(record\)/.test(refusal) && !/forget|writeRecord|resetSessions/i.test(refusal));
+    /Alert\.alert\(title, detail\)/.test(refusal) && /setPayRefusals\(\(prev\) => \(\{ \.\.\.prev, \[key\]: recurringAttemptLine\(outcome, detail, cause\) \}\)\)/.test(refusal) && /refreshRecord\(record\)/.test(refusal) && !/forget|writeRecord|resetSessions/i.test(refusal));
 }
 
 // ---------------------------------------------------------------------------
@@ -1230,6 +1230,68 @@ const noJava = (t) => !/java\.net|UnknownHostException/.test(t);
     const dDca = describeDcaSwapError(noAnswer, { accountType: 'kernel-v3.3', symbol: 'test ETH' }, describeSendError);
     check('a recurring swap with no answer: "Swap status unknown", its own no-answer sentence, never "not sent"',
       dDca.outcome === 'outcome-unknown' && dDca.title === DCA_OUTCOME_UNKNOWN_TITLE && dDca.detail.startsWith(DCA_NO_ANSWER_SENTENCE) && !/not sent|nothing was sent|refused/i.test(dDca.title + dDca.detail));
+
+    // The bounded-broadcast follow-ups: the bundler answers the payment's
+    // submission with HTTP 502 — an open outcome with its own sentence and
+    // card line (never "no answer in time"); the payment is counted against
+    // the spending limits before it is handed over and stays counted.
+    {
+      const spending = await import('../src/wallet/spending-policy.ts');
+      const { RECURRING_SERVER_ERROR_SENTENCE, RECURRING_OUTCOME_UNKNOWN_SENTENCE, RECURRING_LISTED_SENTENCE } = await import('../src/wallet/recurring.ts');
+      const { describeDcaSwapError: dcaErr, dcaAttemptLine, DCA_SERVER_ERROR_SENTENCE } = await import('../src/wallet/dca.ts');
+      const { BroadcastOutcomeUnknownError } = await import('../src/wallet/broadcast-outcome.ts');
+      const scope = { chain: r10.record.chain, owner: r10.record.owner };
+      await spending.saveSpendingPolicy(scope, { token: NATIVE_TOKEN, symbol: 'test ETH', decimals: 18, cap: 10n ** 30n, windowSeconds: 3600 }, [NATIVE_TOKEN], { store: s10, now: NOW });
+      const uninstall = spending.installSpendingRecorder(memoryStore());
+      const before502 = (await spending.listSpendRecords(scope, s10)).records.length;
+      let atSend502 = null;
+      const fetch502 = async (_url, init) => {
+        const { method, params, id } = JSON.parse(init.body);
+        if (method === 'eth_sendUserOperation') {
+          atSend502 = (await spending.listSpendRecords(scope, s10)).records.length;
+          return { ok: false, status: 502, json: async () => ({}) };
+        }
+        let body;
+        try {
+          body = { jsonrpc: '2.0', id, result: await b10(method, params) };
+        } catch (e) {
+          body = { jsonrpc: '2.0', id, error: { code: -32000, message: e.message } };
+        }
+        return { ok: true, status: 200, json: async () => body };
+      };
+      const bundler502 = Object.assign(httpTransport('https://bundler.example', fetch502), { calls: b10.calls });
+      const e502 = await caught(() => payRecurringPayment({ bundle: kernelBundle(n10, bundler502), plan: plan10, vault: v10, store: s10, now: NOW }));
+      uninstall();
+      const after502 = (await spending.listSpendRecords(scope, s10)).records;
+      const fresh502 = after502.slice(before502);
+      check('HTTP 502 on the payment\'s submission: an open outcome (reason server-error), never a refusal', e502?.name === 'BroadcastOutcomeUnknownError' && e502.reason === 'server-error', e502?.message);
+      check('…the payment was counted against the spending limits BEFORE it was handed over, under its userOpHash, and stays counted',
+        atSend502 === before502 + 1 && fresh502.length === 1 && fresh502[0].kind === 'transfer' && fresh502[0].amount === plan10.call.value &&
+          fresh502[0].ref.toLowerCase() === e502?.hash.toLowerCase() && fresh502[0].at === NOW);
+      const d502 = describeRecurringPaymentError(e502, { accountType: 'kernel-v3.3', symbol: 'test ETH' }, describeSendError);
+      check('…described with the server-error sentence (the bundler may have accepted it), cause server-error, never "within 60 seconds" or "not sent"',
+        d502.outcome === 'outcome-unknown' && d502.cause === 'server-error' && d502.title === RECURRING_OUTCOME_UNKNOWN_TITLE &&
+          d502.detail.startsWith(RECURRING_SERVER_ERROR_SENTENCE) && /may have accepted it/.test(d502.detail) && /HTTP error 502/.test(d502.detail) &&
+          !/within 60 seconds|not sent|nothing was sent|refused/i.test(d502.title + d502.detail.split('\n\nTechnical detail:')[0]), d502.detail);
+      check('…the card line names the server error (not "the connection failed")',
+        recurringAttemptLine(d502.outcome, d502.detail, d502.cause) ===
+          'Last payment attempt: outcome unknown (the bundler answered with a server error while it was being sent). Tap Refresh status and wait for the count before sending again.');
+      check('…the no-answer case says "did not answer in time" on the card',
+        recurringAttemptLine(d5.outcome, d5.detail, d5.cause) === 'Last payment attempt: outcome unknown (the bundler did not answer in time). Tap Refresh status and wait for the count before sending again.' &&
+          d5.cause === 'no-answer');
+      const dropped = new BroadcastOutcomeUnknownError({ kind: 'userop', hash: `0x${'77'.repeat(32)}`, chain: scope.chain, recorded: true, technical: 'fetch failed: Connection reset', reason: 'connection' });
+      const dDrop = describeRecurringPaymentError(dropped, { accountType: 'kernel-v3.3', symbol: 'test ETH' }, describeSendError);
+      check('…a dropped connection: the connection sentence, that it is listed, and the original card line',
+        dDrop.cause === 'connection' && dDrop.detail.startsWith(`${RECURRING_OUTCOME_UNKNOWN_SENTENCE} ${RECURRING_LISTED_SENTENCE}`) &&
+          recurringAttemptLine(dDrop.outcome, dDrop.detail, dDrop.cause) === 'Last payment attempt: outcome unknown (the connection failed while it was being sent). Tap Refresh status and wait for the count before sending again.');
+      check('…the line without a cause is the original wording, byte for byte (older callers)',
+        recurringAttemptLine('outcome-unknown', 'x') === 'Last payment attempt: outcome unknown (the connection failed while it was being sent). Tap Refresh status and wait for the count before sending again.');
+      const dDca502 = dcaErr(e502, { accountType: 'kernel-v3.3', symbol: 'test ETH' }, describeSendError);
+      check('a recurring swap answered 502: its own server-error sentence and card line',
+        dDca502.cause === 'server-error' && dDca502.detail.startsWith(DCA_SERVER_ERROR_SENTENCE) &&
+          dcaAttemptLine(dDca502.outcome, dDca502.detail, dDca502.cause) === 'Last swap attempt: outcome unknown (the bundler answered with a server error while it was being sent). Tap Refresh status and wait for the count before sending again.' &&
+          dcaAttemptLine(dDca.outcome, dDca.detail, dDca.cause).includes('(the bundler did not answer in time)'));
+    }
   }
 
   // The plan's status read does not answer: a network failure, not "Payment not sent … status could not be read".

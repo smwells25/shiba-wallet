@@ -91,7 +91,7 @@ import {
   type WcSmartBinding,
 } from './walletconnect';
 import { WcController, type WcQueueItem } from './wc-controller';
-import { answerDappThenShow, wcSentResult, withSentReceipt, type WcSentResult } from './wc-sent';
+import { answerDappThenShow, sentOrOpen, wcSentResult, withSentReceipt, type WcSentResult } from './wc-sent';
 import {
   BrowserBridgeClient,
   CompositeWcClient,
@@ -697,11 +697,17 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
             await declineWith('There is already a batch submitted with this id.', ERC5792_ERRORS.duplicateId);
             return;
           }
-          const { userOpHash } = await signWith(EVM_CHAIN_ID, smart.owner, (signer) =>
-            sendAa(bundle, signer, quote, aaSentMetaFor(item.event.topic)),
+          // An open outcome (no answer in time, a server error, a dropped
+          // connection) completes the request like an accepted one, with the
+          // userOpHash computed on this phone: the request never returns to
+          // the queue, where a second approval could send it twice.
+          const batchSent = await sentOrOpen(
+            () => signWith(EVM_CHAIN_ID, smart.owner, (signer) => sendAa(bundle, signer, quote, aaSentMetaFor(item.event.topic))),
+            'userop',
           );
+          const userOpHash = batchSent.open ? batchSent.open.hash : batchSent.value.userOpHash;
           // ERC-5792: the id is returned once the bundler accepted the
-          // operation; inclusion is NOT awaited.
+          // operation (or once its outcome is open); inclusion is NOT awaited.
           const random = new Uint8Array(32);
           globalThis.crypto.getRandomValues(random);
           const id = batch.id ?? generateCallsId(random, userOpHash);
@@ -729,6 +735,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
                   txid: null,
                   userOpHash,
                   dappNotified,
+                  open: batchSent.open,
                 }),
               ),
           });
@@ -753,9 +760,14 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
         // expects a transaction hash, so wait for inclusion and answer with
         // the bundle transaction's hash — never with the userOpHash, which
         // eth_getTransactionReceipt would not find.
-        const { userOpHash } = await signWith(EVM_CHAIN_ID, smart.owner, (signer) =>
-          sendAa(bundle, signer, quote, aaSentMetaFor(item.event.topic)),
+        // An open outcome is completed like an accepted operation (the
+        // receipt is awaited by the userOpHash computed on this phone), never
+        // put back in the queue.
+        const txSent = await sentOrOpen(
+          () => signWith(EVM_CHAIN_ID, smart.owner, (signer) => sendAa(bundle, signer, quote, aaSentMetaFor(item.event.topic))),
+          'userop',
         );
+        const userOpHash = txSent.open ? txSent.open.hash : txSent.value.userOpHash;
         let txHash: string | null = null;
         let included: boolean | null = null;
         try {
@@ -788,6 +800,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
               txid: null,
               userOpHash,
               dappNotified: true,
+              open: txSent.open,
             }),
           );
           return;
@@ -1018,10 +1031,17 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
           );
           return;
         }
-        const broadcast = await signWith(EVM_CHAIN_ID, item.address, (signer) =>
-          sendEvm(url, signer, quote, evmChain.explorerTxBase),
+        // An open outcome (no answer in time, a server error, a dropped
+        // connection) is answered with the transaction hash computed on this
+        // phone before the broadcast, as an accepted one is: the request never
+        // returns to the queue, where a second approval would re-quote at the
+        // next nonce and could send twice.
+        const eoaSent = await sentOrOpen(
+          () => signWith(EVM_CHAIN_ID, item.address, (signer) => sendEvm(url, signer, quote, evmChain.explorerTxBase)),
+          'tx',
         );
-        // The transaction is on the network from here on. A failed relay
+        const broadcast = eoaSent.open ? { txid: eoaSent.open.hash } : eoaSent.value;
+        // The transaction is (or may be) on the network from here on. A failed relay
         // reply must not be reported as a failed send, and the item must not
         // return to the queue as if nothing had happened. The dApp is
         // answered first; the sent view (with the note field) follows.
@@ -1039,6 +1059,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
                 txid: broadcast.txid,
                 userOpHash: null,
                 dappNotified,
+                open: eoaSent.open,
               }),
             ),
         });

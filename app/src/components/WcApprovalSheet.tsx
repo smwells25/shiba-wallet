@@ -581,7 +581,7 @@ export function WcSentView({ result, onDone }: { result: WcSentResult; onDone: (
     <View style={styles.backdrop}>
       <View style={[styles.card, { backgroundColor: theme.background, borderColor: theme.border }]}>
         <ScrollView key={result.key} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
-          <Text accessibilityRole="header" style={[styles.modalTitle, { color: theme.success }]}>{result.title}</Text>
+          <Text accessibilityRole="header" style={[styles.modalTitle, { color: result.outcomeUnknown ? theme.warningText : theme.success }]}>{result.title}</Text>
           <Text style={[styles.hint, { color: theme.textMuted }]}>Sent for {result.dappName}.</Text>
           {result.detail ? <Text style={[styles.hint, { color: theme.text }]}>{result.detail}</Text> : null}
           {result.txid ? (

@@ -785,8 +785,9 @@ function isEndpointHttpStatus(status: number): boolean {
  * answer. Retrying those elsewhere would only repeat the same answer.
  *
  * NEVER counted (phase 23 item 8): a broadcast that got no answer in time
- * (the engine's BroadcastTimeoutError, the app's BroadcastOutcomeUnknownError)
- * and the refusal to hand such a quote over again
+ * (the engine's BroadcastTimeoutError, the app's BroadcastOutcomeUnknownError),
+ * one whose answer was an HTTP 5xx or never arrived intact (the engine's
+ * BroadcastUnansweredError, the bounded-broadcast follow-ups) and the refusal to hand such a quote over again
  * (BroadcastAlreadyHandedOverError). The broadcast may have reached the
  * endpoint, so a failover would broadcast it a second time.
  */
@@ -797,6 +798,7 @@ export function isEndpointFailure(error: unknown): boolean {
   const message = typeof e.message === 'string' ? e.message : '';
   if (
     name === 'BroadcastTimeoutError' ||
+    name === 'BroadcastUnansweredError' ||
     name === 'BroadcastOutcomeUnknownError' ||
     name === 'BroadcastAlreadyHandedOverError'
   ) {

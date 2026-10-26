@@ -266,9 +266,14 @@ const tr = L.computeTokenPnl(tokenBase);
   check('more held than the history explains is the native gap sentence', treasons({ ...tokenBase, balance: 80n * UNIT }).includes(tgap('the balance is 5 UNI more than the loaded history explains, so some UNI arrived in a way the history does not list.')));
 
   // Today: the wallet reads no price history for tokens.
-  check('no token price history in this wallet: the gap says so plainly',
+  // The bounded-broadcast follow-ups (phase 23): since the contract route
+  // (4325590) the wallet DOES read token price histories, so "unsupported"
+  // can only mean the token's chain is not a mapped main network; the old
+  // "does not read … for tokens yet" sentence would be untrue.
+  check('a token whose price history is not read: the gap says why (its network is not a mapped main network), never "not … for tokens yet"',
     treasons({ ...tokenBase, prices: { status: 'unavailable', reason: 'unsupported' } })
-      .includes(tgap('this wallet does not read CoinGecko’s price history for tokens yet (only for the native coins of the main networks), so there is no price at the time of its transfers.')));
+      .includes(tgap('its network is not a main network for which this wallet reads CoinGecko’s price history of tokens (a main network with a CoinGecko asset platform mapped for it), so there is no price at the time of its transfers.')) && L.TOKEN_PNL_UNSUPPORTED_REASON === 'its network is not a main network for which this wallet reads CoinGecko’s price history of tokens (a main network with a CoinGecko asset platform mapped for it), so there is no price at the time of its transfers.' &&
+      !/for tokens yet|only for the native coins/.test(readFileSync(join(HERE, '..', 'src/wallet/pnl.ts'), 'utf8')));
   check('…the native sentence for "unsupported" is unchanged',
     reasonsOf({ ...base, prices: { status: 'unavailable', reason: 'unsupported' } }).includes('Profit and loss cannot be worked out for ETH: CoinGecko has no price history for it.'));
   check('a failed transfer of the token “moved no UNI”', (() => {
@@ -470,10 +475,15 @@ const amt = (base) => ({ n: base, d: U });
   const outside = L.computeTokenPnl({ ...usdcInput, entries: [usdcTx('0xu0', tA - 2 * 86_400, 'in', 100n * U, EXCHANGE), ...usdcEntries], balance: 1_300n * U });
   check('a transfer the recorded range has no price near is a gap sentence', outside.kind === 'gap' && outside.reasons.includes('Profit and loss cannot be worked out for USDC: no CoinGecko price was found within 3 hours of 1 transaction.'), JSON.stringify(outside));
   // Every gap sentence of the first slice is unchanged.
-  check('…the token “unsupported” sentence is unchanged', (() => {
+  check('…the token “unsupported” sentence (reworded in the bounded-broadcast follow-ups, see above)', (() => {
     const out = L.computeTokenPnl({ ...usdcInput, prices: { status: 'unavailable', reason: 'unsupported' } });
-    return out.kind === 'gap' && out.reasons.includes('Profit and loss cannot be worked out for USDC: this wallet does not read CoinGecko’s price history for tokens yet (only for the native coins of the main networks), so there is no price at the time of its transfers.');
+    return out.kind === 'gap' && out.reasons.includes('Profit and loss cannot be worked out for USDC: its network is not a main network for which this wallet reads CoinGecko’s price history of tokens (a main network with a CoinGecko asset platform mapped for it), so there is no price at the time of its transfers.');
   })());
+  {
+    const panelSrc = readFileSync(join(HERE, '..', 'src/screens/PortfolioViews.tsx'), 'utf8');
+    check('the panel\'s retry hint fits a coin and a token alike: "choose it again", never "choose the coin again"',
+      panelSrc.includes('Pull down or choose it again to retry.') && !panelSrc.includes('choose the coin again'));
+  }
 }
 
 // ===========================================================================

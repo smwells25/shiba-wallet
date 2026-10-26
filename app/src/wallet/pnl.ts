@@ -62,12 +62,29 @@ import type { SmartAccountHistoryStatus } from './smart-account-history.ts';
  *    and with a price history CoinGecko serves by its exact contract
  *    (prices.ts historySourceFor: /coins/{platform}/contract/{contract}/
  *    market_chart/range). A history request that is not mapped still
- *    answers 'unsupported', and the result is the token gap sentence below.
+ *    answers 'unsupported' (the token's chain is not a main network, or no
+ *    CoinGecko asset platform is mapped for it), and the result is
+ *    TOKEN_PNL_UNSUPPORTED_REASON below; the screen never offers such a
+ *    token, so that sentence is reached only by a caller outside it.
  *
  * Exact: amounts are bigints, money is an exact fraction (portfolio.ts
  * Money), rounded to the cent only for display. Free of React Native
  * imports so scripts/check-pnl.mjs runs the exact code.
  */
+
+/**
+ * The gap sentence of a token whose price history is not read at all
+ * (prices.ts historySourceFor answers null, so fetchPriceHistory answers
+ * 'unsupported'): since the contract route (phase 23 item 8, second slice)
+ * that happens only for a token whose chain is not one of the wallet's main
+ * networks, or whose chain has no CoinGecko asset platform in
+ * COINGECKO_TOKEN_PLATFORMS. The screen offers no such token
+ * (pnlTokenChoices), so this is reached only by another caller; it used to
+ * say that tokens were not read at all, which stopped being true.
+ */
+export const TOKEN_PNL_UNSUPPORTED_REASON =
+  'its network is not a main network for which this wallet reads CoinGecko’s price history of tokens (a main ' +
+  'network with a CoinGecko asset platform mapped for it), so there is no price at the time of its transfers.';
 
 export interface PnlAsset {
   /** The mainnet CAIP-19 id CoinGecko prices it under. */
@@ -538,7 +555,7 @@ function computePnl(input: PnlInput, mode: PnlMode): PnlResult {
               : input.prices.reason === 'out-of-range'
                 ? `its transactions are older than the ${PRICE_HISTORY_MAX_DAYS} days of price history CoinGecko’s free service provides.`
                 : mode.kind === 'token'
-                  ? 'this wallet does not read CoinGecko’s price history for tokens yet (only for the native coins of the main networks), so there is no price at the time of its transfers.'
+                  ? TOKEN_PNL_UNSUPPORTED_REASON
                   : 'CoinGecko has no price history for it.',
           ),
         );

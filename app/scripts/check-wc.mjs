@@ -1449,7 +1449,9 @@ console.log('check-wc: the sent view after a dApp transaction, batch or browser 
     mkdirSync(mutantDir, { recursive: true });
     mutantNo += 1;
     const file = join(mutantDir.pathname, `m${mutantNo}-wc-sent.ts`);
-    writeFileSync(file, sentSrc.replace(from, to));
+    // wc-sent.ts imports ./broadcast-outcome.ts (the bounded-broadcast
+    // follow-ups); the copy lives two levels below src/wallet.
+    writeFileSync(file, sentSrc.replace(from, to).replace("from './broadcast-outcome.ts'", "from '../../src/wallet/broadcast-outcome.ts'"));
     return import(pathToFileURL(file).href);
   };
 
@@ -1517,6 +1519,98 @@ console.log('check-wc: the sent view after a dApp transaction, batch or browser 
   check('not included in two minutes: its title and sentence, UserOperation hash only, nothing awaited',
     late.title === 'Submitted, not yet included' && late.txid === null && late.userOpHash === OP && late.receiptState === undefined &&
       late.detail === 'The bundler accepted the operation, but it was not included within two minutes, so the dApp was told no transaction hash is available yet. Look the UserOperation hash up in an ERC-4337 explorer before retrying anything.');
+
+  // The bounded-broadcast follow-ups: an OPEN outcome (no answer in time, an
+  // HTTP 5xx, a dropped connection) is completed like an accepted send — the
+  // dApp gets the hash the device computed before the broadcast (or the batch
+  // id), first; then the queue item completes (it is NOT released back to the
+  // queue, where a second approval could send twice); then the view says the
+  // outcome is unknown. Real send.ts sendEvm through the engine's real
+  // httpTransport over a fetch that answers HTTP 502, the real sentOrOpen /
+  // answerDappThenShow / wcSentResult, and a fake client and queue that record
+  // the order.
+  {
+    const { ethers } = await import('ethers');
+    const sendMod = await import('../src/wallet/send.ts');
+    const bcast = await import('../src/wallet/broadcast-outcome.ts');
+    const seedW = mnemonicToSeed('abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about');
+    const signerW = evmKeyProvider.deriveAccount(seedW, 0, 0);
+    seedW.fill(0);
+    const memW = () => {
+      const map = new Map();
+      return { map, getItem: async (k) => map.get(k) ?? null, setItem: async (k, v) => void map.set(k, v), removeItem: async (k) => void map.delete(k) };
+    };
+    sendMod.setPendingRecordStore(memW());
+    let rawSent = null;
+    const savedFetchW = globalThis.fetch;
+    globalThis.fetch = async (_url, init) => {
+      const { method, params } = JSON.parse(init.body);
+      if (method === 'eth_sendRawTransaction') rawSent = params[0];
+      return { ok: false, status: 502, json: async () => ({}) };
+    };
+    const quoteW = {
+      kind: 'evm', to: `0x${'69'.repeat(20)}`, amount: 1n, balance: 10n ** 18n, nonce: 77n, chainId: 11155111n, gasLimit: 21_000n,
+      maxFeePerGas: 2n, maxPriorityFeePerGas: 1n, fee: 42_000n, total: 42_001n, simulation: { ok: true, returnData: '0x' },
+    };
+    const log = [];
+    let released = false;
+    const fakeClient = { respond: async (result) => void log.push(`respond:${result}`) };
+    const queue = { complete: () => log.push('complete'), release: () => (released = true) };
+    let view = null;
+    let thrown = null;
+    try {
+      const eoaSent = await S.sentOrOpen(() => sendMod.sendEvm('https://node.example', signerW, quoteW, null), 'tx');
+      const broadcast = eoaSent.open ? { txid: eoaSent.open.hash } : eoaSent.value;
+      await S.answerDappThenShow({
+        respond: () => fakeClient.respond(broadcast.txid),
+        complete: () => queue.complete(),
+        show: (dappNotified) => {
+          log.push('show');
+          view = S.wcSentResult({ ...base, kind: 'eoa-transaction', txid: broadcast.txid, userOpHash: null, dappNotified, open: eoaSent.open });
+        },
+      });
+    } catch (e) {
+      thrown = e;
+      queue.release();
+    } finally {
+      globalThis.fetch = savedFetchW;
+      sendMod.setPendingRecordStore(null);
+    }
+    const deviceHash = rawSent ? ethers.Transaction.from(rawSent).hash.toLowerCase() : '#';
+    check('open outcome (HTTP 502) on a dApp\'s eth_sendTransaction: the dApp is answered with the hash computed on the device, then the item completes, then the view shows',
+      thrown === null && log.join() === `respond:${deviceHash},complete,show`, `${log.join()} ${thrown?.message ?? ''}`);
+    check('…the request is NOT released back to the queue (a second approval could send twice)', released === false);
+    check('…the view: "Submitted, outcome unknown", the open sentence for a listed transaction, then what the dApp was told, the hash kept, not a success colour',
+      view?.title === 'Submitted, outcome unknown' && view.outcomeUnknown === true && view.txid === deviceHash &&
+        view.detail === `${bcast.BROADCAST_TX_OPEN_SENTENCE} ${S.WC_OPEN_TX_ANSWERED}` && !/not sent|nothing was sent/i.test(view.detail));
+    check('…the not-notified variant names the failed reply too',
+      S.wcSentResult({ ...base, kind: 'eoa-transaction', txid: TX, userOpHash: null, dappNotified: false, open: { kind: 'tx', hash: TX, recorded: true, reason: 'timeout' } }).detail ===
+        `${bcast.BROADCAST_TX_UNKNOWN_SENTENCE} ${S.WC_OPEN_TX_ANSWERED} ${S.WC_OPEN_NOT_NOTIFIED}`);
+    const openOp = { kind: 'userop', hash: OP, recorded: true, reason: 'connection' };
+    const batchOpen = S.wcSentResult({ ...base, kind: 'batch', txid: null, userOpHash: OP, dappNotified: true, open: openOp });
+    check('…a batch with an open outcome: the same title, the operation sentence and the batch-id sentence, the receipt still awaited',
+      batchOpen.title === 'Submitted, outcome unknown' && batchOpen.receiptState === 'pending' && batchOpen.detail === `${bcast.BROADCAST_USEROP_OPEN_SENTENCE} ${S.WC_OPEN_BATCH_ANSWERED}`);
+    const lateOpen = S.wcSentResult({ ...base, kind: 'not-included', txid: null, userOpHash: OP, dappNotified: true, open: openOp });
+    check('…a smart-account transaction with no receipt in two minutes: never "The bundler accepted the operation"',
+      lateOpen.title === 'Submitted, outcome unknown' && lateOpen.detail === `${bcast.BROADCAST_USEROP_OPEN_SENTENCE} ${S.WC_OPEN_NOT_INCLUDED}` && !/accepted the operation/.test(lateOpen.detail));
+    check('…a receipt found means it was included: the ordinary "Transaction sent" view, whatever the open flag',
+      S.wcSentResult({ ...base, kind: 'smart-transaction', txid: TX, userOpHash: OP, dappNotified: true, success: true, open: openOp }).title === 'Transaction sent');
+    check('…without an open outcome every view is exactly as before (the same objects as above)',
+      JSON.stringify(S.wcSentResult({ ...base, kind: 'eoa-transaction', txid: TX, userOpHash: null, dappNotified: true, open: null })) === JSON.stringify(eoa));
+    // sentOrOpen: only the app's wrapper of the right kind with a 32-byte hash; every other error goes the old way.
+    const refused = new Error('RPC error -32000: nonce too low (eth_sendRawTransaction)');
+    check('sentOrOpen: a definite refusal is thrown unchanged (the old path releases the item with its error)',
+      (await S.sentOrOpen(async () => { throw refused; }, 'tx').then(() => null, (e) => e)) === refused);
+    check('…a wrapper of the other kind, or without a usable hash, is not taken as open',
+      S.openBroadcastOf({ name: 'BroadcastOutcomeUnknownError', kind: 'userop', hash: TX, recorded: true }, 'tx') === null &&
+        S.openBroadcastOf({ name: 'BroadcastOutcomeUnknownError', kind: 'tx', hash: '0x12', recorded: true }, 'tx') === null &&
+        S.openBroadcastOf({ name: 'BroadcastTimeoutError' }, 'tx') === null);
+    check('…an accepted send passes through with open null', (await S.sentOrOpen(async () => ({ txid: TX }), 'tx')).open === null);
+    const rethrowAll = await sentMutant('    const open = openBroadcastOf(error, kind);\n    if (!open) throw error;', '    throw error;');
+    check('mutant caught: a sentOrOpen that treats an open outcome as an error (the item would go back to the queue)',
+      (await rethrowAll.sentOrOpen(async () => { throw Object.assign(new Error('x'), { name: 'BroadcastOutcomeUnknownError', kind: 'tx', hash: TX, recorded: true }); }, 'tx').then(() => 'ok', () => 'threw')) === 'threw');
+  }
+
   // The bundle hash arrives later (the batch path): only the same view gains it.
   const linked = S.withSentReceipt(batch, 'r:7', { kind: 'found', success: true, txHash: TX });
   check('batch receipt: the same view gains the bundle transaction hash (so the note field links its note)', linked.txid === TX && linked.userOpHash === OP && linked.receiptState === 'found' && linked.success === true);
@@ -1570,6 +1664,19 @@ console.log('check-wc: the sent view after a dApp transaction, batch or browser 
       "          show: (dappNotified) =>\n            setSent(\n              wcSentResult({\n                kind: 'eoa-transaction',\n          respond: () => respondApproved(composite, item.event.topic, item.event.id, broadcast.txid),\n          complete: () => controller.complete(item.key),")));
   check('mutant caught: the batch path without the view', !wiringOk(provider.replace("kind: 'batch',", "kind: 'batch-gone',")));
   check('mutant caught: the not-included path without the view', !wiringOk(provider.replace("kind: 'not-included',", "kind: 'gone',")));
+  // The bounded-broadcast follow-ups: every send path goes through sentOrOpen
+  // and hands its open broadcast to the view; the hash answered is the open
+  // broadcast's on an open outcome.
+  const openWiringOk = (src) =>
+    (src.match(/await sentOrOpen\(/g) ?? []).length === 3 &&
+    src.includes("const broadcast = eoaSent.open ? { txid: eoaSent.open.hash } : eoaSent.value;") &&
+    src.includes('const userOpHash = batchSent.open ? batchSent.open.hash : batchSent.value.userOpHash;') &&
+    src.includes('const userOpHash = txSent.open ? txSent.open.hash : txSent.value.userOpHash;') &&
+    ['open: eoaSent.open,', 'open: batchSent.open,', 'open: txSent.open,'].every((x) => src.includes(x)) &&
+    /=> sendEvm\(url, signer, quote, evmChain\.explorerTxBase\)\),\s*'tx',/.test(src) && (src.match(/sendAa\(bundle, signer, quote, aaSentMetaFor\(item\.event\.topic\)\)\),\s*'userop',/g) ?? []).length === 2;
+  check('provider: the EOA transaction, the batch and the smart-account transaction each go through sentOrOpen and pass the open broadcast to the view', openWiringOk(provider));
+  check('mutant caught: the EOA path calling sendEvm outside sentOrOpen (an open outcome would release the item back to the queue)',
+    !openWiringOk(provider.replace("const eoaSent = await sentOrOpen(", "const eoaSent = await (async (f) => ({ value: await f(), open: null }))(")));
 }
 
 console.log('');

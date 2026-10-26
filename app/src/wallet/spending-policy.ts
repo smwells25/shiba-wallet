@@ -23,8 +23,15 @@ import type {
 // Explicit .ts extensions: this module is imported by
 // scripts/check-spending-policy.mjs under Node's type stripping, which
 // resolves relative specifiers literally.
-import { addEvmSentListener, type EvmSendQuote, type EvmSentEvent } from './send.ts';
-import { addAaSentListener, type AaSendQuote, type AaSentEvent } from './aa.ts';
+import { addEvmSentListener, evmQuoteSpendInput, type EvmSendQuote, type EvmSentEvent } from './send.ts';
+import { aaQuoteSpendInput, addAaSentListener, type AaSendQuote, type AaSentEvent } from './aa.ts';
+import {
+  addBroadcastSpendRecorder,
+  type BroadcastSpend,
+  type BroadcastSpendRecorder,
+  type BroadcastSpendState,
+} from './broadcast-spend.ts';
+import { addNonceSettledListener, type NonceSettledEvent } from './pending-transactions.ts';
 import type { Erc20SendQuote } from './send-erc20.ts';
 import type { NftSendQuote } from './send-nft.ts';
 import type { KeyValueStore } from './tokens.ts';
@@ -72,11 +79,21 @@ import { maskAmount } from '../config/prefs.ts';
  * counts only for a native-coin policy whose "count network fees" switch is
  * on (default off); the fee counted is the quote's worst case.
  *
- * HISTORY. A spend is recorded ONLY when the node accepted the transaction
- * (send.ts sendEvm → addEvmSentListener, after eth_sendRawTransaction
- * returned a hash) or the bundler accepted the operation (aa.ts sendAa →
- * addAaSentListener, after eth_sendUserOperation returned a hash). Failed or
- * refused sends are never recorded. Acceptance is not inclusion: an
+ * HISTORY. A spend is counted BEFORE its broadcast (the bounded-broadcast
+ * follow-ups of phase 23 item 8; ./broadcast-spend.ts): when send.ts
+ * broadcastRecorded or aa.ts submitWithPendingRecord records the
+ * transaction or operation in the pending registry, under the hash computed
+ * on the device. A definite refusal (the node or bundler answered with an
+ * error) releases what that attempt counted; a broadcast whose outcome is
+ * unknown (no answer in time, an HTTP 5xx, a dropped connection) stays
+ * counted, because it may have gone through. The acceptance recorders
+ * (send.ts sendEvm → addEvmSentListener, aa.ts sendAa → addAaSentListener,
+ * and the screens' recordAcceptedSpend calls) still run, but a spend whose
+ * hash is already in the history is never added again: a send is counted
+ * once. When the pending registry later learns that a counted transaction
+ * can never be included (its nonce went to a cancellation or another send;
+ * pending-transactions.ts addNonceSettledListener, without a new network
+ * read), its records are released. Acceptance is not inclusion: an
  * accepted transaction that later fails still counts (the conservative
  * side). Only tokens that have a policy in the scope are recorded, and only
  * while one exists ("Sends made before a limit existed are not counted").
@@ -762,15 +779,13 @@ export function spendingInputForQuote(
     // A USDC-fee quote (quote.tokenGas, ./token-gas.ts) carries fee 0n: no
     // ETH pays for its gas, and its USDC fee is deliberately not counted,
     // because fees count only under countFees, which validatePolicyList
-    // allows only on a limit for the network's own coin.
-    return { spender: quote.sender, calls: quote.calls, fee: quote.sponsored ? 0n : quote.fee };
+    // allows only on a limit for the network's own coin. (aa.ts
+    // aaQuoteSpendInput: the same input the before-broadcast count uses.)
+    return aaQuoteSpendInput(quote);
   }
   if (quote.kind === 'evm') {
-    return {
-      spender: from,
-      calls: [{ to: quote.to, value: quote.amount, ...(quote.data ? { data: quote.data } : {}) }],
-      fee: quote.fee,
-    };
+    // send.ts evmQuoteSpendInput: the same input the before-broadcast count uses.
+    return evmQuoteSpendInput(quote, from);
   }
   // ERC-20 and NFT: value 0 to the contract, carrying the transfer calldata.
   return { spender: from, calls: [{ to: quote.contract, value: 0n, data: quote.data }], fee: quote.fee };
@@ -819,37 +834,54 @@ export function clearStagedSpends(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Recording (only after acceptance)
+// Recording (before the broadcast, and again — without a second count — after acceptance)
 // ---------------------------------------------------------------------------
 
+function sameRef(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase();
+}
+
 /**
- * Appends an ACCEPTED send to the history: the outflows the check staged for
- * exactly these calls, else what the calls themselves show. Only tokens with
- * a policy in the scope are kept; a fee record is added when the scope has a
- * native-coin policy (so switching "count network fees" on later has data).
- * Does nothing when the scope has no policy, and never throws (bookkeeping
- * must not turn an accepted send into an error).
+ * The staged check each before-broadcast count took, by the hash it counted
+ * under: put back when a refusal releases the count, so approving the same
+ * quote again (when its screen allows that without a new check) counts the
+ * same outflows. In memory only.
  */
-export async function recordAcceptedSpend(options: {
+const countedStaged = new Map<string, { fingerprint: string; spend: StagedSpend }>();
+
+/**
+ * Appends a spend to the history under `ref`: the outflows the check staged
+ * for exactly these calls, else what the calls themselves show. Only tokens
+ * with a policy in the scope are kept; a fee record is added when the scope
+ * has a native-coin policy (so switching "count network fees" on later has
+ * data). Nothing is added when records with this `ref` are already there
+ * (a send is counted once: before its broadcast, then found again on
+ * acceptance). Returns what it did; never throws.
+ */
+async function writeSpend(options: {
   scope: SpendingScope;
   spender: string;
   calls: readonly SpendingCall[];
   fee: bigint;
   ref: string;
-  store?: KeyValueStore;
+  store: KeyValueStore;
   now?: number;
-}): Promise<void> {
-  const store = options.store ?? AsyncStorage;
-  const fingerprint = callsFingerprint(options.scope.chain, options.spender, options.calls);
-  const stagedSpend = takeStaged(fingerprint);
+}): Promise<{ state: BroadcastSpendState; staged: { fingerprint: string; spend: StagedSpend } | null }> {
+  const store = options.store;
+  let staged: { fingerprint: string; spend: StagedSpend } | null = null;
   try {
-    await serialized(async () => {
+    const key = scopeKey(options.scope);
+    const state = await serialized(async (): Promise<BroadcastSpendState> => {
       const policiesRead = await readPolicyBlob(store);
-      if (!policiesRead.ok) return;
-      const policies = policiesRead.data[scopeKey(options.scope)] ?? [];
-      if (policies.length === 0) return;
+      if (!policiesRead.ok) return 'failed';
+      const policies = policiesRead.data[key] ?? [];
+      if (policies.length === 0) return 'none';
       const historyRead = await readHistoryBlob(store);
-      if (!historyRead.ok) return; // fail-closed at check time already covers this
+      if (!historyRead.ok) return 'failed'; // fail-closed at check time already covers this
+      if ((historyRead.data[key] ?? []).some((r) => sameRef(r.ref, options.ref))) return 'existed';
+      const fingerprint = callsFingerprint(options.scope.chain, options.spender, options.calls);
+      const stagedSpend = takeStaged(fingerprint);
+      if (stagedSpend) staged = { fingerprint, spend: stagedSpend };
       const now = options.now ?? nowSeconds();
       const outflows = stagedSpend?.outflows ?? outflowsFromCalls(options.calls, options.spender).outflows;
       const fee = stagedSpend?.fee ?? options.fee;
@@ -860,13 +892,143 @@ export async function recordAcceptedSpend(options: {
       if (fee > 0n && covered(NATIVE_TOKEN)) {
         fresh.push({ token: NATIVE_TOKEN, amount: fee, at: now, kind: 'fee', ref: options.ref });
       }
-      const key = scopeKey(options.scope);
+      if (fresh.length === 0) return 'none';
       const merged = pruneRecords([...(historyRead.data[key] ?? []), ...fresh], policies, now);
       await writeHistoryBlob(store, { ...historyRead.data, [key]: merged });
+      return 'created';
     });
+    return { state, staged };
   } catch {
     // Best effort, see above.
+    return { state: 'failed', staged };
   }
+}
+
+/**
+ * Appends an ACCEPTED send to the history (see writeSpend). Does nothing
+ * when the scope has no policy or when the send was already counted before
+ * its broadcast under the same hash, and never throws (bookkeeping must not
+ * turn an accepted send into an error).
+ */
+export async function recordAcceptedSpend(options: {
+  scope: SpendingScope;
+  spender: string;
+  calls: readonly SpendingCall[];
+  fee: bigint;
+  ref: string;
+  store?: KeyValueStore;
+  now?: number;
+}): Promise<void> {
+  await writeSpend({ ...options, store: options.store ?? AsyncStorage });
+}
+
+/**
+ * Removes the records of one hash from a scope's history (`kinds`: all, or
+ * only the fee records). Returns how many were removed; never throws.
+ */
+export async function releaseSpend(options: {
+  scope: SpendingScope;
+  ref: string;
+  kinds?: readonly SpendRecord['kind'][];
+  store?: KeyValueStore;
+}): Promise<number> {
+  const store = options.store ?? AsyncStorage;
+  try {
+    const key = scopeKey(options.scope);
+    return await serialized(async () => {
+      const historyRead = await readHistoryBlob(store);
+      if (!historyRead.ok) return 0;
+      const before = historyRead.data[key] ?? [];
+      const kinds = options.kinds ?? ['transfer', 'fee'];
+      const after = before.filter((r) => !(sameRef(r.ref, options.ref) && kinds.includes(r.kind)));
+      if (after.length === before.length) return 0;
+      await writeHistoryBlob(store, { ...historyRead.data, [key]: after });
+      return before.length - after.length;
+    });
+  } catch {
+    return 0;
+  }
+}
+
+/** Moves a scope's records from one hash to another (the hash the node or bundler returned). Never throws. */
+async function rekeySpend(scope: SpendingScope, from: string, to: string, store: KeyValueStore): Promise<void> {
+  if (sameRef(from, to)) return;
+  try {
+    const key = scopeKey(scope);
+    await serialized(async () => {
+      const historyRead = await readHistoryBlob(store);
+      if (!historyRead.ok) return;
+      const before = historyRead.data[key] ?? [];
+      if (!before.some((r) => sameRef(r.ref, from))) return;
+      const after = before.map((r) => (sameRef(r.ref, from) ? { ...r, ref: to } : r));
+      await writeHistoryBlob(store, { ...historyRead.data, [key]: after });
+    });
+  } catch {
+    // Bookkeeping only.
+  }
+}
+
+/**
+ * The before-broadcast recorder (./broadcast-spend.ts): counts a spend when
+ * the transaction or operation is recorded as pending, releases it after a
+ * definite refusal (putting the staged check back), and re-keys it to the
+ * returned hash on acceptance. `store` is the default for spends that name
+ * none.
+ */
+export function broadcastSpendRecorder(store: KeyValueStore = AsyncStorage): BroadcastSpendRecorder {
+  const storeOf = (spend: BroadcastSpend) => (spend.store as KeyValueStore | undefined) ?? store;
+  const scopeOf = (spend: BroadcastSpend): SpendingScope => ({ chain: spend.chain, owner: spend.owner });
+  return {
+    async record(spend, ref) {
+      const { state, staged } = await writeSpend({
+        scope: scopeOf(spend),
+        spender: spend.spender,
+        calls: spend.calls,
+        fee: spend.fee,
+        ref,
+        store: storeOf(spend),
+        ...(spend.now !== undefined ? { now: spend.now } : {}),
+      });
+      if (staged) countedStaged.set(ref.toLowerCase(), staged);
+      return state;
+    },
+    async release(spend, ref) {
+      await releaseSpend({ scope: scopeOf(spend), ref, store: storeOf(spend) });
+      const staged = countedStaged.get(ref.toLowerCase());
+      countedStaged.delete(ref.toLowerCase());
+      if (staged) stage(staged.fingerprint, { outflows: staged.spend.outflows, fee: staged.spend.fee });
+    },
+    async accepted(spend, ref, acceptedRef) {
+      countedStaged.delete(ref.toLowerCase());
+      await rekeySpend(scopeOf(spend), ref, acceptedRef, storeOf(spend));
+    },
+  };
+}
+
+/**
+ * What a settled nonce means for the counts (pending-transactions.ts
+ * NonceSettledEvent; no network read of its own): the broadcasts a block
+ * can never include now are released — every record of each one when the
+ * nonce went to a cancellation, to another ordinary send or to the original
+ * before its replacement; only the FEE records when a speed-up was included
+ * (the speed-up re-sent the original's value, which stays counted under the
+ * original, and counts only its own fee). A nonce with a single broadcast
+ * releases nothing. Returns the number of records released.
+ */
+export async function releaseSettledSpend(event: NonceSettledEvent, store: KeyValueStore = AsyncStorage): Promise<number> {
+  if (event.outcome === 'mined') return 0;
+  const scope = { chain: event.chain, owner: event.from };
+  let released = 0;
+  for (const tx of event.txs) {
+    if (sameRef(tx.hash, event.minedHash)) continue;
+    released += await releaseSpend({
+      scope,
+      ref: tx.hash,
+      kinds: event.outcome === 'replaced' ? ['fee'] : ['transfer', 'fee'],
+      store,
+    });
+  }
+  return released;
 }
 
 /** sendEvm listener: the EOA's own transaction, accepted by the node. */
@@ -901,14 +1063,20 @@ export function aaSentRecorder(store: KeyValueStore = AsyncStorage): (event: AaS
 
 /**
  * Subscribes the recorders to send.ts and aa.ts (once, at app start —
- * WalletContext). Returns the unsubscribe function.
+ * WalletContext): the acceptance recorders, the before-broadcast recorder
+ * (./broadcast-spend.ts) and the settled-nonce release
+ * (pending-transactions.ts). Returns the unsubscribe function.
  */
 export function installSpendingRecorder(store: KeyValueStore = AsyncStorage): () => void {
   const offEvm = addEvmSentListener(evmSentRecorder(store));
   const offAa = addAaSentListener(aaSentRecorder(store));
+  const offBroadcast = addBroadcastSpendRecorder(broadcastSpendRecorder(store));
+  const offSettled = addNonceSettledListener((event) => releaseSettledSpend(event, store));
   return () => {
     offEvm();
     offAa();
+    offBroadcast();
+    offSettled();
   };
 }
 

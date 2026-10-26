@@ -70,6 +70,7 @@ import {
   pooledFees,
   recordPendingTransactionBeforeBroadcast,
   replacementFees,
+  replacementSpendingInput,
   txRecordFromQuote,
   type NonceGroup,
   type PendingStore,
@@ -83,7 +84,15 @@ import {
   BroadcastOutcomeUnknownError,
   describeBroadcastOutcome,
   isBroadcastOutcomeUnknown,
+  broadcastOutcomeReasonOf,
 } from './broadcast-outcome.ts';
+// A leaf module (no imports): the before-broadcast spending count.
+import {
+  countSpendBeforeBroadcast,
+  releaseSpendAfterRefusal,
+  spendAccepted,
+  type BroadcastSpend,
+} from './broadcast-spend.ts';
 
 /**
  * Send-flow engine glue: recipient validation, fee quoting, max-amount
@@ -1357,9 +1366,12 @@ const evmSentListeners = new Set<EvmSentListener>();
  * Subscribes to accepted EOA transactions (every sendEvm caller: native,
  * ERC-20 and NFT sends, swaps, revokes, WalletConnect). Used by the
  * app-enforced spending policy (./spending-policy.ts) to record what left
- * the account. Never called for a send the node refused, nor for one whose
- * broadcast got no answer in time (its outcome is unknown; the pending
- * registry lists it instead). Returns the unsubscribe function.
+ * the account (since the bounded-broadcast follow-ups the spend was already
+ * counted before the broadcast under the same hash, so this record adds
+ * nothing; it stays as the fallback when that count could not be written).
+ * Never called for a send the node refused, nor for one whose broadcast got
+ * no usable answer (its outcome is unknown; the pending registry lists it
+ * and the spend stays counted). Returns the unsubscribe function.
  */
 export function addEvmSentListener(listener: EvmSentListener): () => void {
   evmSentListeners.add(listener);
@@ -1438,6 +1450,42 @@ export function setPendingRecordStore(store: PendingStore | null): void {
  * the pending registry is what survives a restart.
  */
 const outcomeUnknownQuotes = new WeakSet<object>();
+
+/**
+ * What an EOA transaction quote counts against the app's spending limits:
+ * the sender's own outflows (the value, and the calldata it carries) and the
+ * worst-case fee. The one definition: spending-policy.ts spendingInputForQuote
+ * uses it for an 'evm' quote, and broadcastRecorded counts it before the
+ * broadcast (./broadcast-spend.ts).
+ */
+export function evmQuoteSpendInput(
+  quote: Pick<EvmSendQuote, 'to' | 'amount' | 'data' | 'fee'>,
+  from: string,
+): { spender: string; calls: { to: string; value: bigint; data?: Uint8Array }[]; fee: bigint } {
+  return {
+    spender: from,
+    calls: [{ to: quote.to, value: quote.amount, ...(quote.data ? { data: quote.data } : {}) }],
+    fee: quote.fee,
+  };
+}
+
+/** The before-broadcast spend of an ordinary EOA send (sendEvm, sendEvmWithSignature). */
+function evmBroadcastSpend(quote: EvmSendQuote, from: string): BroadcastSpend {
+  return { chain: `eip155:${quote.chainId}`, owner: from, ...evmQuoteSpendInput(quote, from) };
+}
+
+/**
+ * The before-broadcast spend of a replacement: its fee only
+ * (pending-transactions.ts replacementSpendingInput — the value was counted
+ * with the original), under the original's account.
+ */
+function replacementBroadcastSpend(quote: EvmReplacementQuote): BroadcastSpend {
+  return {
+    chain: quote.replacement.chain,
+    owner: quote.replacement.from,
+    ...replacementSpendingInput({ fee: quote.fee, from: quote.replacement.from }),
+  };
+}
 const outcomeUnknownHashes = new Set<string>();
 
 /** True when this quote's broadcast got no answer in time (checked by screens before the device check). */
@@ -1460,13 +1508,20 @@ export function broadcastOutcomeUnknownFor(quote: object): boolean {
  *     stop the broadcast, as before;
  *  3. eth_sendRawTransaction, bounded by the engine's BROADCAST_TIMEOUT_MS:
  *     - accepted: the node's hash is returned (the record stays);
- *     - no answer in time: the quote and the hash are marked, the record
- *       stays, and BroadcastOutcomeUnknownError says the outcome is unknown
- *       (never "not sent"); the card's poll settles it;
- *     - any other error (the node refused, an HTTP error, no connection):
- *       the record this call created is removed again, so the card never
+ *     - no answer in time, an HTTP 5xx, or a connection that failed before a
+ *       JSON-RPC answer was parsed (the engine's BroadcastTimeoutError and
+ *       BroadcastUnansweredError): the quote and the hash are marked, the
+ *       record stays, and BroadcastOutcomeUnknownError says the outcome is
+ *       unknown (never "not sent"); the card's poll settles it;
+ *     - any other error (the node answered with a JSON-RPC error, an HTTP
+ *       4xx): the record this call created is removed again, so the card never
  *       lists a transaction the node answered with an error, and the error
  *       is rethrown unchanged (every existing translation still applies).
+ *
+ * `spend` is counted against the app's spending limits at step 2, under the
+ * same device-computed hash (./broadcast-spend.ts): released on a definite
+ * refusal, kept on an unknown outcome, re-keyed to the node's hash on
+ * acceptance (so the sent listener's own record finds it and adds nothing).
  *
  * Before phase 23 item 8 the record was written by a sent listener after the
  * node accepted; one record per hash either way (the registry is keyed by
@@ -1479,6 +1534,7 @@ async function broadcastRecorded(args: {
   quote: object;
   record: () => PendingTxRecord;
   store: PendingStore | undefined;
+  spend: BroadcastSpend | null;
 }): Promise<string> {
   const hash = args.txHash.toLowerCase();
   if (outcomeUnknownQuotes.has(args.quote) || outcomeUnknownHashes.has(hash)) {
@@ -1491,10 +1547,13 @@ async function broadcastRecorded(args: {
     record = null;
   }
   const state = record ? await recordPendingTransactionBeforeBroadcast(record, args.store) : 'failed';
+  const spendStates = await countSpendBeforeBroadcast(args.spend, hash);
+  let txid: string;
   try {
-    return await args.node.sendRawTransaction(args.rawHex);
+    txid = await args.node.sendRawTransaction(args.rawHex);
   } catch (error) {
     if (isBroadcastOutcomeUnknown(error)) {
+      // The spend stays counted: the transaction may have gone through.
       outcomeUnknownQuotes.add(args.quote);
       outcomeUnknownHashes.add(hash);
       throw new BroadcastOutcomeUnknownError({
@@ -1503,13 +1562,17 @@ async function broadcastRecorded(args: {
         chain: record?.chain ?? '',
         recorded: state !== 'failed',
         technical: error instanceof Error ? error.message : String(error),
+        reason: broadcastOutcomeReasonOf(error) ?? 'timeout',
       });
     }
     if (record && state === 'created') {
       await forgetPendingTransaction({ chain: record.chain, hash }, args.store).catch(() => undefined);
     }
+    await releaseSpendAfterRefusal(args.spend, hash, spendStates);
     throw error;
   }
+  await spendAccepted(args.spend, hash, typeof txid === 'string' ? txid : hash, spendStates);
+  return txid;
 }
 
 /**
@@ -1565,6 +1628,7 @@ export async function sendEvm(
     quote,
     record: () => txRecordFromQuote(signer.address, quote, signed.txHash, Date.now()),
     store: pendingRecordStore ?? undefined,
+    spend: evmBroadcastSpend(quote, signer.address),
   });
   notifyEvmSent({ from: signer.address, quote, txid });
   notifySendAccepted();
@@ -1622,6 +1686,7 @@ export async function sendEvmWithSignature(
     quote,
     record: () => txRecordFromQuote(from, quote, signed.txHash, Date.now()),
     store: pendingRecordStore ?? undefined,
+    spend: evmBroadcastSpend(quote, from),
   });
   notifyEvmSent({ from, quote, txid });
   notifySendAccepted();
@@ -1875,8 +1940,10 @@ export async function checkReplacementBeforeApproval(
  * Signs and broadcasts a replacement, after the device check. A quote goes
  * out at most once. The signer must be the original's sender. Does NOT fan
  * out to the sent listeners (the spending recorder would count the value a
- * second time): the caller records the fee with recordAcceptedSpend
- * (pending-transactions.ts replacementSpendingInput). The new transaction
+ * second time): its fee alone (pending-transactions.ts
+ * replacementSpendingInput) is counted before the broadcast
+ * (broadcastRecorded, ./broadcast-spend.ts), and the caller's own
+ * recordAcceptedSpend after acceptance finds it and adds nothing. The new transaction
  * is recorded in the pending registry, linked to the one it replaces, just
  * BEFORE the broadcast (broadcastRecorded): removed again when the node
  * refuses it, kept when no answer comes in time (BroadcastOutcomeUnknownError). A node refusal is translated: "replacement transaction
@@ -1925,6 +1992,7 @@ export async function sendEvmReplacement(
           replaces: quote.replacement.replaces,
         }),
       store: options.store ?? pendingRecordStore ?? undefined,
+      spend: replacementBroadcastSpend(quote),
     });
   } catch (error) {
     if (isBroadcastOutcomeUnknown(error)) throw error;
@@ -1993,6 +2061,7 @@ export async function sendEvmReplacementWithSignature(
           replaces: quote.replacement.replaces,
         }),
       store: options.store ?? pendingRecordStore ?? undefined,
+      spend: replacementBroadcastSpend(quote),
     });
   } catch (error) {
     if (isBroadcastOutcomeUnknown(error)) throw error;

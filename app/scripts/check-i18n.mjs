@@ -238,9 +238,14 @@ function fixtureProblems(table, fixture) {
   const COLD_AA_NEW = ['readiness.cold-aa.title', 'readiness.cold-aa.reason'];
   // Phase 23 item 6: the wallet handle's screen and its readiness row are new too.
   const handleNew = (id) => id.startsWith('handle.') || id === 'readiness.wallet-handle.title' || id === 'readiness.wallet-handle.reason';
-  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row and the wallet handle\'s',
-    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || handleNew(id)) &&
-      LOCK_KIND_NEW.every((id) => FIXTURE.new.includes(id)) && COLD_AA_NEW.every((id) => FIXTURE.new.includes(id)));
+  // Phase 23 (the bounded-broadcast follow-ups): the open-outcome forms of the
+  // broadcast sentences (an HTTP 5xx or a dropped connection, not a timeout).
+  const BROADCAST_OPEN_NEW = ['broadcast.open.title', 'broadcast.tx.open', 'broadcast.tx.openUnlisted', 'broadcast.userop.open',
+    'broadcast.userop.openUnlisted', 'broadcast.open'];
+  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the wallet handle\'s and the six open-outcome broadcast sentences',
+    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id)) &&
+      LOCK_KIND_NEW.every((id) => FIXTURE.new.includes(id)) && COLD_AA_NEW.every((id) => FIXTURE.new.includes(id)) &&
+      BROADCAST_OPEN_NEW.every((id) => FIXTURE.new.includes(id)));
   check('the changed entries are exactly the transaction-notes line (reworded for the records backup), the watch-only notice (reworded for the off-line signer) and the bridge readiness reason (CCTP sent, phase 23), each with its reason',
     JSON.stringify(Object.keys(FIXTURE.changed ?? {})) === JSON.stringify(['activity.note.privacy', 'notice.watchOnly', 'readiness.bridge.reason']) &&
       en['activity.note.privacy'] === 'Notes are kept on this phone and are not sent anywhere. They are deleted when the wallet is wiped. A records backup (Settings → Records backup) includes them, and your recovery phrase restores them from it. Hide amounts does not hide them.');
@@ -464,6 +469,9 @@ const CONSTANTS = {
   'send.aa.estimatePassed': coldAa.COLD_AA_ESTIMATE_PASSED,
   'broadcast.unknown.title': bcast.BROADCAST_OUTCOME_UNKNOWN_TITLE, 'broadcast.handedOver.title': bcast.BROADCAST_ALREADY_HANDED_OVER_TITLE,
   'broadcast.handedOver': bcast.BROADCAST_ALREADY_HANDED_OVER_SENTENCE,
+  'broadcast.open.title': bcast.BROADCAST_OUTCOME_OPEN_TITLE, 'broadcast.tx.openUnlisted': bcast.BROADCAST_TX_OPEN_UNLISTED_SENTENCE,
+  'broadcast.userop.open': bcast.BROADCAST_USEROP_OPEN_SENTENCE, 'broadcast.userop.openUnlisted': bcast.BROADCAST_USEROP_OPEN_UNLISTED_SENTENCE,
+  'broadcast.open': bcast.BROADCAST_OPEN_SENTENCE,
 };
 {
   const bad = Object.entries(CONSTANTS).filter(([id, v]) => en[id] !== v).map(([id, v]) => `${id}: ${JSON.stringify(en[id])} ≠ ${JSON.stringify(v)}`);
@@ -803,6 +811,17 @@ console.log('check-i18n: the second localisation pass (phase 23 item 8)');
       I.t('broadcast.tx.unknownUnlisted', { seconds: 60 }) === bcast.BROADCAST_TX_UNKNOWN_UNLISTED_SENTENCE &&
       I.t('broadcast.userop.unknownUnlisted', { seconds: 60 }) === bcast.BROADCAST_USEROP_UNKNOWN_UNLISTED_SENTENCE &&
       I.t('broadcast.unknown', { seconds: 60 }) === bcast.BROADCAST_UNKNOWN_SENTENCE);
+  // The bounded-broadcast follow-ups: the open-outcome forms (an HTTP 5xx or a
+  // dropped connection) through the table equal the module's constants.
+  const openErr = { name: 'BroadcastOutcomeUnknownError', kind: 'userop', hash: '0xcd', chain: 'eip155:11155111', recorded: false, technical: 'x', reason: 'server-error' };
+  const openOut = bcast.describeBroadcastOutcome(openErr);
+  check('broadcast-outcome.ts: an open outcome (server error / dropped connection) has its own title and sentences through the table, never "within 60 seconds"',
+    I.t('broadcast.tx.open', { poll: 15 }) === bcast.BROADCAST_TX_OPEN_SENTENCE &&
+      bcast.broadcastOutcomeSentence('tx', true, 'connection') === bcast.BROADCAST_TX_OPEN_SENTENCE &&
+      bcast.broadcastOutcomeSentence('userop', false, 'server-error') === bcast.BROADCAST_USEROP_OPEN_UNLISTED_SENTENCE &&
+      bcast.broadcastOutcomeSentence('tx', true) === bcast.BROADCAST_TX_UNKNOWN_SENTENCE &&
+      openOut.title === bcast.BROADCAST_OUTCOME_OPEN_TITLE && openOut.detail === `${bcast.BROADCAST_USEROP_OPEN_UNLISTED_SENTENCE}\n\nTechnical detail: UserOperation hash: 0xcd. x` &&
+      ['broadcast.open.title', 'broadcast.tx.open', 'broadcast.tx.openUnlisted', 'broadcast.userop.open', 'broadcast.userop.openUnlisted', 'broadcast.open'].every((id) => !/within \{seconds\}|60 seconds/.test(en[id]) && typeof es[id] === 'string' && es[id] !== en[id]));
   // Call sites: the shared receipt lines and the Row sinks.
   const sendSrc = read('src/screens/SendScreen.tsx');
   const stakingSrc = read('src/screens/StakingScreen.tsx');

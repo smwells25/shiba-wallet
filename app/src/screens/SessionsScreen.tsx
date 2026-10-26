@@ -1495,13 +1495,13 @@ export function SessionsScreen({ navigation }: Props) {
   /** A refused or failed swap attempt in plain words, kept on the card. */
   const showSwapRefusal = (record: SessionRecord, e: unknown) => {
     const key = sessionRecordKey(record.chain, record.account, record.permissionId);
-    const { title, detail, outcome } = describeDcaSwapError(
+    const { title, detail, outcome, cause } = describeDcaSwapError(
       e,
       { accountType: bundle?.accountType ?? 'kernel-v3.3', symbol },
       describeSendError,
     );
     Alert.alert(title, detail);
-    setPayRefusals((prev) => ({ ...prev, [key]: dcaAttemptLine(outcome, detail) }));
+    setPayRefusals((prev) => ({ ...prev, [key]: dcaAttemptLine(outcome, detail, cause) }));
     refreshRecord(record);
   };
 
@@ -1695,14 +1695,14 @@ export function SessionsScreen({ navigation }: Props) {
   /** Shows a refused payment in plain words and keeps it on the card (the card stays). */
   const showPayRefusal = (record: SessionRecord, e: unknown) => {
     const key = sessionRecordKey(record.chain, record.account, record.permissionId);
-    const { title, detail, outcome } = describeRecurringPaymentError(
+    const { title, detail, outcome, cause } = describeRecurringPaymentError(
       e,
       { accountType: bundle?.accountType ?? 'kernel-v3.3', symbol },
       describeSendError,
     );
     Alert.alert(title, detail);
     // Only an actual refusal is called "refused" on the card (finding 1 of the 2026-10-09 rehearsal).
-    setPayRefusals((prev) => ({ ...prev, [key]: recurringAttemptLine(outcome, detail) }));
+    setPayRefusals((prev) => ({ ...prev, [key]: recurringAttemptLine(outcome, detail, cause) }));
     refreshRecord(record);
   };
 
