@@ -1216,7 +1216,11 @@ passphrase.
   passes the passphrase to `mnemonicToSeedSync`; `HdKeyring.fromMnemonic`
   takes one too (`keyring.ts` lines 19–25). `packages/core/test/chains.test.ts`
   lines 210–218 checks only that a passphrase changes the address; no
-  BIP-39 vector with the passphrase "TREZOR" is tested.
+  BIP-39 vector with the passphrase "TREZOR" is tested. (Closed in phase 23
+  item 7: `packages/core/test/bip39-vectors.test.ts` runs all 24 English
+  vectors of trezor/python-mnemonic `vectors.json` at `b57a5ad7` through
+  `mnemonicToSeed` and `HdKeyring.fromMnemonic` with "TREZOR", pinned by
+  entropy, seed and xprv rather than by the phrase.)
 - The app never passes a passphrase: `WalletContext.tsx` derives the
   public data with `mnemonicToSeed(mnemonic)` (line 357) and signs with
   `mnemonicToSeed(mnemonic)` (line 1343). The vault holds one phrase per
