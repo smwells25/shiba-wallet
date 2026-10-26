@@ -13933,3 +13933,112 @@ to the Chairperson at once.
       returns a userOpHash different from the device's. The agent left a
       second clean worktree wt-p23-bcast2-base in the scratchpad (its
       before run).
+- [x] Item 8, the third localisation pass — BRIDGE, MULTISIG AND THE REST OF
+      HOME, plus the co-signer Scan button's spoken label (commit 10e2832; 19
+      files, +6,704 / −1,720, mostly the regenerated en.ts / es.ts and the
+      fixture; check-i18n 124 (was 110; mutants 17 → 22), check-multisig
+      435 (431), check-home 111 (107), check-devmode 447 (444),
+      check-bridge 370 with pins changed in place; offline runner ALL
+      GREEN in the CTO's isolated worktree on HEAD 4d043e9 (code e55e5ce)
+      with --skip-bundle: engine 1,269, app 10,568 across 65 suites, lint
+      0/0, tsc clean; checkout 0 / apply 0 / 19 files; the staged patch id
+      equals both the verified tree's and the agent's stated
+      8860fe46…1a85d; the scan clean with no collision; the agent built
+      it against 6a1d2bb, rebased onto e55e5ce itself when told HEAD had
+      moved (two additive conflicts in check-i18n — the new-entries rule
+      keeps BROADCAST_OPEN_NEW and adds THIRD_PASS_NEW, the CONSTANTS map
+      keeps the broadcast constants — and its generator re-appended its
+      blocks after the broadcast slice's six ids in en.ts, es.ts and the
+      fixture), and re-ran the runner there; six hand mutants on the real
+      files caught, five in-suite mutants of its own; not seen on a
+      device). IDS: 475 in three delimited blocks headed "Phase 23 item 8
+      (third pass)" — Home 20 (HomeScreen.tsx plus watch-only.ts,
+      delegation.ts, token-gas.ts), Bridge 179 (BridgeScreen, BridgeViews,
+      bridge.ts), Multisig 276 (MultisigScreen, MultisigViews,
+      multisig.ts); 474 located in the 6a1d2bb checkout (fixture base
+      6a1d2bb) and ONE new English string, multisig.cosigner.scanLabel;
+      every id with a Spanish draft; existing ids reused (aa.sender.multisig,
+      the activity export lines, staking.worstCase / preflightFailed /
+      simulation.failed / aa.title, send.aa.row.smartBalance,
+      send.field.amount, the shared receipt line); 22 composites assembled
+      the old way in check-i18n's old map (the bridge leaving-fee, record
+      "through", USDC recipient, worst-case L1, CCTP pin and burned lines;
+      the multisig exposure, WalletConnect / browser refusals ending in the
+      engine's MULTISIG_ERC1271_REFUSAL, funding and QR-progress lines);
+      about 60 module constants in the CONSTANTS map. BYTE IDENTITY
+      PROVEN: harnesses importing each 6a1d2bb module beside the new one
+      found every output equal (Home 29/29, Bridge 123/123, Multisig
+      263/263). MODULE SENTENCES NOW THROUGH t(): watch-only.ts
+      watchOnlyFooterText / multisigFooterText / multisigOtherNetworkNote;
+      delegation.ts delegationLabelSuffix; token-gas.ts tokenSendFeeSentence;
+      bridge.ts choice / route / recipient notes, the pinned pool line,
+      amount hints, spoken provider rows, offer refusals, the measured-time
+      line, the USDC balance refusal, fee labels, the LayerZero and CCTP
+      confirm lines and pinned summaries, status headings and sentences,
+      the burned / attested lines, expiry sentences, mint blockers, the
+      switch sentence and button, the retry blocker (stored status details
+      stay English in the records and are localised on display);
+      multisig.ts exposure pieces, feature refusals, config and weight
+      errors, history lines, the remove message, the chain note, the funds
+      line, funding-figure pieces, fund-and-retry, weight-bar labels,
+      preview notes, the co-signer review refusals, QR errors / progress /
+      part captions, file refusals, the bad-v message, the duplicate
+      approval, the import refusal (three locals named t renamed to avoid
+      shadowing). THE SCAN BUTTON (the item-8c follow-up): PasteOrScan
+      (components/RecoveryViews.tsx) gains optional scanLabel; the Scan
+      button speaks localize('Scan QR code') + ": " + localize(scanLabel ??
+      label); the co-signer cards pass t('multisig.cosigner.scanLabel', {n})
+      → "Scan QR code: Co-signer 2, Ethereum address" with the visible
+      caption still "Ethereum address"; no other caller passes one; pinned
+      in check-multisig (2 checks, 2 mutants) and check-devmode (1 check,
+      2 mutants); SIDE EFFECT (CTO accepted): the prefix and caption go
+      through localize for every PasteOrScan caller — exact entries only,
+      so captions not in the table stay English. CHECK-I18N: the old
+      "multisig.ts has no i18n import" share-text test is replaced by a
+      structural check (no t / tx / localize inside exportMultisigAccount,
+      multisigRequestShareText, encodeMultisigRequestPayload,
+      encodeMultisigApprovalPayload, multisigShapeLabel,
+      multisigDisplayName, describeMultisigCall) plus a behavioural one
+      (with Spanish active the shape label stays "2-of-3" while noRouteNote
+      answers in Spanish); the new section pins the per-screen counts, the
+      earlier passes untouched (690 at 5cb4601, 336 at c5baff6), one exact
+      English entry per screen, the six module sentences equal to the
+      6a1d2bb English, the Bridge receipt line in the shared tx() form, and
+      that Bridge and Multisig prompt titles are never wrapped; its five
+      mutants (a Spanish line missing, an entry changed by one character,
+      an unused id, the old English-only Bridge receipt line, a share text
+      built through the accessor). PINS (each to the new source form,
+      none loosened, each also checked against en.ts): check-bridge's
+      provider-row labels as tx(), localize(row.note), the mint button and
+      choice hint through t / localize, the mutant anchors m3b / m7c / m15,
+      the finding-9 placeholder and hint, the live-region "(checking…)"
+      as <T>; check-multisig's fee-order rows and old-order mutant, the
+      deposit row through localize, the new-operation Alert regexes,
+      PayloadQr captions, the QR label, the title, the spoken-signer rows,
+      the co-signer heading; check-home's deposit pin and mutant M-h3;
+      check-devmode's three paste-box placeholders, the op-amount caption,
+      the placeholder-repeat mutant, and words() now ignoring
+      interpolations so a caption built with t('…', {symbol}) is compared
+      on its words (the 444 existing checks still pass). HAND MUTANTS:
+      RecoveryViews ignoring scanLabel (check-devmode 2, check-multisig 1),
+      noRouteNote's parameters swapped (check-i18n 2), bridge.mint.button
+      deleted from es.ts (check-i18n 2), the Home deposit label not
+      localised (check-home 1), multisigShapeLabel calling t() (check-i18n
+      1). STAYS ENGLISH by rule: biometric prompt titles (bridgePromptTitle
+      — which also serves as a button and success-view text, kept as one
+      English string, a translated display twin deferred; the mint, retry
+      and approval prompts; the multisig submit and co-signer prompts);
+      texts shared with or stored for others (the multisig request and
+      approval share texts, the record export, share and file-dialog
+      titles, multisigShapeLabel, multisigDisplayName, describeMultisigCall
+      — stored in operation summaries; a display-only translated rendering
+      deferred — and the History's raw summary line); engine-built
+      sentences (provider trust, time, details and notes;
+      checkBridgeQuote's message; the readers' and parsers' errors); the
+      spoken Row strings ("From account: …", as Staking); RecoveryNetworkBadge,
+      the switcher's multisig network line; amounts, addresses, hashes,
+      brand names. INPUT still needed: a native Spanish reviewer for every
+      draft. UNVERIFIED (device): Spanish layout length on the Bridge and
+      Multisig screens; the spoken Scan label under TalkBack. The agent
+      kept its pre-rebase worktree wt-p23-i18n3 (6a1d2bb) and its rebased
+      one wt-p23-i18n3b (e55e5ce) in the scratchpad.
