@@ -89,6 +89,12 @@ import * as wcm from '../src/wallet/walletconnect.ts';
 import * as pinm from '../src/wallet/pin.ts';
 import * as ikeys from '../src/wallet/imported-keys.ts';
 import { MULTISIG_ACCOUNTS_LIST_HINT } from '../src/wallet/multisig.ts';
+// Phase 23 item 8 (the third pass): Bridge, Multisig and the rest of Home.
+import * as BR from '../src/wallet/bridge.ts';
+import * as MS from '../src/wallet/multisig.ts';
+import { FOREIGN_DELEGATE_WARNING, delegationLabelSuffix } from '../src/wallet/delegation.ts';
+import { MULTISIG_UNVERIFIED_NETWORK_NOTE } from '../src/config/evm-chain.ts';
+import { tokenSendFeeSentence } from '../src/wallet/token-gas.ts';
 
 let passed = 0;
 let failed = 0;
@@ -227,6 +233,8 @@ function fixtureProblems(table, fixture) {
   }
   return p;
 }
+// Phase 23 item 8 (the third pass): the spoken scan label of a co-signer's address field is new.
+const THIRD_PASS_NEW = ['multisig.cosigner.scanLabel'];
 {
   const p = fixtureProblems(en, FIXTURE);
   check(`every English entry is the text the app showed at ${FIXTURE.base} (${Object.keys(FIXTURE.literal).length} literals, ${Object.keys(FIXTURE.template).length} templates by their static parts, ${Object.keys(FIXTURE.composite).length} composites) or listed as new (${FIXTURE.new.length})`,
@@ -242,10 +250,10 @@ function fixtureProblems(table, fixture) {
   // broadcast sentences (an HTTP 5xx or a dropped connection, not a timeout).
   const BROADCAST_OPEN_NEW = ['broadcast.open.title', 'broadcast.tx.open', 'broadcast.tx.openUnlisted', 'broadcast.userop.open',
     'broadcast.userop.openUnlisted', 'broadcast.open'];
-  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the wallet handle\'s and the six open-outcome broadcast sentences',
-    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id)) &&
+  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the wallet handle\'s, the six open-outcome broadcast sentences and the co-signer card\'s numbered Scan label',
+    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id)) &&
       LOCK_KIND_NEW.every((id) => FIXTURE.new.includes(id)) && COLD_AA_NEW.every((id) => FIXTURE.new.includes(id)) &&
-      BROADCAST_OPEN_NEW.every((id) => FIXTURE.new.includes(id)));
+      BROADCAST_OPEN_NEW.every((id) => FIXTURE.new.includes(id)) && THIRD_PASS_NEW.every((id) => FIXTURE.new.includes(id)));
   check('the changed entries are exactly the transaction-notes line (reworded for the records backup), the watch-only notice (reworded for the off-line signer) and the bridge readiness reason (CCTP sent, phase 23), each with its reason',
     JSON.stringify(Object.keys(FIXTURE.changed ?? {})) === JSON.stringify(['activity.note.privacy', 'notice.watchOnly', 'readiness.bridge.reason']) &&
       en['activity.note.privacy'] === 'Notes are kept on this phone and are not sent anywhere. They are deleted when the wallet is wiped. A records backup (Settings → Records backup) includes them, and your recovery phrase restores them from it. Hide amounts does not hide them.');
@@ -309,6 +317,46 @@ function fixtureProblems(table, fixture) {
     'swap.aa.calldataValue': [`${4} bytes of calldata${1n > 0n ? `, value ${'0.1'} ${'test ETH'}` : ''}`, I.t('swap.aa.calldataValue', { bytes: 4, value: '0.1', symbol: 'test ETH' })],
     'sessions.balance.withDeposit': [`The smart account holds ${'0.5'} ${'test ETH'}` + (true ? ` plus an EntryPoint deposit of ${'0.01'} ${'test ETH'}` : '') + ' (read just now).',
       I.t('sessions.balance.withDeposit', { balance: '0.5', deposit: '0.01', symbol: 'test ETH' })],
+    // Phase 23 item 8 (the third pass): Bridge — each branch as the old code built it.
+    'bridge.leaving.fee': [`Leaving your account for the bridge (amount + ${'native' === 'usdc' ? 'Circle fee' : 'fee'})`, en['bridge.leaving.fee']],
+    'bridge.leaving.circleFee': [`Leaving your account for the bridge (amount + ${'usdc' === 'usdc' ? 'Circle fee' : 'fee'})`, en['bridge.leaving.circleFee']],
+    'bridge.record.through': [`Through ${'LayerZero (Stargate)'}, to ${'0xR'}, sent ${'05:40:02'} UTC` + `${'regular' === 'smart-account' ? ' from your smart account' : ''}.`,
+      I.t('bridge.record.through', { provider: 'LayerZero (Stargate)', recipient: '0xR', time: '05:40:02' })],
+    'bridge.record.throughSmart': [`Through ${'LayerZero (Stargate)'}, to ${'0xR'}, sent ${'05:40:02'} UTC` + `${'smart-account' === 'smart-account' ? ' from your smart account' : ''}.`,
+      I.t('bridge.record.throughSmart', { provider: 'LayerZero (Stargate)', recipient: '0xR', time: '05:40:02' })],
+    'bridge.usdc.recipient.regular': [`The USDC is minted to your regular account${'0xR' ? ` ${'0xR'}` : ''} on ${'Base Sepolia'}, the same address as on this network.`,
+      I.t('bridge.usdc.recipient.regular', { recipient: '0xR', destination: 'Base Sepolia' })],
+    'bridge.usdc.recipient.regularLater': [`The USDC is minted to your regular account${'' ? ` ${''}` : ''} on ${'Base Sepolia'}, the same address as on this network.`,
+      I.t('bridge.usdc.recipient.regularLater', { destination: 'Base Sepolia' })],
+    'bridge.usdc.recipient.smart': [`The USDC is minted to your smart account${'0xS' ? ` ${'0xS'}` : ''} on ${'Base Sepolia'}, the same address as on this network${'0xS' ? '' : ' (shown when you review)'}. ` +
+      'It does not need to be deployed there: CCTP mints USDC with an ordinary token mint, which needs no code at the ' + 'recipient, unlike Stargate’s 2,300-gas ETH transfer.',
+      I.t('bridge.usdc.recipient.smart', { recipient: '0xS', destination: 'Base Sepolia' })],
+    'bridge.usdc.recipient.smartLater': [`The USDC is minted to your smart account${'' ? ` ${''}` : ''} on ${'Base Sepolia'}, the same address as on this network${'' ? '' : ' (shown when you review)'}. ` +
+      'It does not need to be deployed there: CCTP mints USDC with an ordinary token mint, which needs no code at the ' + 'recipient, unlike Stargate’s 2,300-gas ETH transfer.',
+      I.t('bridge.usdc.recipient.smartLater', { destination: 'Base Sepolia' })],
+    'bridge.worstCase.l1': [`Worst case at ${'0.001000013'} gwei max fee × ${'341035'} gas` + `${true ? ', plus the layer 1 data fee below' : ''}; the actual fee is usually lower.`,
+      I.t('bridge.worstCase.l1', { gwei: '0.001000013', gas: '341035' })],
+    'bridge.cctp.pin.recipientSmart': [`Recipient: ${'0xS'} (your ${'smart-account' === 'smart-account' ? 'smart account' : 'regular account'}).`, I.t('bridge.cctp.pin.recipientSmart', { recipient: '0xS' })],
+    'bridge.cctp.pin.recipientRegular': [`Recipient: ${'0xR'} (your ${'regular' === 'smart-account' ? 'smart account' : 'regular account'}).`, I.t('bridge.cctp.pin.recipientRegular', { recipient: '0xR' })],
+    'bridge.cctp.burned': [`Burned on ${'Arbitrum Sepolia'}${null === null ? '' : ` (block ${null})`}. Waiting for Circle’s attestation: it comes after the ` + 'source chain’s hard finality, about 17 minutes in the measured runs.',
+      I.t('bridge.cctp.burned', { source: 'Arbitrum Sepolia' })],
+    'bridge.cctp.burnedBlock': [`Burned on ${'Arbitrum Sepolia'}${323018391n === null ? '' : ` (block ${323018391n})`}. Waiting for Circle’s attestation: it comes after the ` + 'source chain’s hard finality, about 17 minutes in the measured runs.',
+      I.t('bridge.cctp.burnedBlock', { source: 'Arbitrum Sepolia', block: '323018391' })],
+    // Multisig — the exposure line's pieces, the two refusals ending in the engine's sentence, the funding figure's clause, the QR progress line.
+    'multisig.exposure.allBoth': [`Every operation needs ${2 === 2 ? 'both signers' : `all ${2} signers`}`, en['multisig.exposure.allBoth']],
+    'multisig.exposure.all': [`Every operation needs ${3 === 2 ? 'both signers' : `all ${3} signers`}`, I.t('multisig.exposure.all', { n: 3 })],
+    'multisig.exposure.whoAllOne': [`the ${1} co-signer${1 === 1 ? '' : 's'}`, I.t('multisig.exposure.whoAllOne', { count: 1 })],
+    'multisig.exposure.whoAll': [`the ${2} co-signer${2 === 1 ? '' : 's'}`, I.t('multisig.exposure.whoAll', { count: 2 })],
+    'multisig.refused.walletconnect': ['A multi-signature account is never offered to apps over WalletConnect: apps ask for message signatures, ' +
+      'which it cannot give honestly. ' + MS.MULTISIG_ERC1271_REFUSAL, I.t('multisig.refused.walletconnect', { refusal: MS.MULTISIG_ERC1271_REFUSAL })],
+    'multisig.refused.browser': ['A multi-signature account is never connected to sites in the in-app browser: sites ask for message ' +
+      'signatures, which it cannot give honestly. ' + MS.MULTISIG_ERC1271_REFUSAL, I.t('multisig.refused.browser', { refusal: MS.MULTISIG_ERC1271_REFUSAL })],
+    'multisig.funding.what': [` (the amount ${'5 wei'} plus ${0n > 0n ? 'the rest of ' : ''}the fee)`, I.t('multisig.funding.what', { amount: '5 wei' })],
+    'multisig.funding.whatRest': [` (the amount ${'5 wei'} plus ${3n > 0n ? 'the rest of ' : ''}the fee)`, I.t('multisig.funding.whatRest', { amount: '5 wei' })],
+    'multisig.qr.progress': [`${1} of ${3} parts read. ` + `Show the next part on the other phone (Next part) and scan it; ${2} ${2 === 1 ? 'part is' : 'parts are'} still missing.`,
+      I.t('multisig.qr.progress', { received: 1, total: 3, missing: 2 })],
+    'multisig.qr.progressOne': [`${2} of ${3} parts read. ` + `Show the next part on the other phone (Next part) and scan it; ${1} ${1 === 1 ? 'part is' : 'parts are'} still missing.`,
+      I.t('multisig.qr.progressOne', { received: 2, total: 3, missing: 1 })],
   };
   const bad = Object.entries(old).filter(([, [a, b]]) => a !== b).map(([id, [a, b]]) => `${id}: ${a} ≠ ${b}`);
   check(`the ${Object.keys(old).length} composites assemble to exactly the old text`, bad.length === 0, bad.join('; '));
@@ -472,6 +520,34 @@ const CONSTANTS = {
   'broadcast.open.title': bcast.BROADCAST_OUTCOME_OPEN_TITLE, 'broadcast.tx.openUnlisted': bcast.BROADCAST_TX_OPEN_UNLISTED_SENTENCE,
   'broadcast.userop.open': bcast.BROADCAST_USEROP_OPEN_SENTENCE, 'broadcast.userop.openUnlisted': bcast.BROADCAST_USEROP_OPEN_UNLISTED_SENTENCE,
   'broadcast.open': bcast.BROADCAST_OPEN_SENTENCE,
+  // Phase 23 item 8 (the third pass): the constants Bridge, Multisig and Home show through the accessor.
+  'home.delegation.foreign': FOREIGN_DELEGATE_WARNING,
+  'bridge.intro': BR.BRIDGE_INTRO, 'bridge.choiceNote': BR.BRIDGE_CHOICE_NOTE, 'bridge.timeNotPromise': BR.BRIDGE_TIME_NOT_PROMISE,
+  'bridge.feeBeforeQuote': BR.BRIDGE_FEE_BEFORE_QUOTE, 'bridge.singleProvider': BR.BRIDGE_SINGLE_PROVIDER_NOTE,
+  'bridge.amount.placeholder': BR.BRIDGE_AMOUNT_PLACEHOLDER, 'bridge.amount.placeholderUsdc': BR.BRIDGE_USDC_AMOUNT_PLACEHOLDER,
+  'bridge.records.note': BR.BRIDGE_RECORDS_NOTE, 'bridge.records.readOnly': BR.BRIDGE_RECORDS_READ_ONLY_MESSAGE,
+  'bridge.providerComing': BR.BRIDGE_PROVIDER_COMING_NOTE, 'bridge.refusal.nativeSmart': BR.BRIDGE_NATIVE_SMART_RECIPIENT_REFUSAL,
+  'bridge.logTooOld': BR.BRIDGE_LOG_TOO_OLD, 'bridge.logTooOldCctp': BR.BRIDGE_LOG_TOO_OLD_CCTP,
+  'bridge.userop.waiting': BR.BRIDGE_USEROP_WAITING, 'bridge.userop.notIncluded': BR.BRIDGE_USEROP_NOT_INCLUDED,
+  'bridge.userop.reverted': BR.BRIDGE_USEROP_REVERTED, 'bridge.userop.malformed': BR.BRIDGE_USEROP_RECEIPT_MALFORMED,
+  'bridge.cctp.firstMintPaymaster': BR.CCTP_FIRST_MINT_PAYMASTER_NOTE,
+  'multisig.freshDeploy': MS.MULTISIG_FRESH_DEPLOY_NOTE, 'multisig.feesLine': MS.MULTISIG_FEES_LINE, 'multisig.unaudited': MS.MULTISIG_UNAUDITED_NOTE,
+  'multisig.deployNote': MS.MULTISIG_DEPLOY_NOTE, 'multisig.fundAndRetry': MS.MULTISIG_FUND_AND_RETRY, 'multisig.phraseSignerOnly': MS.MULTISIG_PHRASE_SIGNER_ONLY,
+  'multisig.config.singleSigner': MS.MULTISIG_SINGLE_SIGNER_REFUSAL, 'multisig.approval.submitter': MS.MULTISIG_SUBMITTER_APPROVAL_REFUSAL,
+  'multisig.storeDamaged': MS.MULTISIG_STORE_DAMAGED, 'multisig.remove.title': MS.REMOVE_MULTISIG_TITLE,
+  'multisig.chain.match': MS.MULTISIG_DEPLOYED_MATCH_NOTE, 'multisig.chain.notVisible': MS.MULTISIG_DEPLOYED_NOT_VISIBLE_NOTE,
+  'multisig.depositNote': MS.MULTISIG_DEPOSIT_NOTE, 'multisig.funding.recordedDeploy': MS.MULTISIG_RECORDED_DEPLOY_COST_NOTE,
+  'multisig.funding.recordedLater': MS.MULTISIG_RECORDED_LATER_COST_NOTE, 'multisig.preview.note': MS.MULTISIG_PREVIEW_NOTE,
+  'multisig.preview.undeployed': MS.MULTISIG_PREVIEW_UNDEPLOYED_NOTE, 'multisig.qr.tooLarge': MS.MULTISIG_QR_TOO_LARGE,
+  'multisig.scan.request': MS.MULTISIG_SCAN_REQUEST_TITLE, 'multisig.scan.approval': MS.MULTISIG_SCAN_APPROVAL_TITLE,
+  'multisig.scan.record': MS.MULTISIG_SCAN_RECORD_TITLE, 'multisig.scan.next': MS.MULTISIG_SCAN_NEXT_TITLE,
+  'multisig.scan.startOver': MS.MULTISIG_SCAN_START_OVER_TITLE, 'multisig.scan.requestRationale': MS.MULTISIG_SCAN_REQUEST_RATIONALE,
+  'multisig.scan.approvalRationale': MS.MULTISIG_SCAN_APPROVAL_RATIONALE, 'multisig.scan.recordRationale': MS.MULTISIG_SCAN_RECORD_RATIONALE,
+  'multisig.scan.requestNote': MS.MULTISIG_SCAN_REQUEST_NOTE, 'multisig.scan.recordNote': MS.MULTISIG_SCAN_RECORD_NOTE,
+  'multisig.scan.approvalNote': MS.MULTISIG_SCAN_APPROVAL_NOTE, 'multisig.unverifiedNetwork': MULTISIG_UNVERIFIED_NETWORK_NOTE,
+  'multisig.refused.guardians': MS.multisigFeatureRefusal('guardians'), 'multisig.refused.inheritance': MS.multisigFeatureRefusal('inheritance'),
+  'multisig.refused.passkeys': MS.multisigFeatureRefusal('passkeys'), 'multisig.refused.sessionKeys': MS.multisigFeatureRefusal('session-keys'),
+  'multisig.refused.eip7702': MS.multisigFeatureRefusal('eip7702'), 'multisig.refused.ownerRotation': MS.multisigFeatureRefusal('owner-rotation'),
 };
 {
   const bad = Object.entries(CONSTANTS).filter(([id, v]) => en[id] !== v).map(([id, v]) => `${id}: ${JSON.stringify(en[id])} ≠ ${JSON.stringify(v)}`);
@@ -747,6 +823,17 @@ function unusedIds(table, scans) {
     unused.length === 0, unused.join(', '));
 }
 
+// Phase 23 item 8 (the third pass): the multisig functions whose text is
+// shared or stored, which must build no text through the accessor.
+const SHARED_TEXT_FUNCTIONS = ['exportMultisigAccount', 'multisigRequestShareText', 'encodeMultisigRequestPayload', 'encodeMultisigApprovalPayload', 'multisigShapeLabel', 'multisigDisplayName', 'describeMultisigCall'];
+function fnBodyOf(src, name) {
+  const at = src.indexOf(`export function ${name}(`);
+  return at < 0 ? '' : src.slice(at, src.indexOf('\n}\n', at) + 2);
+}
+function sharedTextsPlainFor(src) {
+  return SHARED_TEXT_FUNCTIONS.every((n) => fnBodyOf(src, n) !== '' && !/\b(?:t|tx|localize)\(/.test(fnBodyOf(src, n)));
+}
+
 let ITEM8_MUTANTS = 0;
 let ITEM8_CAUGHT = 0;
 function caught8(name, wasCaught) {
@@ -846,6 +933,86 @@ console.log('check-i18n: the second localisation pass (phase 23 item 8)');
 }
 
 // ---------------------------------------------------------------------------
+console.log('check-i18n: the third localisation pass (phase 23 item 8: Bridge, Multisig, the rest of Home)');
+// ---------------------------------------------------------------------------
+// The entries migrated in this pass were located in the checkout of commit
+// 6a1d2bb (the fixture records "base": "6a1d2bb" on each of them); every one
+// is checked above against that record like the earlier passes' entries.
+// Here: the ids, their Spanish draft, the two earlier passes untouched, one
+// exact English entry per screen, the sentences the wallet modules now build
+// through the table (the English before, byte for byte), the texts for
+// someone else kept English, and mutants of its own.
+let THIRD_MUTANTS = 0;
+let THIRD_CAUGHT = 0;
+function caught3(name, wasCaught) {
+  THIRD_MUTANTS += 1;
+  if (wasCaught) THIRD_CAUGHT += 1;
+  check(`mutant caught: ${name}`, wasCaught);
+}
+{
+  const THIRD = ['literal', 'template', 'composite'].flatMap((s) => Object.entries(FIXTURE[s]).filter(([, f]) => f.base === '6a1d2bb').map(([id]) => id));
+  const AREAS3 = ['home.', 'bridge.', 'multisig.'];
+  const all3 = [...THIRD, ...THIRD_PASS_NEW];
+  check(`third pass: ${THIRD.length} ids migrated from 6a1d2bb plus ${THIRD_PASS_NEW.length} new, each from Home, Bridge or Multisig, each with a Spanish draft that differs from the id`,
+    THIRD.length === 474 && all3.every((id) => AREAS3.some((a) => id.startsWith(a)) && typeof en[id] === 'string' && typeof es[id] === 'string' && es[id] !== id),
+    all3.filter((id) => !AREAS3.some((a) => id.startsWith(a)) || typeof es[id] !== 'string').slice(0, 5).join(', '));
+  const perScreen = Object.fromEntries(AREAS3.map((a) => [a, all3.filter((id) => id.startsWith(a)).length]));
+  check(`…per screen: Home ${perScreen['home.']}, Bridge ${perScreen['bridge.']}, Multisig ${perScreen['multisig.']}`,
+    perScreen['home.'] === 20 && perScreen['bridge.'] === 179 && perScreen['multisig.'] === 276);
+  const second = ['literal', 'template', 'composite'].flatMap((s) => Object.entries(FIXTURE[s]).filter(([, f]) => f.base === '5cb4601'));
+  check('…the earlier passes are untouched: 690 entries of the second pass (5cb4601) and the 336 of the groundwork (c5baff6) keep their record',
+    second.length === 690 && Object.keys(FIXTURE.literal).filter((id) => FIXTURE.literal[id].base === undefined).length === 336 && FIXTURE.base === 'c5baff6');
+  const EXACT3 = {
+    'home.footer.multisig': '{name} is a multi-signature account: its operations are built on the Multisig screen and need its co-signers’ approvals. Balances come from the RPC endpoints in Settings; pull down to refresh. Activity and NFTs read this address from the indexers in Settings.',
+    'bridge.mint.button': 'Mint on {destination}',
+    'bridge.title': 'Bridge (test networks)',
+    'multisig.cosigner.heading': 'Co-signer {n}',
+    'multisig.cosigner.scanLabel': 'Co-signer {n}, Ethereum address',
+  };
+  check('…exact English for one entry of each screen (Home, Bridge, Multisig) and for the new spoken scan label',
+    Object.entries(EXACT3).every(([id, v]) => en[id] === v), Object.entries(EXACT3).filter(([id, v]) => en[id] !== v).map(([id]) => id).join(', '));
+  // Sentences a wallet module now builds through t(): the English before (from the 6a1d2bb modules, recorded here).
+  const S1 = '0x772eAA1d3BEf14C0BD5cee980b90dB3FC680F44F';
+  const cfg = { signers: [{ address: S1, weight: 1 }, { address: '0x69F0000000000000000000000000000000007E8a', weight: 1 }, { address: '0xCCB4000000000000000000000000000000000107', weight: 1 }], threshold: 2 };
+  check('watch-only.ts multisigFooterText, bridge.ts noRouteNote and bridgeAmountHint, multisig.ts multisigExposureLine: the English before, byte for byte',
+    wo.multisigFooterText('Multisig 2 (2-of-3)') === 'Multisig 2 (2-of-3) is a multi-signature account: its operations are built on the Multisig screen and need its co-signers’ approvals. Balances come from the RPC endpoints in Settings; pull down to refresh. Activity and NFTs read this address from the indexers in Settings.' &&
+      BR.noRouteNote('Ethereum Sepolia', 'OP Sepolia') === 'Does not serve Ethereum Sepolia → OP Sepolia in this wallet.' &&
+      BR.bridgeAmountHint('usdc') === 'USDC has 6 decimal places; an amount with more is refused, not rounded.' &&
+      MS.multisigExposureLine(cfg, S1) === 'Any 2 of the 3 signers together can send an operation — including the 2 co-signers without this phone; for messages the deployed validator needs only 1, so this account must never be used to sign logins, orders or token permits — the wallet refuses that.' &&
+      delegationLabelSuffix({ kind: 'kernel-v3.3' }) === ' · upgraded (Kernel v3.3)' &&
+      tokenSendFeeSentence('eip155:560048') === 'The network fee for a token send is normally paid in test ETH, not in the token.');
+  check('…and in Spanish the same functions answer in Spanish, while the shape label, the display name and the call description (stored, shared) stay English', (() => {
+    const enShape = MS.multisigShapeLabel(cfg);
+    I.setActiveLanguage('es');
+    try {
+      return BR.noRouteNote('Ethereum Sepolia', 'OP Sepolia') === I.t('bridge.noRoute', { source: 'Ethereum Sepolia', destination: 'OP Sepolia' }) &&
+        BR.noRouteNote('Ethereum Sepolia', 'OP Sepolia') !== en['bridge.noRoute'].replace('{source}', 'Ethereum Sepolia').replace('{destination}', 'OP Sepolia') &&
+        MS.multisigShapeLabel(cfg) === enShape && enShape === '2-of-3';
+    } finally {
+      I.setActiveLanguage('en');
+    }
+  })());
+  const bridgeSrc = read('src/screens/BridgeScreen.tsx');
+  const receipt3 = "{aaResult.success === true ? tx('Included on-chain — succeeded.') : tx('Included on-chain.')}";
+  check('the Bridge screen\'s smart-account receipt line is the shared one through the table (as in Send, Staking and Swap)', bridgeSrc.includes(receipt3));
+  check('…the Bridge prompt titles stay English (a biometric prompt is the system\'s, read by the device)',
+    !/requireLocalAuth\((?:t|tx|localize)\(/.test(bridgeSrc) && !/requireLocalAuth\((?:t|tx|localize)\(/.test(read('src/screens/MultisigScreen.tsx')));
+  // Mutants (each must be caught by the checks above).
+  const esMissing3 = { ...es };
+  delete esMissing3['bridge.mint.button'];
+  caught3('third pass: a Spanish line missing for a migrated id', all3.some((id) => typeof esMissing3[id] !== 'string'));
+  caught3('third pass: an English entry changed by one character (Bridge title without its closing parenthesis)',
+    fixtureProblems({ ...en, 'bridge.title': 'Bridge (test networks' }, FIXTURE).length >= 1);
+  const enUnused3 = { ...en, 'multisig.unusedLine': 'A multisig sentence no screen shows.' };
+  caught3('third pass: an unused id added to the table', unusedIds(enUnused3, SCANS).includes('multisig.unusedLine') && fixtureProblems(enUnused3, FIXTURE).length === 1);
+  caught3('third pass: the old English-only receipt line in Bridge', !bridgeSrc.replace(receipt3, "Included on-chain{aaResult.success === true ? ' — succeeded.' : '.'}").includes(receipt3));
+  const msSrc3 = read('src/wallet/multisig.ts');
+  const shapeMutant = msSrc3.replace(/(export function multisigShapeLabel\([^)]*\)[^{]*\{\n)/, "$1  void t('multisig.cosigner.heading', { n: 1 });\n");
+  caught3('third pass: a share text (the shape label) built through the accessor', shapeMutant !== msSrc3 && !sharedTextsPlainFor(shapeMutant));
+}
+check(`third pass: at least four mutants of its own, all caught (${THIRD_CAUGHT} of ${THIRD_MUTANTS})`, THIRD_MUTANTS >= 4 && THIRD_CAUGHT === THIRD_MUTANTS);
+
+// ---------------------------------------------------------------------------
 console.log('check-i18n: the stored language choice (device-wide, through the storage seam)');
 // ---------------------------------------------------------------------------
 function memoryStore() {
@@ -936,8 +1103,14 @@ function memoryStore() {
   check('Settings → Language says texts for someone else stay in English and name English screens (exact), after the amounts note',
     en['settings.language.shared'] === 'Texts the wallet prepares for someone else to read, such as a recovery request for your guardians or a multisig signing request, stay in English in every language, and the screens they point to are named in English (for example Settings → Guardians (social recovery)).' &&
       typeof es['settings.language.shared'] === 'string' && es['settings.language.shared'].includes('Settings → Guardians (social recovery)') && sharedNoteShown(settings));
+  // Phase 23 item 8 (the third pass): multisig.ts now builds the Multisig
+  // screen's sentences through t(), so the import alone no longer tells; the
+  // share texts and what they carry (the export record's text, the request's
+  // share text, the shape label and display name, the call descriptions
+  // stored in each operation's summary) are checked to build no text through
+  // the accessor, and to come out in English with Spanish active (below).
   check('…and that is true: the guardian and multisig share texts are built without the accessor, and the guardian one names the English path',
-    !/from '\.\.\/i18n|from '\.\.\/i18n\/index/.test(recoverySrc) && !/i18n/.test(multisigSrc.split('\n').filter((l) => l.startsWith('import')).join('\n')) &&
+    !/from '\.\.\/i18n|from '\.\.\/i18n\/index/.test(recoverySrc) && sharedTextsPlainFor(multisigSrc) &&
       recoverySrc.includes("'Shiba Wallet: Settings → Guardians (social recovery) → Approve a recovery (as a guardian), then paste '"));
   check('…mutant caught (polish): the shared-texts sentence dropped from the Language section',
     !sharedNoteShown(settings.replace("{t('settings.language.shared')}", '')));
@@ -1027,5 +1200,5 @@ function caught(name, wasCaught) {
 check(`at least six mutants, all caught (${mutantsCaught} of ${mutants + 5} including the table mutants)`, mutants + 5 >= 6 && mutantsCaught === mutants + 5);
 check(`phase 23 item 8: at least three mutants of its own, all caught (${ITEM8_CAUGHT} of ${ITEM8_MUTANTS})`, ITEM8_MUTANTS >= 3 && ITEM8_CAUGHT === ITEM8_MUTANTS);
 
-console.log(`\ncheck-i18n: ${passed} passed, ${failed} failed (${mutants + 5 + ITEM8_MUTANTS} mutants)`);
+console.log(`\ncheck-i18n: ${passed} passed, ${failed} failed (${mutants + 5 + ITEM8_MUTANTS + THIRD_MUTANTS} mutants)`);
 if (failed > 0) process.exit(1);

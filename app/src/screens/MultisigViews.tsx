@@ -3,6 +3,9 @@ import { Alert, StyleSheet, Text, View } from 'react-native';
 import { toHex, type Call, type MultisigConfig } from '@shiba-wallet/chains-evm';
 import { Button, WarningBox } from '../components';
 import { useTheme } from '../theme';
+import { T } from '../i18n/T';
+import { localize, t, tx } from '../i18n/index';
+import { useI18n } from '../i18n/useI18n';
 import { formatUnits } from '../wallet/balances';
 import { PayloadQr, recoveryLayout as styles } from '../components/RecoveryViews';
 import { shareTextFile } from '../components/RecordFileActions';
@@ -42,6 +45,9 @@ import {
  */
 export function MultisigHonesty({ config, localSigner = null }: { config: MultisigConfig | null; localSigner?: string | null }) {
   const theme = useTheme();
+  // Through the string table (phase 23 item 8, third pass); the engine's
+  // ERC-1271 refusal stays as the engine wrote it.
+  useI18n();
   let exposure: string | null = null;
   if (config) {
     try {
@@ -53,9 +59,9 @@ export function MultisigHonesty({ config, localSigner = null }: { config: Multis
   return (
     <View style={styles.card}>
       {exposure ? <WarningBox>{exposure}</WarningBox> : null}
-      <Text style={[styles.hint, { color: theme.text }]}>{MULTISIG_FEES_LINE}</Text>
+      <Text style={[styles.hint, { color: theme.text }]}>{localize(MULTISIG_FEES_LINE)}</Text>
       <Text style={[styles.hint, { color: theme.text }]}>{MULTISIG_ERC1271_REFUSAL}</Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{MULTISIG_UNAUDITED_NOTE}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(MULTISIG_UNAUDITED_NOTE)}</Text>
     </View>
   );
 }
@@ -68,6 +74,7 @@ export function MultisigHonesty({ config, localSigner = null }: { config: Multis
  */
 export function MultisigWeightBar({ progress }: { progress: MultisigWeightProgress }) {
   const theme = useTheme();
+  useI18n();
   const need = progress.cosignerNeeded;
   const pct = need > 0 ? Math.max(0, Math.min(1, progress.cosignerWeight / need)) : 1;
   return (
@@ -92,9 +99,10 @@ const barStyles = StyleSheet.create({
 /** What is refused for a multisig, and why (collision versus not offered versus not applicable). */
 export function MultisigRefusedFeatures() {
   const theme = useTheme();
+  useI18n();
   return (
     <View style={[styles.card, { borderColor: theme.border, backgroundColor: theme.card }]}>
-      <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>Not available for a multi-signature account</Text>
+      <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}><T>Not available for a multi-signature account</T></Text>
       {(['walletconnect', 'browser', 'guardians', 'inheritance', 'passkeys', 'session-keys', 'eip7702', 'owner-rotation'] as const).map(
         (f) => (
           <Text key={f} style={[styles.hint, { color: theme.textMuted }]}>
@@ -114,6 +122,7 @@ export function MultisigRefusedFeatures() {
  */
 export function MultisigCosignedHistory({ entries }: { entries: readonly MultisigCosignedEntry[] }) {
   const theme = useTheme();
+  useI18n();
   return (
     <>
       {entries.map((e) => (
@@ -141,10 +150,11 @@ export function MultisigCallsView({
   nativeSymbol: string;
 }) {
   const theme = useTheme();
+  useI18n();
   return (
     <View style={[styles.card, { borderColor: theme.border, backgroundColor: theme.card }]}>
       <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>
-        {calls.length === 1 ? 'The call' : `The ${calls.length} calls (one atomic operation)`}
+        {calls.length === 1 ? tx('The call') : t('multisig.calls.many', { count: calls.length })}
       </Text>
       {calls.map((c, i) => (
         <View key={`${c.to}-${i}`} style={styles.card}>
@@ -152,13 +162,13 @@ export function MultisigCallsView({
             {i + 1}. {described[i] ?? ''}
           </Text>
           <Text selectable style={[styles.mono, { color: theme.textMuted }]}>
-            to {c.to}
+            {t('multisig.call.to', { address: c.to })}
           </Text>
           <Text selectable style={[styles.mono, { color: theme.textMuted }]}>
-            value {formatUnits(c.value, 18, 18)} {nativeSymbol} ({c.value.toString()} wei)
+            {t('multisig.call.value', { amount: formatUnits(c.value, 18, 18), symbol: nativeSymbol, wei: c.value.toString() })}
           </Text>
           <Text selectable style={[styles.mono, { color: theme.textMuted }]}>
-            data {toHex(c.data)}
+            {t('multisig.call.data', { data: toHex(c.data) })}
           </Text>
         </View>
       ))}
@@ -169,6 +179,7 @@ export function MultisigCallsView({
 /** "Save as file (.json)" for a multisig payload; errors are shown plainly. */
 export function MultisigFileExportButton({ text, fileName, dialogTitle }: { text: string; fileName: string; dialogTitle: string }) {
   const theme = useTheme();
+  useI18n();
   const [busy, setBusy] = useState(false);
   return (
     <>
@@ -190,19 +201,21 @@ export function MultisigFileExportButton({ text, fileName, dialogTitle }: { text
             mimeType: MULTISIG_FILE_MIME_TYPE,
             UTI: MULTISIG_FILE_UTI,
             dialogTitle,
-            unavailableMessage: 'Sharing files is not available on this device. Use Share… or Copy instead.',
+            unavailableMessage: tx('Sharing files is not available on this device. Use Share… or Copy instead.'),
           }).then(
             () => setBusy(false),
             (e: unknown) => {
               setBusy(false);
-              Alert.alert('File not shared', e instanceof Error ? e.message : String(e));
+              Alert.alert(tx('File not shared'), e instanceof Error ? e.message : String(e));
             },
           );
         }}
       />
       <Text style={[styles.hint, { color: theme.textMuted }]}>
-        Shares the text as a .json file (for example to a messaging app or your cloud drive). It contains no secrets;
-        the temporary copy on this phone is deleted a minute after the share sheet closes.
+        <T>
+          Shares the text as a .json file (for example to a messaging app or your cloud drive). It contains no secrets;
+          the temporary copy on this phone is deleted a minute after the share sheet closes.
+        </T>
       </Text>
     </>
   );
@@ -217,10 +230,11 @@ export function MultisigFileExportButton({ text, fileName, dialogTitle }: { text
  */
 export function MultisigPayloadQr({ payload, caption }: { payload: string; caption: string }) {
   const theme = useTheme();
+  useI18n();
   const parts = splitMultisigQrParts(payload);
   const [page, setPage] = useState(0);
   if (!parts) {
-    return <Text style={[styles.hint, { color: theme.textMuted }]}>{MULTISIG_QR_TOO_LARGE}</Text>;
+    return <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(MULTISIG_QR_TOO_LARGE)}</Text>;
   }
   const total = parts.length;
   const index = Math.min(page, total - 1);
@@ -261,6 +275,7 @@ export function MultisigScanButton({
   onError: (message: string) => void;
 }) {
   const theme = useTheme();
+  useI18n();
   const [visible, setVisible] = useState(false);
   const [scan, setScan] = useState<MultisigQrScan | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
@@ -272,16 +287,17 @@ export function MultisigScanButton({
     <View style={barStyles.stack}>
       <Button
         title={scan ? MULTISIG_SCAN_NEXT_TITLE : title}
-        accessibilityLabel={scan ? `${MULTISIG_SCAN_NEXT_TITLE}: ${title}` : title}
+        accessibilityLabel={scan ? `${localize(MULTISIG_SCAN_NEXT_TITLE)}: ${localize(title)}` : title}
         variant="secondary"
         onPress={() => setVisible(true)}
       />
       {progress ? <Text style={[styles.hint, { color: theme.text }]}>{progress}</Text> : null}
       {scan ? <Button title={MULTISIG_SCAN_START_OVER_TITLE} variant="secondary" onPress={startOver} /> : null}
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{note}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(note)}</Text>
       <QrScanner
         visible={visible}
-        rationale={rationale}
+        rationale={localize(rationale)}
+
         onScanned={(data) => {
           setVisible(false);
           try {

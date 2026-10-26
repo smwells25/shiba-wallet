@@ -62,6 +62,13 @@ import { formatUnits } from './balances.ts';
 import { assertFeatureAllowed, isFeatureAllowed } from '../config/readiness.ts';
 import { evmProfileByCaip2, isBuiltInEvmChain, isTestProfileId, type EvmChainProfile, type TestNetworkId } from '../config/evm-chain.ts';
 import { isEndpointFailure } from '../config/endpoint-probe.ts';
+// The sentences this module builds go through the string table (phase 23
+// item 8, the third localisation pass); in English each is exactly the
+// sentence it built before (scripts/check-i18n.mjs). The exported constants
+// keep their English and are shown through the accessor where they are
+// rendered; the engine's own sentences (trust statements, time sources,
+// adapter details, fee descriptions, notes) stay as the engine wrote them.
+import { localize, t } from '../i18n/index.ts';
 
 /**
  * Bridge glue (feature 35, phase 21 item 1, the in-app slice). The
@@ -170,8 +177,8 @@ export const BRIDGE_CHOICE_NOTE =
  */
 export function bridgeChoiceNote(offer: Pick<BridgeOffer, 'unavailable' | 'sourceLabel'>, rowCount: number): string | null {
   if (rowCount === 0) return null;
-  if (bridgeFormInputsShown(offer)) return BRIDGE_CHOICE_NOTE;
-  return `The wallet lists every provider it knows, each with the reason it cannot send from ${offer.sourceLabel}, and never picks one for you.`;
+  if (bridgeFormInputsShown(offer)) return t('bridge.choiceNote');
+  return t('bridge.choiceNote.noSource', { source: offer.sourceLabel });
 }
 
 /** The label the CCTP adapter is registered under (the engine's own). */
@@ -179,7 +186,7 @@ export const CCTP_APP_LABEL = 'Circle CCTP (USDC)';
 
 /** A provider that does not serve the chosen pair of networks. */
 export function noRouteNote(sourceLabel: string, destinationLabel: string): string {
-  return `Does not serve ${sourceLabel} → ${destinationLabel} in this wallet.`;
+  return t('bridge.noRoute', { source: sourceLabel, destination: destinationLabel });
 }
 
 /**
@@ -189,12 +196,12 @@ export function noRouteNote(sourceLabel: string, destinationLabel: string): stri
  * user cannot see or pick).
  */
 export function noSourceRouteNote(sourceLabel: string): string {
-  return `Does not serve ${sourceLabel} in this wallet.`;
+  return t('bridge.noSourceRoute', { source: sourceLabel });
 }
 
 /** The recipient sentence for a send from the regular account. */
 export function regularRecipientNote(recipient: string, destinationLabel: string): string {
-  return `The test ETH arrives at your regular account ${recipient} on ${destinationLabel}, the same address as on this network.`;
+  return t('bridge.recipient.regular', { recipient, destination: destinationLabel });
 }
 
 /**
@@ -203,12 +210,7 @@ export function regularRecipientNote(recipient: string, destinationLabel: string
  * account on purpose.
  */
 export function smartAccountRecipientNote(recipient: string, destinationLabel: string): string {
-  return (
-    `Sent from your smart account, the test ETH arrives at your regular account ${recipient} on ${destinationLabel}, not at ` +
-    'the smart account. Stargate hands ETH over with a 2,300-gas transfer, which a deployed smart account cannot accept, ' +
-    'so the ETH would wait in Stargate’s pool until someone sent a second transaction there. This wallet therefore ' +
-    'offers only your regular account as the recipient.'
-  );
+  return t('bridge.recipient.smart', { recipient, destination: destinationLabel });
 }
 
 /**
@@ -217,11 +219,7 @@ export function smartAccountRecipientNote(recipient: string, destinationLabel: s
  * itself, so the sender and the recipient are one address.
  */
 export function upgradedAccountRecipientNote(recipient: string, destinationLabel: string): string {
-  return (
-    `Your smart account is this same address (upgraded with EIP-7702), so the test ETH arrives at ${recipient} on ` +
-    `${destinationLabel}, the same address as on this network. An upgrade on this network does not carry over: whether ` +
-    'the address has code there is read when you review.'
-  );
+  return t('bridge.recipient.upgraded', { recipient, destination: destinationLabel });
 }
 
 /** The recipient sentence for a plan or a form state (regular, smart account, or an EIP-7702 account). */
@@ -246,13 +244,13 @@ export function bridgeRecipientNote(
  */
 export function usdcRecipientNote(recipientKind: 'regular' | 'smart-account', recipient: string | null, destinationLabel: string): string {
   if (recipientKind === 'regular') {
-    return `The USDC is minted to your regular account${recipient ? ` ${recipient}` : ''} on ${destinationLabel}, the same address as on this network.`;
+    return recipient
+      ? t('bridge.usdc.recipient.regular', { recipient, destination: destinationLabel })
+      : t('bridge.usdc.recipient.regularLater', { destination: destinationLabel });
   }
-  return (
-    `The USDC is minted to your smart account${recipient ? ` ${recipient}` : ''} on ${destinationLabel}, the same address as on this network${recipient ? '' : ' (shown when you review)'}. ` +
-    'It does not need to be deployed there: CCTP mints USDC with an ordinary token mint, which needs no code at the ' +
-    'recipient, unlike Stargate’s 2,300-gas ETH transfer.'
-  );
+  return recipient
+    ? t('bridge.usdc.recipient.smart', { recipient, destination: destinationLabel })
+    : t('bridge.usdc.recipient.smartLater', { destination: destinationLabel });
 }
 
 /**
@@ -261,7 +259,7 @@ export function usdcRecipientNote(recipientKind: 'regular' | 'smart-account', re
  * verified there, so its address there is not known to be the same).
  */
 export function usdcSmartRecipientUnavailable(destinationLabel: string): string {
-  return `Your smart account cannot be chosen as the recipient on ${destinationLabel}: the wallet has not verified the smart-account contracts there, so it cannot say the address is the same. Your regular account receives.`;
+  return t('bridge.usdc.smartUnavailable', { destination: destinationLabel });
 }
 
 /** What the confirm says about the recipient's code on the receiving network. */
@@ -269,28 +267,18 @@ export type RecipientCodeState = 'none' | 'code' | 'unknown';
 
 export function recipientCodeNote(state: RecipientCodeState, destinationLabel: string): string | null {
   if (state === 'none') return null;
-  if (state === 'code') {
-    return (
-      `Your regular account has contract code on ${destinationLabel} (an account upgrade, for example). Stargate’s ` +
-      '2,300-gas delivery may not be accepted there; the ETH would then wait in Stargate’s pool, and the tracking ' +
-      'below offers the transaction that delivers it.'
-    );
-  }
-  return `Whether your regular account has contract code on ${destinationLabel} could not be read just now.`;
+  if (state === 'code') return t('bridge.recipientCode.code', { destination: destinationLabel });
+  return t('bridge.recipientCode.unknown', { destination: destinationLabel });
 }
 
 /** The confirm's line about the pinned pool (the risk card does not know Stargate's pools by name). */
 export function pinnedPoolLine(pool: string, sourceLabel: string): string {
-  return (
-    `This transaction goes to Stargate’s native ETH pool on ${sourceLabel} (${pool}), pinned by this wallet from ` +
-    'Stargate’s published test-network deployments and checked on-chain on 2026-10-15. The risk card below does not ' +
-    'know Stargate’s pools by name.'
-  );
+  return t('bridge.pinnedPool', { source: sourceLabel, pool });
 }
 
 /** The amount field's hint for USDC (6 decimals; the exact-amount rule, never rounded). */
 export function bridgeAmountHint(asset: 'usdc'): string {
-  return asset === 'usdc' ? 'USDC has 6 decimal places; an amount with more is refused, not rounded.' : '';
+  return asset === 'usdc' ? t('bridge.amount.usdcHint') : '';
 }
 
 /** The "not a promise" framing every time figure carries. */
@@ -372,8 +360,8 @@ export function providerRowSpokenLabel(
   row: Pick<BridgeProviderRow, 'label' | 'asset' | 'selectable'>,
   quote: { fee: string } | null,
 ): string {
-  const head = `${row.label}${row.asset ? `, moves ${row.asset}` : ''}`;
-  const tail = !row.selectable ? ', not available' : quote ? `, fee ${quote.fee}` : '';
+  const head = `${row.label}${row.asset ? t('bridge.row.spokenMoves', { asset: row.asset }) : ''}`;
+  const tail = !row.selectable ? t('bridge.row.spokenNotAvailable') : quote ? t('bridge.row.spokenFee', { fee: quote.fee }) : '';
   return `${head}${tail}`.replace(/[.\s]+$/, '');
 }
 
@@ -524,7 +512,7 @@ export function stargatePoolOn(chainId: number): OftDeployment | undefined {
 
 function chainIdOf(caip2: string): number {
   const m = /^eip155:(\d{1,15})$/.exec(caip2);
-  if (!m) throw new BridgeRefusal('Bridging works only on Ethereum networks.');
+  if (!m) throw new BridgeRefusal(t('bridge.refusal.ethereumOnly'));
   return Number(m[1]);
 }
 
@@ -630,7 +618,7 @@ export function bridgeOfferFor(caip2: string, asset: BridgeAssetChoice = 'native
       asset,
       destinations: [],
       providers,
-      unavailable: `No bridge provider in this wallet serves ${sourceLabel}: bridging is offered only between the built-in test networks.`,
+      unavailable: t('bridge.offer.notBuiltIn', { source: sourceLabel }),
     };
   }
   const byChain = new Map<number, BridgeDestination>();
@@ -648,14 +636,14 @@ export function bridgeOfferFor(caip2: string, asset: BridgeAssetChoice = 'native
   let unavailable: string | null = null;
   const anyRoute = registry.routes({ sourceChainId }).some((r) => isBuiltInEvmChain(`eip155:${r.destinationChainId}`));
   if (!anyRoute) {
-    unavailable = `No bridge provider in this wallet serves ${sourceLabel}.`;
+    unavailable = t('bridge.offer.noProvider', { source: sourceLabel });
   } else if (destinations.length === 0) {
     unavailable =
       asset === 'native'
-        ? `No provider in this wallet can bridge ${assetName} from ${sourceLabel}: Stargate has no pool there.${bridgeAssetSendableFrom(caip2, 'usdc') ? ' Choose USDC above to bridge USDC with Circle CCTP.' : ''}`
-        : `No provider in this wallet can bridge USDC from ${sourceLabel}: Circle CCTP is not deployed there.`;
+        ? `${t('bridge.offer.noPool', { asset: assetName, source: sourceLabel })}${bridgeAssetSendableFrom(caip2, 'usdc') ? ` ${t('bridge.offer.chooseUsdc')}` : ''}`
+        : t('bridge.offer.noCctp', { source: sourceLabel });
   } else if (!destinations.some((d) => d.sendable)) {
-    unavailable = `No provider in this wallet can bridge ${assetName} from ${sourceLabel} yet.`;
+    unavailable = t('bridge.offer.notYet', { asset: assetName, source: sourceLabel });
   }
   return { caip2, sourceChainId, sourceLabel, asset, destinations, providers, unavailable };
 }
@@ -701,7 +689,7 @@ export function bridgeLinkShown(caip2: string): boolean {
 /** The measured-time line for a route, or null when it was never measured. */
 export function measuredTimeLine(time: BridgeTimeEstimate): string | null {
   if (!time.measured) return null;
-  return `Measured once on ${time.measured.date}: ${time.measured.seconds} s on this route, from the sending block to the delivery block.`;
+  return t('bridge.measured', { date: time.measured.date, seconds: time.measured.seconds });
 }
 
 /**
@@ -957,7 +945,7 @@ export function destinationLogReader(readers: BridgeReaders, fromBlock: bigint |
  */
 export function defaultChainTransport(chainId: number, fetchImpl?: typeof fetch): JsonRpcTransport {
   const profile = profileOfChain(chainId);
-  if (!profile || !isBuiltInEvmChain(profile.caip2)) throw new BridgeRefusal(`The wallet has no built-in endpoints for chain ${chainId}.`);
+  if (!profile || !isBuiltInEvmChain(profile.caip2)) throw new BridgeRefusal(t('bridge.refusal.noEndpoints', { chainId }));
   const urls = profile.defaultRpcUrls;
   const verified = new Set<string>();
   return async (method, params) => {
@@ -1219,7 +1207,7 @@ export const BRIDGE_NATIVE_SMART_RECIPIENT_REFUSAL =
 
 /** The USDC balance refusal (exact amounts, never rounded). */
 export function usdcBalanceRefusal(balance: bigint, amount: bigint, sourceLabel: string): string {
-  return `You hold ${formatUnits(balance, 6, 6)} USDC on ${sourceLabel}, and this transfer needs ${formatUnits(amount, 6, 6)} USDC. Nothing was quoted.`;
+  return t('bridge.refusal.usdcBalance', { balance: formatUnits(balance, 6, 6), source: sourceLabel, amount: formatUnits(amount, 6, 6) });
 }
 
 /** USDC.balanceOf(owner) on the source network through the quote's transport. */
@@ -1484,17 +1472,14 @@ export function bridgeSourceFeeLines(
   symbol: string,
 ): { worstCase: string; rows: { label: string; value: string }[]; note: string | null } {
   const op = quote.opStack;
-  const worstCase =
-    `Worst case at ${formatUnits(quote.maxFeePerGas, 9, 9)} gwei max fee × ${quote.gasLimit.toString()} gas` +
-    `${op ? ', plus the layer 1 data fee below' : ''}; the actual fee is usually lower.`;
+  const gwei = formatUnits(quote.maxFeePerGas, 9, 9);
+  const gas = quote.gasLimit.toString();
+  // The same sentence as the Staking screen's (its entry), or with the layer 1 clause.
+  const worstCase = op ? t('bridge.worstCase.l1', { gwei, gas }) : t('staking.worstCase', { gwei, gas });
   if (!op) return { worstCase, rows: [], note: null };
   const rows = [{ label: 'Layer 1 data fee (estimate)', value: `${exactNative(op.l1DataFee)} ${symbol}` }];
   if (op.operatorFee > 0n) rows.push({ label: 'Operator fee (worst case)', value: `${exactNative(op.operatorFee)} ${symbol}` });
-  const note =
-    'This is a layer-2 network: every transaction also pays for publishing its data on Ethereum. The network’s fee ' +
-    `oracle estimates ${exactNative(op.l1DataFeeEstimate)} ${symbol} for this transaction; ${L1_DATA_FEE_HEADROOM_PERCENT.toString()}% ` +
-    'more is reserved because this fee follows Ethereum’s fees and cannot be capped. It is included in the max network ' +
-    'fee and the total.';
+  const note = t('bridge.l1.note', { estimate: exactNative(op.l1DataFeeEstimate), symbol, percent: L1_DATA_FEE_HEADROOM_PERCENT.toString() });
   return { worstCase, rows, note };
 }
 
@@ -1530,8 +1515,8 @@ export function bridgeConfirmModel(plan: BridgePlan): BridgeConfirmModel {
   const q = plan.quote;
   const sym = plan.nativeSymbol;
   const feeLines = q.fees.map((f) => ({
-    label: f.kind === 'messaging' ? `LayerZero messaging fee (paid in ${sym})` : f.kind === 'pool' ? 'Pool fee (taken from the amount)' : `${f.kind} fee`,
-    value: f.amount === null ? 'not known before sending' : `${exactNative(f.amount)} ${f.asset.kind === 'native' ? sym : f.asset.symbol}`,
+    label: f.kind === 'messaging' ? t('bridge.fee.messaging', { symbol: sym }) : f.kind === 'pool' ? t('bridge.fee.pool') : t('bridge.fee.other', { kind: f.kind }),
+    value: f.amount === null ? t('bridge.fee.unknown') : `${exactNative(f.amount)} ${f.asset.kind === 'native' ? sym : f.asset.symbol}`,
     note: f.description,
   }));
   const timeLines: string[] = [];
@@ -1540,31 +1525,31 @@ export function bridgeConfirmModel(plan: BridgePlan): BridgeConfirmModel {
   timeLines.push(q.time.source);
   // The adapter's own sentence already ends "Not a promise: …" when it says
   // where the figure comes from; the wallet's sentence is added otherwise.
-  if (!/not a promise/i.test(q.time.source)) timeLines.push(BRIDGE_TIME_NOT_PROMISE);
+  if (!/not a promise/i.test(q.time.source)) timeLines.push(t('bridge.timeNotPromise'));
   const eid = layerZeroEidFor(q.route.destinationChainId);
   const pinnedSummary = [
-    `Receiving network: ${plan.destinationLabel} (LayerZero endpoint id ${eid}).`,
-    `Recipient: ${plan.recipient}.`,
-    `Amount: ${exactNative(q.amountIn)} ${sym}; at least ${exactNative(q.minAmountOut)} ${sym} must arrive, or the transfer reverts on this network and nothing leaves.`,
-    `Messaging fee: ${exactNative(plan.messagingFee)} ${sym}, paid with this transaction; any part not used is refunded to ${plan.sender}.`,
-    'No extra options and no compose message: the transfer cannot run code of its own on the receiving network.',
-    `All of these are fixed words of the call (${q.calls[q.calls.length - 1]!.pins.length} of them). Before showing this screen the wallet re-read the receiving network, the recipient, the amount, the fee and the refund address from the call itself, with the value sent; the other words are fixed by how it builds the call.`,
+    t('bridge.lz.pin.network', { destination: plan.destinationLabel, eid }),
+    t('bridge.lz.pin.recipient', { recipient: plan.recipient }),
+    t('bridge.lz.pin.amount', { amount: exactNative(q.amountIn), minimum: exactNative(q.minAmountOut), symbol: sym }),
+    t('bridge.lz.pin.fee', { fee: exactNative(plan.messagingFee), symbol: sym, sender: plan.sender }),
+    t('bridge.lz.pin.noOptions'),
+    t('bridge.lz.pin.fixed', { pins: q.calls[q.calls.length - 1]!.pins.length }),
   ];
   const approvalLine =
     q.approvals.length === 0
-      ? `No token approval: the pool takes the ${sym} sent with the call itself.`
-      : q.approvals.map((a) => `Exact approval only: this allows ${a.spender} to take exactly ${a.amount} base units of ${a.token}, nothing more.`).join(' ');
+      ? t('bridge.lz.noApproval', { symbol: sym })
+      : q.approvals.map((a) => t('bridge.lz.exactApproval', { spender: a.spender, amount: a.amount.toString(), token: a.token })).join(' ');
   const recipientLines = [bridgeRecipientNote(plan.senderKind, plan.sender, plan.recipient, plan.destinationLabel)];
   const codeNote = recipientCodeNote(plan.recipientCode, plan.destinationLabel);
   if (codeNote) recipientLines.push(codeNote);
   return {
     title: bridgePromptTitle(plan),
     callLines: [],
-    youSend: `You send ${exactNative(q.amountIn)} ${sym} from ${plan.sourceLabel}`,
-    arrives: `Expected to arrive on ${plan.destinationLabel}: ${exactNative(q.expectedAmountOut)} ${sym}`,
-    minimum: `Least that may arrive (written into the call): ${exactNative(q.minAmountOut)} ${sym}`,
+    youSend: t('bridge.youSend', { amount: `${exactNative(q.amountIn)} ${sym}`, source: plan.sourceLabel }),
+    arrives: t('bridge.arrives', { destination: plan.destinationLabel, amount: `${exactNative(q.expectedAmountOut)} ${sym}` }),
+    minimum: t('bridge.lz.minimum', { amount: `${exactNative(q.minAmountOut)} ${sym}` }),
     feeLines,
-    total: `${exactNative(plan.call.value)} ${sym} (amount ${exactNative(q.amountIn)} + messaging fee ${exactNative(plan.messagingFee)}), before this network’s own transaction fee`,
+    total: t('bridge.lz.total', { total: exactNative(plan.call.value), symbol: sym, amount: exactNative(q.amountIn), fee: exactNative(plan.messagingFee) }),
     timeLines,
     trust: plan.trust,
     destinationStep: q.destination.description,
@@ -1578,10 +1563,7 @@ export function bridgeConfirmModel(plan: BridgePlan): BridgeConfirmModel {
 
 /** The confirm's line about Circle's pinned contract (the risk card does not know it by name). */
 export function cctpPinnedContractLine(tokenMessenger: string, sourceLabel: string): string {
-  return (
-    `The burn goes to Circle’s TokenMessengerV2 on ${sourceLabel} (${tokenMessenger}), pinned by this wallet from Circle’s ` +
-    'published test-network addresses and checked on-chain on 2026-10-25. The risk card below names it too.'
-  );
+  return t('bridge.cctp.pinnedContract', { source: sourceLabel, contract: tokenMessenger });
 }
 
 /**
@@ -1600,13 +1582,13 @@ export function cctpFirstMintPaymasterNote(
   destinationLabel: string,
 ): string | null {
   if (state === 'held') return null;
-  if (state === 'zero') return CCTP_FIRST_MINT_PAYMASTER_NOTE;
-  return `${CCTP_FIRST_MINT_PAYMASTER_NOTE} Whether the recipient holds USDC on ${destinationLabel} could not be read just now.`;
+  if (state === 'zero') return t('bridge.cctp.firstMintPaymaster');
+  return t('bridge.cctp.firstMintPaymasterUnread', { note: t('bridge.cctp.firstMintPaymaster'), destination: destinationLabel });
 }
 
 /** Shown on the smart-account confirm: the fee is paid in the network's coin on this path. */
 export function cctpSmartAccountFeeNote(symbol: string): string {
-  return `The network fee is paid in ${symbol} from the smart account. Paying it in USDC through Circle’s paymaster is not offered for bridging in this version.`;
+  return t('bridge.cctp.smartFeeNote', { symbol });
 }
 
 /**
@@ -1614,11 +1596,7 @@ export function cctpSmartAccountFeeNote(symbol: string): string {
  * adapter's own description is shown first).
  */
 export function cctpMintStepLine(destinationLabel: string): string {
-  return (
-    `After Circle’s attestation (about 17 minutes in the measured runs) the USDC is minted on ${destinationLabel} by a transaction ` +
-    `there. This wallet can send it from your regular account when ${destinationLabel} is the active network and that account ` +
-    'holds test ETH there for gas; anyone else with gas there may send it too, and the USDC still goes only to the recipient written into the burn.'
-  );
+  return t('bridge.cctp.mintStep', { destination: destinationLabel });
 }
 
 /**
@@ -1640,45 +1618,43 @@ function cctpConfirmModel(plan: BridgePlan): BridgeConfirmModel {
   const approval = plan.approval!;
   const domain = CCTP_V2_TESTNET_DOMAINS[q.route.destinationChainId];
   const feeLines = q.fees.map((f) => ({
-    label: 'Circle protocol fee (Standard Transfer)',
-    value: f.amount === null ? 'not known before sending' : `${exactAsset(f.amount, 'usdc')} USDC`,
+    label: t('bridge.cctp.feeLabel'),
+    value: f.amount === null ? t('bridge.fee.unknown') : `${exactAsset(f.amount, 'usdc')} USDC`,
     note: f.description,
   }));
   const timeLines: string[] = [];
   const measured = measuredTimeLine(q.time);
   if (measured) timeLines.push(measured);
   timeLines.push(q.time.source);
-  if (!/not a promise/i.test(q.time.source)) timeLines.push(BRIDGE_TIME_NOT_PROMISE);
+  if (!/not a promise/i.test(q.time.source)) timeLines.push(t('bridge.timeNotPromise'));
   const callLines = [
-    `1. approve on USDC (${approval.token}): allows Circle’s TokenMessengerV2 ${approval.spender} to take exactly ${amount}.`,
-    `2. depositForBurn on Circle’s TokenMessengerV2 (${plan.call.to}): burns ${amount} on ${plan.sourceLabel} for minting on ${plan.destinationLabel}.`,
-    plan.senderKind === 'smart-account'
-      ? 'One smart-account operation carries both calls, all or nothing, so there is one device prompt.'
-      : 'Two transactions, each with its own device prompt: first the approval, then, once it is confirmed, the burn.',
+    t('bridge.cctp.call.approve', { token: approval.token, spender: approval.spender, amount }),
+    t('bridge.cctp.call.burn', { contract: plan.call.to, amount, source: plan.sourceLabel, destination: plan.destinationLabel }),
+    plan.senderKind === 'smart-account' ? t('bridge.cctp.call.oneOperation') : t('bridge.cctp.call.twoTransactions'),
   ];
   const pinnedSummary = [
-    `Receiving network: ${plan.destinationLabel} (CCTP domain ${domain}).`,
-    `Recipient: ${plan.recipient} (your ${plan.recipientKind === 'smart-account' ? 'smart account' : 'regular account'}).`,
-    `Amount: ${amount} (${q.amountIn} base units), burned here and minted there.`,
-    `Burn token: USDC ${approval.token} on ${plan.sourceLabel}.`,
-    'Destination caller: none (zero), so anyone may send the mint; it still goes only to the recipient above.',
-    'Maximum fee 0 and finality 2000: a Standard Transfer, which Circle attests after the sending network’s hard finality. This wallet never builds a Fast Transfer.',
-    `All seven words of the call are fixed (${q.calls[q.calls.length - 1]!.pins.length} pins), and before showing this screen the wallet re-read each of them from the call itself.`,
+    t('bridge.cctp.pin.network', { destination: plan.destinationLabel, domain: String(domain) }),
+    plan.recipientKind === 'smart-account'
+      ? t('bridge.cctp.pin.recipientSmart', { recipient: plan.recipient })
+      : t('bridge.cctp.pin.recipientRegular', { recipient: plan.recipient }),
+    t('bridge.cctp.pin.amount', { amount, base: q.amountIn.toString() }),
+    t('bridge.cctp.pin.token', { token: approval.token, source: plan.sourceLabel }),
+    t('bridge.cctp.pin.caller'),
+    t('bridge.cctp.pin.standard'),
+    t('bridge.cctp.pin.fixed', { pins: q.calls[q.calls.length - 1]!.pins.length }),
   ];
   return {
     title: bridgePromptTitle(plan),
     callLines,
-    youSend: `You send ${amount} from ${plan.sourceLabel}`,
-    arrives: `Expected to arrive on ${plan.destinationLabel}: ${exactAsset(q.expectedAmountOut, 'usdc')} USDC`,
-    minimum: `Least that may arrive (written into the call as a maximum fee of 0): ${exactAsset(q.minAmountOut, 'usdc')} USDC`,
+    youSend: t('bridge.youSend', { amount, source: plan.sourceLabel }),
+    arrives: t('bridge.arrives', { destination: plan.destinationLabel, amount: `${exactAsset(q.expectedAmountOut, 'usdc')} USDC` }),
+    minimum: t('bridge.cctp.minimum', { amount: `${exactAsset(q.minAmountOut, 'usdc')} USDC` }),
     feeLines,
-    total: `${amount} (amount ${exactAsset(q.amountIn, 'usdc')} + Circle fee 0), before the network fees in ${plan.nativeSymbol}`,
+    total: t('bridge.cctp.total', { total: amount, amount: exactAsset(q.amountIn, 'usdc'), symbol: plan.nativeSymbol }),
     timeLines,
     trust: plan.trust,
     destinationStep: `${q.destination.description} ${cctpMintStepLine(plan.destinationLabel)}`,
-    approvalLine:
-      `Exact approval only: this allows Circle’s TokenMessengerV2 (${approval.spender}) to take exactly ${amount} ` +
-      `(${approval.amount} base units) of USDC (${approval.token}), nothing more; the burn uses all of it, so nothing stays approved.`,
+    approvalLine: t('bridge.cctp.exactApproval', { spender: approval.spender, amount, base: approval.amount.toString(), token: approval.token }),
     pinnedSummary,
     pinnedPool: cctpPinnedContractLine(plan.call.to, plan.sourceLabel),
     recipientLines: [usdcRecipientNote(plan.recipientKind, plan.recipient, plan.destinationLabel)],
@@ -2284,22 +2260,22 @@ export function trackedPatch(
 /** The heading over the adapter's own detail sentence, for each state. */
 export function bridgeStatusHeading(status: BridgeTransferStatus | null, destinationLabel: string, providerId?: string): string {
   if (providerId === CCTP_V2_PROVIDER_ID) {
-    if (status?.state === 'in-flight') return 'Waiting for Circle’s attestation';
-    if (status?.state === 'awaiting-destination-action' && status.onChain?.status === 'attested') return `Attested: waiting for the mint on ${destinationLabel}`;
+    if (status?.state === 'in-flight') return t('bridge.status.waitingAttestation');
+    if (status?.state === 'awaiting-destination-action' && status.onChain?.status === 'attested') return t('bridge.status.attestedWaiting', { destination: destinationLabel });
   }
   switch (status?.state) {
     case undefined:
-      return 'Not checked yet';
+      return t('bridge.status.notChecked');
     case 'in-flight':
-      return 'On its way';
+      return t('bridge.status.onItsWay');
     case 'delivered':
-      return `Delivered on ${destinationLabel}`;
+      return t('bridge.status.delivered', { destination: destinationLabel });
     case 'awaiting-destination-action':
-      return `Waiting for a transaction on ${destinationLabel}`;
+      return t('bridge.status.waitingDestination', { destination: destinationLabel });
     case 'failed':
-      return 'Failed';
+      return t('bridge.status.failed');
     case 'unknown':
-      return 'Not known yet';
+      return t('bridge.status.unknown');
   }
 }
 
@@ -2311,8 +2287,8 @@ export function bridgeStatusHeading(status: BridgeTransferStatus | null, destina
 export function bridgeStatusSentence(
   record: Pick<BridgeTransferRecord, 'status' | 'checkError' | 'destinationLabel'> & Partial<Pick<BridgeTransferRecord, 'providerId' | 'sourceLabel'>>,
 ): string {
-  if (record.checkError && !record.status) return `The transfer could not be checked just now: ${record.checkError}`;
-  if (!record.status) return 'The wallet has not asked where this transfer is yet.';
+  if (record.checkError && !record.status) return t('bridge.status.checkFailed', { error: localize(record.checkError) });
+  if (!record.status) return t('bridge.status.notAsked');
   if (record.providerId === CCTP_V2_PROVIDER_ID && record.sourceLabel) {
     const onChain = record.status.onChain;
     if (record.status.state === 'in-flight' && onChain?.status === 'in-flight') {
@@ -2322,7 +2298,10 @@ export function bridgeStatusSentence(
       return cctpAttestedSentence(record.destinationLabel);
     }
   }
-  return record.status.detail;
+  // The adapter's detail stays as the engine wrote it; a detail this module
+  // set (a smart-account operation's state, stored in English) is shown in
+  // the chosen language.
+  return localize(record.status.detail);
 }
 
 /**
@@ -2338,15 +2317,14 @@ export function bridgeLiveStatusText(record: Pick<BridgeTransferRecord, 'status'
 
 /** CCTP, burned and waiting for the attestation. */
 export function cctpBurnedSentence(sourceLabel: string, block: bigint | null): string {
-  return (
-    `Burned on ${sourceLabel}${block === null ? '' : ` (block ${block})`}. Waiting for Circle’s attestation: it comes after the ` +
-    'source chain’s hard finality, about 17 minutes in the measured runs.'
-  );
+  return block === null
+    ? t('bridge.cctp.burned', { source: sourceLabel })
+    : t('bridge.cctp.burnedBlock', { source: sourceLabel, block: block.toString() });
 }
 
 /** CCTP, attested and not minted yet. */
 export function cctpAttestedSentence(destinationLabel: string): string {
-  return `Attested. The USDC can now be minted on ${destinationLabel}.`;
+  return t('bridge.cctp.attested', { destination: destinationLabel });
 }
 
 /**
@@ -2365,17 +2343,10 @@ export function cctpAttestedSentence(destinationLabel: string): string {
  * (docs/BRIDGING.md section 17).
  */
 export function cctpExpirySentence(attested: Pick<BridgeAttestation, 'expirationBlock'> | null, destinationLabel: string): string {
-  if (attested === null) {
-    return 'Circle’s attested message is valid until it is used, unless it carries an expiration block: Circle’s technical guide says an expired message must be re-attested by Circle (possible at any time) before it can be minted.';
-  }
-  if (attested.expirationBlock === 0n) {
-    return 'The attested message carries no expiration block (0), so it stays valid until the mint is sent: Circle’s contract accepts such a message at any time, and only once.';
-  }
-  const arb = /arbitrum/i.test(destinationLabel) ? ' (on Arbitrum an Ethereum block number, as Circle’s guide notes)' : '';
-  return (
-    `The attested message expires after block ${attested.expirationBlock}${arb}. After that Circle’s contract refuses it until Circle ` +
-    're-attests it, which Circle’s technical guide says can be requested at any time; this wallet does not request it.'
-  );
+  if (attested === null) return t('bridge.cctp.expiry.unknown');
+  if (attested.expirationBlock === 0n) return t('bridge.cctp.expiry.none');
+  const arb = /arbitrum/i.test(destinationLabel) ? ` ${t('bridge.cctp.expiry.arbitrum')}` : '';
+  return t('bridge.cctp.expiry.block', { block: attested.expirationBlock.toString(), arbitrum: arb });
 }
 
 /**
@@ -2414,16 +2385,16 @@ export function bridgeMintBlocker(
 ): string | null {
   const expiry = cctpExpirySentence(record.attested, record.destinationLabel);
   if (activeCaip2 !== record.destinationCaip2) {
-    return (
-      `Anyone with ${nativeSymbol} on ${record.destinationLabel} can send this mint transaction, and the USDC still goes only to ` +
-      `${record.recipient}. ${expiry} ${bridgeSwitchSentence(record.destinationLabel)}`
-    );
+    return t('bridge.mint.otherNetwork', {
+      symbol: nativeSymbol,
+      destination: record.destinationLabel,
+      recipient: record.recipient,
+      expiry,
+      switchSentence: bridgeSwitchSentence(record.destinationLabel),
+    });
   }
   if (nativeBalance === 0n) {
-    return (
-      `Your regular account holds no ${nativeSymbol} on ${record.destinationLabel} to pay for the mint transaction. Anyone with ` +
-      `${nativeSymbol} there can send it, and the USDC still goes only to ${record.recipient}. ${expiry}`
-    );
+    return t('bridge.mint.noGas', { symbol: nativeSymbol, destination: record.destinationLabel, recipient: record.recipient, expiry });
   }
   return null;
 }
@@ -2436,15 +2407,12 @@ export function bridgeMintBlocker(
  * the active ACCOUNT only (App.tsx), so the switch keeps this screen open.
  */
 export function bridgeSwitchSentence(destinationLabel: string): string {
-  return (
-    `To send it from this wallet, make ${destinationLabel} the active network with the button below (the same choice as ` +
-    'Settings → Developer → Test network); this screen stays open and this transfer stays listed here.'
-  );
+  return t('bridge.switch.sentence', { destination: destinationLabel });
 }
 
 /** The switch button's title. */
 export function bridgeSwitchButtonTitle(destinationLabel: string): string {
-  return `Switch to ${destinationLabel}`;
+  return t('bridge.switch.button', { destination: destinationLabel });
 }
 
 /**
@@ -2496,7 +2464,8 @@ export function bridgeRetryCall(record: Pick<BridgeTransferRecord, 'status' | 'r
 /** Why the retry cannot be sent from here right now, or null when it can. */
 export function bridgeRetryBlocker(activeCaip2: string, record: Pick<BridgeTransferRecord, 'destinationCaip2' | 'destinationLabel'>): string | null {
   if (activeCaip2 !== record.destinationCaip2) {
-    return `Anyone can send this delivery transaction on ${record.destinationLabel}, paying the gas there. ${bridgeSwitchSentence(record.destinationLabel)}`;
+    return t('bridge.retry.otherNetwork', { destination: record.destinationLabel, switchSentence: bridgeSwitchSentence(record.destinationLabel) });
+
   }
   return null;
 }

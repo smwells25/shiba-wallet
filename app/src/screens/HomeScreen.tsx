@@ -684,21 +684,21 @@ export function HomeScreen({ navigation }: Props) {
             style={[styles.address, { color: theme.textMuted }]}
             accessibilityLabel={
               hideAmounts
-                ? `${MULTISIG_DEPOSIT_ROW_LABEL}: hidden`
-                : `${MULTISIG_DEPOSIT_ROW_LABEL}: ${
+                ? `${localize(MULTISIG_DEPOSIT_ROW_LABEL)}: ${tx('hidden')}`
+                : `${localize(MULTISIG_DEPOSIT_ROW_LABEL)}: ${
                     shownDeposit === null
-                      ? 'loading'
+                      ? tx('loading')
                       : shownDeposit.deposit === null
-                        ? 'could not be read'
+                        ? tx('could not be read')
                         : `${spokenAmount(formatBalanceDisplay(shownDeposit.deposit, 18))} ${evmChain.displaySymbol}`
                   }`
             }
           >
-            {MULTISIG_DEPOSIT_ROW_LABEL}:{' '}
+            {localize(MULTISIG_DEPOSIT_ROW_LABEL)}:{' '}
             {shownDeposit === null
-              ? 'loading…'
+              ? tx('loading…')
               : shownDeposit.deposit === null
-                ? 'could not be read'
+                ? tx('could not be read')
                 : `${maskAmount(formatBalanceDisplay(shownDeposit.deposit, 18), hideAmounts)} ${evmChain.displaySymbol}`}
           </Text>
         ) : null}
@@ -803,13 +803,12 @@ export function HomeScreen({ navigation }: Props) {
             {activeAccount && delegation.status?.kind === 'kernel-v3.3' ? (
               <Pressable
                 accessibilityRole="button"
-                accessibilityHint="Opens the account upgrade screen"
+                accessibilityHint={tx('Opens the account upgrade screen')}
                 onPress={() => navigation.navigate('UpgradeAccount')}
                 hitSlop={8}
               >
                 <Text style={[styles.delegationLine, { color: theme.success }]}>
-                  {activeAccount.name}
-                  {delegationLabelSuffix(delegation.status)} on {evmChain.label}
+                  {t('home.delegation.line', { name: activeAccount.name, suffix: delegationLabelSuffix(delegation.status), network: evmChain.label })}
                 </Text>
               </Pressable>
             ) : null}
@@ -818,11 +817,11 @@ export function HomeScreen({ navigation }: Props) {
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={
-                  `Warning: ${activeAccount.name}${delegationLabelSuffix(delegation.status)} on ${evmChain.label}. ` +
-                  (delegation.status.kind === 'other' ? `${FOREIGN_DELEGATE_WARNING} ` : '') +
-                  'Tap to review.'
+                  `${tx('Warning:')} ${t('home.delegation.line', { name: activeAccount.name, suffix: delegationLabelSuffix(delegation.status), network: evmChain.label })}. ` +
+                  (delegation.status.kind === 'other' ? `${localize(FOREIGN_DELEGATE_WARNING)} ` : '') +
+                  tx('Tap to review.')
                 }
-                accessibilityHint="Opens the account upgrade screen to review this"
+                accessibilityHint={tx('Opens the account upgrade screen to review this')}
                 onPress={() => navigation.navigate('UpgradeAccount')}
                 hitSlop={8}
                 style={[
@@ -831,23 +830,22 @@ export function HomeScreen({ navigation }: Props) {
                 ]}
               >
                 <Text style={[styles.delegationLine, { color: theme.warningText }]}>
-                  ⚠ {activeAccount.name}
-                  {delegationLabelSuffix(delegation.status)} on {evmChain.label}.{' '}
-                  {delegation.status.kind === 'other' ? FOREIGN_DELEGATE_WARNING : ''} Tap to review.
+                  ⚠ {t('home.delegation.line', { name: activeAccount.name, suffix: delegationLabelSuffix(delegation.status), network: evmChain.label })}.{' '}
+                  {delegation.status.kind === 'other' ? localize(FOREIGN_DELEGATE_WARNING) : ''} {tx('Tap to review.')}
                 </Text>
               </Pressable>
             ) : null}
             {activeAccount && recovery.recoveredAccount ? (
               <Pressable
                 accessibilityRole="button"
-                accessibilityHint="Opens the guardians screen"
+                accessibilityHint={tx('Opens the guardians screen')}
                 onPress={() => navigation.navigate('Guardians')}
                 hitSlop={8}
               >
                 <Text style={[styles.delegationLine, { color: theme.text }]}>
-                  {activeAccount.name} · recovered account {shortAccountAddress(recovery.recoveredAccount)} on{' '}
-                  {evmChain.label} (not found from your recovery phrase alone; keep its record backed up)
+                  {t('home.recovered.line', { name: activeAccount.name, address: shortAccountAddress(recovery.recoveredAccount), network: evmChain.label })}
                 </Text>
+
               </Pressable>
             ) : null}
             {activeAccount && recovery.recoveryInProgress ? (
