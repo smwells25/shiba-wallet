@@ -12675,3 +12675,23 @@ to the Chairperson at once.
       under throttling, load-balanced RPC lag (afterStep re-reads up to 4 ×
       4 s), the bundler accepting the prepare batch from an undeployed
       Kernel, iOS.
+- [x] Funding for the phase 23 emulator passes (2026-10-25, the CTO, fund.mjs
+      from the dev EOA; each receipt status 0x1 with the balance delta
+      exact): Account 1 0x772e…F44F on ARBITRUM SEPOLIA +0.0002 ETH for the
+      CCTP mint (tx
+      0xf56c86ba76972fb61322f7a2a03c16356037201055db4551ce218d073eb734d1,
+      block 322891691, 21,000 gas at 20,304,000 wei, gasUsedForL1 0; the
+      dev EOA there 22,081,387,725,470,001 → 21,880,961,341,470,001 wei);
+      the cold-signing Kernel 0x96e96e31123aBb64597edA1074fa907EdE7A00C9
+      on ETHEREUM SEPOLIA +0.003 ETH for the item-5 app pass (tx
+      0x2868ef48aefa6a28379f20cbe22edcab31b2e8b0c980ac48938d0761935be091,
+      block 11995191, 27,539 gas at 100,018 wei; the dev EOA
+      40,769,526,161,566,123 → 37,769,523,407,170,421 wei). Read-only before
+      the pass: Account 1 holds 1.5 USDC and 0.0076 ETH on Base Sepolia,
+      1 USDC on Arbitrum Sepolia. CI green on a1149f0. The main checkout's
+      working tree still carries the agents' superseded in-progress hunks
+      in seven files (saved as the scratchpad's
+      stale-worktree-after-p23-wave2.patch; a reset was refused by the
+      session's permission classifier — the Chairperson's call); commits
+      are staged from verified patches, so it affects nothing, and every
+      agent works in its own mkwt worktree.
