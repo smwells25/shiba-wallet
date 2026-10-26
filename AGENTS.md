@@ -13676,3 +13676,155 @@ to the Chairperson at once.
       the probe, the phase-13 read-back, both keeper logs). UNVERIFIED:
       the captions on a device; the 1.83× ratio; a live ERC-20 pull after
       the fork.
+- [x] EMULATOR PASS p23-coldaa — COLD SIGNING FOR A WATCHED OWNER'S SMART
+      ACCOUNT PROVEN LIVE THROUGH THE APP (2026-10-26 13:02–13:36 and
+      19:44–20:15 UTC, the gap the driver's Opus session limit; Expo Go on
+      emulator 37.1.11 with ANGLE, Metro pid 4972 serving wt-app at
+      a1149f0; no repo files edited; ONE device prompt in the whole pass —
+      the ordinary "Unlock Shiba Wallet" with "Use PIN" after an
+      accidental trip to the launcher — and NONE on the cold path (two
+      requests, every check and refusal, two submissions, the expiry);
+      nothing from the dev EOA during the pass (the CTO's 0.003 ETH funding
+      of the Kernel came before it); every hash read by the driver on two
+      or three RPCs and BOTH BUNDLE RECEIPTS RE-READ BY THE CTO on
+      publicnode and 0xrpc.io (identical: status 0x1, the UserOperationEvent
+      nonce, success and cost figures below); the report step by step in
+      the scratchpad p23-coldaa-pass/REPORT.md with redacted dumps, the
+      TalkBack transcripts and the receipts; every request, signature and
+      part file deleted with rm -P; screen protection OFF). THE ACCOUNT:
+      "Cold 8 (watch-only)" = dev index 8 0x8E1dEaF5d88e60DBdabcC79d8EFA570f40fb0cDF,
+      its Kernel 0x96e96e31123aBb64597edA1074fa907EdE7A00C9 (deployed by
+      the script leg). (1) THE FORM AND REVIEW — PASS: the switch "Send
+      from the smart account" on → the card with the Kernel address,
+      "Deployed.", the balance 0.003 and "EntryPoint deposit (pays fees
+      first) 0.000002721126961516" (= the chain); Review with the type tag,
+      the recipient, "Owner (signs off-line)", "From smart account",
+      "Already deployed", "Worst case at 0.231000046 gwei max fee × 361401
+      gas" (231,000,046 × 361,401 = 83,483,647,624,446 exact), the deposit
+      note's top-up = fee − deposit, the total, the preview, the own-account
+      risk line, "Bundler gas estimate passed…". (2) THE LIVE SEND, 0.0001
+      test ETH to Account 2 — PASS: the first "Show for the off-line signer"
+      was REFUSED before anything was built by the fee-floor check ("The
+      network fee rose…": ZeroDev's floor 1.099999981 gwei against the
+      0.231 gwei reviewed — the standard tier jumped about 10× within a
+      minute); a second Review at 2.310000006 gwei → "For the off-line
+      signer" with the summary, the QR-contents note, the "Before
+      signing…" sentence, the request as 2 "SW-CU:" parts ("Smart-account
+      signing request — part 1 of 2" / "2 of 2") whose decoded parts (779 +
+      778 B) joined are byte-identical to the 1,537-byte Copy text (read
+      from the host pasteboard through the emulator's clipboard sync),
+      accountIndex null, "Expires at 13:39 UTC…", the worst case in the
+      summary; cold-signer.mjs sign-userop with index 8 (decoded nonce 3,
+      key 0, max fee 2310000006 / priority 2309999960, worst case
+      834,836,312,168,406 wei) → "Signature checked: made by the owner
+      0x8E1d… over exactly the operation shown above." → "Submit to the
+      bundler" (13:15:53 UTC) → "Sent to bundler ✓" → ~20 s later
+      "Included on-chain — succeeded." with the transaction, the explorer
+      button and the note field (note "p23 cold aa"); userOpHash
+      0x6440a4f9c4842b305828673ce72fb75e5b07147839cb6767e15afe3aee783e70
+      (= the request's), bundle tx
+      0x5a8b90a6b72010dc930f004813e2a5d0761d9fe8fa2c2f097f1dddd02f39e73e,
+      block 11998224, status 0x1, gasUsed 238,389, logs: the EIP-7708
+      Kernel → EntryPoint 832,115,185,206,890 (= prefund − deposit),
+      Deposited 834,836,312,168,406 (= the signed worst case),
+      BeforeExecution, the EIP-7708 Kernel → Account 2 1e14,
+      UserOperationEvent nonce 3 success 1 actualGasCost 608,209,133,680,944;
+      Activity "Pending on this phone / Smart-account operation 0x6440…3e70
+      from an off-line signer." with the no-replacement paragraph, "Check
+      status" → "Included in transaction 0x5a8b…e73e."; the note shows on
+      Account 2's received row (the operation is not a row in Cold 8's own
+      Activity — a watch-only account gets no smart-account stream). (3)
+      REFUSALS, all exact, 0 prompts, Submit disabled each time: another
+      index's signature (the script refuses to sign for another owner, so
+      a copy of the request with only its owner field edited was signed by
+      index 7) → "This signature was made by 0xFDF5b9520E15306980F660f6CC5DB90570B92F14,
+      not by the owner 0x8E1d…, so it was refused. Nothing was sent. Sign
+      with the owner's key." (the same sentence with the stated signer
+      edited to the owner — the recovered signer decides); the request
+      pasted as a signature → "This is the signing request itself, not its
+      signature…"; one "SW-CU:" part pasted → "This is part 1 of 2 of a
+      multi-part QR code…"; request A's used signature on request B, and
+      B's valid signature on a new request C after Back (the form kept
+      recipient and amount; "The request is kept only while this screen
+      is open, and only until it expires…") → "This signature belongs to
+      another signing request, not the one shown on this screen, so it
+      was refused. Nothing was sent."; A's signature with its requestId
+      edited to B's → "The off-line signer signed a different operation
+      from the one shown here (the userOpHash or the signing digest
+      differs)…"; the readiness row "Off-line signing for a smart account
+      — Test networks only" with its reason; MAINNET: the off-line signer
+      form has no smart-account switch at all; BASE SEPOLIA: the switch is
+      offered with the same Kernel address, "Not deployed yet — the first
+      send deploys it." and 0 balance, and Review is refused "Your smart
+      account needs funds first. Insufficient funds: … 0 wei…" (so "Will
+      deploy with this send" was never reached; no "saved paymaster is not
+      used" note appeared, and whether a paymaster is saved for Base
+      Sepolia on the device was not checked). (4) EXPIRY — PASS: request
+      C's view stayed open past 13:59:46 UTC; at 19:44 UTC its valid
+      signature gave "This signing request has expired, so it was refused.
+      Nothing was sent. Its network fees were fixed when it was prepared
+      and cannot be changed after signing; prepare a new request.", Submit
+      disabled. (5) TALKBACK — PASS with minors: the watch-only notice in
+      full (uiautomator skips it, TalkBack reads it), the switch spoken
+      once ("ON. Send from the smart account. Switch. Sends from the
+      watched address's own Kernel v3.3 smart account instead; the off-line
+      signer signs the operation as its owner") with OFF / ON announced on
+      toggle and the card appearing and disappearing, the request view in
+      order (the heading, the summary, the notes, "QR code: Smart-account
+      signing request — part 1 of 2. Image", "Previous part. Button.
+      disabled", the format note, Share, Copy, the worst-case fee, the
+      expiry line, "The signature. Heading", the scan note, the caption
+      and field, "Submit to the bundler. Button. disabled", Back); a
+      verified signature announced as a content change. (6) SWEEP WITH
+      MAX to the dev EOA — PASS: Max 0.00124979831266821, Review trimmed
+      it to 0.001233048502624704 with the trim sentence, amount + fee =
+      the balance exactly; userOpHash
+      0xf1a14fc124091051e914cbdcaebb435a0c3c1f2de147c8e12dda450e9b0df1c4,
+      bundle tx
+      0x3363d3381541d434476cc4dfdca90b80dcf852767d42138a567af3ee9eed203a,
+      block 12000188, status 0x1, gasUsed 238,413, nonce 4 success,
+      actualGasCost 608,209,134,207,532. FUNDS reconciled to the wei: the
+      Kernel's balance + deposit 3,002,721,126,961,516 → 453,254,356,448,336
+      (−2,549,466,770,513,180 = 1e14 to Account 2 + 1,233,048,502,624,704
+      swept + the two actualGasCosts), left 226,627,178,487,462 balance
+      (the CTO re-read it) + 226,627,177,960,874 deposit, EntryPoint nonce
+      3 → 5; Account 2 +1e14; the dev EOA 37,769,523,407,170,421 →
+      39,002,571,909,795,125 (= the sweep exactly). sepolia.drpc.org
+      refused Sepolia mid-pass ("chain is not available on free plan",
+      code 35), so 0xrpc.io served as the second RPC. FINDINGS (no bug in
+      the cold path): (1) Max keeps the full worst-case fee in the balance
+      beside the deposit, so about 0.000227 ETH stays in each — by design
+      (the F-71 top-up rule), worth knowing; (2) after a successful check
+      the view keeps "Signature checked…" with Submit enabled past the
+      expiry (Submit on that stale state was not tried — re-pasting cleared
+      it; the engine's submit checks expiry first, so it would refuse —
+      follow-up: clear the verified state at expiry); (3) Account 2's
+      Activity labels the cold Kernel generically ("Smart-account bundle
+      with 1 operation from other accounts") and the replacement marker
+      lines ("Speed-up of transaction … (nonce N).") show on the
+      RECIPIENT's Activity for transactions it never sent (follow-up); (4)
+      cold-signer.mjs's parser accepted a request whose owner field was
+      edited — for a deployed account the owner is not in the userOpHash,
+      so the app's own stored request is what held (the script is a
+      stand-in; a real signer should bind the owner); accessibility
+      minors: the card's labels and values separate stops, the Kernel and
+      owner addresses spoken in full, "Copied ✓" kept for the view's life,
+      the filled signature field speaking the whole JSON plus its
+      placeholder, the 64-hex values read out, a proofreading hint on the
+      JSON field. NOT VERIFIED: "Will deploy with this send" (no undeployed
+      funded Kernel for a watched owner — a CTO choice); Submit after
+      expiry on the stale state; QR camera scanning of "SW-CU:" parts (the
+      text route was used); dark mode; iOS. DRIVING NOTES: a background
+      Settings walk exceeded the tool's limit and was killed after 8 steps
+      (nowhere near the Danger zone); a BACK from Home left for the
+      launcher and one scroll loop ran on the app drawer (nothing opened);
+      Expo Go's Recent history resumed the same experience window on the
+      lock screen. END STATE: Home, Ethereum Sepolia, Account 1 active,
+      Cold 8 removed (0 prompts), light mode, TalkBack OFF (level 6 in
+      place, inode and SELinux context kept), protection OFF, IME
+      ADBKeyboard, adb reverse 8081 mapped, Metro 4972 at a1149f0, qemu
+      36709 and caffeinate 36943 running with the window in place;
+      .local/cold-userop and /sdcard/Download empty. FEATURE 11 (cold
+      signing): both halves are now proven live through the app — the
+      regular account (p22b) and the smart account (this pass) — the tally
+      at the item-9 refresh.
