@@ -13525,3 +13525,73 @@ to the Chairperson at once.
       (0 USDC there) and absent on Arbitrum → Base; the two risk-card lines;
       TalkBack idle ~60 s with no re-announcement, short addresses, the
       button's label and hint.
+- [x] Item 8, the second localisation pass — SEND'S SMART-ACCOUNT VIEWS,
+      SETTINGS, SESSIONS, SWAP AND STAKING (commit f023d98; 37 files,
+      +7,122 / −831; check-i18n 109 (was 94; 17 mutants) the only count
+      that moved; offline runner ALL GREEN in the CTO's isolated worktree
+      on HEAD da86ff2 with --skip-bundle: engine 1,252, app 10,461 across
+      65 suites, lint 0/0, tsc clean; checkout 0 / apply 0 / 37 files; the
+      staged patch id equals the verified tree's; the scan clean on the
+      staged files; the patch was cut against 5cb4601 and shares no file
+      with the bridge fix b06c074 — check-bridge 370 and check-multisig 425
+      unchanged at HEAD, so no collision; not seen on a device). 690 ids
+      added to en.ts (548 → 1,238 entry lines) and es.ts, each with a
+      Spanish draft; the fixture gains 690 entries marked base 5cb4601 with
+      file and line (561 literals, 115 templates, 14 composites, the
+      composites also assembled in check-i18n's old map); NO ENGLISH
+      WORDING CHANGED, so no new "changed" entries. COVERED: the Send
+      screen's smart-account confirm and both success views, AaDepositNote,
+      aa.ts aaSelfPaidFeeSentence built from t() ids; all of
+      SettingsScreen (endpoint / Blockbook / AaField / indexer rows, custom
+      networks, AppPinSection incl. "App passphrase" through LOCK_COPY.phr
+      — the phase-22 leftover, Developer, the danger zone and the protect /
+      reveal / wipe dialogs, AccountsSection, NotificationScheduler,
+      RecordsBackupSection, duress.ts backupCheckLabel, the LockGate
+      message line); SessionsScreen, DcaViews, SubscriptionKeyHandover;
+      SwapScreen; StakingScreen and StakingViews; broadcast-outcome.ts's
+      describeBroadcastOutcome through t() (the exported constants
+      unchanged); the cold-aa UI constants through localize(). The receipt
+      line is identical in Send, Staking and Swap (tx('Included on-chain —
+      succeeded.') / tx('Included on-chain.'), pinned); existing ids reused
+      instead of duplicating English (send.badge.*, send.worstCase,
+      send.simulation.failed, send.row.maxFeePaidIn, send.field.amount,
+      staking.success.approvalTx in Swap); the Row sink localises in
+      Sessions, Swap and StakingViews, Settings' AaField and field() too
+      (amounts, addresses and hashes never match an entry). PINS updated
+      to the new source form without loosening in check-aa, check-staking,
+      check-duress, check-devmode, check-custom-networks, check-multisig
+      (pins only; the backup tx(), MULTISIG_LIST_HINT, accountsBackupHint
+      and its mutant, the heading and hint), check-pending,
+      check-key-import, check-settings-protection, check-token-gas,
+      check-watch-only, check-records-backup, check-recurring, check-dca,
+      check-cold-aa; check-i18n gains a section for this pass (the id
+      count, Spanish for every new id, the groundwork literals untouched,
+      one exact English entry per screen, "App passphrase" → "Contraseña
+      de la aplicación", aaSelfPaidFeeSentence equal to the old English,
+      backupCheckLabel in both languages, broadcast-outcome equal to its
+      constants, the shared receipt line, the Row sinks, prompt titles and
+      share texts staying English) and four new mutants (a Spanish id
+      missing, the wipe title changed by one character, an unused id, the
+      old receipt line restored), all caught. SECRET-SCAN COLLISIONS on
+      ordinary words, the scanner left strict: the bare "Subscription"
+      entry was dropped (the word stays English in Sessions) and the id
+      sessions.start.subscription became sessions.start.subscriptionTitle
+      (no source change). STAYS ENGLISH by rule or by design: biometric
+      prompt titles, share texts, the CSV, OS notification texts; exact
+      amounts, addresses and hashes; the pending card's "Pending on this
+      phone" / "Check status" (the Spanish broadcast lines quote the
+      on-screen English labels); brand names; ColdSignScreen beyond the
+      cold-aa constants; Bridge, Multisig and Home (the next pass, now
+      that the bridge fix has landed); and the sentences BUILT INSIDE
+      MODULES, which need t() in the wallet modules and fixture templates
+      — token-gas confirm lines, the Max-adjustment sentences,
+      describeDefaultChoice and the fallback notes, bundlerVerifiedLine,
+      customNetworkNote, removalConfirmationText / describeRemoval,
+      describeProtectionStatus, blockTimeLine, TEST_NETWORK_TICK_NOTE,
+      DEVELOPER_TEST_NETWORK_HINT, removeImportedMessage /
+      removeWatchOnlyMessage / accountsBackupHint, the subscription and
+      DCA review and terms texts, stakingActionTitle, contractLabel,
+      SessionGrantViews, PinCostMeasurement, module error messages and
+      technical lines (a follow-up slice). INPUT still needed: a native
+      Spanish reviewer for every draft. UNVERIFIED (device): Spanish
+      layout length on the Settings, Sessions and Swap screens.
