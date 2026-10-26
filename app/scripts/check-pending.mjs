@@ -640,6 +640,272 @@ console.log('check-pending: every sendEvm broadcast is recorded');
 }
 
 // ---------------------------------------------------------------------------
+console.log('check-pending: the bounded broadcast (phase 23 item 8)');
+// ---------------------------------------------------------------------------
+// eth_sendRawTransaction gets at most BROADCAST_TIMEOUT_MS (engine
+// httpTransport); the transaction is recorded BEFORE the request leaves the
+// device; no answer = an unknown outcome (never "not sent"), the record
+// stays and the quote is never broadcast again; a node refusal removes the
+// record this attempt created. Fake timers (node:test mock.timers) and a
+// fake fetch that never answers the broadcast.
+{
+  const { mock } = await import('node:test');
+  const { httpTransport, BROADCAST_TIMEOUT_MS } = await import('@shiba-wallet/chains-evm');
+  const outcome = await import('../src/wallet/broadcast-outcome.ts');
+  const { isEndpointFailure } = await import('../src/config/endpoint-probe.ts');
+  const realSetTimeout = globalThis.setTimeout;
+  const realDelay = (ms) => new Promise((r) => realSetTimeout(r, ms));
+  const flush = async () => {
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+  };
+  const NOT_SENT = /not sent|nothing was sent|could not be sent|was not sent/i;
+
+  // A fetch over a fake node: `broadcast` decides eth_sendRawTransaction
+  // ('silent' never answers; else a function returning a result or throwing a
+  // JSON-RPC error); every request's method and signal are recorded.
+  function fetchOver(node, broadcast, store) {
+    const seen = [];
+    let reachedResolve;
+    const reached = new Promise((r) => (reachedResolve = r));
+    const fetchFn = async (_url, init) => {
+      const { method, params, id } = JSON.parse(init.body);
+      const entry = { method, hasSignal: init.signal !== undefined, signal: init.signal, registryAtSend: null, raw: null };
+      seen.push(entry);
+      if (method === 'eth_sendRawTransaction') {
+        entry.registryAtSend = store ? store.map.get(PENDING_TX_KEY) ?? null : null;
+        entry.raw = params[0];
+        reachedResolve(entry);
+        if (broadcast === 'silent') return new Promise(() => undefined);
+        let body;
+        try {
+          body = { jsonrpc: '2.0', id, result: broadcast(params[0]) };
+        } catch (e) {
+          body = { jsonrpc: '2.0', id, error: { code: -32000, message: e.message } };
+        }
+        return { ok: true, status: 200, json: async () => body };
+      }
+      let body;
+      try {
+        body = { jsonrpc: '2.0', id, result: await node.transport(method, params) };
+      } catch (e) {
+        body = { jsonrpc: '2.0', id, error: { code: -32000, message: e.message } };
+      }
+      return { ok: true, status: 200, json: async () => body };
+    };
+    return { fetchFn, seen, reached };
+  }
+  const recordsOf = (store) => parseRegistry(store.map.get(PENDING_TX_KEY) ?? null).records;
+  const evmQuote = (nonce) => ({ kind: 'evm', ...quoteLike({ nonce }), balance: 10n ** 18n, fee: 21_000n, total: 0n, simulation: { ok: true, returnData: '0x' } });
+
+  check('BROADCAST_TIMEOUT_MS is 60 seconds and every sentence names it',
+    BROADCAST_TIMEOUT_MS === 60_000 &&
+      [outcome.BROADCAST_TX_UNKNOWN_SENTENCE, outcome.BROADCAST_TX_UNKNOWN_UNLISTED_SENTENCE, outcome.BROADCAST_USEROP_UNKNOWN_SENTENCE, outcome.BROADCAST_USEROP_UNKNOWN_UNLISTED_SENTENCE, outcome.BROADCAST_UNKNOWN_SENTENCE].every((x) => x.includes('within 60 seconds')));
+  check('no outcome-unknown sentence says "not sent" or "nothing was sent"',
+    [outcome.BROADCAST_OUTCOME_UNKNOWN_TITLE, outcome.BROADCAST_TX_UNKNOWN_SENTENCE, outcome.BROADCAST_TX_UNKNOWN_UNLISTED_SENTENCE, outcome.BROADCAST_USEROP_UNKNOWN_SENTENCE, outcome.BROADCAST_USEROP_UNKNOWN_UNLISTED_SENTENCE, outcome.BROADCAST_UNKNOWN_SENTENCE, outcome.BROADCAST_ALREADY_HANDED_OVER_SENTENCE].every((x) => !NOT_SENT.test(x)));
+  check('the listed sentence points at Pending on this phone and its 15-second check',
+    outcome.BROADCAST_TX_UNKNOWN_SENTENCE.includes('Pending on this phone') && outcome.BROADCAST_TX_UNKNOWN_SENTENCE.includes('every 15 seconds') && /do not send it again/.test(outcome.BROADCAST_TX_UNKNOWN_SENTENCE));
+
+  // 1. sendEvm, a node that never answers the broadcast.
+  const node = fakeNode();
+  const store = memoryStore();
+  send.setPendingRecordStore(store);
+  const events = [];
+  const offSent = send.addEvmSentListener((e) => void events.push(e));
+  const silent = fetchOver(node, 'silent', store);
+  const savedFetch = globalThis.fetch;
+  globalThis.fetch = silent.fetchFn;
+  const quote = evmQuote(11n);
+  mock.timers.enable({ apis: ['setTimeout'] });
+  let err;
+  let entry;
+  try {
+    const p = send.sendEvm(URL, signer, quote, null).then(() => null, (e) => e);
+    entry = await Promise.race([silent.reached, realDelay(5_000).then(() => null)]);
+    const hash = entry ? ethers.Transaction.from(entry.raw).hash.toLowerCase() : null;
+    const atSend = entry?.registryAtSend ? parseRegistry(entry.registryAtSend).records : [];
+    check('the transaction is recorded BEFORE the broadcast request is sent (the registry at the moment of the fetch)',
+      atSend.length === 1 && atSend[0].hash === hash && atSend[0].nonce === '11' && atSend[0].action === 'send');
+    check('the broadcast request carries an abort signal; nothing aborted yet', entry?.hasSignal === true && entry.signal.aborted === false);
+    mock.timers.tick(BROADCAST_TIMEOUT_MS - 1);
+    await flush();
+    let settled = false;
+    p.then(() => (settled = true));
+    await flush();
+    check('…still waiting one millisecond before the limit', settled === false);
+    mock.timers.tick(1);
+    err = await p;
+    check('at 60 s: BroadcastOutcomeUnknownError for the transaction, listed', err?.name === 'BroadcastOutcomeUnknownError' && err.kind === 'tx' && err.hash === hash && err.recorded === true && err.chain === CHAIN);
+    check('…its message is the outcome-unknown sentence', err?.message === outcome.BROADCAST_TX_UNKNOWN_SENTENCE);
+    check('…the request was aborted', entry?.signal.aborted === true);
+  } finally {
+    mock.timers.reset();
+  }
+  check('the record stays (the card lists it)', recordsOf(store).length === 1 && recordsOf(store)[0].hash === err?.hash);
+  const groups = nonceGroups(recordsOf(store), CHAIN, FROM);
+  const shown = pending.pendingSectionView(parseRegistry(store.map.get(PENDING_TX_KEY)), CHAIN, FROM, []);
+  check('…Pending on this phone shows its nonce group (Speed up / Cancel offered there)', groups.length === 1 && groups[0].nonce === '11' && shown.groups.length === 1 && shown.groups[0].group.latest.hash === err?.hash);
+  const poolNode = fakeNode({ latestNonce: 11n, pendingNonce: 12n });
+  poolNode.state.txs.set(err?.hash, null);
+  const st = await groupStatus(nodeReader(poolNode.transport), groups[0]);
+  check('…and the card\'s poll settles it as usual (here: waiting in the pool)', st.state === 'pending');
+  const minedNode = fakeNode({ latestNonce: 12n, pendingNonce: 12n });
+  minedNode.state.receipts.set(err?.hash, { block: 77n });
+  const st2 = await groupStatus(nodeReader(minedNode.transport), groups[0]);
+  check('…(or: included in block 77)', st2.state === 'mined' && st2.block === 77n);
+  check('no sent listener fired (the spending recorder counts accepted sends only)', events.length === 0);
+  const described = send.describeSendError(err, 'test ETH', 'test ETH');
+  check('describeSendError: the outcome-unknown title and sentence, the hash in the technical line',
+    described.title === outcome.BROADCAST_OUTCOME_UNKNOWN_TITLE && described.detail.startsWith(outcome.BROADCAST_TX_UNKNOWN_SENTENCE) && described.detail.includes(err?.hash ?? '#'));
+  check('…never worded as not sent', !NOT_SENT.test(described.title) && !NOT_SENT.test(described.detail));
+  check('isEndpointFailure is false for an unknown outcome (no failover = no second broadcast)', !isEndpointFailure(err) && !isEndpointFailure(new (await import('@shiba-wallet/chains-evm')).BroadcastTimeoutError('eth_sendRawTransaction', 60_000)));
+  const worded = Object.assign(new Error('request timed out (aborted)'), { name: 'BroadcastTimeoutError' });
+  check('…by name, whatever the wording: an unknown-outcome error that says "timed out" is still never an endpoint failure',
+    !isEndpointFailure(worded) && !isEndpointFailure(Object.assign(new Error('timeout'), { name: 'BroadcastOutcomeUnknownError' })) &&
+      !isEndpointFailure(Object.assign(new Error('aborted'), { name: 'BroadcastAlreadyHandedOverError' })) && isEndpointFailure(new Error('request timed out')));
+  check('isBroadcastOutcomeUnknown recognises the wrapper and the engine\'s bare timeout', outcome.isBroadcastOutcomeUnknown(err) && outcome.isBroadcastOutcomeUnknown(new (await import('@shiba-wallet/chains-evm')).BroadcastTimeoutError('eth_sendRawTransaction', 60_000)) && !outcome.isBroadcastOutcomeUnknown(new Error('x')));
+
+  // 2. The same quote is never broadcast again (nor an identical one).
+  const before = silent.seen.filter((x) => x.method === 'eth_sendRawTransaction').length;
+  const again = await send.sendEvm(URL, signer, quote, null).then(() => null, (e) => e);
+  check('the same quote a second time: refused, no second broadcast request', again?.name === 'BroadcastAlreadyHandedOverError' && silent.seen.filter((x) => x.method === 'eth_sendRawTransaction').length === before);
+  const twin = await send.sendEvm(URL, signer, evmQuote(11n), null).then(() => null, (e) => e);
+  check('…nor a new quote object for the identical transaction (same signed hash)', twin?.name === 'BroadcastAlreadyHandedOverError' && silent.seen.filter((x) => x.method === 'eth_sendRawTransaction').length === before);
+  check('…and the screens can ask before the device check', send.broadcastOutcomeUnknownFor(quote) === true && send.broadcastOutcomeUnknownFor(evmQuote(11n)) === false);
+  const dAgain = send.describeSendError(again, 'test ETH', 'test ETH');
+  check('…described with its own title, never as not sent', dAgain.title === outcome.BROADCAST_ALREADY_HANDED_OVER_TITLE && dAgain.detail === outcome.BROADCAST_ALREADY_HANDED_OVER_SENTENCE && !NOT_SENT.test(dAgain.detail));
+  check('…and the record is untouched', recordsOf(store).length === 1);
+
+  // 3. A node refusal leaves no record of the refused transaction.
+  const refStore = memoryStore();
+  send.setPendingRecordStore(refStore);
+  const refusing = fetchOver(node, () => {
+    throw new Error('transaction underpriced');
+  }, refStore);
+  globalThis.fetch = refusing.fetchFn;
+  const q2 = evmQuote(12n);
+  const refused = await send.sendEvm(URL, signer, q2, null).then(() => null, (e) => e);
+  const rEntry = refusing.seen.find((x) => x.method === 'eth_sendRawTransaction');
+  const rHash = ethers.Transaction.from(rEntry.raw).hash.toLowerCase();
+  check('a refused broadcast: it WAS recorded before the request…', parseRegistry(rEntry.registryAtSend).records.some((r) => r.hash === rHash));
+  check('…and the record is removed after the refusal: no card claims it was sent', recordsOf(refStore).length === 0);
+  check('…the node\'s error is unchanged (its existing translation applies)', refused?.message === 'RPC error -32000: transaction underpriced (eth_sendRawTransaction)' && send.describeSendError(refused, 'test ETH', 'test ETH').title === send.TX_UNDERPRICED_TITLE);
+  check('…no sent listener fired', events.length === 0);
+  const okFetch = fetchOver(node, (raw) => ethers.Transaction.from(raw).hash, refStore);
+  globalThis.fetch = okFetch.fetchFn;
+  const retried = await send.sendEvm(URL, signer, q2, null);
+  check('a refused quote stays usable (the rehearsal retry): accepted on the second approval, recorded once, one sent event',
+    retried.txid.toLowerCase() === rHash && recordsOf(refStore).length === 1 && recordsOf(refStore)[0].hash === rHash && events.length === 1);
+  check('…and the accepted broadcast also carried the signal; the reads did not', okFetch.seen.every((x) => x.hasSignal === (x.method === 'eth_sendRawTransaction')));
+
+  // 4. A record that already existed (an earlier attempt with an unknown
+  // outcome) is never removed by a later refusal of the same transaction.
+  const keepStore = memoryStore({ [PENDING_TX_KEY]: store.map.get(PENDING_TX_KEY) });
+  send.setPendingRecordStore(keepStore);
+  const knownFetch = fetchOver(node, () => {
+    throw new Error('already known');
+  }, keepStore);
+  globalThis.fetch = knownFetch.fetchFn;
+  const otherSigner = await send.sendEvmWithSignature(URL, FROM, quote, (() => {
+    const tx = ethers.Transaction.from(entry.raw);
+    return { yParity: tx.signature.yParity, r: ethers.getBytes(tx.signature.r), s: ethers.getBytes(tx.signature.s) };
+  })(), null).then(() => null, (e) => e);
+  check('a quote marked unknown is refused on the cold path too (same quote object)', otherSigner?.name === 'BroadcastAlreadyHandedOverError', String(otherSigner?.message));
+  const sameTx = (() => {
+    const tx = ethers.Transaction.from(entry.raw);
+    return { yParity: tx.signature.yParity, r: ethers.getBytes(tx.signature.r), s: ethers.getBytes(tx.signature.s) };
+  })();
+  const coldTwin = await send.sendEvmWithSignature(URL, FROM, evmQuote(11n), sameTx, null).then(() => null, (e) => e);
+  check('…and by its hash with a fresh quote object', coldTwin?.name === 'BroadcastAlreadyHandedOverError' && knownFetch.seen.filter((x) => x.method === 'eth_sendRawTransaction').length === 0);
+  const q13 = evmQuote(13n);
+  const pre = txRecordFromQuote(FROM, q13, ethers.Transaction.from((await (async () => {
+    // The hash sendEvm will produce for q13 (deterministic RFC 6979 signing): from an accepted twin run on a scratch store.
+    const scratch = memoryStore();
+    send.setPendingRecordStore(scratch);
+    const f = fetchOver(node, (raw) => ethers.Transaction.from(raw).hash, scratch);
+    globalThis.fetch = f.fetchFn;
+    await send.sendEvm(URL, signer, evmQuote(13n), null);
+    return f.seen.find((x) => x.method === 'eth_sendRawTransaction').raw;
+  })())).hash, T0);
+  const existedStore = memoryStore({ [PENDING_TX_KEY]: JSON.stringify({ version: 1, records: [pre] }) });
+  send.setPendingRecordStore(existedStore);
+  globalThis.fetch = fetchOver(node, () => {
+    throw new Error('already known');
+  }, existedStore).fetchFn;
+  const knownErr = await send.sendEvm(URL, signer, q13, null).then(() => null, (e) => e);
+  check('a refusal of a transaction whose record already existed keeps that record (it may be pending)', /already known/.test(knownErr?.message ?? '') && recordsOf(existedStore).length === 1 && recordsOf(existedStore)[0].hash === pre.hash && recordsOf(existedStore)[0].sentAt === T0);
+
+  // 5. A speed-up whose broadcast never gets an answer.
+  const rStore = memoryStore();
+  const origR = rec(20, { hash: H(20) });
+  await recordPendingTransaction(origR, rStore);
+  const rGroup = nonceGroups([origR], CHAIN, FROM)[0];
+  const rNode = fakeNode({ latestNonce: 20n, pendingNonce: 21n });
+  rNode.state.txs.set(H(20), null);
+  const rQuote = await send.prepareEvmReplacement(URL, rGroup, 'speed-up', CHAIN, { transport: rNode.transport });
+  const rSilent = fetchOver(rNode, 'silent', rStore);
+  mock.timers.enable({ apis: ['setTimeout'] });
+  let rErr;
+  try {
+    const p = send.sendEvmReplacement(URL, signer, rQuote, null, { transport: httpTransport(URL, rSilent.fetchFn), store: rStore, now: () => T0 + 900 }).then(() => null, (e) => e);
+    const e = await Promise.race([rSilent.reached, realDelay(5_000).then(() => null)]);
+    const at = e?.registryAtSend ? parseRegistry(e.registryAtSend).records : [];
+    check('a speed-up is recorded, linked to the original, before its broadcast', at.length === 2 && at.some((r) => r.action === 'speed-up' && r.replaces === H(20)));
+    mock.timers.tick(BROADCAST_TIMEOUT_MS);
+    rErr = await p;
+  } finally {
+    mock.timers.reset();
+  }
+  check('…no answer: outcome unknown (not a "Not replaced" refusal), the speed-up stays listed', rErr?.name === 'BroadcastOutcomeUnknownError' && recordsOf(rStore).length === 2);
+  check('…the card shows both hashes (the waiting line)', /^Speed-up sent: /.test(pending.replacementWaitingSentence(nonceGroups(recordsOf(rStore), CHAIN, FROM)[0]) ?? ''));
+  const rAgain = await send.sendEvmReplacement(URL, signer, rQuote, null, { transport: rNode.transport, store: rStore }).then(() => null, (e) => e);
+  check('…and the replacement quote is not sendable again', rAgain?.message === REPLACEMENT_QUOTE_USED);
+  // The identical speed-up again (a new quote, the same signed transaction): refused by its hash.
+  const rTwin = await send.prepareEvmReplacement(URL, rGroup, 'speed-up', CHAIN, { transport: rNode.transport });
+  const rTwinErr = await send.sendEvmReplacement(URL, signer, rTwin, null, { transport: httpTransport(URL, rSilent.fetchFn), store: rStore }).then(() => null, (e) => e);
+  check('…nor an identical speed-up from a fresh quote (same signed hash)', rTwinErr?.name === 'BroadcastAlreadyHandedOverError');
+  // A refused speed-up leaves the original only.
+  const uStore = memoryStore();
+  const origU = rec(21, { hash: H(21) });
+  await recordPendingTransaction(origU, uStore);
+  const uGroup = nonceGroups([origU], CHAIN, FROM)[0];
+  const uNode = fakeNode({ latestNonce: 21n, pendingNonce: 22n });
+  uNode.state.txs.set(H(21), null);
+  const uQuote = await send.prepareEvmReplacement(URL, uGroup, 'speed-up', CHAIN, { transport: uNode.transport });
+  const under = fetchOver(uNode, () => {
+    throw new Error('replacement transaction underpriced');
+  }, uStore);
+  const uErr = await send.sendEvmReplacement(URL, signer, uQuote, null, { transport: httpTransport(URL, under.fetchFn), store: uStore }).then(() => null, (e) => e);
+  check('a refused speed-up: recorded before the request, removed after, the original kept, "Not replaced" sentence',
+    parseRegistry(under.seen.find((x) => x.method === 'eth_sendRawTransaction').registryAtSend).records.length === 2 &&
+      recordsOf(uStore).length === 1 && recordsOf(uStore)[0].hash === H(21) && uErr?.message === REPLACEMENT_UNDERPRICED_SENTENCE);
+
+  // 6. Reads keep no time limit: a receipt read that never answers is still
+  // waiting after ten minutes, with no signal on its request.
+  const readFetch = { seen: [] };
+  const neverRead = async (url, init) => {
+    readFetch.seen.push({ method: JSON.parse(init.body).method, hasSignal: init.signal !== undefined });
+    return new Promise(() => undefined);
+  };
+  mock.timers.enable({ apis: ['setTimeout'] });
+  let readSettled = false;
+  try {
+    const t = httpTransport(URL, neverRead);
+    t('eth_call', [{ to: TO, data: '0x' }, 'latest']).then(() => (readSettled = true), () => (readSettled = true));
+    t('eth_getTransactionReceipt', [H(1)]).then(() => (readSettled = true), () => (readSettled = true));
+    await flush();
+    mock.timers.tick(10 * 60_000);
+    await flush();
+  } finally {
+    mock.timers.reset();
+  }
+  check('reads (eth_call, a receipt) keep no time limit: still waiting after ten minutes, no signal', readSettled === false && readFetch.seen.length >= 2 && readFetch.seen.every((x) => x.hasSignal === false));
+
+  offSent();
+  send.setPendingRecordStore(null);
+  globalThis.fetch = savedFetch;
+}
+
+// ---------------------------------------------------------------------------
 console.log('check-pending: the minimum-fee rehearsal (Settings → Developer, phase 21 item 3)');
 // ---------------------------------------------------------------------------
 {
@@ -1117,7 +1383,7 @@ console.log('check-pending: the screens wire the gates in order (source)');
   // A wipe forgets the registry with the rest of the wallet's on-device state (CTO, phase 19 item 3).
   const walletContext = readFileSync(join(HERE, '../src/wallet/WalletContext.tsx'), 'utf8');
   check('WalletContext registers the pending recorder once on the operation-sent channel', (walletContext.match(/addAaOperationSentListener\(pendingUserOpRecorder\(AsyncStorage\)\)/g) ?? []).length === 1);
-  check('the wallet wipe resets the pending-transaction registry', walletContext.includes("import { pendingUserOpRecorder, resetPendingRegistry } from './pending-transactions';") && walletContext.includes('await resetPendingRegistry(AsyncStorage).catch(() => undefined);'));
+  check('the wallet wipe resets the pending-transaction registry', walletContext.includes("import { pendingUserOpBroadcastRecorder, pendingUserOpRecorder, resetPendingRegistry } from './pending-transactions';") && walletContext.includes('await resetPendingRegistry(AsyncStorage).catch(() => undefined);'));
 }
 
 // ---------------------------------------------------------------------------

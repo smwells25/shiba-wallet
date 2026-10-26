@@ -11,17 +11,77 @@ import { toRpcEip7702Auth, type RpcEip7702Auth } from './eip7702.js';
 
 export type JsonRpcTransport = (method: string, params: unknown[]) => Promise<unknown>;
 
-/** Builds a fetch-based transport. Kept tiny so tests can inject fakes. */
+/**
+ * The JSON-RPC methods that hand a signed transaction or UserOperation to
+ * the network. Only these are bounded in time by httpTransport (every other
+ * request, the reads included, keeps no time limit, exactly as before).
+ */
+export const BROADCAST_METHODS: readonly string[] = ['eth_sendRawTransaction', 'eth_sendUserOperation'];
+
+/**
+ * How long httpTransport waits for the answer to a broadcast (a
+ * BROADCAST_METHODS request) before giving up on it: 60 seconds. A
+ * JUDGEMENT, not a protocol value or a measurement: long enough that a
+ * slow but healthy endpoint answers, short enough that a user is not left
+ * waiting on a spinner indefinitely (the platform fetch the app uses has no
+ * time limit of its own; in phase 21 pass p21e a refusal arrived about 2
+ * minutes after the prompt, most of it inferred, not measured, to be the
+ * wallet's own key derivation before the request). Giving up does NOT mean the broadcast failed: the
+ * request may already have reached the endpoint, so the caller must treat
+ * the outcome as unknown (BroadcastTimeoutError).
+ */
+export const BROADCAST_TIMEOUT_MS = 60_000;
+
+/**
+ * A broadcast (eth_sendRawTransaction or eth_sendUserOperation) that got no
+ * answer within the time limit. The outcome is UNKNOWN: the endpoint may
+ * have received and forwarded it. Never retry it elsewhere automatically
+ * (that would broadcast it a second time) and never report it as not sent.
+ * The message avoids the words an endpoint-failure classifier looks for.
+ */
+export class BroadcastTimeoutError extends Error {
+  readonly method: string;
+  readonly timeoutMs: number;
+  constructor(method: string, timeoutMs: number) {
+    super(
+      `No answer to ${method} within ${Math.round(timeoutMs / 1000)} seconds, so whether it was accepted is unknown.`,
+    );
+    this.name = 'BroadcastTimeoutError';
+    this.method = method;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+/** True for a BroadcastTimeoutError (by name, so it survives module copies). */
+export function isBroadcastTimeoutError(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === 'object' &&
+    (error as { name?: unknown }).name === 'BroadcastTimeoutError'
+  );
+}
+
+/**
+ * Builds a fetch-based transport. Kept tiny so tests can inject fakes.
+ *
+ * Broadcasts (BROADCAST_METHODS) are bounded by `broadcastTimeoutMs`
+ * (default BROADCAST_TIMEOUT_MS): after that the request is aborted (when
+ * the platform has AbortController) and the call rejects with a
+ * BroadcastTimeoutError. Every other method is sent exactly as before: no
+ * signal, no timer.
+ */
 export function httpTransport(
   url: string,
   fetchFn: typeof fetch = fetch,
+  options: { broadcastTimeoutMs?: number } = {},
 ): JsonRpcTransport {
   let id = 0;
-  return async (method, params) => {
+  const exchange = async (method: string, params: unknown[], signal?: AbortSignal): Promise<unknown> => {
     const response = await fetchFn(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method, params }),
+      ...(signal ? { signal } : {}),
     });
     if (!response.ok) {
       throw new Error(`RPC HTTP error ${response.status} for ${method}`);
@@ -34,6 +94,29 @@ export function httpTransport(
       throw new Error(`RPC error ${body.error.code}: ${body.error.message} (${method})`);
     }
     return body.result;
+  };
+  const timeoutMs = options.broadcastTimeoutMs ?? BROADCAST_TIMEOUT_MS;
+  return async (method, params) => {
+    if (!BROADCAST_METHODS.includes(method)) return exchange(method, params);
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        // Rejected BEFORE the abort, so the race settles with this error
+        // whatever the platform fetch does when it is aborted.
+        reject(new BroadcastTimeoutError(method, timeoutMs));
+        controller?.abort();
+      }, timeoutMs);
+    });
+    const attempt = exchange(method, params, controller?.signal);
+    // The losing promise's rejection (an abort after the deadline) is not
+    // an unhandled rejection.
+    attempt.catch(() => undefined);
+    try {
+      return await Promise.race([attempt, deadline]);
+    } finally {
+      clearTimeout(timer);
+    }
   };
 }
 

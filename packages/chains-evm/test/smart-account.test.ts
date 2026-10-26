@@ -736,3 +736,71 @@ describe('impossible gas estimates (zero limits) are refused before signing', ()
     expect(counts()).toEqual({ estimates: 3, sends: 0 });
   });
 });
+
+describe('beforeSend: the signed operation and its hash, right before eth_sendUserOperation (phase 23 item 8)', () => {
+  it('runs once, after the signature, with the local userOpHash, before the bundler is asked', async () => {
+    const { calls, node, bundler } = makeTransports({ deployed: true, sponsored: false });
+    let signed = false;
+    const client = new SmartAccountClient({
+      chainId: 11155111n,
+      entryPoint: ENTRYPOINT_V07,
+      bundler,
+      node,
+      spec: {
+        ...spec,
+        signUserOpHash: (owner, hash) => {
+          signed = true;
+          return spec.signUserOpHash(owner, hash);
+        },
+      },
+    });
+    const seen: Array<{ op: UserOperation; hash: string; signedThen: boolean; methodsThen: string[] }> = [];
+    const { userOp } = await client.sendCalls(ownerAccount(), [], FEES, {
+      beforeSend: (op, hash) => {
+        seen.push({ op, hash, signedThen: signed, methodsThen: calls.map((c) => c.method) });
+      },
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.signedThen).toBe(true);
+    expect(seen[0]!.methodsThen).not.toContain('eth_sendUserOperation');
+    expect(seen[0]!.op).toEqual(userOp);
+    expect(seen[0]!.hash).toBe(toHex(getUserOpHash(userOp, ENTRYPOINT_V07, 11155111n)));
+    expect(calls.filter((c) => c.method === 'eth_sendUserOperation')).toHaveLength(1);
+  });
+
+  it('a throwing hook stops the send before the bundler; a failed signature never reaches it', async () => {
+    const { calls, node, bundler } = makeTransports({ deployed: true, sponsored: false });
+    const client = new SmartAccountClient({ chainId: 1n, entryPoint: ENTRYPOINT_V07, bundler, node, spec });
+    await expect(
+      client.sendCalls(ownerAccount(), [], FEES, {
+        beforeSend: () => {
+          throw new Error('could not record');
+        },
+      }),
+    ).rejects.toThrow(/could not record/);
+    expect(calls.map((c) => c.method)).not.toContain('eth_sendUserOperation');
+
+    let hookCalls = 0;
+    const refusing = new SmartAccountClient({
+      chainId: 1n,
+      entryPoint: ENTRYPOINT_V07,
+      bundler,
+      node,
+      spec: { ...spec, signUserOpHash: () => Promise.reject(new Error('user cancelled')) },
+    });
+    await expect(
+      refusing.sendCalls(ownerAccount(), [], FEES, { beforeSend: () => void hookCalls++ }),
+    ).rejects.toThrow(/user cancelled/);
+    expect(hookCalls).toBe(0);
+  });
+
+  it('without a hook the requests are exactly as before', async () => {
+    const a = makeTransports({ deployed: true, sponsored: false });
+    const b = makeTransports({ deployed: true, sponsored: false });
+    const make = (t: ReturnType<typeof makeTransports>) =>
+      new SmartAccountClient({ chainId: 1n, entryPoint: ENTRYPOINT_V07, bundler: t.bundler, node: t.node, spec });
+    await make(a).sendCalls(ownerAccount(), [], FEES);
+    await make(b).sendCalls(ownerAccount(), [], FEES, { beforeSend: () => undefined });
+    expect(b.calls).toEqual(a.calls);
+  });
+});

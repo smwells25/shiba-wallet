@@ -444,7 +444,7 @@ console.log('check-passkeys: feature gate (Expo Go, rpId placeholder)');
     const end = src.indexOf('const onRemoveQuote = async', start);
     if (start < 0 || end < 0) return false;
     const body = src.slice(start, end);
-    const sendAt = body.indexOf('await sendPasskeyCalls(t.pbundle, t.quote);');
+    const sendAt = body.indexOf('await sendPasskeyCalls(t.pbundle, t.quote, {');
     const notifyAt = body.indexOf('notifyAaOperationSent({');
     const catchAt = body.indexOf('} catch (e) {');
     const literal = body.slice(notifyAt, body.indexOf('});', notifyAt));
@@ -461,7 +461,7 @@ console.log('check-passkeys: feature gate (Expo Go, rpId placeholder)');
   const noAnnounce = screenSrc.replace(notifyBlock, '');
   check('…mutant caught: the announcement removed', noAnnounce !== screenSrc && !announceOk(noAnnounce));
   const block = screenSrc.match(notifyBlock)?.[0] ?? '';
-  const beforeSubmit = noAnnounce.replace('      const { userOpHash } = await sendPasskeyCalls(t.pbundle, t.quote);', block + '\n      const { userOpHash } = await sendPasskeyCalls(t.pbundle, t.quote);');
+  const beforeSubmit = noAnnounce.replace('      const { userOpHash } = await sendPasskeyCalls(t.pbundle, t.quote, {', block + '\n      const { userOpHash } = await sendPasskeyCalls(t.pbundle, t.quote, {');
   check('…mutant caught: the announcement moved before the submit (would fire for a refused one)', beforeSubmit !== noAnnounce && !announceOk(beforeSubmit));
 }
 

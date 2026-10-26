@@ -15,6 +15,7 @@ import {
   recoverExternalSigner,
   requiredPrefund,
   toEthSignedMessageHash,
+  type BeforeSendHook,
   type Call,
   type ExternalSignature,
   type ExternalSigningScheme,
@@ -833,12 +834,13 @@ export async function submitColdUserOpRequest(
   client: SmartAccountClient,
   request: ColdUserOpRequest,
   signatureText: string,
-  options: { nowSeconds: number; beforeSign?: (op: UserOperation) => void | Promise<void> },
+  options: { nowSeconds: number; beforeSign?: (op: UserOperation) => void | Promise<void>; beforeSend?: BeforeSendHook },
 ): Promise<{ userOpHash: string; userOp: UserOperation }> {
   if (!Number.isSafeInteger(options.nowSeconds)) throw new Error('nowSeconds must be an integer');
   if (BigInt(options.nowSeconds) > BigInt(request.expiresAt)) throw new ColdUserOpRefusedError(COLD_USEROP_EXPIRED);
   const verified = verifyColdUserOpSignature(signatureText, request);
   return client.submitPreparedUserOperation(preparedFromColdUserOpRequest(request), verified.signature, {
     ...(options.beforeSign ? { beforeSign: options.beforeSign } : {}),
+    ...(options.beforeSend ? { beforeSend: options.beforeSend } : {}),
   });
 }

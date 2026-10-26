@@ -55,6 +55,8 @@ import type { AaAccountType } from './aa.ts';
 import type { KeyValueStore } from './tokens.ts';
 import { assertFeatureAllowed, isFeatureAllowed } from '../config/readiness.ts';
 import { NO_ANSWER_SENTENCE, sanitizeEndpointMessage } from '../config/endpoint-probe.ts';
+import { isBroadcastOutcomeUnknown } from './broadcast-outcome.ts';
+import { BROADCAST_TIMEOUT_MS } from '@shiba-wallet/chains-evm';
 
 /**
  * Recurring payments pushed by this phone (phase 15 item 1; the slice
@@ -1034,6 +1036,19 @@ export const RECURRING_NOT_SENT_SENTENCE =
   'up. Try again once the connection is back.';
 
 /**
+ * The bundler did not answer eth_sendUserOperation within the engine's
+ * BROADCAST_TIMEOUT_MS (phase 23 item 8): the payment may or may not have
+ * reached it. Never worded as "not sent"; the operation is also listed
+ * under Pending on this phone.
+ */
+export const RECURRING_NO_ANSWER_SENTENCE =
+  `The bundler did not answer within ${Math.round(BROADCAST_TIMEOUT_MS / 1000)} seconds, so this wallet does ` +
+  'not know whether it received the payment. The account’s nonce for this payment key decides: if the bundler ' +
+  'received the payment, it will be included and this card will count it as sent; if not, nothing was paid. ' +
+  'Wait a minute, then tap Refresh status before sending again: if the first one went through, sending again ' +
+  'would pay the next due payment as well. It is also listed under Pending on this phone in Activity.';
+
+/**
  * After a transport failure during the submission itself (or one the wallet
  * cannot place): the bundler may have received the signed payment.
  */
@@ -1086,6 +1101,8 @@ export function recurringRefusalSentence(message: string): string | null {
  * removes Java exception class names and links) as the technical detail.
  * In order:
  *  - not due / spending limits: their own words ('refused');
+ *  - no answer to the submission within the engine's BROADCAST_TIMEOUT_MS
+ *    (phase 23 item 8): 'outcome-unknown' (RECURRING_NO_ANSWER_SENTENCE);
  *  - a status read the endpoint did not answer, a NODE transport failure,
  *    or a bundler transport failure before the submission: 'not-sent'
  *    (never "refused");
@@ -1116,6 +1133,16 @@ export function describeRecurringPaymentError(
     };
   }
   const message = error instanceof Error ? error.message : String(error);
+  // No answer to the submission itself in time (phase 23 item 8): checked
+  // first, because the outcome is open whatever else the error says.
+  if (isBroadcastOutcomeUnknown(error)) {
+    const technical = (error as { technical?: unknown }).technical;
+    return {
+      title: RECURRING_OUTCOME_UNKNOWN_TITLE,
+      detail: withTechnical(RECURRING_NO_ANSWER_SENTENCE, sanitizeEndpointMessage(typeof technical === 'string' ? technical : message)),
+      outcome: 'outcome-unknown',
+    };
+  }
   if (isTransportFailure(error)) {
     const technical = sanitizeEndpointMessage(message);
     if (isNodeEndpointFailure(error) || isBundlerTransportFailureBeforeSubmit(error)) {

@@ -73,6 +73,9 @@ import {
 import { evmProfileByCaip2, isBuiltInEvmChain } from '../config/evm-chain.ts';
 import { PREVIEW_AA_NOTE } from './simulation.ts';
 import { suggestFeesRetryingOnce } from './fee-read.ts';
+// broadcast-outcome.ts imports only the engine and pending-transactions.ts
+// (which imports only types from this module), so no cycle.
+import { BroadcastOutcomeUnknownError, describeBroadcastOutcome, isBroadcastOutcomeUnknown } from './broadcast-outcome.ts';
 
 /**
  * ERC-4337 smart-account glue for the app (experimental, off by default):
@@ -4103,6 +4106,111 @@ export function notifyAaOperationSent(event: AaOperationSentEvent): void {
 }
 
 /**
+ * The operation an AaOperationSentEvent describes, minus what is only known
+ * at the moment it is handed to the bundler (the userOpHash and the time).
+ */
+export type AaOperationBase = Omit<AaOperationSentEvent, 'userOpHash' | 'sentAt'>;
+
+/** What a before-broadcast record found ('created' / 'existed' / 'failed'; pending-transactions.ts). */
+export type AaBroadcastRecordState = 'created' | 'existed' | 'failed';
+
+/**
+ * Records an operation BEFORE it is handed to the bundler and removes that
+ * record again when the bundler refuses it (phase 23 item 8). WalletContext
+ * registers the pending registry's (pending-transactions.ts
+ * pendingUserOpBroadcastRecorder). Separate from the operation-sent channel,
+ * whose listeners keep their meaning: "the bundler accepted it".
+ */
+export interface AaBroadcastRecorder {
+  record(event: AaOperationSentEvent): Promise<AaBroadcastRecordState>;
+  forget(event: AaOperationSentEvent): Promise<void>;
+}
+
+const broadcastRecorders = new Set<AaBroadcastRecorder>();
+
+/** One recorder and what its before-broadcast record found. */
+type RecorderState = [AaBroadcastRecorder, AaBroadcastRecordState];
+
+/** Registers a before-broadcast recorder. Returns the unsubscribe function. */
+export function addAaBroadcastRecorder(recorder: AaBroadcastRecorder): () => void {
+  broadcastRecorders.add(recorder);
+  return () => {
+    broadcastRecorders.delete(recorder);
+  };
+}
+
+/**
+ * Runs one smart-account submission with the pending record written BEFORE
+ * eth_sendUserOperation (phase 23 item 8). `submit` receives the engine's
+ * beforeSend hook (SmartAccountClient.sendCalls / submitPreparedUserOperation),
+ * which the client calls with the signed operation and its userOpHash
+ * (computed on the device) right before the request; every registered
+ * recorder is awaited there, so the record exists before the request leaves
+ * the device. Afterwards:
+ *
+ *  - accepted: the result is returned; the caller fires
+ *    notifyAaOperationSent as before (the registry merges it into the record);
+ *  - no answer in time (the engine's BroadcastTimeoutError): the record
+ *    stays and BroadcastOutcomeUnknownError reports the outcome as unknown
+ *    (never "not sent"); the quote was claimed before (claimQuoteForSubmission),
+ *    so the same quote cannot go out again;
+ *  - any other failure after the hook ran (the bundler refused, an HTTP
+ *    error, no connection): the records THIS attempt created are removed,
+ *    and the error is rethrown unchanged;
+ *  - a failure before the hook (estimate, fee checks, signing): nothing was
+ *    recorded, nothing to undo.
+ *
+ * Recording is best effort, as before: a recorder that fails or throws
+ * counts as 'failed' and never stops the submission.
+ */
+export async function submitWithPendingRecord<T>(
+  base: AaOperationBase,
+  submit: (beforeSend: (op: unknown, userOpHash: string) => Promise<void>) => Promise<T>,
+): Promise<T> {
+  let announced: { event: AaOperationSentEvent; states: RecorderState[] } | null =
+    null;
+  const beforeSend = async (_op: unknown, userOpHash: string): Promise<void> => {
+    const event: AaOperationSentEvent = { ...base, userOpHash, sentAt: Date.now() };
+    const states: RecorderState[] = [];
+    for (const recorder of [...broadcastRecorders]) {
+      let state: AaBroadcastRecordState;
+      try {
+        state = await recorder.record(event);
+      } catch {
+        state = 'failed';
+      }
+      states.push([recorder, state]);
+    }
+    announced = { event, states };
+  };
+  try {
+    return await submit(beforeSend);
+  } catch (error) {
+    const done = announced as { event: AaOperationSentEvent; states: RecorderState[] } | null;
+    if (done) {
+      if (isBroadcastOutcomeUnknown(error)) {
+        throw new BroadcastOutcomeUnknownError({
+          kind: 'userop',
+          hash: done.event.userOpHash,
+          chain: done.event.chain,
+          recorded: done.states.some(([, state]) => state !== 'failed'),
+          technical: error instanceof Error ? error.message : String(error),
+        });
+      }
+      for (const [recorder, state] of done.states) {
+        if (state !== 'created') continue;
+        try {
+          await recorder.forget(done.event);
+        } catch {
+          // Bookkeeping only.
+        }
+      }
+    }
+    throw error;
+  }
+}
+
+/**
  * Refuses (TokenGasChargeAboveLimitError) any USDC permit the paymaster
  * transport asks for that is not exactly the grant the confirm screen
  * described: owner = the smart account, spender = the quoted paymaster,
@@ -4315,7 +4423,11 @@ export async function checkAaQuoteBeforeApproval(
  * `meta` says where the operation comes from (AaOperationKind; 'other' when
  * omitted). Once the bundler accepted the operation, both notifyAaSent and
  * notifyAaOperationSent fire exactly once; a refused operation fires
- * neither.
+ * neither. Since phase 23 item 8 the operation is also recorded BEFORE it
+ * is handed to the bundler (submitWithPendingRecord): a bundler that does
+ * not answer within the engine's BROADCAST_TIMEOUT_MS leaves it listed and
+ * throws BroadcastOutcomeUnknownError (neither notification fires: the
+ * outcome is unknown).
  */
 export async function sendAa(
   bundle: AaClientBundle,
@@ -4377,9 +4489,23 @@ export async function sendAa(
         ? erc7677TokenGasClient(bundle, sender, quote)
         : tokenGasClient(bundle, owner, sender, quote.tokenGas)
       : bundle.client;
-    const { userOpHash } = await client.sendCalls(owner, quote.calls, fees, {
-      beforeSign: signedFeeGuard(fees, quote.sponsored ? 0n : quote.fee),
-    });
+    // Listed in the pending registry before it is handed to the bundler
+    // (phase 23 item 8): an answer that never comes leaves it listed.
+    const { userOpHash } = await submitWithPendingRecord(
+      {
+        chain: eip155Caip2(bundle.chainId),
+        sender,
+        owner: owner.address,
+        bundler: bundle.bundler,
+        kind: meta.kind,
+        resend: meta.resend ?? null,
+      },
+      (beforeSend) =>
+        client.sendCalls(owner, quote.calls, fees, {
+          beforeSign: signedFeeGuard(fees, quote.sponsored ? 0n : quote.fee),
+          beforeSend,
+        }),
+    );
     // The deploying operation changes "not deployed yet": re-read next time.
     forgetSmartAccountAddress(sender);
     notifyAaSent({ bundle, owner: { address: owner.address, path: owner.path }, quote, userOpHash });
@@ -4531,6 +4657,10 @@ export function describeAaError(
     bundlerUrl?: string | null;
   },
 ): { title: string; detail: string } | null {
+  // A bundler with no answer in time (phase 23 item 8): the outcome is
+  // unknown, never worded as "not sent".
+  const outcome = describeBroadcastOutcome(error);
+  if (outcome) return { title: outcome.title, detail: outcome.detail };
   const detail = error instanceof Error ? error.message : String(error);
   if (error instanceof AaFundingError) return { title: error.title, detail };
   if (error instanceof AaFeeRoseError) return { title: aaFeeRoseTitle(error), detail };

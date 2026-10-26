@@ -8,6 +8,9 @@ export {
 } from './userop.js';
 export type { UserOperation } from './userop.js';
 export {
+  BROADCAST_METHODS,
+  BROADCAST_TIMEOUT_MS,
+  BroadcastTimeoutError,
   BundlerClient,
   DEFAULT_ESTIMATE_RETRIES,
   ImpossibleGasEstimateError,
@@ -16,6 +19,7 @@ export {
   gasEstimateProblems,
   gasLimitProblems,
   httpTransport,
+  isBroadcastTimeoutError,
   toRpcUserOperation,
 } from './rpc.js';
 export type {
@@ -44,6 +48,7 @@ export {
   withEthereumV,
 } from './smart-account.js';
 export type {
+  BeforeSendHook,
   Call,
   SmartAccountClientConfig,
   SmartAccountSignatureContext,

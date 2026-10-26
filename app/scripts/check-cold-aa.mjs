@@ -550,6 +550,69 @@ console.log('check-cold-aa: the signature and the submission');
 }
 
 // ===========================================================================
+console.log('check-cold-aa: a submission with no answer from the bundler (phase 23 item 8)');
+// ===========================================================================
+{
+  const { mock } = await import('node:test');
+  const { httpTransport, BROADCAST_TIMEOUT_MS } = await import('@shiba-wallet/chains-evm');
+  const outcome = await import('../src/wallet/broadcast-outcome.ts');
+  const realSetTimeout = globalThis.setTimeout;
+  const w = world();
+  let reachedResolve;
+  const reached = new Promise((r) => (reachedResolve = r));
+  const store = memoryStore();
+  let atSend = null;
+  let sendRequests = 0;
+  const silentFetch = async (_url, init) => {
+    const { method, params, id } = JSON.parse(init.body);
+    if (method === 'eth_sendUserOperation') {
+      sendRequests += 1;
+      atSend = store.map ? store.map.get(pending.PENDING_TX_KEY) ?? null : await store.getItem(pending.PENDING_TX_KEY);
+      reachedResolve();
+      return new Promise(() => undefined);
+    }
+    let body;
+    try {
+      body = { jsonrpc: '2.0', id, result: await w.bundler(method, params) };
+    } catch (e) {
+      body = { jsonrpc: '2.0', id, error: { code: -32601, message: e.message.replace(/^RPC error -?\d+: /, '') } };
+    }
+    return { ok: true, status: 200, json: async () => body };
+  };
+  const httpBundler = httpTransport(BUNDLER_URL, silentFetch);
+  w.transportFor = (url) => (url === BUNDLER_URL ? httpBundler : w.node);
+  const { bundle, quote } = await quoted(w);
+  const request = await ca.prepareColdAaRequest({ bundle, owner: OWNER, quote, nowSeconds: NOW, nativeSymbol: 'test ETH', requestId: RID(9) });
+  const good = signAs(ownerKey, request);
+  const offRec = aa.addAaBroadcastRecorder(pending.pendingUserOpBroadcastRecorder(store));
+  const events = [];
+  const off = aa.addAaOperationSentListener((ev) => void events.push(ev));
+  mock.timers.enable({ apis: ['setTimeout'] });
+  let err;
+  try {
+    const p = ca.submitColdAa({ bundle, request, quote, signatureText: good, nowSeconds: NOW }).then(() => null, (e) => e);
+    await Promise.race([reached, new Promise((r) => realSetTimeout(r, 5_000))]);
+    mock.timers.tick(BROADCAST_TIMEOUT_MS);
+    err = await p;
+  } finally {
+    mock.timers.reset();
+  }
+  offRec();
+  off();
+  const listed = atSend ? pending.parseRegistry(atSend).records.filter((r) => r.kind === 'userop') : [];
+  check('listed BEFORE eth_sendUserOperation under the request\'s own userOpHash, origin cold-aa, the watched owner',
+    listed.length === 1 && listed[0].userOpHash === request.userOpHash.toLowerCase() && listed[0].origin === 'cold-aa' && listed[0].owner === OWNER.toLowerCase());
+  check('no answer in 60 s: an unknown outcome under that hash, the record kept, no operation event',
+    err?.name === 'BroadcastOutcomeUnknownError' && err.kind === 'userop' && err.hash === request.userOpHash.toLowerCase() && err.recorded === true && events.length === 0);
+  const d = ca.describeColdAaError(err, 'submit', { deployed: false, sender: SENDER });
+  check('described with the outcome-unknown title and the operation sentence, back to the form, never "not sent"',
+    d.title === outcome.BROADCAST_OUTCOME_UNKNOWN_TITLE && d.detail.startsWith(outcome.BROADCAST_USEROP_UNKNOWN_SENTENCE) && d.back === true && !/not sent|nothing was sent/i.test(d.title + d.detail));
+  const again = await rejection(() => ca.submitColdAa({ bundle, request, quote, signatureText: good, nowSeconds: NOW }));
+  check('the same signed request cannot be submitted again from this phone (no second request)', again?.name === 'BroadcastAlreadyHandedOverError' && sendRequests === 1);
+  check('…described with its own title, back to the form', ca.describeColdAaError(again, 'submit', { deployed: false }).title === outcome.BROADCAST_ALREADY_HANDED_OVER_TITLE && ca.describeColdAaError(again, 'submit', { deployed: false }).back === true);
+}
+
+// ===========================================================================
 console.log('check-cold-aa: zero signing, zero secure-store reads');
 // ===========================================================================
 {

@@ -126,7 +126,10 @@ export interface PendingTxRecord {
   maxPriorityFeePerGas: string;
   /** Decimal gas. */
   gasLimit: string;
-  /** Unix milliseconds when the node accepted it. */
+  /**
+   * Unix milliseconds when it was handed to the node (since phase 23 item 8
+   * the record is written just BEFORE the broadcast request).
+   */
   sentAt: number;
   /** 'send' for the wallet's ordinary transaction, else the replacement's action. */
   action: 'send' | ReplacementAction;
@@ -745,6 +748,118 @@ export async function recordPendingTransaction(
   } catch {
     return false;
   }
+}
+
+/**
+ * What a record written BEFORE a broadcast found (phase 23 item 8):
+ * 'created' — this call added it, so a refused broadcast removes it again;
+ * 'existed' — a record of the same hash was already there (an earlier
+ * attempt whose outcome is unknown), so a refusal never removes it;
+ * 'failed' — nothing could be written (damaged registry, storage failure).
+ */
+export type BroadcastRecordState = 'created' | 'existed' | 'failed';
+
+/**
+ * Records a transaction BEFORE eth_sendRawTransaction is sent (phase 23 item
+ * 8: an answer that never arrives must still leave it listed), awaiting the
+ * write so the record exists before the request leaves the device. Best
+ * effort like recordPendingTransaction: a failure resolves 'failed' and the
+ * broadcast still goes ahead. An existing record of the same hash is kept as
+ * it is (never overwritten by a second attempt).
+ */
+export async function recordPendingTransactionBeforeBroadcast(
+  record: PendingTxRecord,
+  store: PendingStore = AsyncStorage,
+  nowMs: number = Date.now(),
+): Promise<BroadcastRecordState> {
+  let state: BroadcastRecordState = 'created';
+  try {
+    await update(
+      store,
+      (records) => {
+        if (records.some((r) => r.kind === 'tx' && r.chain === record.chain && r.hash === record.hash)) {
+          state = 'existed';
+          return records;
+        }
+        return [...records, record];
+      },
+      nowMs,
+    );
+    return state;
+  } catch {
+    return 'failed';
+  }
+}
+
+/**
+ * Removes the record of ONE transaction (by hash), when the node refused the
+ * broadcast that recorded it, so the pending card never lists a transaction
+ * the node answered with an error. Other broadcasts for the same nonce stay.
+ */
+export async function forgetPendingTransaction(
+  key: { chain: string; hash: string },
+  store: PendingStore = AsyncStorage,
+  nowMs: number = Date.now(),
+): Promise<void> {
+  const hash = lower(key.hash);
+  await update(store, (records) => records.filter((r) => !(r.kind === 'tx' && r.chain === key.chain && r.hash === hash)), nowMs);
+}
+
+/**
+ * Records a smart-account operation BEFORE eth_sendUserOperation is sent
+ * (the userOpHash is computed on the device), awaiting the write. Same
+ * states and rules as recordPendingTransactionBeforeBroadcast; the record is
+ * the one pendingUserOpRecorder writes once the bundler accepts (which then
+ * merges into it).
+ */
+export async function recordPendingUserOperationBeforeBroadcast(
+  event: AaOperationSentEvent,
+  store: PendingStore = AsyncStorage,
+): Promise<BroadcastRecordState> {
+  const full: PendingUserOpRecord = {
+    kind: 'userop',
+    chain: event.chain,
+    userOpHash: lower(event.userOpHash),
+    sender: lower(event.sender),
+    owner: lower(event.owner),
+    sentAt: event.sentAt,
+    resend: event.kind === 'send' ? event.resend : null,
+    origin: event.kind,
+  };
+  if (!validateRecord(full)) return 'failed';
+  let state: BroadcastRecordState = 'created';
+  try {
+    await update(
+      store,
+      (records) => {
+        if (records.some((r) => r.kind === 'userop' && r.chain === full.chain && r.userOpHash === full.userOpHash)) {
+          state = 'existed';
+          return records;
+        }
+        return [...records, full];
+      },
+      event.sentAt,
+    );
+    return state;
+  } catch {
+    return 'failed';
+  }
+}
+
+/**
+ * The recorder WalletContext registers with aa.ts addAaBroadcastRecorder:
+ * every smart-account operation is listed before it is handed to the
+ * bundler, and removed again when the bundler refuses it (only when this
+ * attempt created the record).
+ */
+export function pendingUserOpBroadcastRecorder(store: PendingStore = AsyncStorage): {
+  record: (event: AaOperationSentEvent) => Promise<BroadcastRecordState>;
+  forget: (event: AaOperationSentEvent) => Promise<void>;
+} {
+  return {
+    record: (event) => recordPendingUserOperationBeforeBroadcast(event, store),
+    forget: (event) => forgetUserOperation({ chain: event.chain, userOpHash: event.userOpHash }, store),
+  };
 }
 
 /**

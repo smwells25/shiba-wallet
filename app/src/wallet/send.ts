@@ -66,15 +66,24 @@ import {
   meetsReplacementRule,
   nodeReader,
   nonceUsedSentence,
+  forgetPendingTransaction,
   pooledFees,
-  recordPendingTransaction,
+  recordPendingTransactionBeforeBroadcast,
   replacementFees,
   txRecordFromQuote,
   type NonceGroup,
   type PendingStore,
+  type PendingTxRecord,
   type ReplacementAction,
   type ReplacementFees,
 } from './pending-transactions.ts';
+// broadcast-outcome.ts imports only the engine and pending-transactions.ts.
+import {
+  BroadcastAlreadyHandedOverError,
+  BroadcastOutcomeUnknownError,
+  describeBroadcastOutcome,
+  isBroadcastOutcomeUnknown,
+} from './broadcast-outcome.ts';
 
 /**
  * Send-flow engine glue: recipient validation, fee quoting, max-amount
@@ -1348,8 +1357,9 @@ const evmSentListeners = new Set<EvmSentListener>();
  * Subscribes to accepted EOA transactions (every sendEvm caller: native,
  * ERC-20 and NFT sends, swaps, revokes, WalletConnect). Used by the
  * app-enforced spending policy (./spending-policy.ts) to record what left
- * the account. Never called for a send the node refused. Returns the
- * unsubscribe function.
+ * the account. Never called for a send the node refused, nor for one whose
+ * broadcast got no answer in time (its outcome is unknown; the pending
+ * registry lists it instead). Returns the unsubscribe function.
  */
 export function addEvmSentListener(listener: EvmSentListener): () => void {
   evmSentListeners.add(listener);
@@ -1357,8 +1367,6 @@ export function addEvmSentListener(listener: EvmSentListener): () => void {
     evmSentListeners.delete(listener);
   };
 }
-
-addEvmSentListener(recordSentForPending);
 
 export type SendAcceptedListener = () => void;
 
@@ -1422,22 +1430,86 @@ export function setPendingRecordStore(store: PendingStore | null): void {
 }
 
 /**
- * Records every transaction sendEvm broadcast (native, ERC-20 and NFT sends,
- * swaps, staking, revokes, WalletConnect) in the pending registry
- * (./pending-transactions.ts), so Activity can offer Speed up and Cancel
- * while it waits to be included. Registered once, when this module loads;
- * best effort like every sent listener. The EIP-7702 set-code transaction
- * (delegation.ts) and the guardian approveWithSig transaction (recovery.ts)
- * do not go through sendEvm and are not recorded.
+ * Transactions whose broadcast got no answer in time (phase 23 item 8): the
+ * quote objects and the signed transactions' hashes. Neither goes out a
+ * second time (BroadcastAlreadyHandedOverError): if the first one reached
+ * the network, a second broadcast of the same quote is at best a duplicate
+ * and, after a re-quote at the next nonce, a second payment. In memory only;
+ * the pending registry is what survives a restart.
  */
-function recordSentForPending(event: EvmSentEvent): Promise<void> {
-  let record;
-  try {
-    record = txRecordFromQuote(event.from, event.quote, event.txid, Date.now());
-  } catch {
-    return Promise.resolve();
+const outcomeUnknownQuotes = new WeakSet<object>();
+const outcomeUnknownHashes = new Set<string>();
+
+/** True when this quote's broadcast got no answer in time (checked by screens before the device check). */
+export function broadcastOutcomeUnknownFor(quote: object): boolean {
+  return outcomeUnknownQuotes.has(quote);
+}
+
+/**
+ * Every EOA broadcast of this module (sendEvm, sendEvmWithSignature and the
+ * two replacement paths) goes through here (phase 23 item 8). In order:
+ *
+ *  1. a quote or signed transaction whose earlier broadcast has an unknown
+ *     outcome is refused (BroadcastAlreadyHandedOverError) before anything
+ *     is recorded or sent;
+ *  2. the transaction is recorded in the pending registry (Activity's
+ *     "Pending on this phone", which offers Speed up and Cancel) under the
+ *     hash computed on the device — keccak256 of the signed serialization —
+ *     and the write is AWAITED, so the record exists before the request
+ *     leaves the device. Best effort: a failed write ('failed') does not
+ *     stop the broadcast, as before;
+ *  3. eth_sendRawTransaction, bounded by the engine's BROADCAST_TIMEOUT_MS:
+ *     - accepted: the node's hash is returned (the record stays);
+ *     - no answer in time: the quote and the hash are marked, the record
+ *       stays, and BroadcastOutcomeUnknownError says the outcome is unknown
+ *       (never "not sent"); the card's poll settles it;
+ *     - any other error (the node refused, an HTTP error, no connection):
+ *       the record this call created is removed again, so the card never
+ *       lists a transaction the node answered with an error, and the error
+ *       is rethrown unchanged (every existing translation still applies).
+ *
+ * Before phase 23 item 8 the record was written by a sent listener after the
+ * node accepted; one record per hash either way (the registry is keyed by
+ * chain and hash).
+ */
+async function broadcastRecorded(args: {
+  node: NodeClient;
+  rawHex: string;
+  txHash: string;
+  quote: object;
+  record: () => PendingTxRecord;
+  store: PendingStore | undefined;
+}): Promise<string> {
+  const hash = args.txHash.toLowerCase();
+  if (outcomeUnknownQuotes.has(args.quote) || outcomeUnknownHashes.has(hash)) {
+    throw new BroadcastAlreadyHandedOverError(hash);
   }
-  return recordPendingTransaction(record, pendingRecordStore ?? undefined).then(() => undefined);
+  let record: PendingTxRecord | null = null;
+  try {
+    record = args.record();
+  } catch {
+    record = null;
+  }
+  const state = record ? await recordPendingTransactionBeforeBroadcast(record, args.store) : 'failed';
+  try {
+    return await args.node.sendRawTransaction(args.rawHex);
+  } catch (error) {
+    if (isBroadcastOutcomeUnknown(error)) {
+      outcomeUnknownQuotes.add(args.quote);
+      outcomeUnknownHashes.add(hash);
+      throw new BroadcastOutcomeUnknownError({
+        kind: 'tx',
+        hash,
+        chain: record?.chain ?? '',
+        recorded: state !== 'failed',
+        technical: error instanceof Error ? error.message : String(error),
+      });
+    }
+    if (record && state === 'created') {
+      await forgetPendingTransaction({ chain: record.chain, hash }, args.store).catch(() => undefined);
+    }
+    throw error;
+  }
 }
 
 /**
@@ -1456,6 +1528,12 @@ function recordSentForPending(event: EvmSentEvent): Promise<void> {
  * account's owner, ADR D1). With the toggle off or the chain unconfigured,
  * this EOA path runs unchanged. Everything before the fork (recipient
  * validation, amount parsing) is path-agnostic by design.
+ *
+ * The broadcast goes through broadcastRecorded: the transaction is listed in
+ * the pending registry before it is sent, the node gets at most
+ * BROADCAST_TIMEOUT_MS to answer (an unanswered broadcast is reported as an
+ * unknown outcome, never as not sent), and a quote whose broadcast got no
+ * answer is never broadcast again.
  *
  * `explorerTxBase` comes from the active EVM chain profile
  * (config/evm-chain.ts): sepolia.etherscan.io in Sepolia test mode. The
@@ -1480,7 +1558,14 @@ export async function sendEvm(
   };
   const signed = signEip1559(tx, signer);
   const node = new NodeClient(evmHttpTransport(url));
-  const txid = await node.sendRawTransaction(signed.rawHex);
+  const txid = await broadcastRecorded({
+    node,
+    rawHex: signed.rawHex,
+    txHash: signed.txHash,
+    quote,
+    record: () => txRecordFromQuote(signer.address, quote, signed.txHash, Date.now()),
+    store: pendingRecordStore ?? undefined,
+  });
   notifyEvmSent({ from: signer.address, quote, txid });
   notifySendAccepted();
   return { txid, explorerUrl: explorerTxBase ? `${explorerTxBase}${txid}` : null };
@@ -1509,10 +1594,11 @@ export const PRESIGNED_WRONG_SIGNER_SENTENCE =
  * the watch-only account's off-line signer) through the same path as
  * sendEvm: the transaction is rebuilt from the QUOTE exactly as sendEvm
  * builds it, the signature is attached (chains-evm serializeSignedEip1559,
- * pinned against ethers), the recovered signer must equal `from`, and an
- * accepted broadcast notifies the same listeners as sendEvm (the pending
- * registry, so Activity's card applies; the spending recorder; Home's
- * refresh). No key is involved. sendEvm itself is unchanged; it cannot take
+ * pinned against ethers), the recovered signer must equal `from`, the
+ * transaction is recorded in the pending registry before the broadcast (so
+ * Activity's card applies) exactly as sendEvm does, and an accepted
+ * broadcast notifies the same listeners as sendEvm (the spending recorder;
+ * Home's refresh). No key is involved. sendEvm itself is unchanged; it cannot take
  * a signature because it signs with a DerivedAccount.
  */
 export async function sendEvmWithSignature(
@@ -1529,7 +1615,14 @@ export async function sendEvmWithSignature(
   }
   const signed = serializeSignedEip1559(tx, signature);
   const node = new NodeClient(options.transport ?? evmHttpTransport(url));
-  const txid = await node.sendRawTransaction(signed.rawHex);
+  const txid = await broadcastRecorded({
+    node,
+    rawHex: signed.rawHex,
+    txHash: signed.txHash,
+    quote,
+    record: () => txRecordFromQuote(from, quote, signed.txHash, Date.now()),
+    store: pendingRecordStore ?? undefined,
+  });
   notifyEvmSent({ from, quote, txid });
   notifySendAccepted();
   return { txid, explorerUrl: explorerTxBase ? `${explorerTxBase}${txid}` : null };
@@ -1783,9 +1876,10 @@ export async function checkReplacementBeforeApproval(
  * out at most once. The signer must be the original's sender. Does NOT fan
  * out to the sent listeners (the spending recorder would count the value a
  * second time): the caller records the fee with recordAcceptedSpend
- * (pending-transactions.ts replacementSpendingInput). On acceptance the new
- * transaction is recorded in the pending registry, linked to the one it
- * replaces. A node refusal is translated: "replacement transaction
+ * (pending-transactions.ts replacementSpendingInput). The new transaction
+ * is recorded in the pending registry, linked to the one it replaces, just
+ * BEFORE the broadcast (broadcastRecorded): removed again when the node
+ * refuses it, kept when no answer comes in time (BroadcastOutcomeUnknownError). A node refusal is translated: "replacement transaction
  * underpriced" (go-ethereum txpool.ErrReplaceUnderpriced; reth's wording
  * contains "underpriced" too) and "nonce too low" (the nonce was used
  * meanwhile).
@@ -1818,8 +1912,22 @@ export async function sendEvmReplacement(
   const node = new NodeClient(options.transport ?? evmHttpTransport(url));
   let txid: string;
   try {
-    txid = await node.sendRawTransaction(signed.rawHex);
+    // Recorded (linked to what it replaces) before the request leaves the
+    // device; removed again on a refusal, kept when no answer comes.
+    txid = await broadcastRecorded({
+      node,
+      rawHex: signed.rawHex,
+      txHash: signed.txHash,
+      quote,
+      record: () =>
+        txRecordFromQuote(quote.replacement.from, quote, signed.txHash, (options.now ?? Date.now)(), {
+          action: quote.replacement.recordedAction,
+          replaces: quote.replacement.replaces,
+        }),
+      store: options.store ?? pendingRecordStore ?? undefined,
+    });
   } catch (error) {
+    if (isBroadcastOutcomeUnknown(error)) throw error;
     const message = error instanceof Error ? error.message : String(error);
     if (/underpriced/i.test(message)) throw new ReplacementRefusedError(REPLACEMENT_UNDERPRICED_SENTENCE, message);
     if (/nonce too low/i.test(message)) {
@@ -1832,13 +1940,6 @@ export async function sendEvmReplacement(
     }
     throw error;
   }
-  await recordPendingTransaction(
-    txRecordFromQuote(quote.replacement.from, quote, txid, (options.now ?? Date.now)(), {
-      action: quote.replacement.recordedAction,
-      replaces: quote.replacement.replaces,
-    }),
-    options.store ?? pendingRecordStore ?? undefined,
-  );
   notifySendAccepted();
   return { txid, explorerUrl: explorerTxBase ? `${explorerTxBase}${txid}` : null };
 }
@@ -1850,8 +1951,9 @@ export async function sendEvmReplacement(
  * sendEvmReplacement — the quote is claimed once, the sender must be the
  * one that sent the original, the transaction is rebuilt from the quote,
  * the node's refusals are translated with the same sentences, and the
- * accepted replacement is recorded in the pending registry with its
- * action and the hash it replaces — with the signature attached instead of
+ * replacement is recorded in the pending registry with its action and the
+ * hash it replaces (before the broadcast, as sendEvmReplacement) — with the
+ * signature attached instead of
  * made here, and the recovered signer required to equal that sender.
  * sendEvmReplacement itself is unchanged.
  */
@@ -1878,8 +1980,22 @@ export async function sendEvmReplacementWithSignature(
   const node = new NodeClient(options.transport ?? evmHttpTransport(url));
   let txid: string;
   try {
-    txid = await node.sendRawTransaction(signed.rawHex);
+    // Recorded (linked to what it replaces) before the request leaves the
+    // device; removed again on a refusal, kept when no answer comes.
+    txid = await broadcastRecorded({
+      node,
+      rawHex: signed.rawHex,
+      txHash: signed.txHash,
+      quote,
+      record: () =>
+        txRecordFromQuote(quote.replacement.from, quote, signed.txHash, (options.now ?? Date.now)(), {
+          action: quote.replacement.recordedAction,
+          replaces: quote.replacement.replaces,
+        }),
+      store: options.store ?? pendingRecordStore ?? undefined,
+    });
   } catch (error) {
+    if (isBroadcastOutcomeUnknown(error)) throw error;
     const message = error instanceof Error ? error.message : String(error);
     if (/underpriced/i.test(message)) throw new ReplacementRefusedError(REPLACEMENT_UNDERPRICED_SENTENCE, message);
     if (/nonce too low/i.test(message)) {
@@ -1892,13 +2008,6 @@ export async function sendEvmReplacementWithSignature(
     }
     throw error;
   }
-  await recordPendingTransaction(
-    txRecordFromQuote(quote.replacement.from, quote, txid, (options.now ?? Date.now)(), {
-      action: quote.replacement.recordedAction,
-      replaces: quote.replacement.replaces,
-    }),
-    options.store ?? pendingRecordStore ?? undefined,
-  );
   notifySendAccepted();
   return { txid, explorerUrl: explorerTxBase ? `${explorerTxBase}${txid}` : null };
 }
@@ -2071,6 +2180,10 @@ export function describeSendError(
   feeSymbol: string = 'ETH',
   options: { minimumFeeRehearsal?: boolean } = {},
 ): { title: string; detail: string; technical?: string } {
+  // A broadcast with no answer in time (phase 23 item 8): the outcome is
+  // unknown, so it is never worded as "not sent" or "could not be sent".
+  const outcome = describeBroadcastOutcome(error);
+  if (outcome) return outcome;
   // A reverted gas estimate is a quote-step failure (nothing was attempted),
   // explained in one plain sentence rather than the node's "RPC error 3".
   if (error instanceof GasEstimateRevertError || (error as { name?: unknown } | null)?.name === 'GasEstimateRevertError') {

@@ -1,4 +1,5 @@
 import {
+  BROADCAST_TIMEOUT_MS,
   DCA_NATIVE,
   DCA_PINNED_POOLS,
   DCA_UNSUPPORTED_CHAIN_REFUSAL,
@@ -72,6 +73,7 @@ import { formatUnits, parseUnits } from './balances.ts';
 import type { KeyValueStore } from './tokens.ts';
 import { assertFeatureAllowed } from '../config/readiness.ts';
 import { NO_ANSWER_SENTENCE, sanitizeEndpointMessage } from '../config/endpoint-probe.ts';
+import { isBroadcastOutcomeUnknown } from './broadcast-outcome.ts';
 
 /**
  * Recurring swaps — dollar-cost averaging — on a session key held by this
@@ -1192,6 +1194,18 @@ export const DCA_OUTCOME_UNKNOWN_SENTENCE =
   'card will count it as sent; if not, nothing was swapped. Wait a minute, then tap Refresh status before sending ' +
   'again: if the first one went through, sending again would send the next due swap as well.';
 
+/**
+ * The bundler did not answer eth_sendUserOperation within the engine's
+ * BROADCAST_TIMEOUT_MS (phase 23 item 8): the swap may or may not have
+ * reached it. Never worded as "not sent".
+ */
+export const DCA_NO_ANSWER_SENTENCE =
+  `The bundler did not answer within ${Math.round(BROADCAST_TIMEOUT_MS / 1000)} seconds, so this wallet does not ` +
+  'know whether it received the swap. The account’s nonce for this swap key decides: if the bundler received the ' +
+  'swap, it will be included and this card will count it as sent; if not, nothing was swapped. Wait a minute, then ' +
+  'tap Refresh status before sending again: if the first one went through, sending again would send the next due ' +
+  'swap as well. It is also listed under Pending on this phone in Activity.';
+
 /** The plain sentence for an account or bundler refusal of a swap, or null. */
 export function dcaRefusalSentence(message: string): string | null {
   const m = message.toLowerCase();
@@ -1252,6 +1266,15 @@ export function describeDcaSwapError(
     };
   }
   const message = error instanceof Error ? error.message : String(error);
+  // No answer to the submission itself in time (phase 23 item 8).
+  if (isBroadcastOutcomeUnknown(error)) {
+    const technical = (error as { technical?: unknown }).technical;
+    return {
+      title: DCA_OUTCOME_UNKNOWN_TITLE,
+      detail: withTechnical(DCA_NO_ANSWER_SENTENCE, sanitizeEndpointMessage(typeof technical === 'string' ? technical : message)),
+      outcome: 'outcome-unknown',
+    };
+  }
   if (isTransportFailure(error)) {
     const technical = sanitizeEndpointMessage(message);
     if (isNodeEndpointFailure(error) || isBundlerTransportFailureBeforeSubmit(error)) {

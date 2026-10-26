@@ -317,7 +317,14 @@ export function PasskeyScreen({ navigation }: Props) {
     // assertion without the UV flag on-chain.
     setPhase('sending');
     try {
-      const { userOpHash } = await sendPasskeyCalls(t.pbundle, t.quote);
+      const { userOpHash } = await sendPasskeyCalls(t.pbundle, t.quote, {
+        chain: t.pbundle.passkey.record.chain,
+        sender: t.quote.sender,
+        owner: t.pbundle.passkey.record.owner,
+        bundler: t.pbundle.bundler,
+        kind: 'other',
+        resend: null,
+      });
       // Accepted by the bundler: announce it once so Activity's pending card
       // lists it with "Check status" (phase 21 item 4). sendPasskeyCalls does
       // not go through aa.ts sendAa and announces nothing itself; the Send

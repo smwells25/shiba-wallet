@@ -61,6 +61,7 @@ import {
   forgetSmartAccountAddress,
   isBundlerFeeFloorRefusal,
   notifyAaOperationSent,
+  submitWithPendingRecord,
   prepareAaErc20Send,
   prepareAaSend,
   signedFeeGuard,
@@ -73,6 +74,11 @@ import { createQrPartCodec, type QrPartScan, type QrPartScanResult } from './qr-
 import { COLD_SIGN_QR_MAX_PARTS, COLD_SIGN_QR_PART_MAX_BYTES } from './cold-signing.ts';
 // Pure data with no imports (see its file comment).
 import { evmProfileByCaip2 } from '../config/evm-chain.ts';
+import {
+  BroadcastAlreadyHandedOverError,
+  describeBroadcastOutcome,
+  isBroadcastOutcomeUnknown,
+} from './broadcast-outcome.ts';
 import { eip155Caip2 } from '../config/readiness.ts';
 
 // ---------------------------------------------------------------------------
@@ -404,6 +410,13 @@ export function verifyColdAaSignature(text: string, request: ColdUserOpRequest, 
 }
 
 /**
+ * Requests whose submission got no answer from the bundler in time (phase 23
+ * item 8), by request id: never submitted a second time from this phone
+ * (BroadcastAlreadyHandedOverError). In memory only.
+ */
+const outcomeUnknownRequests = new Set<string>();
+
+/**
  * Submits a stored request with a scanned signature through the engine's
  * submitColdUserOpRequest: the expiry, the signature check against the
  * stored request, the chain reads (sender, nonce, deployment), then
@@ -412,7 +425,12 @@ export function verifyColdAaSignature(text: string, request: ColdUserOpRequest, 
  * reprice) followed by signedFeeGuard against the reviewed fee, and only
  * then eth_sendUserOperation. On acceptance the smart account's cached
  * address is forgotten and notifyAaOperationSent fires once with kind
- * 'cold-aa' (the pending card's "from an off-line signer").
+ * 'cold-aa' (the pending card's "from an off-line signer"). Since phase 23
+ * item 8 the operation is listed in the pending registry just before it is
+ * handed to the bundler (aa.ts submitWithPendingRecord); a bundler that
+ * does not answer in time leaves it listed, throws
+ * BroadcastOutcomeUnknownError, and the request is never submitted again
+ * from this phone.
  */
 export async function submitColdAa(args: {
   bundle: AaClientBundle;
@@ -423,6 +441,7 @@ export async function submitColdAa(args: {
 }): Promise<{ userOpHash: string; userOp: UserOperation }> {
   const { bundle, request, quote } = args;
   assertColdAaBundle(bundle);
+  if (outcomeUnknownRequests.has(request.requestId)) throw new BroadcastAlreadyHandedOverError(request.userOpHash);
   if (BigInt(request.chainId) !== bundle.chainId || request.sender.toLowerCase() !== quote.sender.toLowerCase()) {
     throw new ColdAaRefusedError(COLD_AA_SENDER_CHANGED);
   }
@@ -432,13 +451,33 @@ export async function submitColdAa(args: {
   }
   refusePastedPart(args.signatureText);
   const guard = signedFeeGuard(fees, quote.fee);
-  const result = await submitColdUserOpRequest(bundle.client, request, args.signatureText, {
-    nowSeconds: args.nowSeconds,
-    beforeSign: async (op) => {
-      await assertQuoteFeesMeetBundlerFloor(bundle.bundler, fees);
-      guard(op);
-    },
-  });
+  // Listed in the pending registry before it is handed to the bundler
+  // (phase 23 item 8); kept when the bundler does not answer in time.
+  let result: { userOpHash: string; userOp: UserOperation };
+  try {
+    result = await submitWithPendingRecord(
+      {
+        chain: eip155Caip2(bundle.chainId),
+        sender: request.sender,
+        owner: request.owner,
+        bundler: bundle.bundler,
+        kind: 'cold-aa',
+        resend: null,
+      },
+      (beforeSend) =>
+        submitColdUserOpRequest(bundle.client, request, args.signatureText, {
+          nowSeconds: args.nowSeconds,
+          beforeSign: async (op) => {
+            await assertQuoteFeesMeetBundlerFloor(bundle.bundler, fees);
+            guard(op);
+          },
+          beforeSend,
+        }),
+    );
+  } catch (error) {
+    if (isBroadcastOutcomeUnknown(error)) outcomeUnknownRequests.add(request.requestId);
+    throw error;
+  }
   forgetSmartAccountAddress(request.sender);
   notifyAaOperationSent({
     chain: eip155Caip2(bundle.chainId),
@@ -474,6 +513,11 @@ export function describeColdAaError(
 ): { title: string; detail: string; back: boolean } {
   const name = (error as { name?: unknown } | null)?.name;
   const message = error instanceof Error ? error.message : String(error);
+  // No answer from the bundler in time, or a second submission of such a
+  // request (phase 23 item 8): the outcome is unknown and the request is
+  // used up, so back to the form; never worded as "not sent".
+  const outcome = describeBroadcastOutcome(error);
+  if (outcome) return { title: outcome.title, detail: outcome.detail, back: true };
   if (name === 'ColdAaRefusedError' || name === 'ColdUserOpRefusedError' || name === 'ExternalSignatureError') {
     const back =
       stage !== 'submit' ||

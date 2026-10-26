@@ -173,7 +173,10 @@ console.log('balances reload after a send (finding 7):');
     const body = sendSource.slice(start, sendSource.indexOf('\n}\n', start));
     return body.indexOf(marker) !== -1 && body.indexOf('notifySendAccepted();') > body.indexOf(marker);
   };
-  check('sendEvm notifies after eth_sendRawTransaction', after('sendEvm', 'sendRawTransaction('));
+  // Since phase 23 item 8 sendEvm broadcasts through broadcastRecorded (the
+  // pending record first, then the bounded eth_sendRawTransaction).
+  const recordedBody = sendSource.slice(sendSource.indexOf('async function broadcastRecorded('), sendSource.indexOf('\n}\n', sendSource.indexOf('async function broadcastRecorded(')));
+  check('sendEvm notifies after eth_sendRawTransaction', after('sendEvm', 'await broadcastRecorded(') && recordedBody.includes('.sendRawTransaction(args.rawHex)'));
   check('sendUtxo notifies after the broadcast', after('sendUtxo', 'signAndBroadcast('));
   check('sendSol notifies after sendTransaction', after('sendSol', 'sendTransaction('));
   check(
