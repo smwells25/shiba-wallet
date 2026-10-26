@@ -12695,3 +12695,158 @@ to the Chairperson at once.
       session's permission classifier — the Chairperson's call); commits
       are staged from verified patches, so it affects nothing, and every
       agent works in its own mkwt worktree.
+- [x] Item 3 — THE FIRST iOS BUILD EVER, RUNNING IN THE iOS SIMULATOR
+      (2026-10-25; built from f4b9339 in the scratchpad worktree wt-ios —
+      HEAD had moved to a1149f0 and the CTO allowed no rebase, since the
+      proof is the toolchain and the native shell; docs/DEVICE_BUILDS.md
+      gains the section "An iOS Simulator build on this Mac (phase 23 item
+      3)" in the commit below, read by the CTO in full and scanned; no
+      Apple account, no paid membership, no administrator password; a
+      THROWAWAY wallet, wiped in-app afterwards — the app's Keychain rows 4
+      → 0; every screenshot holding a phrase word deleted with rm -P;
+      nothing live; nothing in the main checkout changed; the agent's
+      session was cut once by the Opus limit and resumed; it could not
+      write its REPORT.md — the harness refused the Write — so the
+      hand-back message is the whole report). TOOLCHAIN: `xcodebuild
+      -downloadPlatform iOS` (Apple's "Downloading and installing additional
+      Xcode components" page, fetched 2026-10-25) installed the universal
+      iOS 26.5 Simulator runtime (23F77, 10.6 GB) in 590.8 s with no login;
+      CocoaPods through `brew install cocoapods` (Homebrew 7.0.10 under
+      /usr/local, user-owned, no password; Expo's own installer would have
+      needed sudo with the system Ruby 2.6.10) → CocoaPods 1.17.0 at
+      /usr/local/bin/pod, but in 2 h 11 min because macOS 26 on Intel is a
+      Homebrew "Tier 3" configuration and llvm 23.1.3_2 (1 h 22 min), rust
+      1.99.1 (31 min), z3, libgit2, libssh2 and ruby 4.0.7_1 were compiled
+      from source; SIDE EFFECT — Homebrew's rustc, cargo and ruby are now
+      on PATH ahead of ~/.cargo/bin in some shells (DECISION for the
+      Chairperson: leave, `brew unlink rust ruby`, or uninstall; nothing
+      changed). BUILD: mkwt wt-ios f4b9339 (28.7 s); `CI=1 npx expo
+      prebuild --platform ios --no-install` (3.9 s; "Apple bundle
+      identifier: com.anonymous.shiba-wallet" because app.json has no
+      ios.bundleIdentifier — prebuild wrote it, an Android permissions
+      list and the run: scripts into the worktree's app.json /
+      package.json; worktree-only, not committed); Podfile platform iOS
+      16.4 (Podfile.properties.json), Hermes, prebuilt React Native core,
+      a quick-crypto post_install flooring every pod at 16.4; `pod
+      install` 86.0 s, 117 pods, ios/Pods 1.5 GB, "[QuickCrypto] ⬇️
+      Downloading static OpenSSL 3.6.2 … ✅ Static OpenSSL ready" with the
+      podspec (QuickCrypto.podspec 33–59) checking the pinned SHA-256
+      a50e3c8473b0526b159ad8d105e97a90d1153a4a230388cc731ee23a7d0ad3a4 and
+      raising on a mismatch — the agent re-downloaded the archive
+      independently (35,189,569 bytes, the same hash; an
+      ios-arm64_x86_64-simulator slice inside); React Native 0.86.3 and
+      Hermes 250829098.0.17 from Maven with "Verifying checksum"; then
+      `xcodebuild -workspace ShibaWallet.xcworkspace -scheme ShibaWallet
+      -configuration Debug -sdk iphonesimulator -destination 'id=<udid>'
+      -derivedDataPath <scratch>/p23-ios/dd RCT_METRO_PORT=8083 build` →
+      BUILD SUCCEEDED in 1,028.7 s with 0 errors and 1,175 warnings (304
+      umbrella header, 278 deprecations incl. CC_MD2/MD4/MD5
+      "cryptographically broken", RCTRootView / the legacy architecture,
+      UIMenuController, CTCarrier, WKProcessPool; 87 rnqc_*_free OpenSSL 3
+      deprecations in quick-crypto; 16 Swift 6 concurrency), NO
+      privacy-manifest warnings (an aggregated PrivacyInfo.xcprivacy:
+      tracking false, no collected data types, API reasons C617.1, CA92.1,
+      35F9.1); the .app 138 MB, x86_64 only (an Intel Mac), signed ad hoc,
+      application-identifier FAKETEAMID.com.anonymous.shiba-wallet, 10,991
+      rnqc_ symbols linked. GENERATED PROJECT: bundle id
+      com.anonymous.shiba-wallet, display name "Shiba Wallet", 0.1.0 (1);
+      URL SCHEMES com.anonymous.shiba-wallet and exp+shiba-wallet ONLY —
+      shibawallet is absent because app.json declares no scheme (item 2's
+      decision); the camera and Face ID usage strings from app.json; the
+      dev client's NSLocalNetworkUsageDescription and Bonjour _expo._tcp;
+      ATS arbitrary loads false, local networking true;
+      UIRequiredDeviceCapabilities arm64; no microphone or photo-library
+      strings; ENTITLEMENTS aps-environment = development (expo-
+      notifications' plugin, as recorded in phase 18) and the associated
+      domain webcredentials:passkey-domain-not-configured.invalid.
+      RUNNING: `xcrun simctl create shiba-ios …iPhone-17 …iOS-26-5`, boot,
+      install; Metro `EXPO_NO_METRO_LAZY=1 CI=1 npx expo start --port 8083
+      --dev-client` ("iOS Bundled 37268ms index.ts (2438 modules)"); opened
+      with `simctl openurl <udid>
+      "exp+shiba-wallet://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8083"`
+      (the form from @expo/cli UrlCreator.js:130) → iOS "Open in "Shiba
+      Wallet"?" → the dev menu ("Runtime version: exposdk:57.0.0") →
+      onboarding; driven by System Events clicks, a small Swift CGEvent
+      drag helper, `simctl io screenshot` and Simulator's menus. THE
+      CHECKLIST: KEYCHAIN STORE PASS — creating the wallet wrote 3 items in
+      the access group FAKETEAMID.com.anonymous.shiba-wallet with
+      protection class "aku" = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+      (confirmed with Swift); Show recovery phrase with a matching face
+      read back the Backup screen's 12 words in order; THE PROTECTED CLASS
+      IS NOT ENFORCED BY THE SIMULATOR — "Protect with biometrics"
+      succeeded with no face sent ("Recovery phrase protected"; the
+      standard item deleted, a new item created) and afterwards "Show it"
+      revealed the phrase within 1.5 s and Unlock unlocked within 1 s with
+      NO Face ID sheet (Apple's developer forums thread 733588 and a
+      third-party guide report the same; no Apple document states it) —
+      only a real iPhone can test the protected class; FACE ID through
+      LocalAuthentication works (Features → Face ID → Enrolled / Matching
+      Face), the first attempt with the face sent ~5 s after the prompt
+      failing "Authentication failed (unknown: -1000, Authentication
+      failure.)" (cause not established) and the second at ~1 s
+      succeeding; SECURE-ENTRY SCREENSHOT BLOCK PASS through iOS's own
+      pipeline — Device → Trigger Screenshot on the Backup screen and on
+      the passphrase lock screen gave all-black images (bar the dev Tools
+      bubble) and a black editor, while `xcrun simctl io screenshot` is NOT
+      blocked (it reads the host frame buffer; those captures deleted with
+      rm -P); "Screen protection is on."; APP-SWITCHER COVER PASS — the
+      card blurred, and the app blurs under the Face ID sheet and the "Open
+      in…" dialog; LAUNCH LOCK PASS — after 75 s in the background "Shiba
+      Wallet is locked / The app locked itself after being in the
+      background…" with the screen state kept, and after terminate and
+      launch (the dev client re-downloading the bundle) "Auto-lock is on,
+      so the wallet starts locked…"; no Home frame in the samples, but a
+      2–3 s gap was not sampled, so "zero Home frames" is NOT proven on
+      iOS; PASSPHRASE LOCK PARTLY — set as the lock kind; the backup-word
+      fields secure-entry; the keyboard lowercase with no QuickType
+      suggestions, BUT iOS STILL SHOWS THE "🔑 Passwords" AUTOFILL BAR in
+      the set-up field and the lock field (textContentType "none" plus
+      autoComplete "off" did not hide it; oneTimeCode / newPassword not
+      tried — a DECISION); on the lock screen the keyboard overlaps the
+      Unlock button's top edge; "Enter your passphrase", a wrong entry
+      "Wrong passphrase. Try again.", the right one → Home; timings coarse
+      (9–14 s dominated by screenshot latency; load ~143 with
+      mediaanalysisd at 300–550% CPU and Zoom); the 6-digit PIN pad not
+      seen (the passphrase kind was chosen); NATIVE SCRYPT ON iOS PASS —
+      "PIN hashing path: native scrypt (react-native-quick-crypto),
+      self-check passed", three runs (ms per hash, 2^12 / 2^13 / 2^14 /
+      2^15 / 2^16): 42 / 98 / 114 / 286 / 467, 36 / 57 / 605 / 444 / 560,
+      41 / 80 / 614 / 226 / 698 (totals 1,014 / 1,704 / 1,662; the
+      non-monotonic 2^14 figures unexplained — the loaded host), "Platform:
+      ios · Hermes: yes · development bundle (__DEV__): yes · Hashing:
+      native scrypt (react-native-quick-crypto)"; VOICEOVER NOT AVAILABLE
+      in the iOS 26.5 Simulator (Settings → Accessibility → Vision lists
+      Hover Text, Display & Text Size, Motion, Spoken Content — no
+      VoiceOver); Accessibility Inspector needs screen-recording
+      permission and a person; macOS UI scripting sees one group, not the
+      iOS tree; DEEP-LINK SCHEME AS EXPECTED — `simctl openurl booted
+      "shibawallet://inbox"` fails LSApplicationWorkspaceErrorDomain 115
+      (not registered), `com.anonymous.shiba-wallet://inbox` after iOS's
+      confirmation reaches the app's "This link does not open anything in
+      Shiba Wallet."; the wipe dialog is lock-kind aware ("…With the app
+      passphrase on, this removes everything the wallet keeps on this
+      phone, and the app passphrase itself."); the passkey note reads
+      correctly for a development build ("This build contains the native
+      passkey module, but the passkey domain (rpId) is still the
+      unconfigured placeholder."). CLEAN-UP: the throwaway wiped in-app,
+      Metro 8083 stopped (8081 was already down), the simulator device
+      shut down and DELETED (recreating one takes a second), the Simulator
+      app closed; KEPT: the iOS 26.5 runtime (10.6 GB), wt-ios (2.5 GB)
+      and the 3.0 GB derived data at scratchpad/p23-ios/dd (saves the
+      17-minute rebuild; the scratchpad cleaner rule applies). A touch of
+      wt-ios made Metro say "Detected a change in metro.config.js"
+      (harmless, the known rule). DECISIONS FOR THE CHAIRPERSON: Homebrew's
+      rust / cargo / ruby ahead of rustup; ios.bundleIdentifier in app.json
+      (today prebuild invents com.anonymous.shiba-wallet); the shibawallet
+      scheme (item 2); hiding the Passwords AutoFill bar on the secure
+      fields; a VoiceOver read needs a person at Accessibility Inspector
+      or an iPhone; whether a Release-configuration or arm64 build is
+      wanted (this Mac is Intel). NOT DONE: VoiceOver; the PIN pad on iOS;
+      camera / QR, the notification permission, WalletConnect, any send;
+      the Secure Enclave and real Face ID (a phone). Logs, screenshots and
+      helpers under scratchpad/p23-ios/ (download-platform.log,
+      brew-cocoapods.log, prebuild.log, pod-install.log, xcodebuild-1.log,
+      metro-8083.log, shots/, tap.sh, drag, scr.sh, faceid.sh, shot.sh).
+      Still to update at the refresh: THREAT_MODEL §3.6 ("no development
+      build was ever built" — and now an iOS build exists), the
+      never-on-a-device list, FEATURE_UNIVERSE's iOS lines, RELEASE.md.

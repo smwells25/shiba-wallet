@@ -183,6 +183,120 @@ in the release build (0.6 to 1.7 seconds in debug), and one unlock about
 2.5 seconds in both. Not yet done: a measurement on a phone, and any iOS
 build (the library's podspec download has never run).
 
+### An iOS Simulator build on this Mac (phase 23 item 3)
+
+The first iOS build of the wallet was made on 2026-10-25 for the iOS
+Simulator, from commit f4b9339, on the Intel Mac that also runs the
+Android emulator (macOS 26.7.1, Xcode 26.5 build 17F42). No Apple account,
+no paid membership and no administrator password were needed. A simulator
+build is not a device build: it says nothing about the Secure Enclave,
+real Face ID, VoiceOver or App Store signing (see "What it does not prove"
+below).
+
+**Toolchain, once per Mac.**
+
+1. The iOS simulator runtime, without opening Xcode. Apple documents the
+   command in "Downloading and installing additional Xcode components"
+   (developer.apple.com/documentation/xcode, read 2026-10-25):
+   `xcodebuild -downloadPlatform iOS`. On this Intel Mac it downloaded the
+   universal "iOS 26.5 Simulator (23F77)", 10.6 GB, in about 10 minutes,
+   and installed it with no login. `xcrun simctl list runtimes` then lists
+   `com.apple.CoreSimulator.SimRuntime.iOS-26-5`.
+2. CocoaPods. Expo's own installer (`@expo/package-manager`,
+   CocoaPodsPackageManager.js) tries `gem install cocoapods` and then
+   `sudo gem install`, which needs an administrator password with the
+   system Ruby; it falls back to Homebrew. Homebrew under /usr/local is
+   owned by the user here, so `brew install cocoapods` needs no password.
+   It installed CocoaPods 1.17.0 at /usr/local/bin/pod, but took 2 hours
+   11 minutes: macOS 26 on an Intel Mac is a Homebrew "Tier 3"
+   configuration, and llvm, rust and z3 were compiled from source as
+   dependencies. Homebrew's rustc, cargo and ruby are now on the PATH
+   ahead of a rustup toolchain in some shells.
+
+**Each build.**
+
+1. A worktree with APFS clones of both node_modules:
+   `.local/helpers/mkwt.sh wt-ios <commit>` (it also builds the engine).
+2. In `wt-ios/app`: `CI=1 npx expo prebuild --platform ios --no-install`.
+   Because `app/app.json` has no `ios.bundleIdentifier`, prebuild picks
+   `com.anonymous.shiba-wallet` and writes it into the worktree's app.json
+   (and adds an Android permissions list and the `run:` scripts to
+   package.json). Do not commit those worktree edits.
+3. In `wt-ios/app/ios`: `LANG=en_US.UTF-8 pod install` (about 1.5 minutes,
+   117 pods). react-native-quick-crypto downloads its prebuilt OpenSSL
+   3.6.2 here and refuses it unless its SHA-256 equals the value pinned
+   in QuickCrypto.podspec (a50e3c84…d3a4; checked independently on
+   2026-10-25). The archive carries an `ios-arm64_x86_64-simulator`
+   slice. React Native core and Hermes come as checksum-verified
+   prebuilt archives from Maven Central.
+4. Build with Xcode directly, not `expo run:ios`, so Metro stays off 8081:
+
+   ```
+   xcodebuild -workspace ShibaWallet.xcworkspace -scheme ShibaWallet \
+     -configuration Debug -sdk iphonesimulator \
+     -destination 'id=<simulator udid>' \
+     -derivedDataPath <scratch>/dd RCT_METRO_PORT=8083 build
+   ```
+
+   The first build took 17 minutes and succeeded with no configuration
+   change (about 1,200 warnings from third-party code, none from a
+   missing privacy manifest). The app is signed ad hoc for the
+   simulator; on an Intel Mac it is built for x86_64 only.
+5. A simulator, the app and Metro:
+   `xcrun simctl create shiba-ios com.apple.CoreSimulator.SimDeviceType.iPhone-17 com.apple.CoreSimulator.SimRuntime.iOS-26-5`,
+   `xcrun simctl boot <udid>`, `open -a Simulator`,
+   `xcrun simctl install <udid> <dd>/Build/Products/Debug-iphonesimulator/ShibaWallet.app`;
+   in `wt-ios/app`: `EXPO_NO_METRO_LAZY=1 CI=1 npx expo start --port 8083 --dev-client`;
+   then open the development client on that Metro:
+   `xcrun simctl openurl <udid> "exp+shiba-wallet://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8083"`
+   (iOS asks "Open in “Shiba Wallet”?" the first time).
+
+**What the generated project contains.** Deployment target iOS 16.4;
+URL schemes `com.anonymous.shiba-wallet` and `exp+shiba-wallet` only (no
+`shibawallet` until app.json declares it); the Face ID and camera usage
+strings from app.json; a local-network usage string and a Bonjour entry
+from the development client; the entitlements `aps-environment`
+(development, added by expo-notifications' plugin) and the placeholder
+passkey associated domain; an aggregated PrivacyInfo.xcprivacy (no
+tracking, no collected data; accessed-API reasons for file timestamps,
+user defaults and system boot time).
+
+**What the first simulator pass showed (throwaway wallet only).**
+
+- The keychain-backed store works: a new wallet's phrase is written as
+  `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` items in the app's
+  access group and read back intact; "Protect with biometrics" moves it to
+  an access-controlled item; the wallet's "Wipe" removes every item.
+- **The simulator does not enforce the biometric access control on a
+  keychain item.** The protected phrase was read, and the app unlocked,
+  with no Face ID prompt at all. A real iPhone is needed to test the
+  protected class (Apple's developer forums thread 733588 reports the
+  same simulator behaviour; Apple's documentation does not state it).
+- Face ID itself works through Simulator → Features → Face ID →
+  Enrolled / Matching Face. One attempt, where the matching face was
+  sent about five seconds after the prompt appeared, ended "Authentication
+  failed (unknown: -1000, Authentication failure.)"; sent within about a
+  second, it succeeded (the cause of the failure was not established).
+- Screenshots through iOS itself (Simulator → Device → Trigger
+  Screenshot) come out black on the Backup screen and on the lock screen;
+  `xcrun simctl io <udid> screenshot` reads the simulator's frame buffer
+  and is NOT blocked, so it is not a test of the protection.
+- The app-switcher cover blurs the app in the app switcher and whenever
+  a system sheet (Face ID, "Open in…") covers it.
+- The launch lock, the background lock, the passphrase lock screen and
+  the native scrypt ("PIN hashing path: native scrypt
+  (react-native-quick-crypto), self-check passed"; one hash at N = 2^16
+  in 0.47–0.70 s in the debug build) all work.
+- VoiceOver is not available in the iOS 26.5 Simulator (Settings →
+  Accessibility lists no VoiceOver); Accessibility Inspector is the
+  substitute and needs a person at the Mac.
+
+**What it does not prove.** Anything about the Secure Enclave, real Face
+ID, the biometric access control on the keychain, VoiceOver, an arm64
+build, push or App Store signing; those need an iPhone and an Apple
+Developer membership (see "What is still missing before the first
+build").
+
 ## What to re-validate on the first device builds
 
 In priority order. The W-numbers are the mainnet-readiness conditions in
