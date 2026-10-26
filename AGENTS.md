@@ -13331,3 +13331,111 @@ to the Chairperson at once.
       user ignores "Refresh status first" (stated); (8) a bundler returning
       a userOpHash different from the device's would leave two records
       (ERC-4337 defines the hash; not expected).
+- [x] EMULATOR PASS p23-cctp — CCTP V2 IN THE BRIDGE SCREEN: THE BURN AND
+      THE ATTESTATION PROVEN THROUGH THE APP, THE MINT BLOCKED BY A HOME-LINK
+      BUG (2026-10-25/26; Expo Go on emulator 37.1.11 with ANGLE, Metro from
+      wt-app at a1149f0 (pid 4972); no repo files edited; 5 prompts — Unlock
+      ×3, the approval, the burn — every title read from the prompt window;
+      every receipt on two RPCs; nothing from the dev EOA during the pass;
+      screen protection OFF; the report written step by step in the
+      scratchpad p23-cctp-pass/REPORT.md with redacted dumps, TalkBack
+      transcripts and receipts; the driver was cut by the session limit
+      while scrolling Settings and resumed at 08:03 local with the balances
+      re-read equal). SET-UP INCIDENT: the 23:09 launch did not load the
+      quick-boot snapshot and its cold boot never finished (zygote
+      crash-looped; /apex lacked com.android.media and com.android.resolv)
+      while the host sat at load average 168–257 from concurrent offline
+      runners — that the load caused it is the driver's inference (the apexd
+      logs had rotated); `adb emu kill` at 00:02 SAVED A QUICK-BOOT SNAPSHOT
+      OF THAT BROKEN BOOT in snapshots/default_boot; a relaunch with
+      -no-snapshot-load booted in 4 minutes; the keyguard sleeps within
+      seconds, so wake + swipe + PIN must be one adb command; every unlock
+      raised "System UI isn't responding" (answered Wait). STANDING NOTE:
+      the emulator is left RUNNING on that good session; THE NEXT LAUNCH
+      MUST USE -no-snapshot-load until a healthy session is closed
+      gracefully and saves a good snapshot (the CTO's decision: close the
+      running session gracefully once the queued passes end). THE BUG (the
+      main finding): HomeScreen.tsx line 562 shows the Bridge link only when
+      bridgeOfferFor(evmChain.caip2).destinations.length > 0, and
+      bridgeOfferFor defaults to the NATIVE asset (bridge.ts 607) — Stargate
+      has no pool on Base Sepolia, so the link is hidden there; the Home
+      link is the only navigate('Bridge') in app/src, so CCTP can never be
+      STARTED from Base Sepolia and A TRANSFER TO BASE SEPOLIA CAN NEVER BE
+      MINTED IN-APP (the Mint panel says "switch to Base Sepolia … and come
+      back to this screen", which cannot be done); the brief's own route
+      (Base → Arbitrum) would have hit the first consequence, the driver's
+      reverse route hit the second. THE PASS, adapted — Account 1, ARBITRUM
+      SEPOLIA → BASE SEPOLIA, 1 USDC: (1) on Arbitrum the screen opens on
+      test ETH (as designed); after choosing USDC one CCTP row, "not
+      checked", "One provider serves this route; choose it to continue.",
+      Get quotes and Review disabled until the row is chosen; the row's
+      measured-time sentence (dropped by uiautomator, read by TalkBack)
+      quotes Circle's "~15-19 minutes", both measurements (996 s Base →
+      Arbitrum, 1,058 s Ethereum → Base) and "This route was not measured.";
+      (3) amount 5 → exactly "You hold 1 USDC on Arbitrum Sepolia, and this
+      transfer needs 5 USDC. Nothing was quoted."; (4) the approval view
+      "Step 1 of 2 — Approve exactly the amount", prompt "Approve exactly 1
+      USDC for Circle's TokenMessengerV2"; approval tx
+      0x8b587c2f9697dcee86ddebf500314a20c3604274564c3448065a1d14370206b1,
+      Arbitrum block 323018090, status 0x1, 55,437 gas, one Approval log to
+      TokenMessengerV2 0x8fe6…2daa of exactly 1,000,000; ~20 s later
+      "Approval confirmed. The burn was quoted after the approval; these
+      are its final numbers."; burn prompt "Bridge 1 USDC to Base Sepolia
+      through Circle CCTP (USDC)"; burn tx
+      0xaeae0e5be19309066eec433417a1d7201bb24ab968b7efda47dc838f58c81072,
+      block 323018391 (12:23:51 UTC), status 0x1, input 0x8e0250ee (228 B),
+      104,291 gas, logs Transfer to TokenMinterV2 / Burn / Transfer to 0x0
+      (1,000,000 each), MessageSent decoding source domain 3 → destination
+      6, minFinality 2000, mintRecipient 0x772e…F44F, maxFee 0,
+      expirationBlock 0, no hook data, DepositForBurn 1,000,000; both
+      receipts equal on publicnode and sepolia-rollup.arbitrum.io; (5)
+      "Burned on Arbitrum Sepolia (block 323018391). Waiting for Circle's
+      attestation…" from the burn until 12:43:33 UTC; Circle's sandbox API
+      (read-only) showed "complete" at 12:43:29 — at most 1,178 s after the
+      burn block (≈1,120–1,178 s), THE FIRST MEASUREMENT FOR THIS ROUTE;
+      then "Attested: waiting for the mint on Base Sepolia" / "Attested. The
+      USDC can now be minted on Base Sepolia." with the switch-network
+      sentence; Circle's event nonce
+      0xd402ca89ef8ee1dee8b7fb70a5b04768a7997ddd02c11e87e673359f2877f86b;
+      (6) THE MINT BLOCKED by the bug — nothing sent; on Base Sepolia
+      MessageTransmitterV2.usedNonces(nonce) reads 0; the message has no
+      expiry and can mint only to 0x772e…F44F, and anyone with Base Sepolia
+      gas can submit it (CTO DECISION: the mint is submitted IN-APP from
+      Account 1 on Base Sepolia at the re-check after the fix, which proves
+      the mint path and resolves the stranded USDC; no script mint); (7)
+      after a force-stop, relaunch and unlock the transfer is still listed
+      under "Transfers sent from this screen" as Attested with the Mint
+      sentence ("Delivered" not reached); (8) the smart-account sender
+      OPENED ONLY (the first transfer undelivered; the Kernel holds 0.745
+      USDC on Arbitrum, below 1): a 0.1 USDC review to "Your smart account"
+      showed "One smart-account operation carries both calls, all or
+      nothing, so there is one device prompt.", "…minted to your smart
+      account 0xD31c…D8FA… It does not need to be deployed there…", "The
+      network fee is paid in test ETH from the smart account. Paying it in
+      USDC through Circle's paymaster is not offered for bridging in this
+      version.", the bundler estimate passed with the deposit row — Back,
+      nothing signed; (9) TalkBack: the asset chips ("selected. USDC.
+      Button"), recipient chips, destination chips, the switch, the radio
+      and each provider sentence read as its own stop; the Mint button
+      unverified (unreachable); FINDING — the tracking status is
+      re-announced while idle ("Attested: waiting for the mint…" twice in
+      50 s plus "(checking…)"); TalkBack off again, its level written in
+      place back to 6. FUNDS reconciled exactly: Arbitrum Account 1
+      201,186,122,000,000 → 197,988,124,906,000 wei (= the approval gas +
+      the burn gas), USDC 1,000,000 → 0, nonce 2 → 4; Base Account 1 and
+      both Kernels unchanged. OTHER FINDINGS (fix slice dispatched): the
+      USDC amount placeholder "Amount, for example 0.0002" (a test-ETH
+      example on a USDC field); "Circle's USDC fee paymaster cannot pay for
+      the first mint on a network where this account holds no USDC…" shown
+      on every CCTP confirm although Account 1 and the Kernel hold USDC on
+      Base; the risk card generic on both steps and, on the approval, its
+      first-transfer search about the USDC contract rather than the
+      spender; TalkBack speaks the full 42-character address in the
+      recipient sentence and the record; uiautomator skips text containing
+      straight double quotes (known). COULD NOT VERIFY: the 996 s route in
+      the UI; the in-app mint, its prompt and receipt; "Delivered on…";
+      whether Circle's API is asked again after a restart; a smart-account
+      burn or mint; iOS. END STATE: Home, Ethereum Sepolia, Account 1, light
+      mode, protection OFF, TalkBack OFF, IME ADBKeyboard, no test files on
+      the device, Metro (pid 4972) at a1149f0, the emulator (qemu 36709) and
+      caffeinate (36943) running with the window in place.
