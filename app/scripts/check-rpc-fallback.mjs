@@ -47,6 +47,10 @@ import {
   resolveNetworkUrl,
 } from '../src/config/endpoint-probe.ts';
 import { assertSecureEndpointUrl } from '../src/config/endpoint-url.ts';
+// Phase 23 item 8 (the fifth localisation pass): the tag and the note come from the
+// string table; the checks below still compare the exact English, and one
+// shows they follow the active language.
+import { setActiveLanguage } from '../src/i18n/index.ts';
 
 let passed = 0;
 let failed = 0;
@@ -590,6 +594,30 @@ check(
     note !== null && /None of the 4 default endpoints passed the last check/.test(note) && /may be out of date/.test(note) && /date and time are wrong/.test(note) && note.includes('eth-sepolia-testnet.api.pocket.network'),
     note,
   );
+  check(
+    'clock 2 days ahead: the note, exactly',
+    note === "None of the 4 default endpoints passed the last check. The one in use (eth-sepolia-testnet.api.pocket.network) answers, but its newest block looked older than expected, so balances and quotes may be out of date. If this phone's date and time are wrong, correcting them fixes this; otherwise you can set a custom endpoint with Edit.",
+    note,
+  );
+  // The fifth localisation pass: both texts go through the string table, so
+  // with Spanish active they answer in Spanish (the host unchanged), and in
+  // English (the default, restored here) they are the exact English above.
+  setActiveLanguage('es');
+  let spanishTag;
+  let spanishNote;
+  try {
+    spanishTag = describeDefaultChoice(choice);
+    spanishNote = describeDefaultFallbackNote(choice, SEPOLIA_NETWORK.defaultUrls);
+  } finally {
+    setActiveLanguage('en');
+  }
+  check(
+    'the tag and the note follow the active language (Spanish here, the host unchanged), and read English again after',
+    spanishTag === 'predeterminado (2 de 4: eth-sepolia-testnet.api.pocket.network, por detrás de la cadena)' &&
+      typeof spanishNote === 'string' && spanishNote.startsWith('Ninguno de los 4 puntos de conexión predeterminados') && spanishNote.includes('(eth-sepolia-testnet.api.pocket.network)') &&
+      describeDefaultChoice(choice) === 'default (2 of 4: eth-sepolia-testnet.api.pocket.network, behind the chain)',
+    `${spanishTag} | ${spanishNote}`,
+  );
 }
 {
   // Mixed: wrong chain, unreachable and stale only -> the stale one with
@@ -706,6 +734,7 @@ const [ETH1, ETH2] = EVM_MAINNET.defaultRpcUrls;
   check('a wrong-chain candidate is never returned', choice.url !== ETH1);
   const note = describeDefaultFallbackNote(choice, ETH.defaultUrls);
   check('all-down note says none answered', note !== null && /None of the 2 default endpoints/.test(note), note);
+  check('all-down note, exactly', note === 'None of the 2 default endpoints answered the last check (the primary is ethereum-rpc.publicnode.com). Requests may fail until one recovers; you can set a custom endpoint with Edit.', note);
 }
 {
   // Every candidate wrong-chain -> null (nothing usable).
