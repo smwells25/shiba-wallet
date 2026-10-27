@@ -265,7 +265,7 @@ const tr = L.computeTokenPnl(tokenBase);
     treasons({ ...tokenBase, balance: 70n * UNIT }).includes(tgap('the loaded history shows 5 UNI more received than is held now, and network fees are not paid in UNI, so some UNI left in a way the history does not list.')));
   check('more held than the history explains is the native gap sentence', treasons({ ...tokenBase, balance: 80n * UNIT }).includes(tgap('the balance is 5 UNI more than the loaded history explains, so some UNI arrived in a way the history does not list.')));
 
-  // Today: the wallet reads no price history for tokens.
+  // A token whose price history is not read at all ('unsupported').
   // The bounded-broadcast follow-ups (phase 23): since the contract route
   // (4325590) the wallet DOES read token price histories, so "unsupported"
   // can only mean the token's chain is not a mapped main network; the old
@@ -518,6 +518,36 @@ console.log('check-pnl: which tokens get a profit-and-loss button (pnlTokenChoic
     panel.includes("'CoinGecko’s prices. It is offered for the native coin of a main network and for each ERC-20 token tracked on ' +") &&
       panel.includes("'the active main network that CoinGecko prices, a token counted only by its own contract: test-network coins and ' +") &&
       panel.includes("'tokens have no price, so they are not offered.") && !panel.includes('tokens are not offered (see the notes)'));
+  // Phase 23 item 8, the hygiene slice: TOKEN_PNL_UNSUPPORTED_REASON is not
+  // reachable from the screen. The panel offers only pnlTokenChoices'
+  // tokens (pinned above), asks fetchPriceHistory with that token's own
+  // price id, and every offered token has a history source of kind
+  // 'token', so fetchPriceHistory cannot answer 'unsupported' for it
+  // (prices.ts: 'unsupported' only when historySourceFor is null). The
+  // sentence is kept, worded truthfully, for callers of computeTokenPnl
+  // outside the screen.
+  check('…the panel asks the price history with the offered token\'s own price id',
+    panel.includes('const priceId = token ? token.priceId : nativePriceAssetId(slot.slot, slot.networkChainId)!;') &&
+      panel.includes('void fetchPriceHistory(priceId, range.fromSec, range.toSec, { enabled: showFiat })'));
+  {
+    const everyChain = ['eip155:1', 'eip155:11155111', 'eip155:84532', 'eip155:421614', 'eip155:560048', 'eip155:11155420', 'eip155:8453', 'eip155:137'];
+    const list = everyChain.flatMap((chainId) => [USDC_TOKEN, dai].map((tk) => ({ ...tk, assetId: { ...tk.assetId, chainId } })));
+    const offeredAnywhere = everyChain.flatMap((active) => L.pnlTokenChoices(list, active));
+    const answers = [];
+    resetPriceHistoryCache();
+    for (const asset of offeredAnywhere) {
+      answers.push(await fetchPriceHistory(asset.priceId, Math.floor(NOW_T / 1000) - 7 * 86_400, Math.floor(NOW_T / 1000), {
+        enabled: true,
+        store: { getItem: async () => null, setItem: async () => undefined },
+        fetchFn: async () => ({ ok: true, status: 200, headers: { get: () => null }, text: async () => '{"prices":[[1792800000000,1]],"market_caps":[],"total_volumes":[]}' }),
+        now: () => NOW_T,
+      }));
+    }
+    resetPriceHistoryCache();
+    check('…every token offered on any network has a history source of kind token, so the "unsupported" sentence cannot be reached from the screen',
+      offeredAnywhere.length === 2 && offeredAnywhere.every((a) => historySourceFor(a.priceId)?.kind === 'token') &&
+        answers.every((r) => !(r.status === 'unavailable' && r.reason === 'unsupported')), JSON.stringify(answers.map((r) => r.status)));
+  }
 }
 
 // ===========================================================================

@@ -75,6 +75,49 @@ async function readHeader(readBlock: BridgeBlockReader, chainId: number, block: 
 }
 
 /**
+ * JSON-RPC error code of a node that no longer serves the asked-for history:
+ * reth answers 4444 (EthRpcErrorCode::PrunedHistory, named after EIP-4444)
+ * with the message "pruned history unavailable: requested {requested},
+ * earliest available {earliest_available}" — paradigmxyz/reth at
+ * f1cc50e4fcb958ad18007c0fe7c0e49cb1f75e19 (main on 2026-10-27),
+ * crates/rpc/rpc-eth-types/src/error/mod.rs lines 81–82 (the message),
+ * 392–393 (the code mapping) and 1207–1214 (the test asserting 4444 and the
+ * message). Observed live on 2026-10-27 from base-sepolia-rpc.publicnode.com
+ * (requested 33554432, earliest available 46500000); which reth version that
+ * endpoint runs was not read, and no JSON-RPC standard reserves 4444 (it is
+ * a node's own code), so the check below requires BOTH the code and the
+ * word "pruned".
+ */
+export const PRUNED_HISTORY_ERROR_CODE = 4444;
+
+/**
+ * True for an error that says the node refused a read because that history
+ * is pruned: the JSON-RPC code PRUNED_HISTORY_ERROR_CODE (a numeric `code`
+ * property, or the "RPC error 4444:" prefix the engine's httpTransport puts
+ * in its message, rpc.ts) AND a message containing "pruned". Anything else —
+ * a timeout, another code, 4444 without "pruned" — is not.
+ */
+export function isPrunedHistoryError(error: unknown): boolean {
+  if (error === null || typeof error !== 'object') return false;
+  const message = typeof (error as { message?: unknown }).message === 'string' ? (error as { message: string }).message : '';
+  const code = (error as { code?: unknown }).code;
+  const coded = code === PRUNED_HISTORY_ERROR_CODE || /(?:^|\b)RPC error 4444:/.test(message);
+  return coded && /pruned/i.test(message);
+}
+
+/**
+ * The first block reth's pruned-history message says is still available
+ * ("…, earliest available 46500000"), or null. Only a hint: the search
+ * reads that block before relying on it.
+ */
+export function prunedEarliestAvailable(error: unknown): bigint | null {
+  const message = error !== null && typeof error === 'object' ? (error as { message?: unknown }).message : undefined;
+  if (typeof message !== 'string') return null;
+  const m = /earliest available (\d{1,30})\b/.exec(message);
+  return m ? BigInt(m[1]!) : null;
+}
+
+/**
  * The highest block whose timestamp is at or before `timestamp`.
  *
  * The search walks back from the head and never asks for blocks much older
@@ -90,6 +133,18 @@ async function readHeader(readBlock: BridgeBlockReader, chainId: number, block: 
  * ends in a few reads on a chain with a steady block time and in about
  * 2 x log2(range) reads at worst. A target at or after the head gives the
  * head; one before the chain's first block, block 0.
+ *
+ * A read the node refuses as pruned history (isPrunedHistoryError, phase 23
+ * item 8, the hygiene slice) means the chain's reachable history on that
+ * endpoint begins above that block. The search then looks for the oldest
+ * block the endpoint still serves, between the refused block and the
+ * oldest one it read (the message's "earliest available" block is read
+ * first as a hint, then halving): if that block is still after the target,
+ * the target lies in the pruned part and the answer is that oldest readable
+ * block with `prunedBelow` set to its number, so the caller can say the
+ * search could not start at the sending time; if a readable block at or
+ * before the target is met on the way, the search goes on as usual. Any
+ * other error is thrown as before.
  */
 export async function findBlockAtOrBefore(
   readBlock: BridgeBlockReader,
@@ -97,7 +152,7 @@ export async function findBlockAtOrBefore(
   timestamp: bigint,
   head?: BridgeBlockHeader,
   cache?: BridgeSearchCache,
-): Promise<{ block: BridgeBlockHeader; reads: number }> {
+): Promise<{ block: BridgeBlockHeader; reads: number; prunedBelow?: bigint }> {
   let reads = 0;
   const top = head ?? (await readHeader(readBlock, chainId, 'latest'));
   if (head === undefined) reads += 1;
@@ -106,51 +161,86 @@ export async function findBlockAtOrBefore(
   const cached = cache?.get(key);
   if (cached && cached.number < top.number) return { block: cached, reads };
   let probes = 0;
-  const probe = async (n: bigint): Promise<BridgeBlockHeader> => {
+  // The highest block the node refused as pruned, and the hint its message gave.
+  let floor: bigint | null = null;
+  let hint: bigint | null = null;
+  // A read; null when the node refused it as pruned history (recorded in floor).
+  const probe = async (n: bigint): Promise<BridgeBlockHeader | null> => {
     probes += 1;
     if (probes > BRIDGE_BLOCK_SEARCH_MAX_PROBES) throw new Error('The block search did not end within its limit.');
     reads += 1;
-    return readHeader(readBlock, chainId, n);
+    try {
+      return await readHeader(readBlock, chainId, n);
+    } catch (e) {
+      if (!isPrunedHistoryError(e)) throw e;
+      if (floor === null || n > floor) floor = n;
+      hint = prunedEarliestAvailable(e);
+      return null;
+    }
   };
-  // Walk back until a block at or before the target is found.
-  let hi = top; // timestamp > target
+  let hi = top; // readable, timestamp > target
   let above: BridgeBlockHeader | null = null; // a block after hi, for the local rate
-  let lo: BridgeBlockHeader | null = null; // timestamp <= target
+  let lo: BridgeBlockHeader | null = null; // readable, timestamp <= target
   let step = BRIDGE_BLOCK_SEARCH_FIRST_STEP;
-  while (lo === null) {
-    if (hi.number === 0n) return { block: hi, reads };
-    let back: bigint;
-    if (above !== null && above.timestamp > hi.timestamp) {
-      // Blocks per second from (hi, above), the distance to the target, plus a quarter.
-      back = ((hi.timestamp - timestamp) * (above.number - hi.number) * 5n) / (4n * (above.timestamp - hi.timestamp)) + 1n;
-    } else {
-      back = step;
-      step *= 2n;
+  for (;;) {
+    // Walk back until a readable block at or before the target is found.
+    while (lo === null) {
+      if (hi.number === 0n) return { block: hi, reads };
+      let n: bigint;
+      if (floor !== null) {
+        // Above a pruned block: the oldest readable block lies in (floor, hi].
+        if (hi.number - floor <= 1n) return { block: hi, reads, prunedBelow: hi.number };
+        const h0 = hint as bigint | null;
+        n = h0 !== null && h0 > floor && h0 < hi.number ? h0 : floor + (hi.number - floor) / 2n;
+        hint = null;
+      } else {
+        let back: bigint;
+        if (above !== null && above.timestamp > hi.timestamp) {
+          // Blocks per second from (hi, above), the distance to the target, plus a quarter.
+          back = ((hi.timestamp - timestamp) * (above.number - hi.number) * 5n) / (4n * (above.timestamp - hi.timestamp)) + 1n;
+        } else {
+          back = step;
+          step *= 2n;
+        }
+        n = hi.number > back ? hi.number - back : 0n;
+      }
+      const h = await probe(n);
+      if (h === null) continue;
+      if (h.timestamp <= timestamp) lo = h;
+      else {
+        above = hi;
+        hi = h;
+      }
     }
-    const h = await probe(hi.number > back ? hi.number - back : 0n);
-    if (h.timestamp <= timestamp) lo = h;
-    else {
-      above = hi;
-      hi = h;
+    // Narrow (lo, hi): interpolate, and bisect after an interpolation that did not halve the bracket.
+    let bisect = false;
+    let refused = false;
+    while (hi.number - lo.number > 1n) {
+      const width = hi.number - lo.number;
+      let mid: bigint;
+      if (!bisect && hi.timestamp > lo.timestamp) {
+        mid = lo.number + ((timestamp - lo.timestamp) * width) / (hi.timestamp - lo.timestamp);
+        if (mid <= lo.number) mid = lo.number + 1n;
+        if (mid >= hi.number) mid = hi.number - 1n;
+      } else mid = (lo.number + hi.number) >> 1n;
+      const h = await probe(mid);
+      if (h === null) {
+        // The node pruned past lo while the search ran: lo is no longer
+        // readable either, so look for the oldest readable block again.
+        refused = true;
+        break;
+      }
+      if (h.timestamp <= timestamp) lo = h;
+      else hi = h;
+      bisect = !bisect && (hi.number - lo.number) * 2n > width;
     }
+    if (refused) {
+      lo = null;
+      continue;
+    }
+    if (cache && lo.number < top.number) cache.set(key, lo);
+    return { block: lo, reads };
   }
-  // Narrow (lo, hi): interpolate, and bisect after an interpolation that did not halve the bracket.
-  let bisect = false;
-  while (hi.number - lo.number > 1n) {
-    const width = hi.number - lo.number;
-    let mid: bigint;
-    if (!bisect && hi.timestamp > lo.timestamp) {
-      mid = lo.number + ((timestamp - lo.timestamp) * width) / (hi.timestamp - lo.timestamp);
-      if (mid <= lo.number) mid = lo.number + 1n;
-      if (mid >= hi.number) mid = hi.number - 1n;
-    } else mid = (lo.number + hi.number) >> 1n;
-    const h = await probe(mid);
-    if (h.timestamp <= timestamp) lo = h;
-    else hi = h;
-    bisect = !bisect && (hi.number - lo.number) * 2n > width;
-  }
-  if (cache && lo.number < top.number) cache.set(key, lo);
-  return { block: lo, reads };
 }
 
 /**
@@ -160,7 +250,9 @@ export async function findBlockAtOrBefore(
  * more than `boundSeconds` after the start block, to the receiving block at
  * the start block's time plus `boundSeconds` (found the same way, so the
  * span stated is the span searched). With a cache, a later pass for the
- * same transfer reads only the head.
+ * same transfer reads only the head. When the endpoint refuses the blocks
+ * at the sending time as pruned history, the plan starts at the oldest
+ * block it serves and carries `prunedBelow` (findBlockAtOrBefore).
  */
 export async function planDestinationSearch(
   readBlock: BridgeBlockReader,
@@ -174,12 +266,15 @@ export async function planDestinationSearch(
   const found = await findBlockAtOrBefore(readBlock, request.chainId, target, head, request.cache);
   let reads = 1 + found.reads;
   const start = found.block;
+  // The endpoint no longer serves the receiving chain's blocks from the
+  // sending time: the plan starts at the oldest block it serves and says so.
+  const pruned = found.prunedBelow !== undefined ? { prunedBelow: found.prunedBelow } : {};
   if (head.timestamp - start.timestamp <= bound || head.number <= start.number) {
-    return { fromBlock: start.number, toBlock: head.number, fromTimestamp: start.timestamp, toTimestamp: head.timestamp, bounded: false, boundSeconds: bound, reads };
+    return { fromBlock: start.number, toBlock: head.number, fromTimestamp: start.timestamp, toTimestamp: head.timestamp, bounded: false, boundSeconds: bound, ...pruned, reads };
   }
   const end = await findBlockAtOrBefore(readBlock, request.chainId, start.timestamp + bound, head, request.cache);
   reads += end.reads;
-  return { fromBlock: start.number, toBlock: end.block.number, fromTimestamp: start.timestamp, toTimestamp: end.block.timestamp, bounded: true, boundSeconds: bound, reads };
+  return { fromBlock: start.number, toBlock: end.block.number, fromTimestamp: start.timestamp, toTimestamp: end.block.timestamp, bounded: true, boundSeconds: bound, ...pruned, reads };
 }
 
 /**

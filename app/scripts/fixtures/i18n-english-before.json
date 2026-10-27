@@ -12924,7 +12924,15 @@
   "broadcast.userop.open",
   "broadcast.userop.openUnlisted",
   "broadcast.open",
-  "multisig.cosigner.scanLabel"
+  "multisig.cosigner.scanLabel",
+  "period.second",
+  "period.seconds",
+  "period.minute",
+  "period.minutes",
+  "period.hour",
+  "period.hours",
+  "period.day",
+  "period.days"
  ],
  "changed": {
   "activity.note.privacy": {

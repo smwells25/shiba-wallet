@@ -1218,7 +1218,7 @@ export function createLayerZeroOftProvider(options: LayerZeroOftProviderOptions)
       }
     }
     const search: BridgeDestinationSearch | undefined = plan
-      ? { fromBlock: plan.fromBlock, toBlock: plan.toBlock, fromTimestamp: plan.fromTimestamp, toTimestamp: plan.toTimestamp, bounded: plan.bounded, boundSeconds: plan.boundSeconds }
+      ? { fromBlock: plan.fromBlock, toBlock: plan.toBlock, fromTimestamp: plan.fromTimestamp, toTimestamp: plan.toTimestamp, bounded: plan.bounded, boundSeconds: plan.boundSeconds, ...(plan.prunedBelow !== undefined ? { prunedBelow: plan.prunedBelow } : {}) }
       : undefined;
     const withSearch = search ? { search } : {};
     const receivedQuery = { chainId: r.destinationChainId, address: target, topics: [OFT_RECEIVED_TOPIC, guid] };

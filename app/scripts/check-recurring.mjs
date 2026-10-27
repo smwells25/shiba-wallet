@@ -1161,7 +1161,7 @@ const noJava = (t) => !/java\.net|UnknownHostException/.test(t);
       /nonce for this payment key decides/.test(d3.detail) && /Refresh status before sending again/.test(d3.detail) && !/nothing was sent|refused/i.test(d3.title + d3.detail) && noJava(d3.detail) &&
       !isRecurringNodeFailure(sub), d3.detail);
   check('card line for an open outcome',
-    recurringAttemptLine(d3.outcome, d3.detail) === 'Last payment attempt: outcome unknown (the connection failed while it was being sent). Tap Refresh status and wait for the count before sending again.');
+    recurringAttemptLine(d3.outcome, d3.detail) === 'Last payment attempt: outcome unknown (no usable answer came back from the bundler while it was being sent). Tap Refresh status and wait for the count before sending again.');
   const unreadable = describeRecurringPaymentError(new RecurringNotDueError('Its on-chain status could not be read (The permission is only partly installed on-chain.), so nothing was sent.', { kind: 'unknown', reason: 'x' }), { accountType: 'kernel-v3.3', symbol: 'x' }, describeSendError);
   check('a status unreadable for another reason is "failed", not "refused"; a real not-due stays "refused"',
     unreadable.outcome === 'failed' && recurringAttemptLine(unreadable.outcome, unreadable.detail).startsWith('Last payment attempt failed: Its on-chain status could not be read') &&
@@ -1273,7 +1273,7 @@ const noJava = (t) => !/java\.net|UnknownHostException/.test(t);
         d502.outcome === 'outcome-unknown' && d502.cause === 'server-error' && d502.title === RECURRING_OUTCOME_UNKNOWN_TITLE &&
           d502.detail.startsWith(RECURRING_SERVER_ERROR_SENTENCE) && /may have accepted it/.test(d502.detail) && /HTTP error 502/.test(d502.detail) &&
           !/within 60 seconds|not sent|nothing was sent|refused/i.test(d502.title + d502.detail.split('\n\nTechnical detail:')[0]), d502.detail);
-      check('…the card line names the server error (not "the connection failed")',
+      check('…the card line names the server error (not "no usable answer")',
         recurringAttemptLine(d502.outcome, d502.detail, d502.cause) ===
           'Last payment attempt: outcome unknown (the bundler answered with a server error while it was being sent). Tap Refresh status and wait for the count before sending again.');
       check('…the no-answer case says "did not answer in time" on the card',
@@ -1281,11 +1281,11 @@ const noJava = (t) => !/java\.net|UnknownHostException/.test(t);
           d5.cause === 'no-answer');
       const dropped = new BroadcastOutcomeUnknownError({ kind: 'userop', hash: `0x${'77'.repeat(32)}`, chain: scope.chain, recorded: true, technical: 'fetch failed: Connection reset', reason: 'connection' });
       const dDrop = describeRecurringPaymentError(dropped, { accountType: 'kernel-v3.3', symbol: 'test ETH' }, describeSendError);
-      check('…a dropped connection: the connection sentence, that it is listed, and the original card line',
+      check('…a dropped connection: the connection sentence, that it is listed, and the card line saying no usable answer came back (hygiene slice)',
         dDrop.cause === 'connection' && dDrop.detail.startsWith(`${RECURRING_OUTCOME_UNKNOWN_SENTENCE} ${RECURRING_LISTED_SENTENCE}`) &&
-          recurringAttemptLine(dDrop.outcome, dDrop.detail, dDrop.cause) === 'Last payment attempt: outcome unknown (the connection failed while it was being sent). Tap Refresh status and wait for the count before sending again.');
-      check('…the line without a cause is the original wording, byte for byte (older callers)',
-        recurringAttemptLine('outcome-unknown', 'x') === 'Last payment attempt: outcome unknown (the connection failed while it was being sent). Tap Refresh status and wait for the count before sending again.');
+          recurringAttemptLine(dDrop.outcome, dDrop.detail, dDrop.cause) === 'Last payment attempt: outcome unknown (no usable answer came back from the bundler while it was being sent). Tap Refresh status and wait for the count before sending again.');
+      check('…the line without a cause says no usable answer came back, never "failed" (hygiene slice)',
+        recurringAttemptLine('outcome-unknown', 'x') === 'Last payment attempt: outcome unknown (no usable answer came back from the bundler while it was being sent). Tap Refresh status and wait for the count before sending again.');
       const dDca502 = dcaErr(e502, { accountType: 'kernel-v3.3', symbol: 'test ETH' }, describeSendError);
       check('a recurring swap answered 502: its own server-error sentence and card line',
         dDca502.cause === 'server-error' && dDca502.detail.startsWith(DCA_SERVER_ERROR_SENTENCE) &&
@@ -1480,6 +1480,43 @@ console.log('check-recurring: copy (finding 5) and the due-state timer (finding 
   const facts = { kind: 'ok', state: { rateLimitStatus: 'live', remainingPulls: 2, nextSlotAt: S + 120, intervalSeconds: 120, feeBudgetLeftWei: 1n, validUntil: S + 480 }, next: { kind: 'later' } };
   check('the same on-chain facts read at S + 60 give "later", and at the next tick (S + 120) "due" — no network needed',
     recurringDueState(r, facts, S + 60).kind === 'later' && recurringDueState(r, facts, S + 120).kind === 'due');
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-recurring: the open-outcome card lines say only what is known (phase 23 item 8, the hygiene slice)');
+// ---------------------------------------------------------------------------
+{
+  const R = await import('../src/wallet/recurring.ts');
+  const D = await import('../src/wallet/dca.ts');
+  const { BroadcastOutcomeUnknownError: Open } = await import('../src/wallet/broadcast-outcome.ts');
+  const { BroadcastUnansweredError } = await import('@shiba-wallet/chains-evm');
+  const tail = () => `). Tap Refresh status and wait for the count before sending again.`;
+  check('the no-usable-answer phrase (exact)', R.OPEN_OUTCOME_NO_USABLE_ANSWER === 'no usable answer came back from the bundler while it was being sent');
+  check('…the timeout and server-error parentheses are byte-identical to e55e5ce',
+    R.openOutcomeParenthesis('no-answer') === 'the bundler did not answer in time' &&
+      R.openOutcomeParenthesis('server-error') === 'the bundler answered with a server error while it was being sent');
+  check('…a dropped connection and an unknown cause say no usable answer came back, never "failed"',
+    R.openOutcomeParenthesis('connection') === R.OPEN_OUTCOME_NO_USABLE_ANSWER && R.openOutcomeParenthesis(undefined) === R.OPEN_OUTCOME_NO_USABLE_ANSWER &&
+      !/fail/i.test(R.recurringAttemptLine('outcome-unknown', 'x', 'connection')) && !/fail/i.test(D.dcaAttemptLine('outcome-unknown', 'x')));
+  check('…the swap card line, each cause (exact)',
+    D.dcaAttemptLine('outcome-unknown', 'x', 'connection') === `Last swap attempt: outcome unknown (no usable answer came back from the bundler while it was being sent${tail()}` &&
+      D.dcaAttemptLine('outcome-unknown', 'x') === `Last swap attempt: outcome unknown (no usable answer came back from the bundler while it was being sent${tail()}` &&
+      D.dcaAttemptLine('outcome-unknown', 'x', 'no-answer') === `Last swap attempt: outcome unknown (the bundler did not answer in time${tail()}` &&
+      D.dcaAttemptLine('outcome-unknown', 'x', 'server-error') === `Last swap attempt: outcome unknown (the bundler answered with a server error while it was being sent${tail()}`);
+  check('…the alert sentences of an open outcome (payment and swap) open with the same fact, never "The connection failed"',
+    R.RECURRING_OUTCOME_UNKNOWN_SENTENCE.startsWith('No usable answer came back from the bundler while the payment was being sent, so this wallet cannot tell whether the bundler received it.') &&
+      D.DCA_OUTCOME_UNKNOWN_SENTENCE.startsWith('No usable answer came back from the bundler while the swap was being sent, so this wallet cannot tell whether the bundler received it.') &&
+      !/connection failed/i.test(R.RECURRING_OUTCOME_UNKNOWN_SENTENCE + D.DCA_OUTCOME_UNKNOWN_SENTENCE));
+  // An answer whose body could not be read: the connection did not drop, so
+  // "the connection failed" was untrue for it; the engine's own reason stays
+  // in the detail's technical line.
+  const unreadable = new Open({ kind: 'userop', hash: `0x${'78'.repeat(32)}`, chain: 'eip155:11155111', recorded: true,
+    technical: new BroadcastUnansweredError('eth_sendUserOperation', 'connection', 'the answer could not be read: SyntaxError: Unexpected token <').message, reason: 'connection' });
+  const dU = R.describeRecurringPaymentError(unreadable, { accountType: 'kernel-v3.3', symbol: 'test ETH' }, describeSendError);
+  check('…an unreadable answer: cause connection, the card line says no usable answer came back, the engine reason in the technical line',
+    dU.cause === 'connection' && R.recurringAttemptLine(dU.outcome, dU.detail, dU.cause) ===
+      `Last payment attempt: outcome unknown (no usable answer came back from the bundler while it was being sent${tail()}` &&
+      /Technical detail: No usable answer to eth_sendUserOperation \(the connection failed; cause: the answer could not be read/.test(dU.detail), dU.detail);
 }
 
 console.log(`\ncheck-recurring: ${passed} passed, ${failed} failed`);

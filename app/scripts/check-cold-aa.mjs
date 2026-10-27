@@ -774,6 +774,93 @@ console.log('check-cold-aa: readiness and the exact strings');
 }
 
 // ===========================================================================
+console.log('check-cold-aa: a checked signature is dropped when its request expires (pass p23-coldaa finding 2)');
+// ===========================================================================
+{
+  // Fake timers and a fake clock: nothing waits.
+  const fakeTimers = () => {
+    const armed = [];
+    let next = 1;
+    return {
+      armed,
+      timers: {
+        setTimeout: (fn, ms) => { const h = next++; armed.push({ h, fn, ms, live: true }); return h; },
+        clearTimeout: (h) => { const a = armed.find((x) => x.h === h); if (a) a.live = false; },
+      },
+      fire: () => { const a = armed.filter((x) => x.live).at(-1); if (a) { a.live = false; a.fn(); } return a; },
+      live: () => armed.filter((x) => x.live),
+    };
+  };
+  const req = deployingRequest;
+  const exp = Number(req.expiresAt);
+  check('the fixture request has a lifetime (expiresAt after NOW)', exp > NOW, String(exp));
+  // Armed while valid: one timer, due at the first whole second after expiresAt.
+  {
+    const ft = fakeTimers();
+    let clock = NOW * 1000 + 250;
+    let calls = 0;
+    const cancel = ca.watchColdAaExpiry(req, () => { calls += 1; }, { now: () => clock, timers: ft.timers });
+    check('while the request is valid nothing is reported and one timer is armed for the first second after expiresAt',
+      calls === 0 && ft.live().length === 1 && ft.live()[0].ms === (exp + 1) * 1000 - clock, JSON.stringify(ft.armed.map((a) => a.ms)));
+    // A timer that fires early (the clock still at expiresAt): re-armed, nothing reported.
+    clock = exp * 1000 + 999;
+    ft.fire();
+    check('…a timer that fires while the request is still valid (at expiresAt) re-arms and reports nothing', calls === 0 && ft.live().length === 1 && ft.live()[0].ms === 1);
+    clock = (exp + 1) * 1000;
+    ft.fire();
+    check('…at the first second after expiresAt it reports once and arms nothing more', calls === 1 && ft.live().length === 0 && ca.coldAaRequestExpired(req, Math.floor(clock / 1000)));
+    cancel();
+    check('…cancelling after it reported changes nothing', calls === 1);
+  }
+  // Late (a return from the background): reported on the first run.
+  {
+    const ft = fakeTimers();
+    let clock = NOW * 1000;
+    let calls = 0;
+    ca.watchColdAaExpiry(req, () => { calls += 1; }, { now: () => clock, timers: ft.timers });
+    clock = (exp + 3600) * 1000;
+    ft.fire();
+    check('a timer that fires an hour late reports the expiry once', calls === 1 && ft.live().length === 0);
+  }
+  // Already expired: at once, no timer.
+  {
+    const ft = fakeTimers();
+    let calls = 0;
+    ca.watchColdAaExpiry(req, () => { calls += 1; }, { now: () => (exp + 1) * 1000, timers: ft.timers });
+    check('an already expired request is reported at once and no timer is armed', calls === 1 && ft.armed.length === 0);
+  }
+  // Cancelled before the expiry: never reported.
+  {
+    const ft = fakeTimers();
+    let clock = NOW * 1000;
+    let calls = 0;
+    const cancel = ca.watchColdAaExpiry(req, () => { calls += 1; }, { now: () => clock, timers: ft.timers });
+    cancel();
+    clock = (exp + 10) * 1000;
+    const a = ft.armed[0];
+    check('a cancelled watch clears its timer and never reports (a new request or a cleared signature cancels it)', a && a.live === false && calls === 0);
+    a.fn();
+    check('…even if the platform runs the cleared callback anyway', calls === 0);
+  }
+  // A far expiry never arms more than setTimeout's 32-bit limit.
+  {
+    const ft = fakeTimers();
+    ca.watchColdAaExpiry({ ...req, expiresAt: String(NOW + 40 * 86_400) }, () => {}, { now: () => NOW * 1000, timers: ft.timers });
+    check('a wait longer than setTimeout\'s limit is armed at the limit and re-armed', ft.live()[0].ms === ca.COLD_AA_EXPIRY_TIMER_MAX_MS);
+  }
+  // The screen: the watch runs while a checked signature is shown, drops it, shows the expired sentence; Submit re-checks.
+  const screen = source('src/screens/ColdSignScreen.tsx');
+  check('the screen watches the expiry while a checked signature is shown, then clears it (Submit disabled) and shows the engine\'s expired sentence',
+    /useEffect\(\(\) => \{\n    if \(phase !== 'aa-show' \|\| !aaRequest \|\| !aaSignature\) return undefined;\n    return watchColdAaExpiry\(aaRequest, \(\) => \{\n      setAaSignature\(null\);\n      setSignatureError\(COLD_USEROP_EXPIRED\);\n    \}\);\n  \}, \[phase, aaRequest, aaSignature\]\);/.test(screen) &&
+      screen.includes('<Button title={COLD_AA_SUBMIT_BUTTON} disabled={!aaSignature} onPress={() => void onAaSubmit()} />'));
+  const onAaSubmit = screen.slice(screen.indexOf('const onAaSubmit = async'), screen.indexOf('const onReview = async'));
+  check('…and Submit refuses an expired request itself, before the endpoint check and before submitColdAa',
+    onAaSubmit.indexOf('if (coldAaRequestExpired(aaRequest, nowSeconds())) {') > 0 &&
+      onAaSubmit.indexOf('if (coldAaRequestExpired(aaRequest, nowSeconds())) {') < onAaSubmit.indexOf('aaEndpointStillQuoted()') &&
+      onAaSubmit.indexOf('aaEndpointStillQuoted()') < onAaSubmit.indexOf('submitColdAa('));
+}
+
+// ===========================================================================
 console.log('check-cold-aa: mutation checks (broken copies must fail)');
 // ===========================================================================
 {

@@ -842,6 +842,9 @@ console.log('check-dca: refusals in plain words');
   const unreachable = d(new RecurringStatusUnreachableError('the endpoint did not answer (fetch failed: x)'));
   check('an unanswered status read → not sent, never "refused"', unreachable.outcome === 'not-sent' && unreachable.detail.includes(DCA_NOT_SENT_SENTENCE));
   check('attempt lines', dcaAttemptLine('refused', 'A.\n\nB') === 'Last swap attempt refused: A.' && /outcome unknown/.test(dcaAttemptLine('outcome-unknown', 'x')));
+  check('…an open outcome with no cause says no usable answer came back, never "the connection failed" (phase 23 item 8, the hygiene slice)',
+    dcaAttemptLine('outcome-unknown', 'x') === 'Last swap attempt: outcome unknown (no usable answer came back from the bundler while it was being sent). Tap Refresh status and wait for the count before sending again.' &&
+      dcaAttemptLine('outcome-unknown', 'x', 'connection') === dcaAttemptLine('outcome-unknown', 'x'));
 }
 
 // ---------------------------------------------------------------------------

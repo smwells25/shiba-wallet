@@ -333,7 +333,7 @@ const rec = (n, over = {}, replacement = null) =>
   check(`over the cap (${MAX_PENDING_RECORDS}) the resolved notice goes first`, withNotice.length === MAX_PENDING_RECORDS && withNotice.every((x) => x.kind === 'tx'));
   const marker = { kind: 'marker', chain: CHAIN, from: FROM_L, nonce: '600', outcome: 'replaced', minedHash: H(2), original: H(1), markedAt: now - 10 };
   const withMarker = pruneRecords([marker, ...many], now);
-  check('… and so does a replacement marker (eviction drops the row line)', withMarker.length === MAX_PENDING_RECORDS && withMarker.every((x) => x.kind === 'tx') && replacementRowLine(withMarker, CHAIN, H(2)) === null);
+  check('… and so does a replacement marker (eviction drops the row line)', withMarker.length === MAX_PENDING_RECORDS && withMarker.every((x) => x.kind === 'tx') && replacementRowLine(withMarker, CHAIN, H(2), FROM) === null);
   check('a marker is never aged out by itself', pruneRecords([{ ...marker, markedAt: now - 100 * RESOLVED_KEEP_MS }], now).length === 1);
   check('the strict parse accepts a marker and refuses one with an extra or a missing key',
     parseRegistry(JSON.stringify({ version: 1, records: [marker] })).records.length === 1 &&
@@ -404,7 +404,7 @@ console.log('check-pending: where a nonce stands');
         resolvedSentence(n6) === 'Transaction 0x23bf…3686 (nonce 6) was superseded by 0x9d6f…abcd, included in block 11952645; 0x23bf…3686 will never be included.' &&
         !resolvedSentence(n6).includes(ORIGINAL_MINED_FIRST_SENTENCE), resolvedSentence(n6));
     check('…and the included row\'s Activity line says it was sent in place of the stuck one',
-      replacementRowLine([n6], CHAIN, FRESH) === 'Sent in place of transaction 0x23bf…3686 (nonce 6), which will never be included.' && replacementRowLine([n6], CHAIN, STUCK) === null);
+      replacementRowLine([n6], CHAIN, FRESH, WATCHED) === 'Sent in place of transaction 0x23bf…3686 (nonce 6), which will never be included.' && replacementRowLine([n6], CHAIN, STUCK, WATCHED) === null);
     const stored6 = memoryStore();
     for (const r of [stuck, fresh]) await recordPendingTransaction(r, stored6);
     await refreshAccountPending({ reader: nodeReader(live.transport), chain: CHAIN, from: WATCHED, store: stored6, nowMs: T0 + 120_000 });
@@ -415,7 +415,7 @@ console.log('check-pending: where a nonce stands');
     const after6 = await loadPendingRegistry(stored6);
     check('…after Dismiss: no notice, the marker with outcome "superseded", the row line unchanged',
       resolvedNotices(after6.records, CHAIN, WATCHED).length === 0 && after6.records.length === 1 && after6.records[0].kind === 'marker' &&
-        after6.records[0].outcome === 'superseded' && replacementRowLine(after6.records, CHAIN, FRESH) === 'Sent in place of transaction 0x23bf…3686 (nonce 6), which will never be included.');
+        after6.records[0].outcome === 'superseded' && replacementRowLine(after6.records, CHAIN, FRESH, WATCHED) === 'Sent in place of transaction 0x23bf…3686 (nonce 6), which will never be included.');
     const inbox6 = await import('../src/wallet/inbox.ts');
     check('…the inbox lists it as "Transaction superseded"',
       inbox6.replacementNoticeInboxEvent({ chain: CHAIN, from: WATCHED, nonce: '6', minedHash: FRESH, outcome: 'superseded', resolvedAt: T0, text: resolvedSentence(n6) }).title === 'Transaction superseded');
@@ -491,25 +491,37 @@ console.log('check-pending: where a nonce stands');
   const notices = resolvedNotices(after.records, CHAIN, FROM);
   check('refresh: a "cancelled" notice is kept with every hash', notices.length === 1 && notices[0].outcome === 'cancelled' && notices[0].hashes.join() === [H(1), H(2), H(3)].join());
   check('cancelled sentence', resolvedSentence(notices[0]) === `Cancelled: the cancellation 0x0000…0003 was included in block 81, so transaction 0x0000…0001 (nonce 5) will never be included.`, resolvedSentence(notices[0]));
-  check('the included cancellation\'s Activity row says what it was', replacementRowLine(after.records, CHAIN, H(3)) === 'Cancellation of transaction 0x0000…0001 (nonce 5).');
-  check('other rows get no line', replacementRowLine(after.records, CHAIN, H(1)) === null && replacementRowLine(after.records, 'eip155:1', H(3)) === null);
+  check('the included cancellation\'s Activity row says what it was', replacementRowLine(after.records, CHAIN, H(3), FROM) === 'Cancellation of transaction 0x0000…0001 (nonce 5).');
+  check('other rows get no line', replacementRowLine(after.records, CHAIN, H(1), FROM) === null && replacementRowLine(after.records, 'eip155:1', H(3), FROM) === null);
 
   // Pass p21e finding A1: Dismiss hides the notice only; the included
   // transaction's Activity row keeps its line after Activity is reopened.
   await pending.dismissResolvedNotice(notices[0], store, T0 + 6000);
   const dismissed = await loadPendingRegistry(store);
   check('after Dismiss the notice is gone', resolvedNotices(dismissed.records, CHAIN, FROM).length === 0 && !dismissed.readOnly);
-  check('after Dismiss the row line is still produced for the cancellation hash', replacementRowLine(dismissed.records, CHAIN, H(3)) === 'Cancellation of transaction 0x0000…0001 (nonce 5).');
+  check('after Dismiss the row line is still produced for the cancellation hash', replacementRowLine(dismissed.records, CHAIN, H(3), FROM) === 'Cancellation of transaction 0x0000…0001 (nonce 5).');
   check('the marker is compact: replacement hash, original hash, nonce, kind',
     dismissed.records.length === 1 &&
     JSON.stringify(dismissed.records[0]) === JSON.stringify({ kind: 'marker', chain: CHAIN, from: FROM_L, nonce: '5', outcome: 'cancelled', minedHash: H(3), original: H(1), markedAt: T0 + 6000 }));
   const sped = { ...notices[0], outcome: 'replaced', minedHash: H(2) };
-  check('a dismissed speed-up keeps "Speed-up of …"', replacementRowLine([pending.markerFor(sped, T0)], CHAIN, H(2)) === 'Speed-up of transaction 0x0000…0001 (nonce 5).');
+  check('a dismissed speed-up keeps "Speed-up of …"', replacementRowLine([pending.markerFor(sped, T0)], CHAIN, H(2), FROM) === 'Speed-up of transaction 0x0000…0001 (nonce 5).');
+  // Pass p23-coldaa finding 3: the registry holds every account's records,
+  // so the RECIPIENT's Activity (another account of the wallet, or anyone
+  // the line is computed for) must not carry the sender's line.
+  const RECIPIENT = '0xb6994c4EFAC1C7fC4C2D1B1aE2A3E1d0a4c581fE';
+  const spedMarker = pending.markerFor(sped, T0);
+  check('the line is given only on the sender\'s own Activity: never on the recipient\'s row of the same hash, for a notice or a marker, in any letter case',
+    replacementRowLine([spedMarker], CHAIN, H(2), RECIPIENT) === null && replacementRowLine([sped], CHAIN, H(2), RECIPIENT) === null &&
+      replacementRowLine([spedMarker], CHAIN, H(2), FROM.toUpperCase().replace('0X', '0x')) === 'Speed-up of transaction 0x0000…0001 (nonce 5).' &&
+      replacementRowLine([spedMarker], CHAIN, H(2).toUpperCase().replace('0X', '0x'), FROM_L) === 'Speed-up of transaction 0x0000…0001 (nonce 5).');
+  check('…when the list holds two accounts\' records for the same hash, each viewer sees only the line of its own record',
+    replacementRowLine([{ ...spedMarker, from: RECIPIENT.toLowerCase(), outcome: 'cancelled' }, spedMarker], CHAIN, H(2), FROM) === 'Speed-up of transaction 0x0000…0001 (nonce 5).' &&
+      replacementRowLine([{ ...spedMarker, from: RECIPIENT.toLowerCase(), outcome: 'cancelled' }, spedMarker], CHAIN, H(2), RECIPIENT) === 'Cancellation of transaction 0x0000…0001 (nonce 5).');
   const pcs = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/components/PendingTransactions.tsx'), 'utf8');
   check('the notice\'s Dismiss button keeps the marker (dismissResolvedNotice, not settleNonce)',
     pcs.includes('onPress={() => void dismissResolvedNotice(n).then(refresh, refresh)}') && !pcs.includes('settleNonce(n, null)'));
   await resetPendingRegistry(store);
-  check('reset drops the marker and its line', replacementRowLine((await loadPendingRegistry(store)).records, CHAIN, H(3)) === null);
+  check('reset drops the marker and its line', replacementRowLine((await loadPendingRegistry(store)).records, CHAIN, H(3), FROM) === null);
 }
 
 // ---------------------------------------------------------------------------
@@ -1574,7 +1586,7 @@ console.log('check-pending: the screens wire the gates in order (source)');
   check('…mutant caught: the title spoken in full again',
     !spokenOk(view.replace('<Text accessibilityLabel={withShortAddresses(userOpCardTitle(record))} style=', '<Text style=')));
   const activity = readFileSync(join(HERE, '../src/screens/ActivityScreen.tsx'), 'utf8');
-  check('Activity shows the section in the list, the unavailable and the error states', (activity.match(/\{pendingSection\}/g) ?? []).length === 3 && activity.includes('replacementRowLine(pendingRecords'));
+  check('Activity shows the section in the list, the unavailable and the error states', (activity.match(/\{pendingSection\}/g) ?? []).length === 3 && activity.includes('replacementLine={isEvmSlot && account ? replacementRowLine(pendingRecords, evmChain.caip2, item.id, account.address) : null}'));
   // Pass p22b: a stuck cold-signed transaction could not be sped up or
   // cancelled once its success view was closed, because Activity hid this
   // section for a watch-only account. It is shown for a watch-only account

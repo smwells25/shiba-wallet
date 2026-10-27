@@ -1992,4 +1992,13 @@ export const es: Readonly<Partial<Record<StringId, string>>> = {
   'settings.endpoint.fallback.noneAnswered': 'Ninguno de los {total} puntos de conexión predeterminados respondió a la última comprobación (el principal es {primary}). Las solicitudes pueden fallar hasta que uno se recupere; puedes configurar un punto de conexión personalizado con Editar.',
   'settings.endpoint.fallback.primaryStale': 'El punto de conexión predeterminado principal ({primary}) va por detrás de la cadena ahora mismo (su bloque más reciente es más antiguo de lo esperado), así que se usa uno predeterminado de respaldo. El principal se vuelve a probar en el próximo inicio de la aplicación o cuando falle el de respaldo.',
   'settings.endpoint.fallback.primaryUnreachable': 'El punto de conexión predeterminado principal ({primary}) no responde ahora mismo, así que se usa uno predeterminado de respaldo. El principal se vuelve a probar en el próximo inicio de la aplicación o cuando falle el de respaldo.',
+  // ---- Phase 23 item 8 (the hygiene slice): a period in words for the sentences the wallet builds (wallet/period-text.ts; the engine's describePeriod and the stored one-line summaries stay English) ----
+  'period.second': '{count} segundo',
+  'period.seconds': '{count} segundos',
+  'period.minute': '{count} minuto',
+  'period.minutes': '{count} minutos',
+  'period.hour': '{count} hora',
+  'period.hours': '{count} horas',
+  'period.day': '{count} día',
+  'period.days': '{count} días',
 };

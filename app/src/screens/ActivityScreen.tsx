@@ -1095,7 +1095,7 @@ export function ActivityScreen({ navigation, route }: Props) {
             sentence={rowText.sentence}
             loading={rowText.loading}
             unavailable={rowText.unavailable}
-            replacementLine={isEvmSlot ? replacementRowLine(pendingRecords, evmChain.caip2, item.id) : null}
+            replacementLine={isEvmSlot && account ? replacementRowLine(pendingRecords, evmChain.caip2, item.id, account.address) : null}
             sameAsAbove={index > 0 && state.entries[index - 1]?.id === listed.id}
             noAmount={hidesZeroNativeAmount(item, tokenTxIds, sentences.lookup(item.id)?.description)}
             note={noteFor(item.id)}

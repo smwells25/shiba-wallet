@@ -335,6 +335,15 @@ export interface BridgeDestinationSearch {
   bounded: boolean;
   /** The time bound in seconds (BRIDGE_SEARCH_BOUND_SECONDS unless the app chose another). */
   boundSeconds: bigint;
+  /**
+   * Set when the receiving chain's endpoint refused the blocks at the
+   * sending time as pruned history (bridge/search.ts isPrunedHistoryError):
+   * the number of the oldest block it still serves, where the search starts
+   * (= fromBlock). Blocks before it, from the sending time on, were NOT
+   * searched, so a delivery there cannot be seen through this endpoint.
+   * Absent when the search starts at the sending time as planned.
+   */
+  prunedBelow?: bigint;
 }
 
 /** Where a transfer is, according to event logs on the two chains. */
