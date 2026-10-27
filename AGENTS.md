@@ -14714,3 +14714,92 @@ to the Chairperson at once.
       (pinned with encoded fake answers); the 2-minute poll against
       publicnode's backends; the risk-card lines against the live
       contracts; the Alert title; iOS, the Spanish text length.
+- [x] Item 8, the recorded follow-ups — ONE HYGIENE SLICE (commit 8bafd1f; 24 files, +813 / −93, incl. the new app/src/wallet/period-text.ts;
+      engine 1,290 → 1,296 (chains-evm 881 → 887), check-recurring 215
+      (was 209), check-dca 172 (171), check-pnl 138 (136), check-i18n 169
+      (159; +4 in-suite mutants), check-cold-aa 119 (107), check-pending
+      316 (314); offline runner ALL GREEN in the CTO's isolated worktree on
+      HEAD 0236988 with --skip-bundle: app 10,731 across 65 suites, lint
+      0/0, tsc clean; checkout 0 / apply 0 / 24 files; the staged patch id
+      equals the verified tree's and the agent's stated 8c67e2b7…550f0c;
+      the scan clean; one hand mutant per item caught bar one equivalent
+      (below); the agent's first run failed lint once — a useEffect after
+      the screen's early return, moved above it — and the second run is
+      the green one; the agent was cut once by the session limit after its
+      baseline and resumed; the CTO read the search.ts hunk; not seen on a
+      device, nothing live). (1) RECURRING / DCA CARD WORDING: the
+      'connection' cause and no cause now read "no usable answer came back
+      from the bundler while it was being sent" (OPEN_OUTCOME_NO_USABLE_ANSWER
+      in recurring.ts); the alert sentences RECURRING_OUTCOME_UNKNOWN_SENTENCE
+      and DCA_OUTCOME_UNKNOWN_SENTENCE lose the same "The connection
+      failed" claim; the timeout and server-error wordings byte-identical;
+      NOT "connection lost", because the engine's 'connection' reason
+      (rpc.ts broadcastExchange ~176–198) also covers an answer whose body
+      could not be read or was not JSON-RPC, where nothing dropped; these
+      are English constants, not string-table entries, so no fixture entry
+      changed; three check-recurring pins changed in place plus a new
+      7-check section and one in check-dca. (2) THE TOKEN P&L 'unsupported'
+      SENTENCE: the old "…for tokens yet…" text was already gone (e55e5ce);
+      TOKEN_PNL_UNSUPPORTED_REASON (pnl.ts 76–87) is true and reachable
+      only through the function API — PortfolioViews.tsx 91 offers only
+      pnlTokenChoices, which (pnl.ts 289–290) keeps a token only when its
+      history source is kind 'token', PortfolioViews 156 / 237 ask with
+      that same price id, and prices.ts 574–575 answers 'unsupported' only
+      for a null source; kept, with two new checks (the screen asks with
+      the token's own price id; no offered token on eight chain ids can get
+      'unsupported') and a stale comment fixed; the mutant removing
+      pnlTokenChoices' source filter SURVIVES — equivalent with today's
+      tables, as the second-slice record already noted. (3) A WALLET-SIDE
+      PERIOD DESCRIBER: period-text.ts periodText follows the engine's rule
+      incl. seconds, used only in the seven sentences already built through
+      the string table (recurringReview, recurringShortWindowWarning,
+      recurringFinalDatesLine, dcaShortWindowWarning, dcaFinalDatesLine,
+      subscriptionShortWindowWarning, subscriptionFinalDatesLine); the
+      engine's describePeriod, the stored one-line summaries,
+      checkSubscriptionPeriod's English error and the English form hints
+      unchanged; 8 new ids period.second / seconds / minute / minutes /
+      hour / hours / day / days with Spanish drafts in the fixture's "new"
+      list (check-i18n PERIOD_NEW); English equals describePeriod for
+      532,682 periods (every second up to 2 hours and every custom minute,
+      hour and day value up to 365 days); the fourth pass's 606 golden
+      cases unchanged. (4) COLD SIGNING (pass p23-coldaa): (a) finding 2 —
+      cold-aa.ts watchColdAaExpiry, a timer that re-checks the clock;
+      ColdSignScreen clears the checked signature at expiry (Submit
+      disabled, the engine's expired sentence shown) and onAaSubmit
+      refuses an expired request before any endpoint call; 12 fake-timer
+      checks; the regular-account request has no expiry, unchanged; (b)
+      FINDING 4 WAS MISFRAMED — cold-signer.mjs already refused an owner
+      field that differs from the key; the real gap was the SENDER (for a
+      deployed account the owner is not in the userOpHash), so sign-userop
+      now also requires the sender to be the chosen key's own Kernel v3.3
+      address and says so when it refuses; selftest-userop proves the
+      refusal and the honest case; node --check, selftest and
+      selftest-userop pass; (c) finding 3 — replacementRowLine takes a
+      required viewer address and returns the line only when the record's
+      sender is that viewer (ActivityScreen passes account.address); the
+      recipient's generic "Smart-account bundle with 1 operation from other
+      accounts" label is correct for an unknown sender and stays;
+      check-pending's calls pass the sender, two recipient-side checks
+      added. (5) PRUNED HISTORY, ENGINE ONLY (no Bridge app file touched):
+      the code 4444 is reth's own, not a JSON-RPC standard — paradigmxyz/
+      reth at f1cc50e4 (main on 2026-10-27), crates/rpc/rpc-eth-types/src/
+      error/mod.rs line 81 the message "pruned history unavailable:
+      requested N, earliest available M", 392–393 the code mapping,
+      1207–1214 a test asserting 4444 (a copy in the scratchpad
+      p23-hygiene/reth-src); which reth version publicnode runs was not
+      read, so the match is OBSERVED there, not documented for that
+      endpoint, and isPrunedHistoryError requires BOTH the code 4444 (the
+      numeric code or the engine's "RPC error 4444:" prefix) AND the word
+      "pruned" — anything else still throws; findBlockAtOrBefore finds the
+      oldest block the endpoint still serves (the message's "earliest
+      available" number as a first probe, then halving; copes with a node
+      pruning further mid-search) and returns prunedBelow when the target
+      lies in the pruned part; planDestinationSearch starts there, sets the
+      optional BridgeDestinationSearch.prunedBelow (passed through by the
+      CCTP and LayerZero adapters) and does not cache a pruned start; six
+      bridge.test.ts tests with a fake reader that prunes below a block;
+      the app does not yet show prunedBelow (the later Bridge slice).
+      UNVERIFIED (device): the expiry clearing on screen; the Spanish
+      period lines and their layout; a recipient account's Activity rows;
+      TalkBack; a non-reth node signalling pruned history with another
+      code is not recognised and still throws, as before.
