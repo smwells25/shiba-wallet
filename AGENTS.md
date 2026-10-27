@@ -14269,7 +14269,7 @@ to the Chairperson at once.
       No app code changed; localDateLabel keeps the local calendar.
 - [x] Pass p23-cctp-recheck's bug FIXED — THE BRIDGE SEARCH PLANNED FROM
       TIME, AND CCTP READS usedNonces BEFORE ANY LOG SEARCH (commit
-      CCTPWIN_HASH; 10 files — new packages/chains-evm/src/bridge/search.ts,
+      954aca4; 10 files — new packages/chains-evm/src/bridge/search.ts,
       types.ts, cctp-v2.ts, layerzero-oft.ts, index.ts, bridge.test.ts and
       bridge-cctp.test.ts, app/src/wallet/bridge.ts, BridgeScreen.tsx and
       check-bridge.mjs; engine 1,269 → 1,290 (chains-evm +21), check-bridge
