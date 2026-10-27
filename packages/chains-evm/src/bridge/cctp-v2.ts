@@ -914,7 +914,7 @@ export function createCctpV2Provider(options: CctpV2ProviderOptions = {}): Bridg
       plan = await planDestinationSearch(options.readBlock, { chainId: r.destinationChainId, sinceTimestamp: burnHeader.timestamp, cache: options.searchCache });
     }
     search = plan
-      ? { fromBlock: plan.fromBlock, toBlock: plan.toBlock, fromTimestamp: plan.fromTimestamp, toTimestamp: plan.toTimestamp, bounded: plan.bounded, boundSeconds: plan.boundSeconds }
+      ? { fromBlock: plan.fromBlock, toBlock: plan.toBlock, fromTimestamp: plan.fromTimestamp, toTimestamp: plan.toTimestamp, bounded: plan.bounded, boundSeconds: plan.boundSeconds, ...(plan.prunedBelow !== undefined ? { prunedBelow: plan.prunedBelow } : {}) }
       : undefined;
     const receivedQuery = { chainId: r.destinationChainId, address: mt, topics: [CCTP_MESSAGE_RECEIVED_TOPIC, null, nonce] };
     const received = plan

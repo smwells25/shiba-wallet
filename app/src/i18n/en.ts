@@ -1991,4 +1991,13 @@ export const en = {
   'settings.endpoint.fallback.noneAnswered': 'None of the {total} default endpoints answered the last check (the primary is {primary}). Requests may fail until one recovers; you can set a custom endpoint with Edit.',
   'settings.endpoint.fallback.primaryStale': 'The primary default ({primary}) is behind the chain right now (its newest block is older than expected), so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails.',
   'settings.endpoint.fallback.primaryUnreachable': 'The primary default ({primary}) is unreachable right now, so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails.',
+  // ---- Phase 23 item 8 (the hygiene slice): a period in words for the sentences the wallet builds (wallet/period-text.ts; the engine's describePeriod and the stored one-line summaries stay English) ----
+  'period.second': '{count} second',
+  'period.seconds': '{count} seconds',
+  'period.minute': '{count} minute',
+  'period.minutes': '{count} minutes',
+  'period.hour': '{count} hour',
+  'period.hours': '{count} hours',
+  'period.day': '{count} day',
+  'period.days': '{count} days',
 } as const;

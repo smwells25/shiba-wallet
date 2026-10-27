@@ -35,8 +35,10 @@
  *        the signing digest from the fields, checks a deploying operation's
  *        factory data and sender against the owner, and refuses any EIP-7702
  *        material), the operation is decoded FROM ITS FIELDS to stderr
- *        (calls, deployment, fees, worst case), an expired request or one for
- *        another owner is refused, and the signature payload goes to stdout
+ *        (calls, deployment, fees, worst case), an expired request, one for
+ *        another owner, or one whose smart account is not the chosen key's own
+ *        Kernel v3.3 account (pass p23-coldaa finding 4) is refused, and the
+ *        signature payload goes to stdout
  *   node scripts/testnet/cold-signer.mjs selftest-userop
  *        offline: a smart-account request built and signed with the public
  *        test phrase through the engine, the signature verified, and the
@@ -155,10 +157,44 @@ function describeUserOp(request) {
   return lines.join('\n');
 }
 
-/** Signs a parsed smart-account request; the digest is RECOMPUTED from the fields, not taken from the request. */
+/**
+ * The Kernel v3.3 account the chosen key owns: its CREATE2 address at the
+ * request's account index when the request states one (a deploying
+ * request), else at index 0 — the only index the app's off-line signing
+ * for a smart account uses (app/src/wallet/cold-aa.ts COLD_AA_ACCOUNT_INDEX;
+ * a recovered or owner-rotated account is refused there).
+ */
+function ownedKernelAddress(request, account) {
+  const index = request.accountIndex === null ? 0n : BigInt(request.accountIndex);
+  return { index, address: evm.predictKernelAddress(account.address, { index }) };
+}
+
+/**
+ * Signs a parsed smart-account request; the digest is RECOMPUTED from the
+ * fields, not taken from the request.
+ *
+ * The owner field alone does not bind a request to the key (pass
+ * p23-coldaa finding 4): for an account that is already deployed the owner
+ * is not part of the userOpHash (EntryPoint v0.7 hashes the sender, not the
+ * owner), so a request whose owner field was edited to the chosen key's
+ * address would still carry ANOTHER account's operation. The signer
+ * therefore also requires the operation's sender to be the Kernel account
+ * the chosen key owns. Like a real off-line signer it reads no chain, so an
+ * owner-rotated account (whose address no longer follows from its owner) is
+ * refused too.
+ */
 function signUserOpRequest(request, account) {
   if (account.address !== request.owner) {
     throw new Error(`This request is for owner ${request.owner}, but the chosen key is ${account.address}. Nothing was signed.`);
+  }
+  const owned = ownedKernelAddress(request, account);
+  if (owned.address.toLowerCase() !== request.sender.toLowerCase()) {
+    throw new Error(
+      `This request's smart account ${request.sender} is not the Kernel v3.3 account of the chosen key ` +
+        `${account.address} (that account is ${owned.address}, CREATE2 index ${owned.index}). The owner field does not ` +
+        'bind an operation of an already deployed account, so a request that names this key as owner but sends from ' +
+        'another account was refused. Nothing was signed.',
+    );
   }
   const op = evm.coldUserOpFromFields(request.sender, request.userOp);
   const digest = evm.KERNEL_V3_3_ECDSA_ROOT_SCHEME.digest(evm.getUserOpHash(op, request.entryPoint, BigInt(request.chainId)));
@@ -218,6 +254,44 @@ async function selftestUserOp() {
   const ok = evm.toHex(external) === evm.toHex(engine) && verified.signer === signer.address;
   console.log(ok ? 'selftest-userop: OK (request → sign → verify; signature equals the engine Kernel signing path)' : 'selftest-userop: MISMATCH');
   if (!ok) process.exit(1);
+  // Pass p23-coldaa finding 4: an operation of an ALREADY DEPLOYED account
+  // (no factory, so the owner is not in the userOpHash) whose owner field
+  // names another key. The parser accepts it; the signer must refuse it.
+  const other = devSigner(1, PUBLIC_TEST_PHRASE);
+  const deployedOp = { ...op, nonce: 1n, factory: undefined, factoryData: undefined };
+  delete deployedOp.factory;
+  delete deployedOp.factoryData;
+  const deployedHash = evm.getUserOpHash(deployedOp, evm.ENTRYPOINT_V07, 11155111n);
+  const forged = evm.parseColdUserOpRequest(
+    evm.serializeColdUserOpRequest(
+      evm.buildColdUserOpRequest(
+        { ...prepared, ownerAddress: other.address, userOp: deployedOp, userOpHash: deployedHash, signingDigest: evm.KERNEL_V3_3_ECDSA_ROOT_SCHEME.digest(deployedHash) },
+        { summary: 'selftest: another key named as owner', accountIndex: null, nowSeconds: Math.floor(Date.now() / 1000), requestId: '0x' + '5b'.repeat(16) },
+      ),
+    ),
+  );
+  let refusal = null;
+  try {
+    signUserOpRequest(forged, other);
+  } catch (e) {
+    refusal = e instanceof Error ? e.message : String(e);
+  }
+  const honest = evm.parseColdUserOpRequest(
+    evm.serializeColdUserOpRequest(
+      evm.buildColdUserOpRequest(
+        { ...prepared, userOp: deployedOp, userOpHash: deployedHash, signingDigest: evm.KERNEL_V3_3_ECDSA_ROOT_SCHEME.digest(deployedHash) },
+        { summary: 'selftest: deployed account, its own key', accountIndex: null, nowSeconds: Math.floor(Date.now() / 1000), requestId: '0x' + '5c'.repeat(16) },
+      ),
+    ),
+  );
+  const honestSigned = evm.verifyColdUserOpSignature(signUserOpRequest(honest, signer), honest).signer === signer.address;
+  const refused = refusal !== null && refusal.includes(`is not the Kernel v3.3 account of the chosen key ${other.address}`) && refusal.endsWith('Nothing was signed.');
+  console.log(
+    refused && honestSigned
+      ? 'selftest-userop: OK (a deployed account\'s request naming another key as owner is refused; the same operation with its own owner is signed)'
+      : `selftest-userop: MISMATCH (owner binding: refused=${refused}, own owner signed=${honestSigned}${refusal ? `, message: ${refusal}` : ''})`,
+  );
+  if (!(refused && honestSigned)) process.exit(1);
 }
 
 const [cmd, ...args] = process.argv.slice(2);

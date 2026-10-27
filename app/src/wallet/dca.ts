@@ -78,6 +78,7 @@ import { assertFeatureAllowed } from '../config/readiness.ts';
 import { NO_ANSWER_SENTENCE, sanitizeEndpointMessage } from '../config/endpoint-probe.ts';
 import { isBroadcastOutcomeUnknown } from './broadcast-outcome.ts';
 import { t } from '../i18n/index.ts';
+import { periodText } from './period-text.ts';
 
 /**
  * Recurring swaps — dollar-cost averaging — on a session key held by this
@@ -778,7 +779,7 @@ export function dcaShortWindowWarning(terms: DcaTerms): string | null {
   if (!(total < 600)) return null;
   // Through the string table (phase 23 item 8, fourth pass); in English
   // exactly the sentence this function built before.
-  const params = { total: describePeriod(total), count: terms.count, period: describePeriod(terms.periodSeconds) };
+  const params = { total: periodText(total), count: terms.count, period: periodText(terms.periodSeconds) };
   return terms.count === 1 ? t('dca.shortOne', params) : t('dca.shortMany', params);
 }
 
@@ -788,7 +789,7 @@ export function dcaFinalDatesLine(terms: DcaTerms): string {
   // exactly the line this function built before.
   return t('dca.finalTerms', {
     start: formatUtc(terms.startAt),
-    period: describePeriod(terms.periodSeconds),
+    period: periodText(terms.periodSeconds),
     count: terms.count,
     end: formatUtc(dcaValidUntil(terms)),
     minimum: usdc(terms.minimumOut),
@@ -1202,7 +1203,8 @@ export const DCA_NOT_SENT_SENTENCE =
   'again once the connection is back.';
 
 export const DCA_OUTCOME_UNKNOWN_SENTENCE =
-  'The connection failed while the swap was being sent, so this wallet cannot tell whether the bundler received it. ' +
+  'No usable answer came back from the bundler while the swap was being sent, so this wallet cannot tell whether ' +
+  'the bundler received it. ' +
   'The account’s nonce for this swap key decides: if the bundler received the swap, it will be included and this ' +
   'card will count it as sent; if not, nothing was swapped. Wait a minute, then tap Refresh status before sending ' +
   'again: if the first one went through, sending again would send the next due swap as well.';
@@ -1328,7 +1330,8 @@ export function describeDcaSwapError(
 /**
  * The card's one-line note after a swap attempt that did not go through.
  * `cause` (describeDcaSwapError's) names why an open outcome is open; the
- * line without it is the original "the connection failed" wording.
+ * line without it says that no usable answer came back (recurring.ts
+ * OPEN_OUTCOME_NO_USABLE_ANSWER).
  */
 export function dcaAttemptLine(outcome: RecurringAttemptOutcome, detail: string, cause?: RecurringOutcomeCause): string {
   const first = detail.split('\n\n')[0];

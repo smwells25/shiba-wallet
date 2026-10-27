@@ -46,6 +46,7 @@ import {
   type SessionKeyGrant,
 } from '../src/index.js';
 import { toHex } from '../src/encoding.js';
+import { httpTransport } from '../src/rpc.js';
 import { solidityPacked } from 'ethers';
 import {
   decodeOftReceivedLog,
@@ -76,7 +77,10 @@ import {
   BRIDGE_SEARCH_START_MARGIN_SECONDS,
   BRIDGE_SEARCH_WINDOW_BLOCKS,
   findBlockAtOrBefore,
+  isPrunedHistoryError,
   planDestinationSearch,
+  prunedEarliestAvailable,
+  PRUNED_HISTORY_ERROR_CODE,
   searchPlannedLogs,
   searchRangeText,
   searchSpanText,
@@ -1208,6 +1212,124 @@ describe('bridge search: the receiving chain searched from the sending transacti
     }
     // Bisecting from block 0 would have asked for block 25,372,832 or older first and failed there.
     await expect(pruned({ chainId: 84532, block: 25_372_832n })).rejects.toThrow('pruned history unavailable');
+  });
+
+  // Phase 23 item 8, the hygiene slice: a node that refuses the target's
+  // blocks as pruned history (reth's code 4444) bounds the plan at the
+  // oldest block it serves, and says so; any other error still throws.
+  describe('a node that prunes history below a block', () => {
+    const B0 = 1_783_000_000n;
+    const bts = (n: bigint) => B0 + n / 5n; // Base Sepolia-like: 0.2 s blocks, five per second
+    const HEAD_B = 50_745_664n;
+    const EARLIEST = 46_500_000n;
+    // The message the engine's httpTransport builds from reth's answer (rpc.ts: "RPC error <code>: <message> (<method>)").
+    const rethError = (n: bigint, earliest: bigint) =>
+      new Error(`RPC error 4444: pruned history unavailable: requested ${n}, earliest available ${earliest} (eth_getBlockByNumber)`);
+    function prunedChain(earliestAt: (reads: number, asked: bigint) => bigint, makeError = rethError) {
+      const asked: bigint[] = [];
+      let reads = 0;
+      const read: BridgeBlockReader = async ({ block }) => {
+        reads += 1;
+        const n = block === 'latest' ? HEAD_B : block;
+        const earliest = earliestAt(reads, n);
+        if (n < earliest) throw makeError(n, earliest);
+        asked.push(n);
+        return { number: n, timestamp: bts(n) };
+      };
+      return { read, asked };
+    }
+
+    it('recognises reth\'s pruned-history answer by its code AND the word "pruned", through the engine\'s own transport', async () => {
+      expect(PRUNED_HISTORY_ERROR_CODE).toBe(4444);
+      const fetchFn = (async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ jsonrpc: '2.0', id: 1, error: { code: 4444, message: 'pruned history unavailable: requested 33554432, earliest available 46500000' } }),
+      })) as unknown as typeof fetch;
+      const e = await httpTransport('https://node.example', fetchFn)('eth_getBlockByNumber', ['0x2000000', false]).catch((x: unknown) => x);
+      expect(isPrunedHistoryError(e)).toBe(true);
+      expect(prunedEarliestAvailable(e)).toBe(46_500_000n);
+      // A coded error object (another transport) with the word, too.
+      expect(isPrunedHistoryError(Object.assign(new Error('state at block 5 is pruned'), { code: 4444 }))).toBe(true);
+      // Not: the code without the word, the word without the code, another code, a timeout, a non-error.
+      expect(isPrunedHistoryError(new Error('RPC error 4444: something else (eth_getBlockByNumber)'))).toBe(false);
+      expect(isPrunedHistoryError(new Error('pruned history unavailable: requested 5, earliest available 100'))).toBe(false);
+      expect(isPrunedHistoryError(new Error('RPC error -32000: pruned history unavailable (eth_getBlockByNumber)'))).toBe(false);
+      expect(isPrunedHistoryError(new Error('RPC error 44440: pruned (eth_getBlockByNumber)'))).toBe(false);
+      expect(isPrunedHistoryError(new Error('The operation was aborted due to timeout'))).toBe(false);
+      expect(isPrunedHistoryError('RPC error 4444: pruned')).toBe(false);
+      expect(prunedEarliestAvailable(new Error('RPC error 4444: pruned'))).toBe(null);
+    });
+
+    it('a target in the pruned part: the oldest block the node serves, with prunedBelow set to it', async () => {
+      for (const make of [rethError, (n: bigint) => Object.assign(new Error(`history pruned, block ${n}`), { code: 4444 })]) {
+        const c = prunedChain(() => EARLIEST, make);
+        const r = await findBlockAtOrBefore(c.read, BASE_SEPOLIA, bts(30_000_000n));
+        expect(r.block.number).toBe(EARLIEST);
+        expect(r.block.timestamp).toBe(bts(EARLIEST));
+        expect(r.prunedBelow).toBe(EARLIEST);
+        expect(r.reads).toBeLessThanOrEqual(BRIDGE_BLOCK_SEARCH_MAX_PROBES);
+        expect(c.asked.every((n) => n >= EARLIEST)).toBe(true);
+      }
+    });
+
+    it('a target the node still serves, even when a step back lands in the pruned part: the usual answer, no prunedBelow', async () => {
+      for (const want of [EARLIEST, EARLIEST + 1n, EARLIEST + 7n, EARLIEST + 40_000n]) {
+        const c = prunedChain(() => EARLIEST);
+        const target = bts(want);
+        const r = await findBlockAtOrBefore(c.read, BASE_SEPOLIA, target);
+        expect(bts(r.block.number) <= target && bts(r.block.number + 1n) > target).toBe(true);
+        expect(r.prunedBelow).toBeUndefined();
+      }
+    });
+
+    it('the node prunes further while the search runs: the oldest block it serves at the end, with prunedBelow', async () => {
+      const later = EARLIEST + 5_000n;
+      let floorNow = EARLIEST;
+      const asked: bigint[] = [];
+      const read: BridgeBlockReader = async ({ block }) => {
+        const n = block === 'latest' ? HEAD_B : block;
+        if (n < floorNow) throw rethError(n, floorNow);
+        asked.push(n);
+        // Once a block at or before the target has been answered (the search
+        // is then narrowing between it and a later block), the node prunes up
+        // to `later`, past that block.
+        if (n <= EARLIEST + 1_000n) floorNow = later;
+        return { number: n, timestamp: bts(n) };
+      };
+      const r = await findBlockAtOrBefore(read, BASE_SEPOLIA, bts(EARLIEST + 1_000n));
+      expect(floorNow).toBe(later);
+      expect(asked.some((n) => n <= EARLIEST + 1_000n)).toBe(true);
+      expect(r.block.number).toBe(later);
+      expect(r.prunedBelow).toBe(later);
+    });
+
+    it('planDestinationSearch starts at the oldest served block, reports prunedBelow, and caches nothing for it', async () => {
+      const cache = new Map();
+      const c = prunedChain(() => EARLIEST);
+      const plan = await planDestinationSearch(c.read, { chainId: BASE_SEPOLIA, sinceTimestamp: bts(40_000_000n), cache, boundSeconds: 30n * 86_400n });
+      expect(plan).toMatchObject({ fromBlock: EARLIEST, fromTimestamp: bts(EARLIEST), toBlock: HEAD_B, bounded: false, prunedBelow: EARLIEST });
+      expect(cache.size).toBe(0);
+      const c2 = prunedChain(() => EARLIEST);
+      const again = await planDestinationSearch(c2.read, { chainId: BASE_SEPOLIA, sinceTimestamp: bts(40_000_000n), cache, boundSeconds: 30n * 86_400n });
+      expect(again.prunedBelow).toBe(EARLIEST);
+      expect(c2.asked.length).toBeGreaterThan(1);
+      // A target the node serves: no prunedBelow on the plan.
+      const ok = await planDestinationSearch(prunedChain(() => EARLIEST).read, { chainId: BASE_SEPOLIA, sinceTimestamp: bts(HEAD_B - 100_000n) });
+      expect(ok.prunedBelow).toBeUndefined();
+      expect('prunedBelow' in ok).toBe(false);
+    });
+
+    it('any other error during the search still throws', async () => {
+      for (const make of [
+        (n: bigint) => new Error(`RPC error 4444: unknown block ${n} (eth_getBlockByNumber)`),
+        (n: bigint) => new Error(`pruned history unavailable: requested ${n}, earliest available 46500000`),
+        () => new Error('fetch failed: connection reset'),
+      ]) {
+        const c = prunedChain(() => EARLIEST, make);
+        await expect(findBlockAtOrBefore(c.read, BASE_SEPOLIA, bts(30_000_000n))).rejects.toThrow();
+      }
+    });
   });
 
   it('with a cache, a later pass for the same time reads nothing but the head', async () => {

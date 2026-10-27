@@ -1497,11 +1497,19 @@ export function resolvedSentence(r: ResolvedRecord): string {
  * the history lists, says what it was). Read from a shown notice or from the
  * marker a dismissed or expired notice leaves, so it lasts until the
  * registry's cap evicts the record. Null for any other row.
+ *
+ * `viewer` is the account whose Activity shows the row. The line is given
+ * only when that account SENT the replacement (the record's `from`): the
+ * registry is shared by every account of the wallet, so before pass
+ * p23-coldaa finding 3 the recipient's Activity — Account 2's, for a
+ * speed-up Account 1 sent to it — carried "Speed-up of transaction …" for a
+ * transaction it never sent.
  */
-export function replacementRowLine(records: readonly PendingRecord[], chain: string, id: string): string | null {
+export function replacementRowLine(records: readonly PendingRecord[], chain: string, id: string, viewer: string): string | null {
   const h = lower(id);
+  const me = lower(viewer);
   for (const r of records) {
-    if ((r.kind !== 'resolved' && r.kind !== 'marker') || r.chain !== chain || r.minedHash !== h) continue;
+    if ((r.kind !== 'resolved' && r.kind !== 'marker') || r.chain !== chain || r.minedHash !== h || r.from !== me) continue;
     if (r.outcome === 'replaced') return `Speed-up of transaction ${shortHash(r.original)} (nonce ${r.nonce}).`;
     if (r.outcome === 'cancelled') return `Cancellation of transaction ${shortHash(r.original)} (nonce ${r.nonce}).`;
     if (r.outcome === 'superseded') return `Sent in place of transaction ${shortHash(r.original)} (nonce ${r.nonce}), which will never be included.`;

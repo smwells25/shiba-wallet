@@ -51,6 +51,7 @@ import {
 } from './sessions.ts';
 import { suggestFeesRetryingOnce } from './fee-read.ts';
 import { t } from '../i18n/index.ts';
+import { periodText } from './period-text.ts';
 
 /**
  * Subscriptions (phase 12 item 2, app half): a grant TEMPLATE on the
@@ -165,10 +166,11 @@ export function subscriptionShortWindowWarning(sub: Pick<SubscriptionGrant, 'sta
   const total = sub.validUntil - sub.startAt;
   if (!(total < SUBSCRIPTION_SHORT_WINDOW_SECONDS)) return null;
   const payments = subscriptionPeriodCount(sub);
-  // Through the string table (phase 23 item 8, fourth pass); the periods are
-  // the engine's describePeriod (English by rule). In English exactly the
-  // sentence this function built before.
-  const params = { total: describePeriod(total), payments, period: describePeriod(sub.periodSeconds) };
+  // Through the string table (phase 23 item 8, fourth pass); the periods in
+  // the active language since the hygiene slice (period-text.ts; in English
+  // exactly the engine's describePeriod). In English exactly the sentence
+  // this function built before.
+  const params = { total: periodText(total), payments, period: periodText(sub.periodSeconds) };
   return payments === 1 ? t('sessions.subscription.shortOne', params) : t('sessions.subscription.shortMany', params);
 }
 
@@ -1161,7 +1163,7 @@ export function subscriptionFinalDatesLine(sub: SubscriptionGrant): string {
   // exactly the line this function built before.
   return t('sessions.subscription.finalTerms', {
     start: utc(sub.startAt),
-    period: describePeriod(sub.periodSeconds),
+    period: periodText(sub.periodSeconds),
     count,
     end: utc(sub.validUntil),
   });

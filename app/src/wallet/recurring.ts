@@ -58,6 +58,7 @@ import { NO_ANSWER_SENTENCE, sanitizeEndpointMessage } from '../config/endpoint-
 import { broadcastOutcomeReasonOf, isBroadcastOutcomeUnknown } from './broadcast-outcome.ts';
 import { BROADCAST_TIMEOUT_MS } from '@shiba-wallet/chains-evm';
 import { t } from '../i18n/index.ts';
+import { periodText } from './period-text.ts';
 
 /**
  * Recurring payments pushed by this phone (phase 15 item 1; the slice
@@ -317,12 +318,13 @@ export function recurringReview(
   const graced = end > sub.validUntil;
   const payee = context.payeeName ? `${context.payeeName} (${sub.merchant})` : sub.merchant;
   const amount = `${formatBaseUnits(sub.amountPerPeriod, context.tokenDecimals)} ${context.tokenSymbol}`;
-  const period = describePeriod(sub.periodSeconds);
+  const period = periodText(sub.periodSeconds);
   const count = subscriptionPeriodCount(sub);
   const fee = `${formatBaseUnits(sub.feeBudgetWei, 18)} ${context.nativeSymbol}`;
-  // Through the string table (phase 23 item 8, fourth pass); the period is
-  // the engine's describePeriod (English by rule). In English exactly the
-  // review this function built before.
+  // Through the string table (phase 23 item 8, fourth pass); the period in
+  // the active language since the hygiene slice (period-text.ts; in English
+  // exactly the engine's describePeriod). In English exactly the review this
+  // function built before.
   const sentence = t('sessions.recurring.review.sentence', { payee, amount, period, end: formatUtc(end) });
   const enforced = [
     isNativeSubscription(sub)
@@ -368,7 +370,7 @@ export function recurringShortWindowWarning(sub: Pick<SubscriptionGrant, 'startA
   const untilLast = recurringEndOf(sub) - lastPaymentDueAt(sub);
   // Through the string table (phase 23 item 8, fourth pass); in English
   // exactly the sentence this function built before.
-  const params = { total: describePeriod(total), count, period: describePeriod(sub.periodSeconds), untilLast: describePeriod(untilLast) };
+  const params = { total: periodText(total), count, period: periodText(sub.periodSeconds), untilLast: periodText(untilLast) };
   return count === 1 ? t('sessions.recurring.shortOne', params) : t('sessions.recurring.shortMany', params);
 }
 
@@ -379,7 +381,7 @@ export function recurringFinalDatesLine(sub: SubscriptionGrant): string {
   // exactly the line this function built before.
   return t('sessions.recurring.finalTerms', {
     start: formatUtc(sub.startAt),
-    period: describePeriod(sub.periodSeconds),
+    period: periodText(sub.periodSeconds),
     count,
     end: formatUtc(recurringEndOf(sub)),
   });
@@ -1015,7 +1017,7 @@ export type RecurringAttemptOutcome =
   | 'refused'
   /** The network endpoint or the bundler could not be reached BEFORE the payment was submitted. Nothing was sent. */
   | 'not-sent'
-  /** The connection failed in a way that leaves open whether the bundler received the signed payment. */
+  /** No usable answer came back during the submission, so it is open whether the bundler received the signed payment. */
   | 'outcome-unknown'
   /** Any other failure, in the session wording. */
   | 'failed';
@@ -1023,7 +1025,7 @@ export type RecurringAttemptOutcome =
 /**
  * Why an 'outcome-unknown' attempt is open (the bounded-broadcast follow-ups):
  * no answer in time ('no-answer'), the bundler answered with a server error
- * ('server-error'), or the connection failed while it was being sent
+ * ('server-error'), or no usable answer came back while it was being sent
  * ('connection'). The card's line names it (recurringAttemptLine).
  */
 export type RecurringOutcomeCause = 'no-answer' | 'server-error' | 'connection';
@@ -1080,9 +1082,9 @@ export const RECURRING_LISTED_SENTENCE = 'It is also listed under Pending on thi
  * cannot place): the bundler may have received the signed payment.
  */
 export const RECURRING_OUTCOME_UNKNOWN_SENTENCE =
-  'The connection failed while the payment was being sent, so this wallet cannot tell whether the bundler ' +
-  'received it. The account’s nonce for this payment key decides: if the bundler received the payment, it ' +
-  'will be included and this card will count it as sent; if not, nothing was paid. Wait a minute, then tap ' +
+  'No usable answer came back from the bundler while the payment was being sent, so this wallet cannot tell ' +
+  'whether the bundler received it. The account’s nonce for this payment key decides: if the bundler received ' +
+  'the payment, it will be included and this card will count it as sent; if not, nothing was paid. Wait a minute, then tap ' +
   'Refresh status before sending again: if the first one went through, sending again would pay the next due ' +
   'payment as well.';
 
@@ -1207,18 +1209,39 @@ export function describeRecurringPaymentError(
   };
 }
 
-/** The parenthesis of an open outcome on the card, by its cause ('connection' and none: the original wording). */
+/**
+ * What the card's open-outcome parenthesis says when the cause is a dropped
+ * or unreadable answer, or is not known (phase 23 item 8, the hygiene
+ * slice). The 'connection' cause covers three engine cases
+ * (packages/chains-evm/src/rpc.ts broadcastExchange): the platform fetch
+ * rejected, the answer's body could not be read, or the body was not a
+ * JSON-RPC object. In none of them does the wallet know that the
+ * connection "failed" (the bundler may have received and accepted the
+ * payment), and in the last two the connection did not even drop, so the
+ * line says only what is certain: no usable answer came back. The cause's
+ * exact engine text stays in the detail's technical line.
+ */
+export const OPEN_OUTCOME_NO_USABLE_ANSWER = 'no usable answer came back from the bundler while it was being sent';
+
+/**
+ * The parenthesis of an open outcome on the card, by its cause: no answer
+ * in time and a server error keep their pinned wording; a dropped or
+ * unreadable answer and an unknown cause say OPEN_OUTCOME_NO_USABLE_ANSWER
+ * (until the hygiene slice they said "the connection failed while it was
+ * being sent", which claimed a failure nobody had observed).
+ */
 export function openOutcomeParenthesis(cause: RecurringOutcomeCause | undefined): string {
   if (cause === 'no-answer') return 'the bundler did not answer in time';
   if (cause === 'server-error') return 'the bundler answered with a server error while it was being sent';
-  return 'the connection failed while it was being sent';
+  return OPEN_OUTCOME_NO_USABLE_ANSWER;
 }
 
 /**
  * The card's one-line note after a payment attempt that did not go through
  * (the card stays). Only an actual refusal is called "refused". `cause`
  * (describeRecurringPaymentError's) names why an open outcome is open; the
- * line without it is the original "the connection failed" wording.
+ * line without it says that no usable answer came back
+ * (OPEN_OUTCOME_NO_USABLE_ANSWER).
  */
 export function recurringAttemptLine(outcome: RecurringAttemptOutcome, detail: string, cause?: RecurringOutcomeCause): string {
   const first = detail.split('\n\n')[0];

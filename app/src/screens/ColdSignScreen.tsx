@@ -60,7 +60,7 @@ import {
   shortHash,
 } from '../wallet/pending-transactions';
 import { evaluateBeforeSigning, recordAcceptedSpend, spendingInputForQuote } from '../wallet/spending-policy';
-import { coldUserOpDetails, serializeColdUserOpRequest, type ColdUserOpRequest } from '@shiba-wallet/chains-evm';
+import { COLD_USEROP_EXPIRED, coldUserOpDetails, serializeColdUserOpRequest, type ColdUserOpRequest } from '@shiba-wallet/chains-evm';
 import {
   coldOwnerAaRefusal,
   createColdOwnerAaClient,
@@ -85,6 +85,7 @@ import {
   COLD_AA_SWITCH_HINT,
   COLD_AA_SWITCH_LABEL,
   coldAaExpiryLine,
+  coldAaRequestExpired,
   coldAaVerifiedLine,
   describeColdAaError,
   prepareColdAaRequest,
@@ -92,6 +93,7 @@ import {
   readColdAaAccount,
   submitColdAa,
   verifyColdAaSignature,
+  watchColdAaExpiry,
   type ColdAaAccount,
 } from '../wallet/cold-aa';
 import {
@@ -364,6 +366,18 @@ export function ColdSignScreen({ route, navigation }: Props) {
     };
   }, [replaceHash, replaceAction, from, refusal, evmChain.caip2, symbol]);
 
+  // Pass p23-coldaa finding 2: a checked signature stops being usable when
+  // the request expires. Drop the checked state then, so Submit is disabled
+  // and the expired sentence shows without a re-paste (the engine's
+  // submission would refuse it anyway, wallet/cold-aa.ts submitColdAa).
+  useEffect(() => {
+    if (phase !== 'aa-show' || !aaRequest || !aaSignature) return undefined;
+    return watchColdAaExpiry(aaRequest, () => {
+      setAaSignature(null);
+      setSignatureError(COLD_USEROP_EXPIRED);
+    });
+  }, [phase, aaRequest, aaSignature]);
+
   if (refusal || !from) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
@@ -568,6 +582,14 @@ export function ColdSignScreen({ route, navigation }: Props) {
     const bundle = aaBundle.current;
     if (!aaQuote || !aaRequest || !aaSignature || !bundle || !from) return;
     setError(null);
+    // An expired request is refused here, before any request leaves the
+    // phone (the expiry timer above may not have run yet, e.g. right after
+    // a return from the background).
+    if (coldAaRequestExpired(aaRequest, nowSeconds())) {
+      setAaSignature(null);
+      setSignatureError(COLD_USEROP_EXPIRED);
+      return;
+    }
     if (!(await aaEndpointStillQuoted())) return;
     setPhase('aa-sending');
     try {

@@ -385,6 +385,59 @@ export function coldAaRequestExpired(request: ColdUserOpRequest, nowSeconds: num
   return BigInt(nowSeconds) > BigInt(request.expiresAt);
 }
 
+/** The longest delay one timer is armed for (setTimeout's 32-bit limit, 2^31 − 1 ms); a longer wait re-arms. */
+export const COLD_AA_EXPIRY_TIMER_MAX_MS = 2_147_483_647;
+
+/** The timer functions watchColdAaExpiry uses (injected by tests). */
+export interface ColdAaExpiryTimers {
+  setTimeout(fn: () => void, ms: number): unknown;
+  clearTimeout(handle: unknown): void;
+}
+
+/**
+ * Calls `onExpired` once, when the request's lifetime is over
+ * (coldAaRequestExpired: the first whole second after expiresAt), so a
+ * screen that shows "Signature checked…" with Submit enabled can drop that
+ * state at the moment the signature stops being usable (pass p23-coldaa
+ * finding 2: the view kept both past the expiry until a re-paste). Already
+ * expired: called at once. A timer that fires early, or late (JavaScript
+ * timers are paused while the app is in the background and fire on its
+ * return), re-reads the clock, so it never reports an unexpired request and
+ * reports an expired one on the first run after the expiry. Returns a
+ * cancel function (call it when the request or the state changes).
+ */
+export function watchColdAaExpiry(
+  request: ColdUserOpRequest,
+  onExpired: () => void,
+  options: { now?: () => number; timers?: ColdAaExpiryTimers } = {},
+): () => void {
+  const now = options.now ?? Date.now;
+  const timers: ColdAaExpiryTimers = options.timers ?? {
+    setTimeout: (fn, ms) => setTimeout(fn, ms),
+    clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+  };
+  let handle: unknown = null;
+  let done = false;
+  const arm = () => {
+    handle = null;
+    if (done) return;
+    const nowMs = now();
+    if (coldAaRequestExpired(request, Math.floor(nowMs / 1000))) {
+      done = true;
+      onExpired();
+      return;
+    }
+    const wait = (Number(request.expiresAt) + 1) * 1000 - nowMs;
+    handle = timers.setTimeout(arm, Math.min(Math.max(wait, 0), COLD_AA_EXPIRY_TIMER_MAX_MS));
+  };
+  arm();
+  return () => {
+    done = true;
+    if (handle !== null) timers.clearTimeout(handle);
+    handle = null;
+  };
+}
+
 /** "Expires at HH:MM UTC. …" for the request's expiry. */
 export function coldAaExpiryLine(request: ColdUserOpRequest): string {
   const at = new Date(Number(request.expiresAt) * 1000);

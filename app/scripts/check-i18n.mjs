@@ -254,6 +254,8 @@ function fixtureProblems(table, fixture) {
 }
 // Phase 23 item 8 (the third pass): the spoken scan label of a co-signer's address field is new.
 const THIRD_PASS_NEW = ['multisig.cosigner.scanLabel'];
+// Phase 23 item 8 (the hygiene slice): the wallet's own period words (wallet/period-text.ts) are new.
+const PERIOD_NEW = ['period.second', 'period.seconds', 'period.minute', 'period.minutes', 'period.hour', 'period.hours', 'period.day', 'period.days'];
 {
   const p = fixtureProblems(en, FIXTURE);
   check(`every English entry is the text the app showed at ${FIXTURE.base} (${Object.keys(FIXTURE.literal).length} literals, ${Object.keys(FIXTURE.template).length} templates by their static parts, ${Object.keys(FIXTURE.composite).length} composites) or listed as new (${FIXTURE.new.length})`,
@@ -269,10 +271,10 @@ const THIRD_PASS_NEW = ['multisig.cosigner.scanLabel'];
   // broadcast sentences (an HTTP 5xx or a dropped connection, not a timeout).
   const BROADCAST_OPEN_NEW = ['broadcast.open.title', 'broadcast.tx.open', 'broadcast.tx.openUnlisted', 'broadcast.userop.open',
     'broadcast.userop.openUnlisted', 'broadcast.open'];
-  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the wallet handle\'s, the six open-outcome broadcast sentences and the co-signer card\'s numbered Scan label',
-    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id)) &&
+  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the wallet handle\'s, the six open-outcome broadcast sentences, the co-signer card\'s numbered Scan label and the eight period words of the hygiene slice',
+    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id)) &&
       LOCK_KIND_NEW.every((id) => FIXTURE.new.includes(id)) && COLD_AA_NEW.every((id) => FIXTURE.new.includes(id)) &&
-      BROADCAST_OPEN_NEW.every((id) => FIXTURE.new.includes(id)) && THIRD_PASS_NEW.every((id) => FIXTURE.new.includes(id)));
+      BROADCAST_OPEN_NEW.every((id) => FIXTURE.new.includes(id)) && THIRD_PASS_NEW.every((id) => FIXTURE.new.includes(id)) && PERIOD_NEW.every((id) => FIXTURE.new.includes(id)));
   check('the changed entries are exactly the transaction-notes line (reworded for the records backup), the watch-only notice (reworded for the off-line signer) and the bridge readiness reason (CCTP sent, phase 23), each with its reason',
     JSON.stringify(Object.keys(FIXTURE.changed ?? {})) === JSON.stringify(['activity.note.privacy', 'notice.watchOnly', 'readiness.bridge.reason']) &&
       en['activity.note.privacy'] === 'Notes are kept on this phone and are not sent anywhere. They are deleted when the wallet is wiped. A records backup (Settings → Records backup) includes them, and your recovery phrase restores them from it. Hide amounts does not hide them.');
@@ -1470,6 +1472,80 @@ const templatePattern = (text) => new RegExp(`^${text.split(/\{[A-Za-z][A-Za-z0-
 check(`fifth pass: at least four mutants of its own, all caught (${FIFTH_CAUGHT} of ${FIFTH_MUTANTS})`, FIFTH_MUTANTS >= 4 && FIFTH_CAUGHT === FIFTH_MUTANTS);
 
 // ---------------------------------------------------------------------------
+console.log('check-i18n: phase 23 item 8, the hygiene slice — the wallet\'s own period words (wallet/period-text.ts)');
+// ---------------------------------------------------------------------------
+let PERIOD_MUTANTS = 0;
+let PERIOD_CAUGHT = 0;
+function caughtP(name, wasCaught) {
+  PERIOD_MUTANTS += 1;
+  if (wasCaught) PERIOD_CAUGHT += 1;
+  check(`mutant caught: ${name}`, wasCaught);
+}
+{
+  const { describePeriod } = await import('@shiba-wallet/chains-evm');
+  const PT = await import('../src/wallet/period-text.ts');
+  const REC = await import('../src/wallet/recurring.ts');
+  const SUB = await import('../src/wallet/subscriptions.ts');
+  const WANT_EN = { 'period.second': '{count} second', 'period.seconds': '{count} seconds', 'period.minute': '{count} minute', 'period.minutes': '{count} minutes',
+    'period.hour': '{count} hour', 'period.hours': '{count} hours', 'period.day': '{count} day', 'period.days': '{count} days' };
+  const WANT_ES = { 'period.second': '{count} segundo', 'period.seconds': '{count} segundos', 'period.minute': '{count} minuto', 'period.minutes': '{count} minutos',
+    'period.hour': '{count} hora', 'period.hours': '{count} horas', 'period.day': '{count} día', 'period.days': '{count} días' };
+  check('the eight period ids, English and Spanish (exact)', PERIOD_NEW.every((id) => en[id] === WANT_EN[id] && es[id] === WANT_ES[id]));
+  // Golden equality with the engine: every period the forms offer (the
+  // presets, the custom minutes / hours / days from 1 up to 365 days, the
+  // 60-second test minimum) and every total and remaining time the
+  // short-window warnings print (any whole second below 2 hours), plus the
+  // edges (0, 1, a non-whole number).
+  const periods = new Set([0, 1, 59.5, 120, 3600, 86400, 7 * 86400, 30 * 86400, 365 * 86400, ...SUB.SUBSCRIPTION_PERIOD_PRESETS.map((x) => x.seconds)]);
+  for (let s2 = 1; s2 <= 7200; s2 += 1) periods.add(s2);
+  for (const u of SUB.SUBSCRIPTION_PERIOD_UNITS) for (let n = 1; n * u.seconds <= SUB.SUBSCRIPTION_MAX_PERIOD_SECONDS; n += 1) periods.add(n * u.seconds);
+  const englishDiffs = [...periods].filter((x) => PT.periodText(x) !== describePeriod(x));
+  check(`in English periodText equals the engine's describePeriod for every period the forms offer and every total the warnings print (${periods.size} periods)`,
+    periods.size > 500_000 && englishDiffs.length === 0, englishDiffs.slice(0, 3).join(', '));
+  const spanish = (() => {
+    I.setActiveLanguage('es');
+    try {
+      return {
+        one: [1, 60, 3600, 86400].map((x) => PT.periodText(x)),
+        many: [2, 120, 7200, 7 * 86400].map((x) => PT.periodText(x)),
+        recShort: REC.recurringShortWindowWarning({ startAt: 1_800_000_000, validUntil: 1_800_000_000 + 3 * 120, periodSeconds: 120 }),
+        subShort: SUB.subscriptionShortWindowWarning({ startAt: 1_800_000_000, validUntil: 1_800_000_000 + 2 * 120, periodSeconds: 120 }),
+      };
+    } finally {
+      I.setActiveLanguage('en');
+    }
+  })();
+  check('…in Spanish the period is Spanish ("1 segundo", "2 minutos", "7 días"), never the engine\'s English',
+    JSON.stringify(spanish.one) === JSON.stringify(['1 segundo', '1 minuto', '1 hora', '1 día']) &&
+      JSON.stringify(spanish.many) === JSON.stringify(['2 segundos', '2 minutos', '2 horas', '7 días']), JSON.stringify(spanish));
+  check('…the Spanish short-window warnings carry Spanish periods ("cada 2 minutos"), no English unit and no {placeholder}',
+    typeof spanish.recShort === 'string' && spanish.recShort.includes('cada 2 minutos') && typeof spanish.subShort === 'string' && spanish.subShort.includes('cada 2 minutos') &&
+      ![spanish.recShort, spanish.subShort].some((x) => /\b(minutes?|hours?|days?|seconds?)\b|\{[A-Za-z]+\}/.test(x)), `${spanish.recShort} | ${spanish.subShort}`);
+  // Source: the table sentences use periodText; the stored one-line
+  // summaries and the engine keep describePeriod (English by rule).
+  const PERIOD_SITES = {
+    'src/wallet/recurring.ts': ['recurringReview', 'recurringShortWindowWarning', 'recurringFinalDatesLine'],
+    'src/wallet/dca.ts': ['dcaShortWindowWarning', 'dcaFinalDatesLine'],
+    'src/wallet/subscriptions.ts': ['subscriptionShortWindowWarning', 'subscriptionFinalDatesLine'],
+  };
+  const SUMMARY_SITES = { 'src/wallet/recurring.ts': ['recurringSummary'], 'src/wallet/dca.ts': ['dcaSummary'], 'src/wallet/subscriptions.ts': ['subscriptionSummary'] };
+  const periodSites = (sources) =>
+    Object.entries(PERIOD_SITES).every(([f, names]) => names.every((n) => { const b = fnBodyOf(sources[f], n); return b !== '' && b.includes('periodText(') && !b.includes('describePeriod('); })) &&
+      Object.entries(SUMMARY_SITES).every(([f, names]) => names.every((n) => { const b = fnBodyOf(sources[f], n); return b !== '' && b.includes('describePeriod(') && !b.includes('periodText('); }));
+  const periodSources = Object.fromEntries(Object.keys(PERIOD_SITES).map((f) => [f, read(f)]));
+  check('…the seven table sentences build their periods with periodText; the three stored one-line summaries keep the engine\'s describePeriod', periodSites(periodSources));
+  // Mutants.
+  caughtP('the old engine period restored in recurringFinalDatesLine',
+    !periodSites({ ...periodSources, 'src/wallet/recurring.ts': periodSources['src/wallet/recurring.ts'].replace('    period: periodText(sub.periodSeconds),\n    count,\n    end: formatUtc(recurringEndOf(sub)),', '    period: describePeriod(sub.periodSeconds),\n    count,\n    end: formatUtc(recurringEndOf(sub)),') }));
+  caughtP('a stored summary built with the translated period',
+    !periodSites({ ...periodSources, 'src/wallet/dca.ts': periodSources['src/wallet/dca.ts'].replace('`${describePeriod(terms.periodSeconds)} (at least', '`${periodText(terms.periodSeconds)} (at least') }));
+  caughtP('a Spanish period line missing', PERIOD_NEW.some((id) => typeof ({ ...es, 'period.days': undefined })[id] !== 'string'));
+  caughtP('an English period word that differs from the engine ("{count} mins")',
+    [120, 300].some((x) => I.fill('{count} mins', { count: x / 60 }) !== describePeriod(x)));
+}
+check(`hygiene slice: at least four mutants of its own, all caught (${PERIOD_CAUGHT} of ${PERIOD_MUTANTS})`, PERIOD_MUTANTS >= 4 && PERIOD_CAUGHT === PERIOD_MUTANTS);
+
+// ---------------------------------------------------------------------------
 console.log('check-i18n: the stored language choice (device-wide, through the storage seam)');
 // ---------------------------------------------------------------------------
 function memoryStore() {
@@ -1657,5 +1733,5 @@ function caught(name, wasCaught) {
 check(`at least six mutants, all caught (${mutantsCaught} of ${mutants + 5} including the table mutants)`, mutants + 5 >= 6 && mutantsCaught === mutants + 5);
 check(`phase 23 item 8: at least three mutants of its own, all caught (${ITEM8_CAUGHT} of ${ITEM8_MUTANTS})`, ITEM8_MUTANTS >= 3 && ITEM8_CAUGHT === ITEM8_MUTANTS);
 
-console.log(`\ncheck-i18n: ${passed} passed, ${failed} failed (${mutants + 5 + ITEM8_MUTANTS + THIRD_MUTANTS + FOURTH_MUTANTS + FIFTH_MUTANTS} mutants)`);
+console.log(`\ncheck-i18n: ${passed} passed, ${failed} failed (${mutants + 5 + ITEM8_MUTANTS + THIRD_MUTANTS + FOURTH_MUTANTS + FIFTH_MUTANTS + PERIOD_MUTANTS} mutants)`);
 if (failed > 0) process.exit(1);
