@@ -14614,3 +14614,103 @@ to the Chairperson at once.
       8081 still at 2e93a0d (the next pass moves wt-app to HEAD and rebuilds
       the engine inside it), qemu 36709 and caffeinate 36943 running with the
       window in place.
+- [x] Pass p23-handle findings FIXED, and the 'handle' operation kind (commit 2531763; 15 files, +937 / −84 — HandleScreen.tsx, HandleViews.tsx,
+      handle.ts, risk.ts, simulation.ts, RiskWarnings.tsx, aa.ts,
+      pending-transactions.ts, en.ts / es.ts and the fixture, check-handle
+      153 (was 111; in-suite mutants 11 → 17), check-approvals 270 (247),
+      check-pending 314 (313), check-cold-aa 107 with its M9 anchor
+      widened; offline runner ALL GREEN in the CTO's isolated worktree on
+      HEAD f9e0353 with --skip-bundle: engine 1,290, app 10,698 across 65
+      suites, lint 0/0, tsc clean; checkout 0 / apply 0 / 15 files; the
+      staged patch id equals the verified tree's and the agent's stated
+      d625c665…cb76a; the scan clean; 18 hand mutants on the real files
+      and 10 new in-suite mutants caught; the CTO read the risk.ts hunk;
+      not seen on a device, nothing live). (1) refreshPrimaryNameUntil
+      (handle.ts) re-reads the owner's name up to 4 × 4 s until the new
+      name answers, replacing primaryNames.forget on the done path, the
+      smart account's own-name path and the card's Done — the sub-name
+      section appears without leaving the screen. (2) CAUSE from the
+      source: every other phase replaces the main view, so a return mounts
+      the "handle-main" ScrollView again at offset 0 with the answer or
+      the card below five intro paragraphs; FIX: scroll anchors in the
+      Settings pattern (notice, card, answer, sub-name card) set by
+      backToMain, ended by a drag or a 3 s settle window
+      (ANCHOR_SETTLE_MS, a judgement); an inline Check was tried and
+      reverted (the owner chips would have stayed tappable during the
+      quote). (3) WHAT THE WAIT WAS: waitForTx read every 4 s for up to
+      180 s, afterStep re-read only 4 × 4 s and the card polled only while
+      it showed the wait, so a lagging endpoint left the card behind until
+      Check now; why L4's step took about 1 min 45 s is NOT established
+      (publicnode's null receipts plus the next quote, inferred); FIX:
+      readProgressUntil polls every 4 s for up to 120 s (both judgements),
+      a failed read counting as "not yet", then the new handle.tx.notSeen
+      sentence; pinned with injected sleeps. (4) callLineTexts: a
+      single-call step carries no number, a batch 1. / 2. / 3. (5) risk.ts
+      pinnedEnsContracts (the ETHRegistrar, the VerifiableFactory and the
+      ENSv1 ReverseRegistrar from the engine's ENS_V2_SEPOLIA table),
+      ensContractAt and ensContractText — "This transaction goes to ENS's
+      <name> on Ethereum Sepolia (0x…), pinned by this wallet from ENS's
+      published Sepolia deployments."; the owner's own resolver is named
+      ONLY when the caller passes the name's owner
+      (GatherRiskOptions.ensResolverOwner; RiskWarnings gains the prop,
+      passed on both confirms) and risk.ts DERIVES its address itself
+      through predictVerifiableProxyAddress(owner, ensOwnedResolverSalt(owner))
+      — never an address from the caller; code at the target still
+      required, then no age check or first-interaction search; the
+      registrar is the only ENS contract accepted as a pinned spender
+      (PinnedSpenderApproval gains amount) and an approval of exactly 0
+      reads "This sets to 0 what ENS's ETHRegistrar … may take in USDC…"
+      with the Circle wording unchanged; check-approvals pins look-alikes,
+      mainnet, another owner, no owner and no code (4 mutants). (6)
+      simulation.ts: on Sepolia exactly 1 token of ENS's .eth registry
+      reads "the name's ownership token (ERC-1155) from ENS's .eth
+      registry (0xD4eB…A8B4)"; mainnet, another contract or another
+      amount keep the generic line with the id. (7) the pre-flight already
+      ran before the smart-account review as an eth_call from record.owner
+      (the smart account's own address for a smart owner — now pinned);
+      the register job carries preflightOk and the smart review shows the
+      line. (8) the Forget body says to remove the approval AFTERWARDS
+      with "Remove the USDC approval", reworded in place — CORRECTION to
+      the brief: every handle.* id is in the fixture's "new" list, and
+      fixtureProblems refuses a "changed" entry that was not migrated, so
+      no "changed" record exists or can exist for it. (9) handle.revoke.done
+      states the result; A LATENT BUG FIXED WITH IT — revoke jobs carried
+      record: null, so the old body always named the regular account even
+      when the smart account's approval was removed; jobs now carry
+      revokeOwner. (10) readSubnameState resolves the sub-name forward
+      through the engine's resolveEnsAddress (points / elsewhere / none; a
+      transport error is thrown and the button stays), read 600 ms after
+      typing stops (a judgement), on Check now and after each step;
+      "…already points to your smart account." replaces "Add the
+      sub-name". (11) handleCardLiveText gives the card one polite live
+      sentence for the whole wait that changes once to "can be registered
+      now"; the countdown is a plain Text. (12) spokenWithShortAddresses,
+      spokenCallLine and spokenTxId ("Transaction id 0x1234…abcd"):
+      accounts short in speech, the pinned ENS contracts, USDC and the
+      owner's resolver full (the confirm-screen rule); applied to the call
+      lines, owner rows, balance and allowance notes, the card's
+      sentences, the sub-name notes, the Sent body and the transaction id
+      (Note gains a spoken prop); visible text unchanged. (13) the
+      sub-name placeholder "One word: letters, digits or hyphens" (passes
+      check-devmode's scan). (14) NO CHANGE: in RN 0.86.3 AlertFragment.kt
+      99–131 / 144–148 the title is a custom focusable TextView marked as
+      a heading (setCustomTitle) and the JS Alert API has no initial-focus
+      option; TalkBack starting on the body is Android / TalkBack
+      behaviour whose source is not on this machine. FOLLOW-UPS DONE: the
+      'handle' AaOperationKind (aa.ts; USEROP_ORIGINS, the retry sentence
+      and the phrase "from Wallet handle (ENS)" — the screen's visible
+      title — in pending-transactions.ts; the screen sends {kind:
+      'handle'}; the card's phrases are English constants with no i18n
+      ids); check-handle pins the records-backup exclusion
+      (recordKindOfKey(HANDLE_PENDING_KEY) === null) and both
+      WalletContext resetPendingHandles wipe lines. I18N: six new ids
+      (handle.revoke.done, handle.card.waitingLive, handle.tx.notSeen,
+      handle.spoken.txId, handle.sub.already, handle.sub.elsewhere) in
+      en.ts / es.ts and the fixture's "new" list; the Spanish drafts.
+      UNVERIFIED (emulator): the anchor scrolling and the 3 s settle; the
+      live region speaking exactly once at the transition (it may also
+      speak when first shown in the ready state); the spoken labels under
+      TalkBack; the sub-name read against the live Universal Resolver
+      (pinned with encoded fake answers); the 2-minute poll against
+      publicnode's backends; the risk-card lines against the live
+      contracts; the Alert title; iOS, the Spanish text length.
