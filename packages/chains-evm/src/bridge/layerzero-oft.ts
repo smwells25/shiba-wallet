@@ -4,6 +4,8 @@ import { keccak, toBytes, toHex } from '../encoding.js';
 import type { Call } from '../smart-account.js';
 import type {
   BridgeAsset,
+  BridgeBlockReader,
+  BridgeDestinationSearch,
   BridgeCall,
   BridgeEventLogReader,
   BridgeFeeLine,
@@ -20,6 +22,7 @@ import type {
   BridgeTransferStatus,
   BridgeTrustStatement,
 } from './types.js';
+import { planDestinationSearch, searchPlannedLogs, searchRangeText, searchSpanText, type BridgeSearchCache } from './search.js';
 import { addressToBytes32, assertUint, capPin, checksumAddress, equalPin, exactApprovalCall, isZeroAddress, sameAsset } from './util.js';
 
 /**
@@ -794,6 +797,17 @@ export interface LayerZeroOftProviderOptions {
   /** eth_getLogs on the receiving chain, to find OFTReceived or UnreceivedTokenCached for the GUID. */
   readDestinationLogs?: BridgeEventLogReader;
   /**
+   * eth_getBlockByNumber (bridge/search.ts, pass p23-cctp-recheck). With it,
+   * the receiving chain is searched from the block at the sending
+   * transaction's time, to the head or a week later; a transfer whose
+   * delivery is not found within that bound is reported as not found in the
+   * span searched, never refused as too old. Without it the log reader
+   * chooses the range, as before.
+   */
+  readBlock?: BridgeBlockReader;
+  /** The receiving blocks found for a time, kept by the app between tracking passes so a later pass reads only the head. */
+  searchCache?: BridgeSearchCache;
+  /**
    * eth_estimateGas for the bridge call. When given, quotes carry
    * gasEstimate. In the live run of 2026-10-15 the estimate was 341,035 for
    * 313,407 gas used (Sepolia) and 266,841 for 257,755 (OP Sepolia), so it
@@ -1190,7 +1204,27 @@ export function createLayerZeroOftProvider(options: LayerZeroOftProviderOptions)
       );
     }
     const target = checksumAddress(r.target.address);
-    const receivedLogs = await readDestinationLogs({ chainId: r.destinationChainId, address: target, topics: [OFT_RECEIVED_TOPIC, guid] });
+    // Where to search: from the receiving block at the sending
+    // transaction's time, when a block reader was given and the sending
+    // block is known (the receipt's, else a log's).
+    let plan: (BridgeDestinationSearch & { reads: number }) | null = null;
+    if (options.readBlock) {
+      const fromLog = receipt.logs.map((l) => l.blockNumber).find((b): b is string => typeof b === 'string' && /^0x[0-9a-fA-F]+$/.test(b));
+      const sourceBlock = typeof receipt.blockNumber === 'bigint' ? receipt.blockNumber : fromLog !== undefined ? BigInt(fromLog) : null;
+      if (sourceBlock !== null) {
+        const sent = await options.readBlock({ chainId: r.sourceChainId, block: sourceBlock });
+        if (!sent || sent.number !== sourceBlock || typeof sent.timestamp !== 'bigint') throw new Error(`The node did not return the sending block ${sourceBlock}.`);
+        plan = await planDestinationSearch(options.readBlock, { chainId: r.destinationChainId, sinceTimestamp: sent.timestamp, cache: options.searchCache });
+      }
+    }
+    const search: BridgeDestinationSearch | undefined = plan
+      ? { fromBlock: plan.fromBlock, toBlock: plan.toBlock, fromTimestamp: plan.fromTimestamp, toTimestamp: plan.toTimestamp, bounded: plan.bounded, boundSeconds: plan.boundSeconds }
+      : undefined;
+    const withSearch = search ? { search } : {};
+    const receivedQuery = { chainId: r.destinationChainId, address: target, topics: [OFT_RECEIVED_TOPIC, guid] };
+    const receivedLogs = plan
+      ? await searchPlannedLogs(readDestinationLogs, plan, receivedQuery, (logs) => logs.some((l) => topicIs(l, OFT_RECEIVED_TOPIC)))
+      : await readDestinationLogs(receivedQuery);
     let mismatched = false;
     for (const log of receivedLogs) {
       if (!sameAddress(log.address, target) || !topicIs(log, OFT_RECEIVED_TOPIC)) continue;
@@ -1205,7 +1239,7 @@ export function createLayerZeroOftProvider(options: LayerZeroOftProviderOptions)
         const destinationTx = typeof log.transactionHash === 'string' ? log.transactionHash : null;
         return result(
           'delivered',
-          { status: 'delivered', guid, destinationTx, amountReceived: event.amountReceivedLD },
+          { status: 'delivered', guid, destinationTx, amountReceived: event.amountReceivedLD, ...withSearch },
           `Delivered: the receiving network shows OFTReceived for this transfer's message (GUID ${guid}), ${event.amountReceivedLD} base units to ${recipient}${destinationTx ? ` in transaction ${destinationTx}` : ''}.`,
         );
       }
@@ -1214,12 +1248,22 @@ export function createLayerZeroOftProvider(options: LayerZeroOftProviderOptions)
     if (mismatched) {
       return result(
         'unknown',
-        { status: 'unknown', ...none, guid },
+        { status: 'unknown', ...none, guid, ...withSearch },
         `The receiving network shows an OFTReceived event for GUID ${guid} that does not match this transfer (sender's endpoint, recipient or amount), so the wallet does not call it delivered.`,
       );
     }
     if (r.target.kind === 'stargate-pool' || r.target.kind === 'stargate-pool-native') {
-      const cachedLogs = await readDestinationLogs({ chainId: r.destinationChainId, address: target, topics: [UNRECEIVED_TOKEN_CACHED_TOPIC] });
+      const cachedQuery = { chainId: r.destinationChainId, address: target, topics: [UNRECEIVED_TOKEN_CACHED_TOPIC] };
+      const cachedForGuid = (logs: readonly BridgeLog[]): boolean =>
+        logs.some((l) => {
+          if (!topicIs(l, UNRECEIVED_TOKEN_CACHED_TOPIC)) return false;
+          try {
+            return decodeUnreceivedTokenCachedLog(l).guid === guid;
+          } catch {
+            return false;
+          }
+        });
+      const cachedLogs = plan ? await searchPlannedLogs(readDestinationLogs, plan, cachedQuery, cachedForGuid) : await readDestinationLogs(cachedQuery);
       for (const log of cachedLogs) {
         if (!sameAddress(log.address, target) || !topicIs(log, UNRECEIVED_TOKEN_CACHED_TOPIC)) continue;
         let cached: UnreceivedTokenCachedEvent;
@@ -1230,7 +1274,7 @@ export function createLayerZeroOftProvider(options: LayerZeroOftProviderOptions)
         }
         if (cached.guid !== guid) continue;
         const destinationTx = typeof log.transactionHash === 'string' ? log.transactionHash : null;
-        const onChain = { status: 'cached-needs-retry' as const, guid, destinationTx, amountReceived: null };
+        const onChain = { status: 'cached-needs-retry' as const, guid, destinationTx, amountReceived: null, ...withSearch };
         if (cached.srcEid !== srcEid || !sameAddress(cached.receiver, recipient) || cached.amountLD !== send.amountReceivedLD) {
           return result(
             'unknown',
@@ -1259,14 +1303,24 @@ export function createLayerZeroOftProvider(options: LayerZeroOftProviderOptions)
         );
       }
     }
+    if (search && search.bounded) {
+      // The search reached its time bound before the head: say how far it
+      // looked, and let Scan's status stand beside it as supporting
+      // evidence only (pass p23-cctp-recheck).
+      return result(
+        'unknown',
+        { status: 'unknown', ...none, guid, search },
+        `The message was sent (GUID ${guid}), but no delivery for it was found in the ${searchSpanText(search.toTimestamp - search.fromTimestamp)} this wallet searched on the receiving network (${searchRangeText(search)}), which is as far as it searches after the sending transaction, so the wallet cannot tell whether it arrived later.`,
+      );
+    }
     if (apiStatus !== null && apiStatus !== 'DELIVERED' && layerZeroScanState(apiStatus) !== 'in-flight') {
       return result(
         'unknown',
-        { status: 'in-flight', ...none, guid },
+        { status: 'in-flight', ...none, guid, ...withSearch },
         `The message was sent (GUID ${guid}) and the receiving network shows no delivery for it yet; with LayerZero Scan reporting that it is not on its way, the wallet cannot tell whether it will arrive.`,
       );
     }
-    return result('in-flight', { status: 'in-flight', ...none, guid }, `The message was sent (GUID ${guid}); the receiving network shows no delivery for it yet.`);
+    return result('in-flight', { status: 'in-flight', ...none, guid, ...withSearch }, `The message was sent (GUID ${guid}); the receiving network shows no delivery for it yet.`);
   }
 
   return {

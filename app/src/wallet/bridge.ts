@@ -10,6 +10,7 @@ import {
   LAYERZERO_OFT_PROVIDER_ID,
   LAYERZERO_OFT_TRUST,
   LAYERZERO_V2_TESTNET,
+  BRIDGE_SEARCH_WINDOW_BLOCKS,
   MAX_EXACT_APPROVAL,
   OFT_SEND_LAYOUT,
   OFT_SEND_SELECTOR,
@@ -27,6 +28,8 @@ import {
   oftTimeEstimate,
   toHex,
   type BridgeAttestation,
+  type BridgeBlockHeader,
+  type BridgeBlockReader,
   type BridgeEventLogReader,
   type BridgeLog,
   type BridgeProvider,
@@ -61,7 +64,7 @@ import { prepareAaCalls, summarizeAaReceipt, type AaClientBundle, type AaSendQuo
 import { formatUnits } from './balances.ts';
 import { assertFeatureAllowed, isFeatureAllowed } from '../config/readiness.ts';
 import { evmProfileByCaip2, isBuiltInEvmChain, isTestProfileId, type EvmChainProfile, type TestNetworkId } from '../config/evm-chain.ts';
-import { isEndpointFailure } from '../config/endpoint-probe.ts';
+import { isEndpointFailure, sanitizeEndpointMessage } from '../config/endpoint-probe.ts';
 // The sentences this module builds go through the string table (phase 23
 // item 8, the third localisation pass); in English each is exactly the
 // sentence it built before (scripts/check-i18n.mjs). The exported constants
@@ -459,34 +462,43 @@ const NO_READER = (): never => {
  */
 export function createAppBridgeRegistry(
   readers: BridgeReaders | null = null,
-  options: { estimateGas?: boolean; destinationFromBlock?: bigint | null; nowMs?: () => number } = {},
+  options: { estimateGas?: boolean; nowMs?: () => number } = {},
 ): BridgeRegistry {
+  // One transport per chain for the life of this registry (one tracking
+  // pass or one quote): defaultChainTransport checks each endpoint's chain
+  // id once per transport, so the block search's reads do not repeat it.
+  const transports = new Map<number, JsonRpcTransport>();
+  const scoped: BridgeReaders | null = readers
+    ? {
+        ...readers,
+        transportFor: (chainId: number) => {
+          let tr = transports.get(chainId);
+          if (!tr) {
+            tr = readers.transportFor(chainId);
+            transports.set(chainId, tr);
+          }
+          return tr;
+        },
+      }
+    : null;
+  const readContract = scoped ? contractReader(scoped) : NO_READER;
   const layerZero = createLayerZeroOftProvider({
     deployments: STARGATE_V2_TESTNET_NATIVE_POOLS,
     label: LAYERZERO_APP_LABEL,
-    readContract: readers
-      ? async ({ chainId, to, data }) => {
-          let answer: unknown;
-          try {
-            answer = await readers.transportFor(chainId)('eth_call', [{ to, data }, 'latest']);
-          } catch (e) {
-            throw asReaderError(e);
-          }
-          if (typeof answer !== 'string') throw asReaderError(new Error('The node answered eth_call with something other than hex.'));
-          return answer;
-        }
-      : NO_READER,
-    ...(readers
+    readContract,
+    ...(scoped
       ? {
-          fetchMessageStatus: layerZeroScanReader(readers.fetchImpl),
-          readSourceReceipt: sourceReceiptReader(readers),
-          readDestinationLogs: destinationLogReader(readers, options.destinationFromBlock ?? null),
+          fetchMessageStatus: layerZeroScanReader(scoped.fetchImpl),
+          readSourceReceipt: sourceReceiptReader(scoped),
+          readDestinationLogs: destinationLogReader(scoped),
+          readBlock: blockHeaderReader(scoped),
+          searchCache,
         }
       : {}),
-    ...(readers && options.estimateGas
+    ...(scoped && options.estimateGas
       ? {
           estimateGas: async ({ chainId, from, to, value, data }: { chainId: number; from: string; to: string; value: bigint; data: string }) => {
-            const answer = await readers.transportFor(chainId)('eth_estimateGas', [{ from, to, value: `0x${value.toString(16)}`, data }]);
+            const answer = await scoped.transportFor(chainId)('eth_estimateGas', [{ from, to, value: `0x${value.toString(16)}`, data }]);
             if (typeof answer !== 'string' || !/^0x[0-9a-fA-F]+$/.test(answer)) throw new Error('The node answered eth_estimateGas with something other than a quantity.');
             return BigInt(answer);
           },
@@ -494,15 +506,34 @@ export function createAppBridgeRegistry(
       : {}),
   });
   const cctp = createCctpV2Provider(
-    readers
+    scoped
       ? {
-          fetchAttestation: circleIrisReader(readers.fetchImpl),
-          readSourceReceipt: sourceReceiptReader(readers),
-          readDestinationLogs: destinationLogReader(readers, options.destinationFromBlock ?? null, BRIDGE_LOG_TOO_OLD_CCTP),
+          fetchAttestation: circleIrisReader(scoped.fetchImpl),
+          readSourceReceipt: sourceReceiptReader(scoped),
+          readDestinationLogs: destinationLogReader(scoped),
+          // usedNonces on the receiving chain decides whether the mint
+          // happened (pass p23-cctp-recheck), not the log search.
+          readContract: contractReader(scoped),
+          readBlock: blockHeaderReader(scoped),
+          searchCache,
         }
       : {},
   );
   return createBridgeRegistry([layerZero, cctp]);
+}
+
+/** eth_call through the readers, the answer checked to be hex; failures are reader errors. */
+function contractReader(readers: BridgeReaders): (request: { chainId: number; to: string; data: string }) => Promise<string> {
+  return async ({ chainId, to, data }) => {
+    let answer: unknown;
+    try {
+      answer = await readers.transportFor(chainId)('eth_call', [{ to, data }, 'latest']);
+    } catch (e) {
+      throw asReaderError(e);
+    }
+    if (typeof answer !== 'string') throw asReaderError(new Error('The node answered eth_call with something other than hex.'));
+    return answer;
+  };
 }
 
 /** The Stargate deployment the wallet pins on a chain, or undefined. */
@@ -881,55 +912,166 @@ export function sourceReceiptReader(readers: BridgeReaders): BridgeReceiptLogRea
     if (typeof receipt !== 'object' || !Array.isArray(receipt.logs)) throw new Error('The node answered the receipt request in an unexpected shape.');
     const status = receipt.status === '0x1' ? 'success' : receipt.status === '0x0' ? 'reverted' : null;
     if (status === null) throw new Error('The receipt carries no success or failure status.');
-    return { status, logs: receipt.logs as BridgeLog[] };
+    const bn = (receipt as { blockNumber?: unknown }).blockNumber;
+    const blockNumber = typeof bn === 'string' && /^0x[0-9a-fA-F]+$/.test(bn) ? BigInt(bn) : undefined;
+    return blockNumber === undefined ? { status, logs: receipt.logs as BridgeLog[] } : { status, logs: receipt.logs as BridgeLog[], blockNumber };
   };
 }
 
 /**
- * eth_getLogs windows (blocks per request). 9,000 blocks is the window the
- * risk card already uses against the same public endpoints (risk.ts
- * RISK_LOG_WINDOW_BLOCKS); it is a judgement, not a documented limit.
+ * eth_getLogs windows (blocks per request): the engine's
+ * BRIDGE_SEARCH_WINDOW_BLOCKS (9,000, the window the risk card already uses
+ * against the same public endpoints, risk.ts RISK_LOG_WINDOW_BLOCKS; a
+ * judgement, not a documented limit).
  */
-export const BRIDGE_LOG_WINDOW_BLOCKS = 9_000n;
-/** At most this many windows per search: older transfers are left to an explorer (judgement). */
-export const BRIDGE_LOG_MAX_WINDOWS = 12;
-/** Without a recorded starting block, how far back the search reaches (one window; judgement). */
+export const BRIDGE_LOG_WINDOW_BLOCKS = BRIDGE_SEARCH_WINDOW_BLOCKS;
+/** When an adapter gives no range (no block reader), how far back from the head the reader looks (one window; judgement). */
 export const BRIDGE_LOG_FALLBACK_BLOCKS = 9_000n;
 
+/**
+ * No longer shown (pass p23-cctp-recheck): the receiving chain is now
+ * searched from the sending transaction's TIME up to a time bound
+ * (packages/chains-evm/src/bridge/search.ts), and a CCTP mint is decided
+ * by usedNonces, so no transfer is refused as "too old". Kept, unused,
+ * because the localisation tables (en.ts bridge.logTooOld /
+ * bridge.logTooOldCctp, check-i18n's constants) still pin them; remove them
+ * there and here together.
+ */
 export const BRIDGE_LOG_TOO_OLD =
   'This transfer was sent too long ago for the wallet to search the receiving network for it; look up the sending transaction in LayerZero Scan or an explorer.';
 
-/** The same for a CCTP transfer: the mint is searched by the message's nonce. */
+/** The same for a CCTP transfer (no longer shown; see BRIDGE_LOG_TOO_OLD). */
 export const BRIDGE_LOG_TOO_OLD_CCTP =
   'This transfer was sent too long ago for the wallet to search the receiving network for its mint; look up the recipient on that network in an explorer. If the USDC was never minted, anyone can still send the mint with Circle’s attested message.';
 
 /**
- * The destination log reader: eth_getLogs on the receiving chain for one
- * contract, from `fromBlock` (the receiving chain's head when the transfer
- * was quoted, which is no later than its head when the transfer was sent)
- * to the current head, in windows of BRIDGE_LOG_WINDOW_BLOCKS.
+ * Answers the tracking may reuse across polls (the screen asks every 15 s).
+ * A numbered block's timestamp does not change once it is deep in the
+ * chain, and the engine's block search asks for the same blocks on every
+ * pass (bridge/search.ts), so headers are kept; an eth_getLogs window is
+ * kept only once its last block lies at least one window (9,000 blocks)
+ * below the head this module last read for that chain, so the window near
+ * the head is always asked again. Bounded; module-level; cleared by
+ * resetBridgeReadCaches (the checks).
  */
-export function destinationLogReader(readers: BridgeReaders, fromBlock: bigint | null, tooOld: string = BRIDGE_LOG_TOO_OLD): BridgeEventLogReader {
-  return async ({ chainId, address, topics }) => {
+const BRIDGE_HEADER_CACHE_MAX = 4_096;
+const BRIDGE_LOG_CACHE_MAX = 2_048;
+const BRIDGE_SEARCH_CACHE_MAX = 512;
+const headerCache = new Map<string, bigint>();
+const logCache = new Map<string, readonly BridgeLog[]>();
+const latestHeads = new Map<number, bigint>();
+/** The receiving block the engine found for a time (bridge/search.ts BridgeSearchCache), bounded like the other caches. */
+class BoundedHeaderMap extends Map<string, BridgeBlockHeader> {
+  override set(key: string, value: BridgeBlockHeader): this {
+    if (!this.has(key) && this.size >= BRIDGE_SEARCH_CACHE_MAX) {
+      const oldest = this.keys().next();
+      if (!oldest.done) this.delete(oldest.value);
+    }
+    return super.set(key, value);
+  }
+}
+const searchCache = new BoundedHeaderMap();
+
+function remember<V>(map: Map<string, V>, key: string, value: V, max: number): void {
+  if (map.size >= max) {
+    const oldest = map.keys().next();
+    if (!oldest.done) map.delete(oldest.value);
+  }
+  map.set(key, value);
+}
+
+/** Empties the reuse caches above (for the checks). */
+export function resetBridgeReadCaches(): void {
+  headerCache.clear();
+  logCache.clear();
+  latestHeads.clear();
+  searchCache.clear();
+}
+
+/**
+ * The block reader the adapters search with: eth_getBlockByNumber (number
+ * and timestamp) on any chain through the readers, so the receiving
+ * network goes through the built-in endpoints with failover like the other
+ * reads. A numbered block's timestamp is kept for reuse.
+ */
+export function blockHeaderReader(readers: BridgeReaders): BridgeBlockReader {
+  return async ({ chainId, block }): Promise<BridgeBlockHeader> => {
+    if (block !== 'latest') {
+      const cached = headerCache.get(`${chainId}:${block}`);
+      if (cached !== undefined) return { number: block, timestamp: cached };
+    }
+    const tag = block === 'latest' ? 'latest' : `0x${block.toString(16)}`;
+    const answer = (await readers.transportFor(chainId)('eth_getBlockByNumber', [tag, false])) as { number?: unknown; timestamp?: unknown } | null;
+    const hex = (v: unknown) => typeof v === 'string' && /^0x[0-9a-fA-F]+$/.test(v);
+    if (answer === null || typeof answer !== 'object' || !hex(answer.number) || !hex(answer.timestamp)) {
+      throw new Error(`The node did not return block ${block === 'latest' ? 'latest' : block.toString()}.`);
+    }
+    const header = { number: BigInt(answer.number as string), timestamp: BigInt(answer.timestamp as string) };
+    if (block !== 'latest' && header.number !== block) throw new Error(`The node answered block ${header.number} when block ${block} was asked for.`);
+    if (block === 'latest') latestHeads.set(chainId, header.number);
+    remember(headerCache, `${chainId}:${header.number}`, header.timestamp, BRIDGE_HEADER_CACHE_MAX);
+    return header;
+  };
+}
+
+/**
+ * The destination log reader: eth_getLogs on the receiving chain for one
+ * contract. With a range from the adapter (it planned the search from the
+ * sending transaction's time, bridge/search.ts): exactly that range in one
+ * request, reused when settled (see the caches above). Without one: the
+ * last BRIDGE_LOG_FALLBACK_BLOCKS blocks, in windows. Never refuses a
+ * transfer as too old.
+ */
+export function destinationLogReader(readers: BridgeReaders): BridgeEventLogReader {
+  return async ({ chainId, address, topics, fromBlock, toBlock }) => {
     const transport = readers.transportFor(chainId);
-    const headHex = await transport('eth_blockNumber', []);
-    if (typeof headHex !== 'string' || !/^0x[0-9a-fA-F]+$/.test(headHex)) throw new Error('The node answered eth_blockNumber with something other than a quantity.');
-    const head = BigInt(headHex);
-    let start = fromBlock ?? (head > BRIDGE_LOG_FALLBACK_BLOCKS ? head - BRIDGE_LOG_FALLBACK_BLOCKS : 0n);
-    if (start > head) return [];
-    if (head - start + 1n > BRIDGE_LOG_WINDOW_BLOCKS * BigInt(BRIDGE_LOG_MAX_WINDOWS)) throw new BridgeRefusal(tooOld);
-    const out: BridgeLog[] = [];
-    while (start <= head) {
-      const end = start + BRIDGE_LOG_WINDOW_BLOCKS - 1n < head ? start + BRIDGE_LOG_WINDOW_BLOCKS - 1n : head;
+    const ask = async (start: bigint, end: bigint): Promise<BridgeLog[]> => {
       const logs = await transport('eth_getLogs', [
         { address, fromBlock: `0x${start.toString(16)}`, toBlock: `0x${end.toString(16)}`, topics },
       ]);
       if (!Array.isArray(logs)) throw new Error('The node answered eth_getLogs with something other than a list.');
-      out.push(...(logs as BridgeLog[]));
+      return logs as BridgeLog[];
+    };
+    if (fromBlock !== undefined && toBlock !== undefined) {
+      if (toBlock < fromBlock) return [];
+      const key = `${chainId}|${address.toLowerCase()}|${JSON.stringify(topics)}|${fromBlock}|${toBlock}`;
+      const hit = logCache.get(key);
+      if (hit) return hit;
+      const logs = await ask(fromBlock, toBlock);
+      const head = latestHeads.get(chainId);
+      if (head !== undefined && toBlock + BRIDGE_LOG_WINDOW_BLOCKS <= head) remember(logCache, key, logs, BRIDGE_LOG_CACHE_MAX);
+      return logs;
+    }
+    const headHex = await transport('eth_blockNumber', []);
+    if (typeof headHex !== 'string' || !/^0x[0-9a-fA-F]+$/.test(headHex)) throw new Error('The node answered eth_blockNumber with something other than a quantity.');
+    const head = BigInt(headHex);
+    let start = head > BRIDGE_LOG_FALLBACK_BLOCKS ? head - BRIDGE_LOG_FALLBACK_BLOCKS : 0n;
+    const out: BridgeLog[] = [];
+    while (start <= head) {
+      const end = start + BRIDGE_LOG_WINDOW_BLOCKS - 1n < head ? start + BRIDGE_LOG_WINDOW_BLOCKS - 1n : head;
+      out.push(...(await ask(start, end)));
       start = end + 1n;
     }
     return out;
   };
+}
+
+/**
+ * The text a failed tracking pass leaves on the record (pass
+ * p23-cctp-recheck): this wallet's own refusals (BridgeRefusal, the
+ * readiness gate) are whole sentences written for the screen and are shown
+ * whole; only other errors (a node, an endpoint, an adapter's plain Error)
+ * go through sanitizeEndpointMessage, which keeps their first sentence and
+ * drops links and class names.
+ */
+export function bridgeCheckErrorText(e: unknown): string {
+  const name = (e as { name?: unknown } | null)?.name;
+  const message = e instanceof Error ? e.message : String(e);
+  if (e instanceof BridgeRefusal || name === 'BridgeRefusal' || name === 'FeatureNotAllowedError') {
+    return message.trim() === '' ? 'No details were given.' : message;
+  }
+  const text = sanitizeEndpointMessage(message);
+  return text === '' ? 'No details were given.' : text;
 }
 
 /**
@@ -1022,7 +1164,12 @@ export interface BridgePlan {
   approval: { token: string; spender: string; amount: bigint } | null;
   /** The messaging fee, exactly as the adapter quoted it (0 for CCTP: there is none). */
   messagingFee: bigint;
-  /** The receiving chain's head when quoted (where tracking starts), or null when unreadable. */
+  /**
+   * The receiving chain's head when quoted, or null when unreadable. Kept
+   * on the record (store version 1) but no longer where tracking starts:
+   * since pass p23-cctp-recheck the search starts at the receiving block at
+   * the sending transaction's time (bridge/search.ts in the engine).
+   */
   destinationFromBlock: bigint | null;
   recipientCode: RecipientCodeState;
   /**
@@ -2222,7 +2369,7 @@ export async function trackBridgeTransfer(record: BridgeTransferRecord, readers:
     if (outcome.kind === 'reverted') return { state: 'failed', detail: bridgeUserOpRevertedDetail(outcome.reason) };
     sourceTxHash = outcome.txHash;
   }
-  const registry = createAppBridgeRegistry(readers, { destinationFromBlock: record.destinationFromBlock });
+  const registry = createAppBridgeRegistry(readers);
   const provider = registry.require(record.providerId);
   const transfer = {
     providerId: record.providerId,

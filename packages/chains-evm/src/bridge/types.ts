@@ -272,7 +272,16 @@ export interface BridgeLog {
 export type BridgeReceiptLogReader = (request: {
   chainId: number;
   txHash: string;
-}) => Promise<{ status: 'success' | 'reverted'; logs: readonly BridgeLog[] } | null>;
+}) => Promise<{
+  status: 'success' | 'reverted';
+  logs: readonly BridgeLog[];
+  /**
+   * The block that holds the transaction (the receipt's blockNumber), when
+   * the reader gives it. Optional so readers written before it keep
+   * working; without it the adapters fall back to a log's blockNumber.
+   */
+  blockNumber?: bigint;
+} | null>;
 
 /**
  * eth_getLogs on one chain for one contract, supplied by the app. `topics`
@@ -285,7 +294,48 @@ export type BridgeEventLogReader = (request: {
   chainId: number;
   address: string;
   topics: readonly (string | readonly string[] | null)[];
+  /**
+   * The inclusive block range to ask for, given by the adapters when the
+   * app also injected a block reader (BridgeBlockReader): the engine then
+   * plans the search from the sending transaction's TIME (bridge/search.ts)
+   * and asks window by window. The reader asks for exactly this range in
+   * one eth_getLogs request. Absent: the reader chooses the range, as
+   * before.
+   */
+  fromBlock?: bigint;
+  toBlock?: bigint;
 }) => Promise<readonly BridgeLog[]>;
+
+/** One block's number and timestamp (seconds since the Unix epoch), as eth_getBlockByNumber returns them. */
+export interface BridgeBlockHeader {
+  number: bigint;
+  timestamp: bigint;
+}
+
+/**
+ * eth_getBlockByNumber on one chain, supplied by the app (failover is the
+ * app's job): a block number, or 'latest' for the head. Throws when the
+ * node does not return that block. With it, the adapters search the
+ * receiving chain from the block at the sending transaction's time
+ * (bridge/search.ts), whatever the two chains' block times are.
+ */
+export type BridgeBlockReader = (request: { chainId: number; block: bigint | 'latest' }) => Promise<BridgeBlockHeader>;
+
+/**
+ * What one search of the receiving chain covered (bridge/search.ts): the
+ * blocks asked for and their timestamps, and whether the search stopped at
+ * its time bound before the head.
+ */
+export interface BridgeDestinationSearch {
+  fromBlock: bigint;
+  toBlock: bigint;
+  fromTimestamp: bigint;
+  toTimestamp: bigint;
+  /** True when the head lies beyond the time bound, so blocks after toBlock were not searched. */
+  bounded: boolean;
+  /** The time bound in seconds (BRIDGE_SEARCH_BOUND_SECONDS unless the app chose another). */
+  boundSeconds: bigint;
+}
 
 /** Where a transfer is, according to event logs on the two chains. */
 export type BridgeOnChainState =
@@ -314,6 +364,14 @@ export interface BridgeOnChainDelivery {
   apiStatus: string | null;
   /** The block that holds the sending transaction's message, read from its receipt (CCTP), when known. */
   sourceBlock?: bigint | null;
+  /** The receiving-chain search this answer rests on, when the adapter planned one from time (a block reader was injected). */
+  search?: BridgeDestinationSearch;
+  /**
+   * CCTP: what MessageTransmitterV2.usedNonces(nonce) answered on the
+   * receiving chain (true = the message was received, so the USDC was
+   * minted), when the app injected a contract reader; undefined otherwise.
+   */
+  nonceUsed?: boolean;
 }
 
 /** The adapter every bridge provider implements. */

@@ -167,6 +167,9 @@ import {
   recordBridgeTransfer,
   regularRecipientNote,
   resetBridgeTransfers,
+  resetBridgeReadCaches,
+  bridgeCheckErrorText,
+  blockHeaderReader,
   smartAccountRecipientNote,
   subscribeBridgeTransfers,
   trackBridgeTransfer,
@@ -270,9 +273,29 @@ const evIface = new ethers.Interface([
 ]);
 const word = (v) => ethers.toBeHex(v, 32);
 
+// Each fake chain has a clock (pass p23-cctp-recheck): block `block` at
+// unix time `time`, `num`/`den` seconds per block, so the bridge search can
+// find a receiving block from a sending block's time. The anchors are the
+// live legs' own blocks and times: LayerZero leg A (Ethereum Sepolia block
+// 11,917,629 sent while OP Sepolia stood near 50,115,500, 2026-10-15) and
+// the CCTP legs (Base Sepolia burn block 50,079,573 at 14:16:23 UTC and
+// Arbitrum Sepolia mint block 322,726,898 at 14:32:59 UTC on 2026-10-25);
+// the block times are the measured ones (12 s; 2 s; 0.2 s; 0.25 s).
+const LEG_A_TIME = 1_792_042_080n; // 2026-10-15 05:28:00 UTC
+const CLOCKS = {
+  11155111: { block: 11_917_629n, time: LEG_A_TIME, num: 12n, den: 1n },
+  11155420: { block: 50_115_500n, time: LEG_A_TIME, num: 2n, den: 1n },
+  84532: { block: 50_079_573n, time: 1_792_937_783n, num: 1n, den: 5n },
+  421614: { block: 322_726_898n, time: 1_792_938_779n, num: 1n, den: 4n },
+  560048: { block: 1_000_000n, time: 0x6a000000n, num: 12n, den: 1n },
+};
+const timeAt = (s, n) => s.clock.time + ((n - s.clock.block) * s.clock.num) / s.clock.den;
 function chainState(chainId, over = {}) {
   return {
     chainId,
+    clock: CLOCKS[chainId],
+    usedNonces: new Set(), // MessageTransmitterV2.usedNonces = 1 (lower-case nonces)
+    sloppyLogs: false, // a node that ignores the topic filters (only the address and the range)
     chainIdHex: ethers.toQuantity(chainId),
     head: 1_000_000n,
     nativeFee: NATIVE_FEE,
@@ -290,6 +313,7 @@ function chainState(chainId, over = {}) {
 }
 const chains = new Map();
 function resetChains() {
+  resetBridgeReadCaches();
   chains.clear();
   for (const id of [SEPOLIA, ARB, OP, BASE, HOODI]) chains.set(id, chainState(id));
 }
@@ -306,8 +330,12 @@ function nodeFor(chainId) {
         return ethers.toQuantity(s.balance);
       case 'eth_getTransactionCount':
         return '0x5';
-      case 'eth_getBlockByNumber':
-        return { number: ethers.toQuantity(s.head), baseFeePerGas: ethers.toQuantity(GWEI), timestamp: '0x6a000000' };
+      case 'eth_getBlockByNumber': {
+        const tag = params[0];
+        const n = typeof tag === 'string' && /^0x[0-9a-fA-F]+$/.test(tag) ? BigInt(tag) : s.head;
+        if (n > s.head) return null;
+        return { number: ethers.toQuantity(n), baseFeePerGas: ethers.toQuantity(GWEI), timestamp: ethers.toQuantity(timeAt(s, n)) };
+      }
       case 'eth_maxPriorityFeePerGas':
         return ethers.toQuantity(GWEI);
       case 'eth_estimateGas':
@@ -330,7 +358,7 @@ function nodeFor(chainId) {
             same(l.address, f.address) &&
             BigInt(l.blockNumber) >= from &&
             BigInt(l.blockNumber) <= to &&
-            (f.topics ?? []).every((t, i) => t === null || same(l.topics[i], t)),
+            (s.sloppyLogs ? (f.topics ?? []).slice(0, 1) : f.topics ?? []).every((t, i) => t === null || same(l.topics[i], t)),
         );
       }
       case 'eth_call': {
@@ -359,6 +387,10 @@ function nodeFor(chainId) {
           return '0x';
         }
         if (same(to, CCTP_V2_TESTNET.messageTransmitterV2) && data.startsWith(CCTP_RECEIVE_MESSAGE_SELECTOR)) return word(1n);
+        // MessageTransmitterV2.usedNonces(bytes32) (selector 0xfeb61724; pass p23-cctp-recheck).
+        if (same(to, CCTP_V2_TESTNET.messageTransmitterV2) && data.startsWith('0xfeb61724') && data.length === 10 + 64) {
+          return word(s.usedNonces.has(('0x' + data.slice(10)).toLowerCase()) ? 1n : 0n);
+        }
         if (same(to, '0x420000000000000000000000000000000000000F')) {
           // GasPriceOracle (OP-stack): getL1Fee(bytes) → 268 wei; getOperatorFee(uint256) → 0.
           return data.startsWith(ethers.id('getL1Fee(bytes)').slice(0, 10)) ? word(268n) : word(0n);
@@ -876,7 +908,8 @@ function packetSentLog(src, dst, guid = GUID) {
   check('a reverted source → failed, heading "Failed", final', st.state === 'failed' && bridgeStatusHeading(st, 'OP Sepolia') === 'Failed' && bridgeTransferFinal({ status: st }) &&
     /^The sending transaction reverted, so no message was sent and nothing was bridged; only its network fee was spent\./.test(st.detail), st.detail);
   // 3. Sent, in flight (Scan INFLIGHT).
-  chains.get(SEPOLIA).receipts.set(SOURCE_TX, { status: '0x1', logs: [oftSentLog(SEPOLIA, OP), packetSentLog(SEPOLIA, OP)] });
+  chains.get(SEPOLIA).receipts.set(SOURCE_TX, { status: '0x1', blockNumber: ethers.toQuantity(11_917_629n), logs: [oftSentLog(SEPOLIA, OP), packetSentLog(SEPOLIA, OP)] });
+  chains.get(SEPOLIA).head = 11_917_700n;
   scanAnswer = { status: 200, body: { data: [{ status: { name: 'INFLIGHT' } }] } };
   fetchLog = [];
   st = await trackBridgeTransfer(rec, readers);
@@ -885,7 +918,8 @@ function packetSentLog(src, dst, guid = GUID) {
   check('heading for in-flight: "On its way"; not final', bridgeStatusHeading(st, 'OP Sepolia') === 'On its way' && !bridgeTransferFinal({ status: st }));
   check('Scan was asked at the keyless testnet API by source hash', fetchLog.includes(`${LAYERZERO_SCAN_TESTNET_API}/messages/tx/${SOURCE_TX}`));
   const opGetLogs = chains.get(OP).calls.filter((c) => c.method === 'eth_getLogs');
-  check('the receiving network was searched from the head recorded at quote time', opGetLogs.length >= 1 && BigInt(opGetLogs[0].params[0].fromBlock) === 50_115_500n);
+  check('the receiving network was searched from its block at the sending block’s time less 10 minutes (pass p23-cctp-recheck; was: the head recorded at quote time)',
+    opGetLogs.length >= 1 && BigInt(opGetLogs[0].params[0].fromBlock) === 50_115_200n && BigInt(opGetLogs[0].params[0].toBlock) === 50_115_600n, opGetLogs.map((c) => c.params[0].fromBlock).join());
   // 4. Delivered (OFTReceived for the GUID, to this recipient, for the amount).
   chains.get(OP).logs.push(logOf(pool(OP).address, evIface.encodeEventLog('OFTReceived', [GUID, LAYERZERO_V2_TESTNET[SEPOLIA].eid, EOA, AMOUNT]), { transactionHash: DELIVERY_TX, blockNumber: ethers.toQuantity(50_115_531n) }));
   scanAnswer = { status: 200, body: { data: [{ status: { name: 'DELIVERED' }, destination: { tx: { txHash: DELIVERY_TX } } }] } };
@@ -1245,15 +1279,15 @@ console.log('check-bridge: a smart-account transfer resolved from the bundler’
 
   resetChains();
   chains.get(OP).head = 1_020_000n;
-  const reader = destinationLogReader(readersFor(SEPOLIA), 1_000_000n);
+  const reader = destinationLogReader(readersFor(SEPOLIA));
   chains.get(OP).calls = [];
+  await reader({ chainId: OP, address: pool(OP).address, topics: [null], fromBlock: 1_000_000n, toBlock: 1_008_999n });
   await reader({ chainId: OP, address: pool(OP).address, topics: [null] });
   const windows = chains.get(OP).calls.filter((c) => c.method === 'eth_getLogs').map((c) => `${BigInt(c.params[0].fromBlock)}-${BigInt(c.params[0].toBlock)}`);
-  check('destination logs: searched in windows of 9,000 blocks from the recorded head to the current head',
-    windows.join() === '1000000-1008999,1009000-1017999,1018000-1020000', windows.join());
-  const tooOld = destinationLogReader(readersFor(SEPOLIA), 1n);
-  const old = await rejection(() => tooOld({ chainId: OP, address: pool(OP).address, topics: [null] }));
-  check('a search older than 12 windows is refused with the plain sentence', old instanceof BridgeRefusal && old.message === BRIDGE_LOG_TOO_OLD);
+  check('destination logs: a range from the adapter is asked as given, in one request; with none, the last 9,000 blocks (pass p23-cctp-recheck: no window cap)',
+    windows.join() === '1000000-1008999,1011000-1019999,1020000-1020000', windows.join());
+  check('…and nothing refuses a transfer as too old any more (the old cap and its sentence are gone from the reader)',
+    !/BRIDGE_LOG_MAX_WINDOWS|throw new BridgeRefusal\(tooOld\)/.test(BRIDGE_SOURCE) && BRIDGE_LOG_TOO_OLD.length > 0);
 
   // defaultChainTransport: the built-in defaults in order, chain id checked, failover on endpoint failures only.
   resetChains();
@@ -1893,6 +1927,7 @@ console.log('check-bridge: CCTP tracking — burned, attested, the Mint button, 
   await resetBridgeTransfers();
   fundUsdc(BASE, EOA, 5_000_000n);
   chains.get(ARB).head = 322_726_000n;
+  chains.get(BASE).head = BURN_BLOCK + 100n; // the sending network has passed the burn block
   const plan = await quoteBridge(cctpRequest());
   const store = memStore();
   await loadBridgeTransfers(store);
@@ -1933,8 +1968,9 @@ console.log('check-bridge: CCTP tracking — burned, attested, the Mint button, 
       bridgeStatusSentence(findRec()) === 'Attested. The USDC can now be minted on Arbitrum Sepolia.' && cctpAttestedSentence('Arbitrum Sepolia') === bridgeStatusSentence(findRec()),
     `${st.state} ${st.detail}`);
   const arbLogs = chains.get(ARB).calls.filter((c) => c.method === 'eth_getLogs');
-  check('the receiving network was searched for MessageReceived by the nonce, from the head recorded at quote time',
-    arbLogs.length >= 1 && same(arbLogs[0].params[0].address, MT) && arbLogs[0].params[0].topics[2] === CCTP_NONCE && BigInt(arbLogs[0].params[0].fromBlock) === 322_726_000n);
+  const arbUsed = chains.get(ARB).calls.filter((c) => c.method === 'eth_call' && String(c.params[0].data).startsWith('0xfeb61724'));
+  check('attested: usedNonces(nonce) on the receiving network’s MessageTransmitterV2 answered 0, so no log was searched (pass p23-cctp-recheck; was: a log search from the head recorded at quote time)',
+    arbUsed.length >= 1 && same(arbUsed[0].params[0].to, MT) && arbUsed[0].params[0].data === `0xfeb61724${CCTP_NONCE.slice(2)}` && arbLogs.length === 0 && st.onChain?.nonceUsed === false);
   check('the record keeps the checked attested message (trackedPatch)', findRec().attested?.nonce === CCTP_NONCE && findRec().attested.message === ATTESTED_MSG && findRec().attested.expirationBlock === 0n);
   const stored = JSON.parse(store.map.get(BRIDGE_TRANSFERS_KEY)).records[0];
   check('…and stores it (still version 1, one more key): message, attestation, nonce, expiration block as a decimal string; no final status',
@@ -2027,6 +2063,7 @@ console.log('check-bridge: CCTP tracking — burned, attested, the Mint button, 
   // 5. Minted (by this wallet or anyone): delivered from the chain's own events.
   updateBridgeTransfer(rec.id, { retryTxHash: MINT_TX });
   chains.get(ARB).head = 322_727_000n;
+  chains.get(ARB).usedNonces.add(CCTP_NONCE);
   chains.get(ARB).logs.push(
     cctpLog(MT, 'MessageReceived', [EOA, 6, CCTP_NONCE, pad(TM), 2000, '0x'], { transactionHash: MINT_TX, blockNumber: ethers.toQuantity(322_726_898n) }),
     cctpLog(TM, 'MintAndWithdraw', [EOA, USDC_AMOUNT, CCTP_V2_TESTNET_USDC[ARB], 0n], { transactionHash: MINT_TX, blockNumber: ethers.toQuantity(322_726_898n) }),
@@ -2365,6 +2402,285 @@ console.log('check-bridge: the emulator pass p23-cctp findings (the Home link, t
       screen.includes('<Text accessibilityLabel={withShortAddresses(text)} style={[styles.hint, { color: theme.textMuted }]}>{text}</Text>'));
   check('the transfer record’s line is spoken with the short address', views.includes('<Text accessibilityLabel={withShortAddresses(through)} style={[styles.body, { color: theme.textMuted }]}>'));
   for (const mod of [mLink, mPay]) await mod.resetBridgeTransfers();
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-bridge: pass p23-cctp-recheck — usedNonces decides the mint, the search starts from the burn’s time, refusals shown whole');
+// ---------------------------------------------------------------------------
+{
+  const memStore = (initial = {}) => {
+    const map = new Map(Object.entries(initial));
+    return { map, getItem: async (k) => (map.has(k) ? map.get(k) : null), setItem: async (k, v) => void map.set(k, v), removeItem: async (k) => void map.delete(k) };
+  };
+  // The live transfer stranded by the bug (pass p23-cctp, 2026-10-26): 1 USDC
+  // Arbitrum Sepolia → Base Sepolia from Account 1, burned in block
+  // 323,018,391 (12:23:51 UTC), attested by Circle with nonce 0xd402…f86b,
+  // never minted (usedNonces 0 on Base Sepolia, read 2026-10-27 03:16 UTC on
+  // two endpoints). The record below has the stored record's shape (version
+  // 1, the 18 keys plus `attested`) with the live values the passes recorded;
+  // the record id, the receiving head at quote time and the attestation bytes
+  // were not recorded and are stand-ins of the right form (130 bytes, two
+  // signatures, as the live one).
+  const A1 = '0x772eAA1d3BEf14C0BD5cee980b90dB3FC680F44F';
+  const LIVE_BURN_TX = '0xaeae0e5be19309066eec433417a1d7201bb24ab968b7efda47dc838f58c81072';
+  const LIVE_BURN_BLOCK = 323_018_391n;
+  const LIVE_BURN_TIME = 1_793_017_431n; // 2026-10-26 12:23:51 UTC
+  const LIVE_NONCE = '0xd402ca89ef8ee1dee8b7fb70a5b04768a7997ddd02c11e87e673359f2877f86b';
+  const BASE_HEAD_NOW = 50_745_664n; // Base Sepolia's head read on 2026-10-27 03:16:41 UTC
+  const LIVE_MINT_TX = '0x' + '6d'.repeat(32);
+  const liveMessage = (nonce, finality) =>
+    ethers
+      .concat([
+        u32(1), u32(3), u32(6), nonce, pad(TM), pad(TM), ethers.ZeroHash, u32(2000), u32(finality),
+        u32(1), pad(CCTP_V2_TESTNET_USDC[ARB]), pad(A1), word(USDC_AMOUNT), pad(A1), word(0n), word(0n), word(0n),
+      ])
+      .toLowerCase();
+  const LIVE_ATTESTED = liveMessage(LIVE_NONCE, 2000);
+  const liveReceipt = () => ({
+    status: '0x1',
+    blockNumber: ethers.toQuantity(LIVE_BURN_BLOCK),
+    logs: [
+      cctpLog(MT, 'MessageSent', [liveMessage(ethers.ZeroHash, 0)], { blockNumber: ethers.toQuantity(LIVE_BURN_BLOCK), transactionHash: LIVE_BURN_TX }),
+      cctpLog(TM, 'DepositForBurn', [CCTP_V2_TESTNET_USDC[ARB], USDC_AMOUNT, A1, pad(A1), 6, pad(TM), ethers.ZeroHash, 0n, 2000, '0x'], { blockNumber: ethers.toQuantity(LIVE_BURN_BLOCK), transactionHash: LIVE_BURN_TX }),
+    ],
+  });
+  const liveStored = {
+    id: 'bridge-1793017429000-1',
+    providerId: CCTP_V2_PROVIDER_ID,
+    providerLabel: 'Circle CCTP (USDC)',
+    route: {
+      providerId: CCTP_V2_PROVIDER_ID,
+      sourceChainId: ARB,
+      destinationChainId: BASE,
+      sourceAsset: { kind: 'erc20', address: CCTP_V2_TESTNET_USDC[ARB], symbol: 'USDC', decimals: 6 },
+      destinationAsset: { kind: 'erc20', address: CCTP_V2_TESTNET_USDC[BASE], symbol: 'USDC', decimals: 6 },
+    },
+    sourceCaip2: caip(ARB),
+    sourceLabel: 'Arbitrum Sepolia',
+    destinationCaip2: caip(BASE),
+    destinationLabel: 'Base Sepolia',
+    amountIn: '1000000',
+    recipient: A1,
+    sender: A1,
+    senderKind: 'regular',
+    sourceTxHash: LIVE_BURN_TX,
+    userOpHash: null,
+    destinationFromBlock: '50474000',
+    sentAt: 1_793_017_429_000,
+    retryTxHash: null,
+    final: null,
+    attested: { message: LIVE_ATTESTED, attestation: ATTESTATION, nonce: LIVE_NONCE, expirationBlock: '0' },
+  };
+  const setLive = () => {
+    resetChains();
+    chains.get(ARB).clock = { block: LIVE_BURN_BLOCK, time: LIVE_BURN_TIME, num: 1n, den: 4n };
+    chains.get(ARB).head = LIVE_BURN_BLOCK + 500_000n;
+    chains.get(ARB).receipts.set(LIVE_BURN_TX, liveReceipt());
+    chains.get(BASE).head = BASE_HEAD_NOW;
+    chains.get(BASE).balance = 7_599_501_972_279_663n; // Account 1's Base Sepolia balance, 2026-10-26
+  };
+  const baseStart = (() => {
+    // Base Sepolia's block at the burn's time less 10 minutes, from the fake clock (0.2 s per block).
+    // The highest block whose time is at or before it (five blocks share each second).
+    const c = CLOCKS[BASE];
+    return c.block + ((LIVE_BURN_TIME - 600n - c.time + 1n) * c.den - 1n) / c.num;
+  })();
+  const loadLive = async (over = {}) => {
+    await resetBridgeTransfers();
+    const store = memStore({ [BRIDGE_TRANSFERS_KEY]: JSON.stringify({ version: 1, records: [{ ...liveStored, ...over }] }) });
+    const loaded = await loadBridgeTransfers(store);
+    return { store, loaded, rec: listBridgeTransfers()[0] };
+  };
+
+  setLive();
+  const { loaded, rec } = await loadLive();
+  check('the live record’s stored shape (version 1, the 18 keys plus the attested message) loads with no migration, writable, attested, no status',
+    loaded.readOnly === false && rec?.attested?.nonce === LIVE_NONCE && rec.attested.expirationBlock === 0n && rec.status === null && rec.destinationFromBlock === 50_474_000n);
+  check('…its receiving head is 270,000+ Base Sepolia blocks past the burn’s time: more than the old 108,000-block cap (12 windows of 9,000)',
+    BASE_HEAD_NOW - baseStart > 108_000n && BASE_HEAD_NOW - baseStart > 270_000n, String(BASE_HEAD_NOW - baseStart));
+  // (1) usedNonces 0, no logs: the Mint panel, from either network.
+  for (const active of [ARB, BASE]) {
+    setLive();
+    const { rec: r } = await loadLive();
+    fetchLog = [];
+    const st = await trackBridgeTransfer(r, readersFor(active));
+    updateBridgeTransfer(r.id, trackedPatch(r, st, 1_793_100_000_000));
+    const now = listBridgeTransfers()[0];
+    const baseLogs = chains.get(BASE).calls.filter((c) => c.method === 'eth_getLogs');
+    const used = chains.get(BASE).calls.filter((c) => c.method === 'eth_call' && String(c.params[0].data).startsWith('0xfeb61724'));
+    check(`the stranded record, ${active === ARB ? 'Arbitrum' : 'Base'} Sepolia active: usedNonces 0 → "Attested: waiting for the mint on Base Sepolia", the Mint call, no log searched, Circle not asked`,
+      st.state === 'awaiting-destination-action' && st.onChain?.status === 'attested' && st.onChain.nonceUsed === false &&
+        bridgeStatusHeading(st, 'Base Sepolia', CCTP_V2_PROVIDER_ID) === 'Attested: waiting for the mint on Base Sepolia' &&
+        bridgeStatusSentence(now) === 'Attested. The USDC can now be minted on Base Sepolia.' && baseLogs.length === 0 && used.length === 1 &&
+        !fetchLog.some((u) => u.startsWith(CIRCLE_IRIS_SANDBOX_API)) && !/too long ago/.test(st.detail),
+      `${st.state} ${st.detail}`);
+    const call = bridgeMintCall(now);
+    check('…the Mint call is receiveMessage(the stored attested message, its attestation) to MessageTransmitterV2',
+      call !== null && same(call.to, MT) && toHex(call.data) === cctpIface.encodeFunctionData('receiveMessage', [LIVE_ATTESTED, ATTESTATION]));
+    if (active === ARB) {
+      check('…from Arbitrum Sepolia: the switch sentence and the switch target Base Sepolia (the button)',
+        /make Base Sepolia the active network with the button below/.test(bridgeMintBlocker(caip(ARB), now, null) ?? '') && bridgeSwitchTarget(caip(ARB), now) === caip(BASE));
+    } else {
+      check('…with Base Sepolia active and Account 1 holding 0.0076 test ETH there: nothing blocks "Mint on Base Sepolia"', bridgeMintBlocker(caip(BASE), now, 7_599_501_972_279_663n) === null);
+      const mq = await prepareBridgeMint(ACTIVE_URL(BASE), A1, now);
+      check('…and the mint quotes through prepareEvmSend on Base Sepolia: to MessageTransmitterV2, value 0, the mint calldata, pre-flight passed',
+        same(mq.to, MT) && mq.amount === 0n && toHex(mq.data) === toHex(call.data) && mq.simulation.ok);
+    }
+  }
+  // (2) usedNonces 1, no log within the search: delivered, the transaction not found.
+  setLive();
+  chains.get(BASE).usedNonces.add(LIVE_NONCE);
+  {
+    const { rec: r, store } = await loadLive();
+    const st = await trackBridgeTransfer(r, readersFor(BASE));
+    updateBridgeTransfer(r.id, trackedPatch(r, st, 1_793_100_000_000));
+    await bridgeTransfersWritten();
+    const now = listBridgeTransfers()[0];
+    const s = st.onChain?.search;
+    check('usedNonces 1 and no log found: "Delivered on Base Sepolia", the engine’s sentence (the mint read from usedNonces; the receiving transaction not found in the blocks searched), final, no Mint',
+      st.state === 'delivered' && st.onChain?.nonceUsed === true && st.destinationTxHash === undefined &&
+        bridgeStatusHeading(st, 'Base Sepolia', CCTP_V2_PROVIDER_ID) === 'Delivered on Base Sepolia' &&
+        bridgeStatusSentence(now) === `Delivered: Circle's MessageTransmitterV2 on the receiving network records this transfer's message (nonce ${LIVE_NONCE}) as used, which happens only when a receiveMessage carrying it succeeds, so the USDC was minted to ${A1}. The receiving transaction was not found in the blocks this wallet searched (blocks ${baseStart} to ${BASE_HEAD_NOW}, from 2026-10-26 12:13 UTC to 2026-10-27 03:16 UTC).` &&
+        bridgeTransferFinal(now) && bridgeMintCall(now) === null && s?.fromBlock === baseStart && s.bounded === false,
+      bridgeStatusSentence(now));
+    const final = JSON.parse(store.map.get(BRIDGE_TRANSFERS_KEY)).records[0].final;
+    check('…stored final with no receiving transaction (the panel then shows no "Receiving transaction" row)', final?.state === 'delivered' && final.destinationTxHash === null);
+    const firstBaseLogs = chains.get(BASE).calls.filter((c) => c.method === 'eth_getLogs');
+    check('…searched from Base Sepolia’s block at the burn’s time less 10 minutes, in 9,000-block windows, never from the record’s receiving head',
+      firstBaseLogs.length >= 30 && BigInt(firstBaseLogs[0].params[0].fromBlock) === baseStart && BigInt(firstBaseLogs[0].params[0].toBlock) === baseStart + 8_999n,
+      `${firstBaseLogs.length} ${firstBaseLogs[0]?.params[0].fromBlock}`);
+    const numbered = chains.get(BASE).calls.filter((c) => c.method === 'eth_getBlockByNumber' && c.params[0] !== 'latest').length;
+    check('…the block search took a handful of numbered block reads on Base Sepolia (walking back from the head, never from block 0)', numbered <= 12, String(numbered));
+  }
+  // (3) usedNonces 1 and the mint 200,000 blocks after the burn: delivered with the transaction.
+  setLive();
+  chains.get(BASE).usedNonces.add(LIVE_NONCE);
+  const lateMint = baseStart + 200_000n;
+  chains.get(BASE).logs.push(
+    cctpLog(MT, 'MessageReceived', [A1, 3, LIVE_NONCE, pad(TM), 2000, '0x'], { transactionHash: LIVE_MINT_TX, blockNumber: ethers.toQuantity(lateMint) }),
+    cctpLog(TM, 'MintAndWithdraw', [A1, USDC_AMOUNT, CCTP_V2_TESTNET_USDC[BASE], 0n], { transactionHash: LIVE_MINT_TX, blockNumber: ethers.toQuantity(lateMint) }),
+  );
+  {
+    const { rec: r } = await loadLive();
+    const st = await trackBridgeTransfer(r, readersFor(BASE));
+    check('usedNonces 1 and the mint 200,000 blocks after the burn’s time (past the old cap): delivered with the receiving transaction and amount',
+      st.state === 'delivered' && st.destinationTxHash === LIVE_MINT_TX && st.onChain?.amountReceived === USDC_AMOUNT && st.onChain.nonceUsed === true, st.detail);
+    const asked = chains.get(BASE).calls.filter((c) => c.method === 'eth_getLogs');
+    const last = asked[asked.length - 1].params[0];
+    check('…the MessageReceived search stopped at its window, and MintAndWithdraw was asked in the mint’s block only',
+      same(last.address, TM) && BigInt(last.fromBlock) === lateMint && BigInt(last.toBlock) === lateMint && asked.length < 30, String(asked.length));
+  }
+  // (4) The delivered rule: a MintAndWithdraw to another recipient (a node ignoring the topic filters) is not this delivery.
+  setLive();
+  chains.get(BASE).usedNonces.add(LIVE_NONCE);
+  chains.get(BASE).sloppyLogs = true;
+  chains.get(BASE).logs.push(
+    cctpLog(MT, 'MessageReceived', [A1, 3, LIVE_NONCE, pad(TM), 2000, '0x'], { transactionHash: LIVE_MINT_TX, blockNumber: ethers.toQuantity(lateMint) }),
+    cctpLog(TM, 'MintAndWithdraw', [KERNEL_ACCOUNT_0, USDC_AMOUNT, CCTP_V2_TESTNET_USDC[BASE], 0n], { transactionHash: LIVE_MINT_TX, blockNumber: ethers.toQuantity(lateMint) }),
+  );
+  {
+    const { rec: r } = await loadLive();
+    const st = await trackBridgeTransfer(r, readersFor(BASE));
+    check('the delivered rule still refuses a mint to another recipient (usedNonces 1): "Not known yet", no mint offered',
+      st.state === 'unknown' && bridgeStatusHeading(st, 'Base Sepolia', CCTP_V2_PROVIDER_ID) === 'Not known yet' && st.destinationCalls === undefined && /do not match this transfer/.test(st.detail), st.detail);
+  }
+  // (5) This wallet's refusals are shown whole; node errors keep their first sentence.
+  check('a BridgeRefusal of two sentences is kept whole as the check error (was cut to its first sentence by sanitizeEndpointMessage)',
+    bridgeCheckErrorText(new BridgeRefusal(BRIDGE_LOG_TOO_OLD_CCTP)) === BRIDGE_LOG_TOO_OLD_CCTP &&
+      /If the USDC was never minted, anyone can still send the mint with Circle’s attested message\.$/.test(bridgeCheckErrorText(new BridgeRefusal(BRIDGE_LOG_TOO_OLD_CCTP))));
+  const gate = Object.assign(new Error('Bridging is for test networks. Nothing was sent.'), { name: 'FeatureNotAllowedError' });
+  check('…as is the readiness gate’s refusal; a node’s error keeps its first sentence and loses its link; an empty one reads "No details were given."',
+    bridgeCheckErrorText(gate) === 'Bridging is for test networks. Nothing was sent.' &&
+      bridgeCheckErrorText(new Error('RPC error -32000: header not found. Try later at https://example.org/x')) === 'JSON-RPC error -32000: header not found.' &&
+      bridgeCheckErrorText(new BridgeRefusal('')) === 'No details were given.');
+  check('…and the panel line carries the whole refusal', bridgeStatusSentence({ status: null, checkError: bridgeCheckErrorText(new BridgeRefusal(BRIDGE_LOG_TOO_OLD_CCTP)), destinationLabel: 'Base Sepolia' }) ===
+    `The transfer could not be checked just now: ${BRIDGE_LOG_TOO_OLD_CCTP}`);
+  const screenSrc = source('src/screens/BridgeScreen.tsx');
+  const checkFn = screenSrc.slice(screenSrc.indexOf('async function checkBridgeRecord('), screenSrc.indexOf('function useBridgeAaBundle('));
+  check('the screen stores bridgeCheckErrorText(e) as the check error and no longer passes it through sanitizeEndpointMessage',
+    /checkError: bridgeCheckErrorText\(e\)/.test(checkFn) && !/sanitizeEndpointMessage/.test(checkFn));
+  // (6) Stargate: nothing within the week searched → the span stated, Scan beside it; the next poll reuses the settled answers.
+  resetChains();
+  await resetBridgeTransfers();
+  chains.get(OP).head = 50_115_500n;
+  const lzPlan = await quoteBridge(quoteRequest());
+  const lzRec = recordBridgeTransfer(lzPlan, { sourceTxHash: SOURCE_TX, userOpHash: null, sentAt: 1_792_042_078_000 });
+  chains.get(SEPOLIA).head = 11_917_700n;
+  chains.get(SEPOLIA).receipts.set(SOURCE_TX, { status: '0x1', blockNumber: ethers.toQuantity(11_917_629n), logs: [oftSentLog(SEPOLIA, OP), packetSentLog(SEPOLIA, OP)] });
+  chains.get(OP).head = 50_115_500n + (8n * 86_400n) / 2n; // 8 days of 2-second blocks
+  scanAnswer = { status: 200, body: { data: [{ status: { name: 'DELIVERED' }, destination: { tx: { txHash: DELIVERY_TX } } }] } };
+  const lzSt = await trackBridgeTransfer(lzRec, readersFor(SEPOLIA));
+  check('Stargate, nothing found within the week searched: "Not known yet", the span and blocks stated, Scan’s DELIVERED beside it as supporting evidence only, never "too old"',
+    lzSt.state === 'unknown' && bridgeStatusHeading(lzSt, 'OP Sepolia') === 'Not known yet' && lzSt.onChain?.search?.bounded === true &&
+      lzSt.detail === `The message was sent (GUID ${GUID}), but no delivery for it was found in the 168 hours this wallet searched on the receiving network (blocks 50115200 to ${lzSt.onChain.search.toBlock}, from 2026-10-15 05:18 UTC to 2026-10-22 05:18 UTC), which is as far as it searches after the sending transaction, so the wallet cannot tell whether it arrived later. LayerZero Scan reports DELIVERED; the wallet goes by the chains' own events.` &&
+      lzSt.destinationTxHash === undefined && !bridgeTransferFinal({ status: lzSt }),
+    lzSt.detail);
+  const firstPass = chains.get(OP).calls.length;
+  chains.get(OP).calls = [];
+  chains.get(SEPOLIA).calls = [];
+  await trackBridgeTransfer(lzRec, readersFor(SEPOLIA));
+  const opAgain = chains.get(OP).calls;
+  check('…the next 15-second poll asks only for the head: the block search and the settled log windows are reused (the first pass made ' + firstPass + ' requests)',
+    opAgain.filter((c) => c.method === 'eth_getLogs').length === 0 && opAgain.filter((c) => c.method === 'eth_getBlockByNumber' && c.params[0] !== 'latest').length === 0 &&
+      chains.get(SEPOLIA).calls.filter((c) => c.method === 'eth_getBlockByNumber').length === 0,
+    `${opAgain.length}: ${opAgain.map((c) => c.method).join()}`);
+  // (7) The block reader on its own.
+  resetChains();
+  chains.get(BASE).head = BASE_HEAD_NOW;
+  const rb = blockHeaderReader(readersFor(SEPOLIA));
+  const h = await rb({ chainId: BASE, block: 50_079_573n });
+  check('the block reader: number and timestamp from eth_getBlockByNumber, a block past the head refused',
+    h.number === 50_079_573n && h.timestamp === 1_792_937_783n && /did not return block/.test((await rejection(() => rb({ chainId: BASE, block: 10n ** 12n })))?.message ?? ''));
+
+  // Mutants on the real file.
+  // M-a: the usedNonces read removed → a minted transfer with no log found is offered a mint again.
+  setLive();
+  chains.get(BASE).usedNonces.add(LIVE_NONCE);
+  const ma = await bridgeMutant('          readContract: contractReader(scoped),\n', '');
+  await ma.resetBridgeTransfers();
+  {
+    const r = (await (async () => {
+      const store = memStore({ [BRIDGE_TRANSFERS_KEY]: JSON.stringify({ version: 1, records: [liveStored] }) });
+      await ma.loadBridgeTransfers(store);
+      return ma.listBridgeTransfers()[0];
+    })());
+    const st = await ma.trackBridgeTransfer(r, readersFor(BASE));
+    check('MUTANT (the usedNonces read removed) is caught: a minted transfer is not seen as delivered and a mint is offered again', st.state === 'awaiting-destination-action', st.state);
+  }
+  await ma.resetBridgeTransfers();
+  // M-b: the search reverted to a block count (no time-based plan; the reader refuses past its window cap again).
+  setLive();
+  chains.get(BASE).usedNonces.add(LIVE_NONCE);
+  chains.get(BASE).logs.push(
+    cctpLog(MT, 'MessageReceived', [A1, 3, LIVE_NONCE, pad(TM), 2000, '0x'], { transactionHash: LIVE_MINT_TX, blockNumber: ethers.toQuantity(lateMint) }),
+    cctpLog(TM, 'MintAndWithdraw', [A1, USDC_AMOUNT, CCTP_V2_TESTNET_USDC[BASE], 0n], { transactionHash: LIVE_MINT_TX, blockNumber: ethers.toQuantity(lateMint) }),
+  );
+  const mb = await bridgeMutant(
+    '          readBlock: blockHeaderReader(scoped),\n          searchCache,\n        }\n      : {},\n  );',
+    '        }\n      : {},\n  );',
+    '    let start = head > BRIDGE_LOG_FALLBACK_BLOCKS ? head - BRIDGE_LOG_FALLBACK_BLOCKS : 0n;',
+    '    if (head > 9_000n * 12n) throw new BridgeRefusal(BRIDGE_LOG_TOO_OLD_CCTP);\n    let start = 0n;',
+  );
+  await mb.resetBridgeTransfers();
+  {
+    const store = memStore({ [BRIDGE_TRANSFERS_KEY]: JSON.stringify({ version: 1, records: [liveStored] }) });
+    await mb.loadBridgeTransfers(store);
+    const r = mb.listBridgeTransfers()[0];
+    const st = await mb.trackBridgeTransfer(r, readersFor(BASE));
+    check('MUTANT (the search reverted to a block count) is caught: the late mint’s transaction is not found (the old reader refuses the search as too old; usedNonces still says delivered)',
+      st.state === 'delivered' && st.destinationTxHash === undefined && /was not looked up/.test(st.detail), `${st.state} ${st.detail}`);
+    await mb.resetBridgeTransfers();
+  }
+  // M-c: the sanitiser restored on the refusal.
+  const mc = await bridgeMutant(
+    "  if (e instanceof BridgeRefusal || name === 'BridgeRefusal' || name === 'FeatureNotAllowedError') {\n    return message.trim() === '' ? 'No details were given.' : message;\n  }",
+    '',
+  );
+  check('MUTANT (the refusal passed through sanitizeEndpointMessage again) is caught: its second sentence is dropped',
+    mc.bridgeCheckErrorText(new mc.BridgeRefusal(BRIDGE_LOG_TOO_OLD_CCTP)) !== BRIDGE_LOG_TOO_OLD_CCTP &&
+      !/If the USDC was never minted/.test(mc.bridgeCheckErrorText(new mc.BridgeRefusal(BRIDGE_LOG_TOO_OLD_CCTP))));
+  await resetBridgeTransfers();
+  resetChains();
 }
 
 console.log(`\ncheck-bridge: ${passed} passed, ${failed} failed (${mutantCount} mutants)`);

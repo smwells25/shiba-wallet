@@ -106,6 +106,7 @@ import {
   subscribeBridgeTransfers,
   upgradedAccountRecipientNote,
   trackBridgeTransfer,
+  bridgeCheckErrorText,
   updateBridgeTransfer,
   type BridgeAssetChoice,
   type BridgeOffer,
@@ -160,8 +161,9 @@ async function checkBridgeRecord(
     // The status, and a CCTP transfer's checked attested message, so a restart can offer the mint again.
     updateBridgeTransfer(record.id, trackedPatch(record, status, Date.now()));
   } catch (e) {
-    const text = sanitizeEndpointMessage(errorText(e));
-    updateBridgeTransfer(record.id, { checkedAt: Date.now(), checkError: text === '' ? 'No details were given.' : text });
+    // This wallet's own refusals are shown whole; only node and endpoint
+    // errors are cut to their first sentence (pass p23-cctp-recheck).
+    updateBridgeTransfer(record.id, { checkedAt: Date.now(), checkError: bridgeCheckErrorText(e) });
   } finally {
     inFlight.delete(record.id);
     busy(record.id, false);
