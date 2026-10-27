@@ -103,6 +103,16 @@ import * as PNS from '../src/wallet/pin-native-scrypt.ts';
 import * as EVMC from '../src/config/evm-chain.ts';
 import { PHRASE_UNREADABLE_MESSAGE } from '../src/wallet/storage.ts';
 
+// The golden cases below replay dates through config/dates.ts
+// localDateLabel, which labels a timestamp in the LOCAL calendar by design, so
+// the recorded English depends on the machine's time zone (timestamp 0 is
+// 1969-12-31 in America/New_York and 1970-01-01 in UTC, where CI runs). The
+// check therefore pins UTC before any date is formatted, and the fixture is
+// recorded under TZ=UTC. Node re-reads the zone when process.env.TZ is
+// assigned, and nothing imported above formats a date at import time; the
+// pin check beside the golden check proves both.
+process.env.TZ = 'UTC';
+
 let passed = 0;
 let failed = 0;
 function check(name, ok, detail = '') {
@@ -1254,6 +1264,9 @@ const FOURTH_MODULES = Object.fromEntries(await Promise.all(FOURTH_MODULE_FILES.
   check('…exact English for one entry of each module (token-gas, aa, send, custom networks, the custom-network note, phrase protection, imported keys, watch-only, the accounts\' backup hint, staking, sessions, subscriptions, recurring, DCA, the PIN measurement and its hashing path)',
     Object.entries(EXACT4).every(([id, v]) => en[id] === v), Object.entries(EXACT4).filter(([id, v]) => en[id] !== v).map(([id]) => id).join(', '));
   // The golden cases: the a9998cc English of every migrated function, branch by branch.
+  check('the golden replay runs in UTC whatever the machine\'s zone (process.env.TZ pinned before any date is formatted; timestamp 0 labels as 1970-01-01), so the recorded dates hold on CI and on this Mac alike',
+    process.env.TZ === 'UTC' && new Date(0).getFullYear() === 1970 && new Date(0).getDate() === 1
+      && GOLDEN.cases.some((c) => c.module === 'wallet/phrase-protection-copy.ts' && c.fn === 'protectionDate' && goldenSer(c.args) === '[0]' && c.out === '1970-01-01'));
   const perModule = {};
   for (const c of GOLDEN.cases) perModule[c.module] = (perModule[c.module] ?? 0) + 1;
   const goldenBad = await goldenProblems(GOLDEN.cases, FOURTH_MODULES);
