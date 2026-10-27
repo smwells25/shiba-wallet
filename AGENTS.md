@@ -14418,3 +14418,199 @@ to the Chairperson at once.
       reviewer. UNVERIFIED (device): the Spanish tag and note length on
       Settings → Network endpoints; the row re-rendering on a language
       change.
+- [x] EMULATOR PASS p23-handle — THE WALLET HANDLE PROVEN LIVE THROUGH THE
+      APP: TWO ENS NAMES REGISTERED ON SEPOLIA, ONE FROM THE REGULAR ACCOUNT
+      AND ONE FROM THE SMART ACCOUNT, PLUS THE SUB-NAME (2026-10-26 ~03:30 –
+      2026-10-27 12:20 UTC; the driver was cut once by the Opus session limit
+      after step 10's countdown read and resumed at 11:52 UTC with the state
+      re-established — adb reverse in place, the app in front and unlocked,
+      TalkBack still on, both balances re-read equal on two RPCs; Expo Go on
+      emulator 37.1.11 with ANGLE, Metro moved to wt-app at 2e93a0d with the
+      engine built inside it (pid 94961 on 8081); no repo files edited; 23
+      device prompts, every one expected and every title read from the
+      BiometricPrompt window; every hash status 0x1 with the same block hashes
+      on publicnode and 0xrpc.io; the dev EOA and shibawalletdemo.eth untouched;
+      the commitment secrets never displayed or written anywhere; screen
+      protection OFF; the report step by step in the scratchpad
+      p23-handle-pass/REPORT.md with redacted dumps and TalkBack transcripts).
+      THE FORM (steps 1–2): Home on Ethereum Sepolia shows "Wallet handle
+      (ENS)" (hint "Registers an ENS name for this account on Ethereum
+      Sepolia"); the form in order — the intro, the public-data note, the term
+      (28 days plus a 28-day grace period), the fee-in-USDC note, the steps,
+      the redeploy WarningBox, "Who owns the name" with "✓ Regular account" /
+      "Smart account", the caption "Name to register (.eth)" with "For example
+      alice"; "shibawalletdemo" → "shibawalletdemo.eth is not available: it is
+      registered, reserved or still in its grace period. Choose another name.";
+      "ab" → "A handle needs at least 3 characters; shorter .eth names cannot
+      be registered on Sepolia."; the quote for qzv7hk2wmt → "qzv7hk2wmt.eth is
+      available.", "Registration fee: 0.613701 USDC for 28 days (the
+      registrar's figure, read just now; the wallet computed the same).",
+      "Account 1 0x772e…F44F holds 40.079603 USDC.", the registrar 0xf633…a3d3
+      and USDC 0x1c7D…7238 marked pinned, "Your ENS resolver does not exist
+      yet; Prepare creates it at 0xeB40B4c323A135e80cb0072eB75BB11d980322Ee"
+      (= the engine's prediction recomputed off-device), the 3-transaction and
+      secret notes. L1 qzv7hk2wmt.eth FROM THE REGULAR ACCOUNT (steps 3–6),
+      each transaction quoted only after the previous one was included:
+      prepare 1 of 3 "Approve preparing qzv7hk2wmt.eth (transaction 1 of 3)" —
+      deployProxy on the VerifiableFactory creating the resolver 0xeB40…22Ee,
+      tx 0x2827c0325a0d7679dad6c4234f5c736af0951e29c78dd9f6c25531de6e4bbec8,
+      block 12002498, 1,133,927 gas at 17 wei; 2 of 3 — USDC approve to the
+      registrar for EXACTLY 613,701, tx
+      0x5ecde720bc4077f5953cfa4415d9744b3cff5d78ddac0e07b640183bda0d6941,
+      block 12002505, 137,757 gas; 3 of 3 — commit, tx
+      0x241c78c5c705887d45ff3ac29839767eb580fc034acdb404bbf6193d93806e6f,
+      block 12002511 (03:43:24 UTC), 127,458 gas; a force-stop and relaunch
+      after readiness (prompt "Unlock Shiba Wallet") brought the card back as
+      "qzv7hk2wmt.eth can be registered now, until 2026-10-28 03:43:24 UTC."
+      with Register / Check now / Forget this registration — THE RECORD AND
+      ITS SECRET SURVIVE A KILL; register "Approve registering qzv7hk2wmt.eth"
+      — tx 0xbdec3744f5d697e05625f012cd49ccad263050d7f16c35370788f82de8fdb249,
+      block 12002537, 680,807 gas at 18 wei, the USDC Transfer to the
+      beneficiary 0x84D3…39D3 of EXACTLY 613,701; setName "Approve showing
+      qzv7hk2wmt.eth for this address" — tx
+      0x04228b73a8e950511983e233072f5596f89bec6493021343ebf361c961734f57,
+      block 12002544, 372,985 gas; on both RPCs the name is REGISTERED to
+      Account 1 (expiry 1795492140 = 28 days), forward resolution matches and
+      Account 1's primary name is qzv7hk2wmt.eth; the done view "Registered ✓
+      / qzv7hk2wmt.eth now belongs to 0x772e… and is the name shown for it…";
+      Home and Receive show "ENS name: qzv7hk2wmt.eth" (Home's spoken label
+      "Ethereum Sepolia, 0x772eAA1d…C680F44F, ENS name: qzv7hk2wmt.eth"), still
+      there after a force-stop, relaunch and unlock. THE SUB-NAME (step 8):
+      "Approve pointing smart.qzv7hk2wmt.eth to your smart account" — setAddress
+      on Account 1's resolver, tx
+      0xc838a4024dd15477e7c01bd054ebd4612f56fcfbcd82ee9ba371572218126647,
+      block 12002573, 273,092 gas; smart.qzv7hk2wmt.eth →
+      0xD31c2C54F21684eE2026a6C41e391130BdEeD8FA on both RPCs. L2
+      xk9fdq4rvz.eth FROM THE SMART ACCOUNT (step 7) — ZEROD​EV'S BUNDLER
+      ACCEPTED THE PREPARE BATCH FROM THE KERNEL: the quote predicted the
+      resolver 0x8112aEB3106aBd749fBdE78b1108F33d4a6d04F7 and said the 3 calls
+      go in one operation; "Approve preparing xk9fdq4rvz.eth from your smart
+      account" — userOp
+      0xceadc66cecbb267ad1acf7b2c37451d2ac397354c4c9452a0f8fdb6215cf17c7,
+      bundle tx
+      0x77542eef1b956ebc72758a68d1637fc5c44321d96eca99a3811c87eccab1c211,
+      block 12002594, Deposited = the displayed max fee, the Approval EXACTLY
+      613,701, UserOperationEvent nonce 39 success, actualGasCost
+      3,726,572,816,122,065; "Approve registering xk9fdq4rvz.eth from your
+      smart account" — register and setName in ONE operation, userOp
+      0x049100ec447151026a2de0711dc627673b9e6ad87f0afa10b563fafad8995333,
+      bundle tx
+      0xf4367e78d4fa901f3642620afa0fc1b1ef1319c92f42e30eaf09c364beec8d43,
+      block 12002628, the USDC Transfer EXACTLY 613,701, nonce 40 success,
+      actualGasCost 3,002,923,742,700,693; on both RPCs the name is REGISTERED
+      to the Kernel (expiry 1795493244) and the Kernel's primary name is
+      xk9fdq4rvz.eth. THE WAIT (step 4, PARTIAL): L3 pw3njx8tqy's countdown
+      read "Registration prepared: pw3njx8tqy.eth can be registered from block
+      time 2026-10-27 04:15:12 UTC (about 72 s from now) until 2026-10-28
+      04:14:00 UTC." (readyAt = the commit block's time + 60 s + the 12 s
+      margin) and counted 72 → 60 → 48 → 36 → 12 s then "…can be registered
+      now…" — it moves in 12-second block steps behind the phone clock, as
+      designed; Register tapped 17 s after readiness opened the review with
+      "Pre-flight passed: the registrar accepts Register in the latest block."
+      (the CommitmentTooNew "reading it again" branch was not triggered); L4
+      mj4rbx7vqz force-stopped 53 s before readiness and relaunched (the lock
+      in 50 s, unlock at 04:24:28) came back "can be registered now, until
+      2026-10-28 04:23:12 UTC" — the record survived, but no countdown was
+      visible after the resume because the relaunch and unlock (about 80 s)
+      outlasted the 72-second wait (the partial). FORGET AND THE ZERO APPROVAL
+      (step 9, twice): L3's three prepare transactions (setAddress
+      0x222194d4…21d3 block 12002650; approve 0xded4741c…8391 block 12002656,
+      exactly 613,701; commit 0xdf65fe75…cd32 block 12002661) and L4's two
+      (setAddress 0x04ce4548…7de7 block 12002692; commit 0x9fb00eb5…95fb block
+      12002706 — THE APPROVE STEP WAS SKIPPED because the existing allowance
+      already covered the fee); the Forget dialog exactly "The prepared
+      registration of <name> and its secret are deleted from this phone.
+      Nothing on-chain changes: the commitment expires by itself, and an
+      approval of 0.613701 USDC to the ENS registrar stays until it is used or
+      removed. Remove it first with "Remove the USDC approval" if you will not
+      register again." (CANCEL / FORGET); afterwards "The ENS registrar may
+      still take 0.613701 USDC from Account 1 … (read just now)." with "Remove
+      the USDC approval"; the first zero approval "Approve removing the USDC
+      approval for the ENS registrar" — tx
+      0x4c0cb441723fc3470cd90fc2b0eb529bfae412b45207bf4b02c141ff87f49f6d,
+      block 12002729, value 0, allowance 0 on both RPCs; L5 zt6wcn3hkq
+      prepared for the TalkBack countdown (setAddress 0xd67068ee…9da8 block
+      12002757; approve 0x4ad3210f…ff6ac block 12002762; commit
+      0xbb547c9e…c681f block 12002766) and forgotten through TalkBack; the
+      second zero approval — tx
+      0x69669e3f56dfc0c64c805d0179ed2a5ed2d7c6b743f5c54f7f63756dedf8da4b,
+      block 12005001, nonce 53, 31,841 gas at 18 wei, allowance 0. Side
+      effect, harmless: zt6wcn3hkq, pw3njx8tqy and mj4rbx7vqz (status 0 on
+      both RPCs, never registered) carry address records on Account 1's
+      resolver; their commitments expire after a day. THE LINK PER ACCOUNT
+      KIND AND NETWORK (step 1, 0 prompts): Multisig 2 — Activity / NFTs /
+      Approvals / Multisig only; a watched 0xd8dA…6045 ("Watched 9", removed
+      afterwards) — "Send with an off-line signer" / Activity / NFTs /
+      Approvals, no handle link; Base Sepolia and mainnet — no link and no ENS
+      name line; the mainnet readiness row exact: "Wallet handles (ENS names)
+      — Test networks only — A wallet handle is an ENS name registered on
+      Ethereum Sepolia's ENSv2 test contracts, which ENS has redeployed before
+      and which single keys can change there, so a name may not survive.
+      ENSv2 has not launched on Ethereum mainnet, where names still go
+      through contracts this wallet does not use. This wallet registers
+      handles only on Ethereum Sepolia, paid in test USDC."; the screen's own
+      refusals are unreachable through the UI (the Home link is the only way
+      in). TALKBACK (step 10) — PASS with minors: the form's title, banner,
+      each intro paragraph as one stop, the redeploy box, "Who owns the name.
+      Heading", "selected. Regular account. Button", the caption then "For
+      example alice. Edit box for Name to register (.eth)", "A sub-name for
+      the smart account. Heading"; the card in order (heading, "Owner of the
+      name", the owner address, the ready sentence, the three buttons); the
+      Forget dialog's body read first (uiautomator drops it for its straight
+      quotes); the zero-approval review ("Owner of the name: Account 1,
+      0x772e…F44F" short, "Approval revoked: 0xf633…a3d3 may no longer spend
+      USDC", "Risk checks. Heading", "Approve and send. Button"); the done
+      view; Home's row with the name. TalkBack incident, not a wallet defect:
+      after a biometric prompt TalkBack logged off / on, opened its own
+      notification-permission request and showed "Android Accessibility Suite
+      isn't responding" twice; the wallet lost focus long enough to auto-lock
+      (prompt "Unlock Shiba Wallet" at 12:07:03); recovered by toggling
+      TalkBack and closing the dialog. FUNDS, both RPCs to the wei: Account 1
+      1,746,233,893,200,609 → 1,746,233,818,524,128 wei (−74,676,481 = exactly
+      the 16 transaction fees; nonce 38 → 54), USDC 40,079,603 → 39,465,902
+      (one registration), allowance 0; the Kernel 20,320,832,019,090,953 →
+      13,322,220,431,442,338 wei (the two deposit top-ups), deposit
+      219,061,927,541,244 → 488,176,956,367,101, USDC 4,912,454 → 4,298,753,
+      allowance 0 (about 0.0067 test ETH of smart-account fees at roughly 2.09
+      gwei); the dev EOA untouched. NAMES NOW HELD: qzv7hk2wmt.eth (Account
+      1, its primary name), xk9fdq4rvz.eth (the Kernel, its primary name),
+      smart.qzv7hk2wmt.eth → the Kernel. FEATURE 75 is proven live through the
+      app (the tally at the item-9 refresh). FINDINGS (fix slice to dispatch):
+      (1) the sub-name section does not appear right after a registration
+      finishes — the name is read only on focus and the cache is cleared then
+      without a re-read, so the screen must be left and reopened; (2) after
+      "Check" and after each step's inclusion the screen scrolls back to the
+      top, leaving the answer or the waiting card below the fold; (3) one
+      step's inclusion was detected slowly (about 1 min 45 s for L4's
+      transaction 1); COPY — (4) each transaction's call list is numbered "1."
+      even for transaction 2 or 3 of 3; (5) the risk card is generic for ENS's
+      pinned factory and registrar, for the user's own resolver ("first time
+      sending to it") and for USDC on the zero-approval review; (6) the
+      register preview prints the 75–78-digit NFT id; (7) the smart-account
+      register review lacks the regular account's "Pre-flight passed" line;
+      (8) the Forget dialog says "Remove it first" while the remove button
+      appears only after Forget; (9) the zero-approval Sent view repeats the
+      instruction wording instead of stating the result; (10) "Add the
+      sub-name" is still offered when the sub-name already points to the
+      smart account; ACCESSIBILITY — (11) the countdown's polite live region
+      is re-announced on every 12-second block step, interrupting navigation;
+      (12) full 42-character addresses spoken in the sub-name intro, the card,
+      the call lines and the done view, and the transaction id read out as 64
+      hex digits; (13) the sub-name field speaks its value and placeholder as
+      the same word twice; (14) the Forget dialog's title is not a stop.
+      DRIVING NOTES: a cold relaunch plus unlock (50–80 s) outlasts a
+      72-second wait, so the kill-during-wait countdown needs a longer window
+      or a quicker relaunch; uiautomator dumps took 15–50 s under load; one
+      blind batch of slow Settings swipes overshot to the Danger zone (nothing
+      tapped there; the standing rule stands). UNVERIFIED: the countdown
+      visible after a kill (the partial); the CommitmentTooNew re-read branch;
+      the screen's refusals; the USDC shortfall sentence; dark mode; iOS. END
+      STATE: Home, Ethereum Sepolia, Account 1 showing "ENS name:
+      qzv7hk2wmt.eth", light mode, protection OFF (screencap 250,935 bytes, no
+      SECURE window), no watched address, no pending handle registration,
+      TalkBack OFF (level 6 written in place; TalkBack rewrote its own prefs
+      file while on — inode 74374 → 74387, SELinux context kept), IME
+      ADBKeyboard, /data/local/tmp and /sdcard/Download clean, Metro 94961 on
+      8081 still at 2e93a0d (the next pass moves wt-app to HEAD and rebuilds
+      the engine inside it), qemu 36709 and caffeinate 36943 running with the
+      window in place.
