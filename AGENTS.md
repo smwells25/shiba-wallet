@@ -14352,3 +14352,69 @@ to the Chairperson at once.
       "Mint the bridged USDC on Base Sepolia") → usedNonces 0 → 1, Base
       USDC 1,500,000 → 2,500,000, "Delivered on Base Sepolia"; the switch
       button's label and hint under TalkBack; the attested-state idle test.
+- [x] Item 8, the fifth localisation pass — THE ENDPOINT STATUS TAG AND THE
+      FALLBACK NOTES (commit e7a0402; 8 files, +1,445 / −29, incl. the
+      new golden fixture app/scripts/fixtures/i18n-fifth-pass-golden.json
+      (72 cases); check-i18n 159 (was 142; mutants 28 → 34),
+      check-rpc-fallback 181 (178); offline runner ALL GREEN in the CTO's
+      isolated worktree on HEAD 337c60c with --skip-bundle: engine 1,290,
+      app 10,632 across 65 suites, lint 0/0, tsc clean; checkout 0 /
+      apply 0 / 8 files; the staged patch id equals both the verified
+      tree's and the agent's stated 13c5ddcb…48023; the scan clean; the
+      agent was cut once by the Opus limit and resumed from its worktree's
+      diff; the CTO read the endpoint-probe and Settings hunks; not seen
+      on a device). THE SLICE the fourth pass reverted (the log-window fix
+      owned endpoint-probe.ts then; it landed as 954aca4): app/src/config/
+      endpoint-probe.ts gains one import — t from ../i18n/index.ts, which
+      is pure, so the module still loads under Node's type stripping and
+      the checks read English — and exactly two hunks of sentence
+      construction, describeDefaultChoice and describeDefaultFallbackNote
+      (their branch logic unchanged; isEndpointFailure and
+      sanitizeEndpointMessage byte-identical to 337c60c; nothing else in
+      the file moved); SettingsScreen.tsx's one tag line reads
+      t('settings.endpoint.tag.custom') / t('settings.endpoint.tag.default').
+      IDS: 8 under "Phase 23 item 8 (fifth pass)" (the record said the
+      fourth pass dropped 7; the Settings "custom" tag came too) —
+      settings.endpoint.tag.default ("predeterminado") and .custom
+      ("personalizado") as literals, .tag.choice and .tag.choiceBehind as
+      composites (the old code built both from one template with a
+      ", behind the chain" suffix, so their static parts fail the template
+      rule), settings.endpoint.fallback.allStale / .noneAnswered /
+      .primaryStale / .primaryUnreachable as templates word for word; the
+      Spanish keeps "punto de conexión" and "Editar" as the earlier
+      Settings entries do; the fixture's 8 entries marked base 337c60c
+      with file and line, no existing entry changed. BYTE IDENTITY PROVEN:
+      the 337c60c module copied before any edit and called beside the
+      migrated one over every branch (513 calls, 0 differences — url null,
+      an index below 0, stale true / false / absent, ten URLs incl. a host
+      with braces and "$&", an http URL, a wss URL and a non-URL; every
+      combination of the candidate list, primary unreachable, healthy,
+      stale, url and failure kind), 72 golden cases kept and replayed by
+      check-i18n through the fourth pass's golden mechanism (the TZ pin
+      untouched — these functions format no dates); the template parts
+      asserted against the base source, the composites assembled in
+      check-i18n's old-text map. THE NEW SECTION (17 checks): the ids by
+      kind with Spanish for each, the earlier passes untouched (204 / 474
+      / 690 / 336), exact English for four entries, the golden replay and
+      branch coverage, hosts passing through untouched, no English left in
+      the two function bodies, the exact Settings tag line with the old
+      line gone, Spanish output with the host unchanged and no placeholder
+      left. PINS: check-rpc-fallback, check-tokens and check-balances call
+      the functions and compare exact English, so none needed a change and
+      none was loosened; check-rpc-fallback gained three (the all-stale
+      and all-down notes compared exactly; in Spanish the tag and note
+      answer in Spanish with the host unchanged, then English again);
+      check-devmode has no pin on these lines. MUTANTS: six in-suite (a
+      Spanish line missing, an English entry changed, a golden case one
+      character off, the old Settings tag line restored, the old 'default'
+      literal restored in describeDefaultChoice, an unused id) and three
+      by hand on the real files, restored and cmp-equal (the two tag ids
+      swapped: check-i18n 4 and check-rpc-fallback 11 failures; the old
+      'custom' literal restored: 1; one word changed in the all-stale note:
+      17 and 2), all caught. STAYS ENGLISH: endpoint URLs, hosts and
+      numbers (values), the probe failure diagnostics; the fourth-pass
+      block header comment in en.ts / es.ts still lists "the endpoint tags
+      and notes" (a comment; left). INPUT still needed: a native Spanish
+      reviewer. UNVERIFIED (device): the Spanish tag and note length on
+      Settings → Network endpoints; the row re-rendering on a language
+      change.
