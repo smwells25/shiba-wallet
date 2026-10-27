@@ -313,10 +313,9 @@ export const TOKEN_GAS_CHOICE_HINT =
 
 /** Confirm: the fee line. `max` is the exact worst case already formatted. */
 export function tokenGasFeeSentence(max: string, symbol = TOKEN_GAS_SYMBOL): string {
-  return (
-    `Network fee paid in ${symbol}: up to ${max} ${symbol}; the unused part is refunded in the same ` +
-    'transaction; no ETH is needed for the fee.'
-  );
+  // Through the string table (phase 23 item 8, fourth pass); in English
+  // exactly the sentence this function built before.
+  return t('tokenGas.circle.fee', { symbol, max });
 }
 
 /**
@@ -332,7 +331,7 @@ export function tokenGasFeeSentence(max: string, symbol = TOKEN_GAS_SYMBOL): str
  * approved.
  */
 export function tokenGasGrantSentence(max: string, symbol = TOKEN_GAS_SYMBOL): string {
-  return `A one-time permit letting Circle’s paymaster take at most ${max} ${symbol}. The permit is used up by this operation, so normally nothing stays approved.`;
+  return t('tokenGas.circle.grant', { max, symbol });
 }
 
 /** Confirm: the rate and its source. `price` = base units of the token per 1 ETH (1e18 wei). */
@@ -342,7 +341,7 @@ export function tokenGasRateSentence(
   nativeSymbol: string,
   symbol = TOKEN_GAS_SYMBOL,
 ): string {
-  return `1 ${nativeSymbol} = ${formatUnits(price, decimals, decimals)} ${symbol}, from the paymaster’s on-chain oracle.`;
+  return t('tokenGas.circle.rate', { native: nativeSymbol, price: formatUnits(price, decimals, decimals), symbol });
 }
 
 /** Base Sepolia only: the test oracle is a fixed price (token-paymaster.ts lines 73-76). */
@@ -350,18 +349,18 @@ export const TOKEN_GAS_FIXED_ORACLE_NOTE =
   'On Base Sepolia the paymaster’s test oracle returns a fixed price; it is not a market rate.';
 
 export function tokenGasOracleNote(chainCaip2: string): string | null {
-  if (chainCaip2 === 'eip155:84532') return TOKEN_GAS_FIXED_ORACLE_NOTE;
+  if (chainCaip2 === 'eip155:84532') return t('tokenGas.oracle.baseSepolia');
   // Arbitrum Sepolia's oracle (0x66B5…bf52) is fixed too: latestRoundData()
   // answered 3,000.00000000 with roundId 1 and updatedAt 2 on 2026-10-04.
   if (chainCaip2 === 'eip155:421614') {
-    return 'On Arbitrum Sepolia the paymaster’s test oracle returns a fixed price; it is not a market rate.';
+    return t('tokenGas.oracle.arbitrumSepolia');
   }
   return null;
 }
 
 /** Confirm: the fee spread as the paymaster reports it (basis points, exact). */
 export function tokenGasSpreadText(bips: bigint): string {
-  return `${formatUnits(bips, 2, 2)}% (${bips} basis points), read from the paymaster`;
+  return t('tokenGas.circle.spread', { percent: formatUnits(bips, 2, 2), bips: bips.toString() });
 }
 
 export const TOKEN_GAS_SPREAD_NOTE =
@@ -371,11 +370,11 @@ export const TOKEN_GAS_SPREAD_NOTE =
 /** Confirm: how the worst case was computed. */
 export function tokenGasWorstCaseHint(tokenGas: AaTokenGas, maxFeePerGas: bigint): string {
   const gas = tokenGas.estimationGasCeiling + tokenGas.paymasterVerificationGasLimit + tokenGas.paymasterPostOpGasLimit;
-  return (
-    `Worst case at ${formatUnits(maxFeePerGas, 9, 9)} gwei max fee for up to ${gas} gas, plus the ` +
-    `paymaster’s fixed ${tokenGas.additionalGasCharge} gas, converted at the rate below. The exact gas ` +
-    'is estimated after you approve, and the charge can never exceed this amount.'
-  );
+  return t('tokenGas.circle.worstCase', {
+    gwei: formatUnits(maxFeePerGas, 9, 9),
+    gas: gas.toString(),
+    fixed: tokenGas.additionalGasCharge.toString(),
+  });
 }
 
 /** Confirm: replaces "Bundler gas estimate passed" on the USDC-fee path. */
@@ -398,10 +397,7 @@ export const TOKEN_GAS_REFUSED_TITLE = 'Circle’s paymaster refused the operati
 
 /** Success screen. */
 export function tokenGasChargedSentence(actual: string, max: string, symbol = TOKEN_GAS_SYMBOL): string {
-  return (
-    `Network fee charged: ${actual} ${symbol} (up to ${max} ${symbol} was permitted; the rest was ` +
-    'refunded in the same transaction).'
-  );
+  return t('tokenGas.circle.charged', { actual, symbol, max });
 }
 
 export const TOKEN_GAS_NO_CHARGE_EVENT =
@@ -451,11 +447,7 @@ export function erc7677NeedsBundlerSentence(networkLabel: string, vendor: string
 
 /** Confirm: the fee line's explanation. `max` is the exact worst case already formatted. */
 export function erc7677FeeSentence(max: string, symbol = TOKEN_GAS_SYMBOL, vendor = ERC7677_TOKEN_GAS_VENDOR): string {
-  return (
-    `Network fee paid in ${symbol}: up to ${max} ${symbol}. This operation first approves ${vendor}’s paymaster ` +
-    `for exactly ${max} ${symbol}; after your calls run, it takes the actual fee, which can be less. No ETH is ` +
-    'needed for the fee.'
-  );
+  return t('tokenGas.erc7677.fee', { symbol, max, vendor });
 }
 
 /** Confirm: how the worst case was computed. */
@@ -463,12 +455,13 @@ export function erc7677WorstCaseHint(tokenGas: AaTokenGas, maxFeePerGas: bigint)
   const vendor = tokenGas.erc7677?.vendor ?? ERC7677_TOKEN_GAS_VENDOR;
   const headroom = tokenGas.erc7677?.headroomPercent ?? ERC7677_TOKEN_GAS_HEADROOM_PERCENT;
   const gas = tokenGas.estimationGasCeiling + tokenGas.paymasterVerificationGasLimit + tokenGas.paymasterPostOpGasLimit;
-  return (
-    `Worst case at ${formatUnits(maxFeePerGas, 9, 9)} gwei max fee for the bundler’s padded gas estimate ` +
-    `(${gas} gas), plus the paymaster’s fixed ${tokenGas.additionalGasCharge} gas and the 10% charge on unused ` +
-    `execution gas, converted at the rate below, plus ${headroom}% headroom in case ${vendor}’s rate moves ` +
-    `before the operation is signed. If ${vendor}’s final terms would cost more than this, nothing is signed.`
-  );
+  return t('tokenGas.erc7677.worstCase', {
+    gwei: formatUnits(maxFeePerGas, 9, 9),
+    gas: gas.toString(),
+    fixed: tokenGas.additionalGasCharge.toString(),
+    headroom: String(headroom),
+    vendor,
+  });
 }
 
 /** Confirm: the rate and who sets it. `rate` = token base units per 1 ETH (1e18 wei). */
@@ -479,33 +472,21 @@ export function erc7677RateSentence(
   symbol = TOKEN_GAS_SYMBOL,
   vendor = ERC7677_TOKEN_GAS_VENDOR,
 ): string {
-  return (
-    `1 ${nativeSymbol} = ${formatUnits(rate, decimals, decimals)} ${symbol}, set by ${vendor}’s service and ` +
-    'signed into the operation; it is not read from an on-chain oracle.'
-  );
+  return t('tokenGas.erc7677.rate', { native: nativeSymbol, rate: formatUnits(rate, decimals, decimals), symbol, vendor });
 }
 
 export const ERC7677_MARKUP_LABEL = 'Paymaster markup';
 export const ERC7677_MARKUP_VALUE = 'Included in the rate; not shown as a separate figure';
 export function erc7677MarkupNote(vendor = ERC7677_TOKEN_GAS_VENDOR): string {
-  return (
-    `${vendor} says its fee is built into the exchange rate it returns, and services that resell its paymaster ` +
-    'may add their own (ZeroDev documents a 5% premium on the rate).'
-  );
+  return t('tokenGas.erc7677.markupNote', { vendor });
 }
 
 export function erc7677PermissionedNote(vendor = ERC7677_TOKEN_GAS_VENDOR): string {
-  return (
-    `${vendor}’s paymaster is a permissioned service: its server signs each operation and can decline any of ` +
-    'them. If it declines, nothing is sent.'
-  );
+  return t('tokenGas.erc7677.permissioned', { vendor });
 }
 
 export function erc7677UnstakedNote(networkLabel: string): string {
-  return (
-    `This paymaster is not staked in the EntryPoint on ${networkLabel}, so some bundlers may refuse operations ` +
-    'that use it.'
-  );
+  return t('tokenGas.erc7677.unstaked', { network: networkLabel });
 }
 
 /** Confirm: what the account grants, and what stays approved afterwards. */
@@ -515,29 +496,22 @@ export function erc7677GrantSentence(
   vendor = ERC7677_TOKEN_GAS_VENDOR,
   replaces: string | null = null,
 ): string {
-  return (
-    `This operation approves ${vendor}’s paymaster to take up to ${max} ${symbol} from your smart account` +
-    (replaces !== null ? `, replacing an earlier approval of ${replaces} ${symbol}` : '') +
-    '. It takes only the actual fee; the rest of the approval (up to ' +
-    `${max} ${symbol} minus the fee) stays in place afterwards. Only operations from this smart account that ` +
-    'use this paymaster can draw on it, and the next one replaces it with a new exact approval.'
-  );
+  return replaces !== null
+    ? t('tokenGas.erc7677.grantReplaces', { vendor, max, symbol, replaces })
+    : t('tokenGas.erc7677.grant', { vendor, max, symbol });
 }
 
 export function erc7677EstimatePassedSentence(vendor = ERC7677_TOKEN_GAS_VENDOR): string {
-  return `Bundler gas estimate passed with ${vendor}’s paymaster terms.`;
+  return t('tokenGas.erc7677.estimatePassed', { vendor });
 }
 
 /** Success screen. */
 export function erc7677ChargedSentence(actual: string, max: string, symbol = TOKEN_GAS_SYMBOL, vendor = ERC7677_TOKEN_GAS_VENDOR): string {
-  return (
-    `Network fee charged: ${actual} ${symbol}. The approval allowed up to ${max} ${symbol}; what was not ` +
-    `charged stays approved for ${vendor}’s paymaster until a later operation through it replaces the approval.`
-  );
+  return t('tokenGas.erc7677.charged', { actual, symbol, max, vendor });
 }
 
 export function erc7677NoChargeEventSentence(vendor = ERC7677_TOKEN_GAS_VENDOR): string {
-  return `The receipt did not include ${vendor}’s fee event, so the USDC charge could not be read from it.`;
+  return t('tokenGas.noChargeEvent', { vendor });
 }
 
 export function tokenGasUnavailableTitle(paymasterName: string): string {
@@ -586,10 +560,12 @@ export function tokenGasConfirmLines(
   const d = tokenGas.decimals;
   const sym = tokenGas.symbol;
   const max = exact(tokenGas.maxTokenCharge, d);
-  const balanceLabel = `Smart account ${sym} balance`;
+  // The labels and sentences through the string table (phase 23 item 8,
+  // fourth pass); in English exactly the strings this function built before.
+  const balanceLabel = t('send.aa.row.smartBalance', { symbol: sym });
   const balanceValue = `${exact(tokenGas.tokenBalance, d)} ${sym}`;
-  const feeLabel = `Network fee (paid in ${sym})`;
-  const feeValue = `up to ${max} ${sym}`;
+  const feeLabel = t('tokenGas.feeLabel', { symbol: sym });
+  const feeValue = t('tokenGas.feeValue', { max, symbol: sym });
   if (tokenGas.source === 'erc7677') {
     const e = tokenGas.erc7677;
     const vendor = e?.vendor ?? ERC7677_TOKEN_GAS_VENDOR;
@@ -597,17 +573,17 @@ export function tokenGasConfirmLines(
     const notes = [erc7677PermissionedNote(vendor)];
     if (e && !e.staked) notes.push(erc7677UnstakedNote(label));
     return {
-      paymasterName: erc7677PaymasterName(vendor),
+      paymasterName: t('tokenGas.erc7677.paymasterName', { vendor }),
       feeLabel,
       feeValue,
       feeSentence: erc7677FeeSentence(max, sym, vendor),
       worstCaseHint: erc7677WorstCaseHint(tokenGas, ctx.maxFeePerGas),
       rateValue: erc7677RateSentence(tokenGas.nativeTokenPrice, d, ctx.nativeSymbol, sym, vendor),
       rateNote: null,
-      spreadLabel: ERC7677_MARKUP_LABEL,
-      spreadValue: ERC7677_MARKUP_VALUE,
+      spreadLabel: t('tokenGas.erc7677.markupLabel'),
+      spreadValue: t('tokenGas.erc7677.markupValue'),
       spreadNote: erc7677MarkupNote(vendor),
-      paymasterLabel: `Paymaster (${vendor})`,
+      paymasterLabel: t('tokenGas.erc7677.paymasterLabel', { vendor }),
       paymasterValue: tokenGas.paymaster,
       balanceLabel,
       balanceValue,
@@ -619,35 +595,35 @@ export function tokenGasConfirmLines(
       ),
       notes,
       estimateSentence: erc7677EstimatePassedSentence(vendor),
-      throughPhrase: `${vendor}’s paymaster`,
+      throughPhrase: t('tokenGas.erc7677.through', { vendor }),
     };
   }
   return {
-    paymasterName: 'Circle’s token paymaster',
+    paymasterName: t('tokenGas.circle.paymasterName'),
     feeLabel,
     feeValue,
     feeSentence: tokenGasFeeSentence(max, sym),
     worstCaseHint: tokenGasWorstCaseHint(tokenGas, ctx.maxFeePerGas),
     rateValue: tokenGasRateSentence(tokenGas.nativeTokenPrice, d, ctx.nativeSymbol, sym),
     rateNote: tokenGasOracleNote(ctx.chainCaip2),
-    spreadLabel: 'Paymaster fee spread',
+    spreadLabel: t('tokenGas.circle.spreadLabel'),
     spreadValue: tokenGasSpreadText(tokenGas.feeSpreadBips),
-    spreadNote: TOKEN_GAS_SPREAD_NOTE,
-    paymasterLabel: 'Paymaster (Circle)',
+    spreadNote: t('tokenGas.circle.spreadNote'),
+    paymasterLabel: t('tokenGas.circle.paymasterLabel'),
     paymasterValue: tokenGas.paymaster,
     balanceLabel,
     balanceValue,
     grantSentence: tokenGasGrantSentence(max, sym),
     notes: [],
-    estimateSentence: TOKEN_GAS_ESTIMATE_AFTER_APPROVAL,
-    throughPhrase: 'Circle’s paymaster',
+    estimateSentence: t('tokenGas.circle.estimateAfterApproval'),
+    throughPhrase: t('tokenGas.circle.through'),
   };
 }
 
 /** Success line for either source; `actual` null = no fee event found. */
 export function tokenGasChargedLine(tokenGas: AaTokenGas, actual: bigint | null): string {
   const vendor = tokenGas.erc7677?.vendor ?? ERC7677_TOKEN_GAS_VENDOR;
-  if (actual === null) return tokenGas.source === 'erc7677' ? erc7677NoChargeEventSentence(vendor) : TOKEN_GAS_NO_CHARGE_EVENT;
+  if (actual === null) return erc7677NoChargeEventSentence(tokenGas.source === 'erc7677' ? vendor : 'Circle');
   const a = exact(actual, tokenGas.decimals);
   const m = exact(tokenGas.maxTokenCharge, tokenGas.decimals);
   return tokenGas.source === 'erc7677'
@@ -1586,10 +1562,7 @@ export function tokenGasMaxAdjustmentSentence(
 ): string | null {
   if (!quote.maxAdjustment) return null;
   const now = quote.token ? quote.token.amount : quote.amount;
-  return (
-    `The amount was lowered from ${format(quote.maxAdjustment.requested)} to ${format(now)} because the ` +
-    'balance changed or the worst-case network fee rose after you tapped Max.'
-  );
+  return t('tokenGas.maxAdjustment', { requested: format(quote.maxAdjustment.requested), amount: format(now) });
 }
 
 // ---------------------------------------------------------------------------

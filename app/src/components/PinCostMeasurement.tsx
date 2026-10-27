@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
 import { Button } from '../components';
 import { useTheme } from '../theme';
+import { useI18n } from '../i18n/useI18n';
 import {
   PIN_COST_BUTTON,
   PIN_COST_RESULT_NOTE,
@@ -34,6 +35,8 @@ import { currentPinHashPath, pinHashPathLine, resolvePinHashPath, type PinHashPa
  */
 export function PinCostMeasurement() {
   const theme = useTheme();
+  // The module's lines answer in the chosen language; useI18n re-renders on a switch.
+  const { localize } = useI18n();
   const [running, setRunning] = useState(false);
   const [current, setCurrent] = useState<number | null>(null);
   const [rows, setRows] = useState<readonly PinCostRow[]>([]);
@@ -119,7 +122,7 @@ export function PinCostMeasurement() {
           >
             {pinCostPlatformText(report.platform, report.hashPath)}
           </Text>
-          <Text style={[styles.hint, { color: theme.textMuted }]}>{PIN_COST_RESULT_NOTE}</Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(PIN_COST_RESULT_NOTE)}</Text>
         </>
       ) : null}
       {failure ? <Text style={[styles.hint, { color: theme.danger }]}>{failure}</Text> : null}

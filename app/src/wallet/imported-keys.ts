@@ -11,6 +11,7 @@ import type { ChainKeyProvider, DerivedAccount } from '@shiba-wallet/core';
 import { evmAccountFromPrivateKey, isValidEvmPrivateKey, publicKeyToEvmAddress } from '@shiba-wallet/core';
 import { ACCOUNT_CHANGED_MESSAGE } from './accounts.ts';
 import { IMPORTED_KEY_EVM_ONLY, IMPORTED_KEY_PATH } from './account-ids.ts';
+import { t } from '../i18n/index.ts';
 
 export type ParsedPrivateKey =
   | {
@@ -200,17 +201,19 @@ export function accountsBackupHint(
   anyImported: boolean,
   keyless: { watchOnly?: boolean; multisig?: boolean } = {},
 ): string {
-  const others = [keyless.watchOnly ? 'watch-only' : null, keyless.multisig ? 'multi-signature' : null].filter(
+  // Through the string table (phase 23 item 8, fourth pass): the kinds and
+  // the list's "and" are entries too; in English exactly the sentences this
+  // function built before (ACCOUNTS_WITH_IMPORTED_HINT and
+  // ACCOUNTS_PHRASE_ONLY_HINT included).
+  const others = [keyless.watchOnly ? t('accounts.kind.watchOnly') : null, keyless.multisig ? t('accounts.kind.multisig') : null].filter(
     (k): k is string => k !== null,
   );
-  if (others.length === 0) return anyImported ? ACCOUNTS_WITH_IMPORTED_HINT : ACCOUNTS_PHRASE_ONLY_HINT;
-  const kinds = [...(anyImported ? ['imported'] : []), ...others];
-  const listed = kinds.length === 1 ? kinds[0] : `${kinds.slice(0, -1).join(', ')} and ${kinds[kinds.length - 1]}`;
+  if (others.length === 0) return anyImported ? t('accounts.backupHint.imported') : t('accounts.backupHint.phraseOnly');
+  const kinds = [...(anyImported ? [t('accounts.kind.imported')] : []), ...others];
+  const listed = kinds.length === 1 ? kinds[0] : `${kinds.slice(0, -1).join(', ')} ${t('common.and')} ${kinds[kinds.length - 1]}`;
   return anyImported
-    ? `Every account here except the ${listed} ones comes from your one recovery phrase. Imported accounts are ` +
-        'NOT backed up by the phrase: keep their private keys yourself.'
-    : `Every account here except the ${listed} ones comes from your one recovery phrase — backing up the ` +
-        'phrase backs up all of those.';
+    ? t('accounts.backupHint.exceptImported', { kinds: listed })
+    : t('accounts.backupHint.except', { kinds: listed });
 }
 
 export const IMPORT_KEY_INTRO =
@@ -247,12 +250,9 @@ export const REMOVE_IMPORTED_TITLE = 'Remove this imported account?';
  * there is nothing to name); it is appended unchanged.
  */
 export function removeImportedMessage(name: string, address: string, stranded: string | null = null): string {
-  return (
-    `This deletes the private key of ${name} (${address}) from this phone. Your recovery phrase cannot ` +
-    'bring it back: unless you kept the private key yourself, this account and everything it holds ' +
-    'will be lost for good. Funds on-chain are not moved.' +
-    (stranded ? ` ${stranded}` : '')
-  );
+  // Through the string table (phase 23 item 8, fourth pass); `stranded` is
+  // appended as given. In English exactly the message this built before.
+  return t('accounts.removeImported.message', { name, address }) + (stranded ? ` ${stranded}` : '');
 }
 
 /** What the removal dialog knows about the key's smart account (aa.ts OwnerSmartAccountHoldings, by shape). */

@@ -2225,8 +2225,20 @@ await (async () => {
     sendFormTokenFeeSentence({ nativeSymbol: 'test ETH', tokenSymbol: 'EURC', feeToken: { symbol: 'USDC', throughPhrase: tokenGasThroughPhrase({ kind: 'erc7677', vendor: 'Pimlico' }) } }) ===
       'The network fee is paid in USDC through Pimlico\u2019s paymaster, not in test ETH; Review shows the most it can cost.');
   const tokenGasSource = readFileSync(new URL('../src/wallet/token-gas.ts', import.meta.url), 'utf8');
+  // Phase 23 item 8 (fourth pass): the confirm's phrases come through the
+  // string table; their English entries are the form's phrases, and the
+  // confirm lines' values equal tokenGasThroughPhrase for both sources.
+  const { en: EN } = await import('../src/i18n/en.ts');
+  const { tokenGasConfirmLines: tgLinesFor } = await import('../src/wallet/token-gas.ts');
+  const tgFixture = (source, vendor) => ({ decimals: 6, symbol: 'USDC', maxTokenCharge: 1n, tokenBalance: 1n, source, nativeTokenPrice: 1n, feeSpreadBips: 0n,
+    paymaster: '0x31BE08D380A21fc740883c0BC434FcFc88740b58', estimationGasCeiling: 1n, paymasterVerificationGasLimit: 1n, paymasterPostOpGasLimit: 1n, additionalGasCharge: 1n,
+    ...(vendor ? { erc7677: { vendor, staked: true, allowanceBefore: 0n, headroomPercent: 25n } } : {}) });
+  const tgCtx = { chainCaip2: 'eip155:84532', nativeSymbol: 'test ETH', maxFeePerGas: 1n };
   check('the form\'s paymaster phrases are the confirm\'s throughPhrase values (token-gas.ts)',
-    tokenGasSource.includes("throughPhrase: 'Circle\u2019s paymaster'") && tokenGasSource.includes('throughPhrase: `${vendor}\u2019s paymaster`'));
+    tokenGasSource.includes("throughPhrase: t('tokenGas.circle.through')") && tokenGasSource.includes("throughPhrase: t('tokenGas.erc7677.through', { vendor })") &&
+      EN['tokenGas.circle.through'] === 'Circle\u2019s paymaster' && EN['tokenGas.erc7677.through'] === '{vendor}\u2019s paymaster' &&
+      tgLinesFor(tgFixture('circle'), tgCtx).throughPhrase === tokenGasThroughPhrase({ kind: 'circle' }) &&
+      tgLinesFor(tgFixture('erc7677', 'Pimlico'), tgCtx).throughPhrase === tokenGasThroughPhrase({ kind: 'erc7677', vendor: 'Pimlico' }));
   check('SendScreen: the token box takes the USDC wording only when the USDC fee is active',
     sendSource.includes("tokenGasActive && tokenGasOfferNow?.kind === 'available'\n                  ? { symbol: TOKEN_GAS_SYMBOL, throughPhrase: tokenGasThroughPhrase(tokenGasOfferNow.source) }\n                  : null,"));
   check('SendScreen: the fixed ETH sentence is gone from the token box', !sendSource.includes('fee is paid in {evmChain.displaySymbol}, not in {token.symbol}.'));

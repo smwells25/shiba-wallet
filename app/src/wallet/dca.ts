@@ -77,6 +77,7 @@ import type { KeyValueStore } from './tokens.ts';
 import { assertFeatureAllowed } from '../config/readiness.ts';
 import { NO_ANSWER_SENTENCE, sanitizeEndpointMessage } from '../config/endpoint-probe.ts';
 import { isBroadcastOutcomeUnknown } from './broadcast-outcome.ts';
+import { t } from '../i18n/index.ts';
 
 /**
  * Recurring swaps — dollar-cost averaging — on a session key held by this
@@ -640,15 +641,20 @@ export function dcaMarketLines(args: {
   floorBps: number | null;
   nativeSymbol: string;
 }): string[] {
+  // Through the string table (phase 23 item 8, fourth pass); in English
+  // exactly the lines this function built before.
   const lines = [
-    `Pool: Uniswap v3 ${DCA_POOL.label}, ${DCA_POOL.pool} (checked against Uniswap’s factory ` +
-      `${UNISWAP_V3_SEPOLIA.factory} on every read).`,
-    `Router: Uniswap SwapRouter02, ${UNISWAP_V3_SEPOLIA.swapRouter02}.`,
+    t('dca.market.pool', { label: DCA_POOL.label, pool: DCA_POOL.pool, factory: UNISWAP_V3_SEPOLIA.factory }),
+    t('dca.market.router', { router: UNISWAP_V3_SEPOLIA.swapRouter02 }),
   ];
   if (args.quotedOut !== null) {
     lines.push(
-      `Quote just now (Uniswap QuoterV2 ${UNISWAP_V3_SEPOLIA.quoterV2}): ${formatBaseUnits(args.amountIn, 18)} ` +
-        `${args.nativeSymbol} → ${usdc(args.quotedOut)}. A quote is a reading at one block, not a promise.`,
+      t('dca.market.quote', {
+        quoter: UNISWAP_V3_SEPOLIA.quoterV2,
+        amount: formatBaseUnits(args.amountIn, 18),
+        symbol: args.nativeSymbol,
+        out: usdc(args.quotedOut),
+      }),
     );
     if (args.floorBps !== null) {
       let floor: bigint | null = null;
@@ -659,8 +665,8 @@ export function dcaMarketLines(args: {
       }
       lines.push(
         floor === null
-          ? `Minimum to receive per swap: ${bpsText(args.floorBps)} of that quote rounds down to 0 USDC, which is refused.`
-          : `Minimum to receive per swap: ${bpsText(args.floorBps)} of that quote = ${usdc(floor)}, fixed at set-up.`,
+          ? t('dca.market.minimumZero', { percent: bpsText(args.floorBps) })
+          : t('dca.market.minimum', { percent: bpsText(args.floorBps), floor: usdc(floor) }),
       );
     }
   }
@@ -695,12 +701,9 @@ function engineCaveat(caveats: readonly string[], start: string): string {
 
 /** The line stating what the swap key can do at all. */
 export function dcaKeyOnlyLine(account: string): string {
-  return (
-    `The swap key can only buy ${DCA_TOKEN_OUT_SYMBOL} for this account: it may call only Uniswap’s SwapRouter02 ` +
-    `to sell exactly the plan’s amount in the pinned pool, with this smart account (${account}) as the only ` +
-    'recipient. It cannot send your ETH or tokens anywhere else, approve a spender, or sign messages, logins or ' +
-    'permits.'
-  );
+  // Through the string table (phase 23 item 8, fourth pass); in English
+  // exactly the line this function built before.
+  return t('dca.review.keyOnly', { symbol: DCA_TOKEN_OUT_SYMBOL, account });
 }
 
 /**
@@ -746,13 +749,11 @@ export function dcaReview(
   const end = dcaValidUntil(terms);
   const lastDue = terms.startAt + Math.max(0, terms.count - 1) * terms.periodSeconds;
   const graced = (terms.graceSeconds ?? 0) > 0;
+  // The engine's caveats stay English by rule; the wallet's own sentences
+  // go through the string table (phase 23 item 8, fourth pass).
   const catchUp =
     engineCaveat(d.caveats, 'Missed periods are not lost') +
-    (graced
-      ? ` The last swap falls due ${formatUtc(lastDue)} and can be sent until ${formatUtc(end)}: the end date is ` +
-        'two periods after it (one period more than the swaps alone need, as a grace period), so a late last swap ' +
-        'can still be sent; this does not allow any extra swap.'
-      : '');
+    (graced ? ` ${t('dca.review.grace', { lastDue: formatUtc(lastDue), end: formatUtc(end) })}` : '');
   const caveats = [
     floorCaveatForStage(engineCaveat(d.caveats, 'THE MINIMUM DOES NOT FOLLOW THE PRICE'), context.stage ?? 'set-up'),
     engineCaveat(d.caveats, 'There is no deadline'),
@@ -761,8 +762,7 @@ export function dcaReview(
     dcaKeyOnlyLine(terms.account),
     catchUp,
     engineCaveat(d.caveats, 'Revoke at any time'),
-    'The swap key lives in this phone’s secure storage. Wiping the wallet or restoring it from the recovery phrase ' +
-      'deletes it: swaps then stop, while the permission stays on-chain until its end date. Revoke before wiping.',
+    t('dca.review.keyLives'),
   ];
   return {
     sentence: d.sentence,
@@ -776,21 +776,23 @@ export function dcaReview(
 export function dcaShortWindowWarning(terms: DcaTerms): string | null {
   const total = dcaValidUntil(terms) - terms.startAt;
   if (!(total < 600)) return null;
-  return (
-    `This plan lasts only ${describePeriod(total)} in total: ${terms.count} swap${terms.count === 1 ? '' : 's'}, one ` +
-    `every ${describePeriod(terms.periodSeconds)}. Swaps are sent only while the wallet is open and after you confirm ` +
-    'each one, so some may not be sent before the end date. Choose a longer period or more swaps unless this is a ' +
-    'quick test.'
-  );
+  // Through the string table (phase 23 item 8, fourth pass); in English
+  // exactly the sentence this function built before.
+  const params = { total: describePeriod(total), count: terms.count, period: describePeriod(terms.periodSeconds) };
+  return terms.count === 1 ? t('dca.shortOne', params) : t('dca.shortMany', params);
 }
 
 /** The success screen's line with the dates the set-up actually carries. */
 export function dcaFinalDatesLine(terms: DcaTerms): string {
-  return (
-    `Final terms: the first swap is due from ${formatUtc(terms.startAt)}, then one more every ` +
-    `${describePeriod(terms.periodSeconds)} (${terms.count} in total); nothing after ${formatUtc(dcaValidUntil(terms))}. ` +
-    `Each swap must return at least ${usdc(terms.minimumOut)}.`
-  );
+  // Through the string table (phase 23 item 8, fourth pass); in English
+  // exactly the line this function built before.
+  return t('dca.finalTerms', {
+    start: formatUtc(terms.startAt),
+    period: describePeriod(terms.periodSeconds),
+    count: terms.count,
+    end: formatUtc(dcaValidUntil(terms)),
+    minimum: usdc(terms.minimumOut),
+  });
 }
 
 /**

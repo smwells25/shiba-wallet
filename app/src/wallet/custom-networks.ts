@@ -5,6 +5,7 @@ import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store
 // literally.
 import {
   EVM_PROFILES,
+  EVM_TEST_PROFILES,
   KNOWN_PUBLIC_TEST_CHAIN_IDS,
   isKnownPublicTestChainId,
   isStoredTestChainIdAccepted,
@@ -15,6 +16,7 @@ import {
 import { INSECURE_ENDPOINT_MESSAGE, assertSecureEndpointUrl } from '../config/endpoint-url.ts';
 import { FRESHNESS_BOUND_SECONDS, assessHeadFreshness, type FetchLike } from '../config/endpoint-probe.ts';
 import { sanitizeDisplayName } from './names.ts';
+import { localize, t } from '../i18n/index.ts';
 
 /**
  * Custom EVM networks (feature 33, phase 17 item 3; requirement 4, no
@@ -217,6 +219,70 @@ export const TEST_NETWORK_TICK_NOTE =
   'status as on Ethereum mainnet.';
 
 /**
+ * TEST_NETWORK_TICK_NOTE as shown (phase 23 item 8, fourth pass): through
+ * the string table, so it follows the chosen language; in English exactly
+ * the constant above (the constant is evaluated once at load, before a
+ * language is chosen, so the screen calls this instead).
+ */
+export function testNetworkTickNote(): string {
+  return t('settings.custom.tickNote', { networks: knownTestNetworkList() });
+}
+
+/**
+ * config/evm-chain.ts customNetworkNote as shown in Settings → Developer,
+ * through the string table (phase 23 item 8, fourth pass). evm-chain.ts is
+ * pure data with no imports by design, so its English function stays there
+ * (the checks pin it) and this one builds the same sentence from the table;
+ * in English the two are byte for byte equal for every branch
+ * (scripts/check-i18n.mjs compares them).
+ */
+export function customNetworkNoteText(
+  profile: Pick<EvmChainProfile, 'label' | 'custom' | 'testnet'>,
+  options: { smartAccountRefusal?: string } = {},
+): string {
+  const explorer = profile.custom?.explorerBase
+    ? t('settings.customNote.explorer', { base: profile.custom.explorerBase })
+    : t('settings.customNote.noExplorer');
+  const smart = profile.testnet
+    ? t('settings.customNote.testSmart')
+    : t('settings.customNote.mainSmart', { refusal: options.smartAccountRefusal ?? t('settings.customNote.defaultRefusal') });
+  return t('settings.customNote', { label: profile.label, smart, explorer });
+}
+
+/**
+ * "A, B and C" / "A, B or C" with the conjunction from the string table
+ * (common.and / common.or); in English exactly the lists SettingsScreen's
+ * listJoin and removalConfirmationText built before.
+ */
+export function joinList(items: readonly string[], conjunction: 'and' | 'or'): string {
+  if (items.length <= 1) return items.join('');
+  const word = conjunction === 'and' ? t('common.and') : t('common.or');
+  return `${items.slice(0, -1).join(', ')} ${word} ${items[items.length - 1]}`;
+}
+
+/**
+ * Settings → Developer: what the test-network choice does, built from the
+ * test profiles (config/evm-chain.ts) so a new profile is described without
+ * editing this text, and nothing here assumes how many test networks exist.
+ * Moved here from SettingsScreen.tsx (phase 23 item 8, fourth pass) so it is
+ * built at render time through the string table; in English exactly the
+ * text the screen's constant held. `profiles` lets the checks pass a changed
+ * profile table.
+ */
+export function developerTestNetworkHint(profiles: readonly EvmChainProfile[] = EVM_TEST_PROFILES): string {
+  const nets = joinList(profiles.map((p) => t('multisig.cosign.network', { network: p.label, chainId: p.chainIdDecimal })), 'or');
+  const hosts = joinList(
+    profiles.map((p) => /^https:\/\/([^/]+)\//.exec(p.explorerTxBase)?.[1] ?? p.explorerTxBase),
+    'or',
+  );
+  const kernel = joinList(profiles.filter((p) => p.kernelV33Verified).map((p) => p.label), 'and');
+  const simple = profiles.filter((p) => p.aaPrefill !== null).map((p) => p.label);
+  return simple.length > 0
+    ? t('settings.dev.testNetworkHint', { nets, kernel, hosts, simple: joinList(simple, 'and') })
+    : t('settings.dev.testNetworkHintNoSimple', { nets, kernel, hosts });
+}
+
+/**
  * The example shown in the custom-network form's empty name and chain-id
  * fields (Settings → Networks you added). Polygon Amoy, chain id 80002: on
  * KNOWN_PUBLIC_TEST_CHAIN_IDS (ethereum-lists/chains
@@ -381,16 +447,10 @@ export function staleHeadMessage(blockNumber: bigint, ageSeconds: number, boundS
 
 /** The plain line for the measured block time (Settings row). */
 export function blockTimeLine(blockTimeMs: number | null): string {
-  if (blockTimeMs === null) {
-    return (
-      'Block time: not measured, so the warning about recently created contracts is not shown on this network ' +
-      '(the rule for every network the wallet has no figure for).'
-    );
-  }
-  return (
-    `Block time: about ${(blockTimeMs / 1000).toString()} s per block, measured over ${BLOCK_TIME_SAMPLE_BLOCKS} ` +
-    'blocks when the network was added; the warning about contracts younger than 7 days counts blocks at that rate.'
-  );
+  // Through the string table (phase 23 item 8, fourth pass); in English
+  // exactly the lines this function built before.
+  if (blockTimeMs === null) return t('settings.custom.blockTimeNone');
+  return t('settings.custom.blockTime', { seconds: (blockTimeMs / 1000).toString(), blocks: BLOCK_TIME_SAMPLE_BLOCKS });
 }
 
 // ---------------------------------------------------------------------------
@@ -1129,13 +1189,15 @@ export const KEPT_ON_REMOVAL_SENTENCE =
 
 /** The confirmation text for removing a custom network. */
 export function removalConfirmationText(name: string, chainId: string, active: boolean): string {
-  const labels = CHAIN_DATA_REMOVERS.map((r) => r.label);
-  return (
-    `Remove “${name}” (chain id ${chainId}) from this wallet? This also deletes, for this chain only: ` +
-    `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}. ` +
-    (active ? 'The wallet switches back to Ethereum mainnet first. ' : '') +
-    KEPT_ON_REMOVAL_SENTENCE
-  );
+  // Through the string table (phase 23 item 8, fourth pass): each store's
+  // label is an entry (localize), the list joined with common.and; in
+  // English exactly the text this function built before.
+  const labels = CHAIN_DATA_REMOVERS.map((r) => localize(r.label));
+  return [
+    t('settings.custom.remove.confirm', { name, chainId, labels: joinList(labels, 'and') }),
+    ...(active ? [t('settings.custom.remove.switchesFirst')] : []),
+    t('settings.custom.remove.kept'),
+  ].join(' ');
 }
 
 export interface RemovalReport {
@@ -1211,17 +1273,20 @@ export async function removeCustomNetwork(
 
 /** The sentence summarizing a removal (Settings alert). */
 export function describeRemoval(name: string, report: RemovalReport): string {
+  // Through the string table (phase 23 item 8, fourth pass); each store's
+  // label is an entry (localize), a failure's reason stays as reported; in
+  // English exactly the text this function built before.
   const parts: string[] = [];
-  if (report.networkRemoved) parts.push(`“${name}” was removed.`);
-  else parts.push(`“${name}” was NOT removed, because some of its data could not be deleted; nothing else changed for it.`);
-  if (report.switchedToMainnet) parts.push('The wallet is back on Ethereum mainnet.');
+  if (report.networkRemoved) parts.push(t('settings.custom.removed.ok', { name }));
+  else parts.push(t('settings.custom.removed.not', { name }));
+  if (report.switchedToMainnet) parts.push(t('settings.custom.removed.mainnet'));
   if (report.removed.length > 0) {
-    parts.push(`Deleted for this chain: ${report.removed.map((r) => `${r.label} (${r.count})`).join(', ')}.`);
+    parts.push(t('settings.custom.removed.deleted', { items: report.removed.map((r) => `${localize(r.label)} (${r.count})`).join(', ') }));
   } else {
-    parts.push('No other data was stored for this chain.');
+    parts.push(t('settings.custom.removed.nothing'));
   }
   if (report.failed.length > 0) {
-    parts.push(`Could not delete: ${report.failed.map((f) => `${f.label} (${f.reason})`).join('; ')}. Try Remove again.`);
+    parts.push(t('settings.custom.removed.failed', { items: report.failed.map((f) => `${localize(f.label)} (${f.reason})`).join('; ') }));
   }
   return parts.join(' ');
 }

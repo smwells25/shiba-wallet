@@ -1,6 +1,6 @@
 {
  "base": "c5baff6",
- "about": "The English each migrated string-table entry had in the app at commit c5baff6, before the localisation groundwork (phase 22 item 6). Generated from that checkout: \"literal\" entries were found as a string literal, a folded string concatenation or a JSX text (whitespace collapsed as JSX does) at the places listed; \"template\" entries have their static parts (the text between placeholders) found in that order in a template literal, a string concatenation or a JSX element; \"composite\" entries were assembled from several pieces, described with their place; \"new\" entries did not exist (Settings → Language). scripts/check-i18n.mjs compares app/src/i18n/en.ts with this file. \"changed\" entries are migrated entries whose English was reworded on purpose after the migration: \"before\" is the text at c5baff6 (equal to the entry's own record above), \"en\" the text now, \"why\" the reason; the \"new\" list also holds the ids added since (the Settings → Language note on shared texts and the passphrase forms of the app-lock notes, phase 22 polish). Phase 23 item 8 (the second localisation pass): entries carrying \"base\": \"5cb4601\" were located the same way in the checkout of commit 5cb4601, where the screens they come from stood when they were migrated (the base above applies to every entry without one). Phase 23 item 8 (the third localisation pass): entries carrying \"base\": \"6a1d2bb\" were located the same way in the checkout of commit 6a1d2bb (Bridge, Multisig and the rest of Home).",
+ "about": "The English each migrated string-table entry had in the app at commit c5baff6, before the localisation groundwork (phase 22 item 6). Generated from that checkout: \"literal\" entries were found as a string literal, a folded string concatenation or a JSX text (whitespace collapsed as JSX does) at the places listed; \"template\" entries have their static parts (the text between placeholders) found in that order in a template literal, a string concatenation or a JSX element; \"composite\" entries were assembled from several pieces, described with their place; \"new\" entries did not exist (Settings → Language). scripts/check-i18n.mjs compares app/src/i18n/en.ts with this file. \"changed\" entries are migrated entries whose English was reworded on purpose after the migration: \"before\" is the text at c5baff6 (equal to the entry's own record above), \"en\" the text now, \"why\" the reason; the \"new\" list also holds the ids added since (the Settings → Language note on shared texts and the passphrase forms of the app-lock notes, phase 22 polish). Phase 23 item 8 (the second localisation pass): entries carrying \"base\": \"5cb4601\" were located the same way in the checkout of commit 5cb4601, where the screens they come from stood when they were migrated (the base above applies to every entry without one). Phase 23 item 8 (the third localisation pass): entries carrying \"base\": \"6a1d2bb\" were located the same way in the checkout of commit 6a1d2bb (Bridge, Multisig and the rest of Home). Phase 23 item 8 (the fourth localisation pass): entries carrying \"base\": \"a9998cc\" were located the same way in the checkout of commit a9998cc (the sentences built inside the wallet modules).",
  "literal": {
   "common.cancel": {
    "en": "Cancel",
@@ -7675,6 +7675,510 @@
     "src/wallet/multisig.ts:2751 literal"
    ],
    "base": "6a1d2bb"
+  },
+  "tokenGas.circle.paymasterName": {
+   "en": "Circle’s token paymaster",
+   "where": [
+    "src/wallet/token-gas.ts:626 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.circle.spreadLabel": {
+   "en": "Paymaster fee spread",
+   "where": [
+    "src/wallet/token-gas.ts:633 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.circle.paymasterLabel": {
+   "en": "Paymaster (Circle)",
+   "where": [
+    "src/wallet/token-gas.ts:636 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.circle.through": {
+   "en": "Circle’s paymaster",
+   "where": [
+    "src/wallet/token-gas.ts:643 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.oracle.baseSepolia": {
+   "en": "On Base Sepolia the paymaster’s test oracle returns a fixed price; it is not a market rate.",
+   "where": [
+    "src/wallet/token-gas.ts:350 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.oracle.arbitrumSepolia": {
+   "en": "On Arbitrum Sepolia the paymaster’s test oracle returns a fixed price; it is not a market rate.",
+   "where": [
+    "src/wallet/token-gas.ts:357 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.circle.spreadNote": {
+   "en": "Circle’s documentation mentions a 10% surcharge on Arbitrum and Base; this is the figure the paymaster contract itself reports, and it is the one it charges.",
+   "where": [
+    "src/wallet/token-gas.ts:368 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.circle.estimateAfterApproval": {
+   "en": "The bundler’s gas estimate runs after you approve, because Circle’s paymaster needs a permit signed by your smart account first. If the estimate fails, nothing is sent.",
+   "where": [
+    "src/wallet/token-gas.ts:383 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.erc7677.markupLabel": {
+   "en": "Paymaster markup",
+   "where": [
+    "src/wallet/token-gas.ts:488 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.erc7677.markupValue": {
+   "en": "Included in the rate; not shown as a separate figure",
+   "where": [
+    "src/wallet/token-gas.ts:489 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.custom.blockTimeNone": {
+   "en": "Block time: not measured, so the warning about recently created contracts is not shown on this network (the rule for every network the wallet has no figure for).",
+   "where": [
+    "src/wallet/custom-networks.ts:386 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.custom.remove.switchesFirst": {
+   "en": "The wallet switches back to Ethereum mainnet first.",
+   "where": [
+    "src/wallet/custom-networks.ts:1136 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.custom.remove.kept": {
+   "en": "Kept on this phone: session keys, subscriptions, guardian and inheritance records, passkey details and multi-signature accounts for this chain. They describe things that exist on the network itself, so deleting them would undo nothing there and would remove what you need to revoke or recover them; they come back if you add the same chain id again. Nothing on the network changes.",
+   "where": [
+    "src/wallet/custom-networks.ts:1125 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.custom.data.tokens": {
+   "en": "tracked tokens",
+   "where": [
+    "src/wallet/custom-networks.ts:988 literal",
+    "src/wallet/custom-networks.ts:1003 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.custom.data.endpoint": {
+   "en": "endpoint override",
+   "where": [
+    "src/wallet/custom-networks.ts:1011 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.custom.data.aa": {
+   "en": "smart-account settings",
+   "where": [
+    "src/wallet/custom-networks.ts:1019 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.custom.data.historyIndexer": {
+   "en": "history indexer",
+   "where": [
+    "src/wallet/custom-networks.ts:1027 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.custom.data.contacts": {
+   "en": "contacts",
+   "where": [
+    "src/wallet/custom-networks.ts:1048 literal",
+    "src/wallet/custom-networks.ts:1049 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.custom.data.notes": {
+   "en": "transaction notes",
+   "where": [
+    "src/wallet/custom-networks.ts:1057 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.custom.data.spending": {
+   "en": "spending limits",
+   "where": [
+    "src/wallet/custom-networks.ts:1073 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.custom.data.browser": {
+   "en": "in-app browser connections",
+   "where": [
+    "src/wallet/custom-networks.ts:1091 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.custom.data.walletconnect": {
+   "en": "WalletConnect smart-account records",
+   "where": [
+    "src/wallet/custom-networks.ts:1107 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.custom.removed.mainnet": {
+   "en": "The wallet is back on Ethereum mainnet.",
+   "where": [
+    "src/wallet/custom-networks.ts:1217 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.custom.removed.nothing": {
+   "en": "No other data was stored for this chain.",
+   "where": [
+    "src/wallet/custom-networks.ts:1221 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.customNote.noExplorer": {
+   "en": "No block explorer was given, so the wallet shows no explorer links here.",
+   "where": [
+    "src/config/evm-chain.ts:1185 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.customNote.testSmart": {
+   "en": "No smart-account deployment is pre-filled (paste a factory under Account Abstraction and the wallet checks it on-chain before saving), swaps are not offered, and tokens start with an empty list.",
+   "where": [
+    "src/config/evm-chain.ts:1187 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.customNote.defaultRefusal": {
+   "en": "they are switched off there, as on Ethereum mainnet.",
+   "where": [
+    "src/config/evm-chain.ts:1190 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.protect.unknownDate": {
+   "en": "unknown date",
+   "where": [
+    "src/wallet/phrase-protection-copy.ts:72 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.protect.subject.yourOne": {
+   "en": "Your imported private key",
+   "where": [
+    "src/wallet/phrase-protection-copy.ts:126 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.protect.subject.oneOf": {
+   "en": "One of your imported private keys",
+   "where": [
+    "src/wallet/phrase-protection-copy.ts:122 literal",
+    "src/wallet/phrase-protection-copy.ts:127 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.protect.imported.damaged": {
+   "en": "The record of imported private keys on this phone could not be read, so where they are kept is unknown. No key was deleted.",
+   "where": [
+    "src/wallet/phrase-protection-copy.ts:149 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.protect.imported.notBackedUp": {
+   "en": "The recovery phrase does not back up imported keys.",
+   "where": [
+    "src/wallet/phrase-protection-copy.ts:178 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.protect.unreadable": {
+   "en": "This phone can no longer open your recovery phrase. Its biometric protection was reset (for example, a fingerprint or face was added or removed, or the screen lock was turned off), and the system deletes protected keys when that happens. Nothing was signed and your funds are untouched on-chain. To keep using this wallet here, remove it in Settings and import your written recovery phrase again.",
+   "where": [
+    "src/wallet/storage.ts:243 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "accounts.backupHint.phraseOnly": {
+   "en": "Every account comes from your one recovery phrase — backing up the phrase backs up all of them.",
+   "where": [
+    "src/wallet/imported-keys.ts:178 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "accounts.backupHint.imported": {
+   "en": "Every account except the imported ones comes from your one recovery phrase. Imported accounts are NOT backed up by the phrase: keep their private keys yourself.",
+   "where": [
+    "src/wallet/imported-keys.ts:182 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "accounts.kind.imported": {
+   "en": "imported",
+   "where": [
+    "src/wallet/imported-keys.ts:207 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "accounts.kind.watchOnly": {
+   "en": "watch-only",
+   "where": [
+    "src/wallet/imported-keys.ts:203 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "accounts.kind.multisig": {
+   "en": "multi-signature",
+   "where": [
+    "src/wallet/imported-keys.ts:203 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.grant.noFunction": {
+   "en": "No contract function: meant for a plain transfer with empty calldata. The account enforces this as function 0x00000000, so a call whose data begins with 0x00000000 would also be allowed. That matters only if the target is a contract.",
+   "where": [
+    "src/wallet/sessions.ts:900 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.grant.anyArguments": {
+   "en": "Any arguments are allowed.",
+   "where": [
+    "src/wallet/sessions.ts:913 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.grant.perCall": {
+   "en": "The cap is per call, not a total: the session may repeat this call until it expires.",
+   "where": [
+    "src/wallet/sessions.ts:921 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.grant.noteApprove": {
+   "en": "Lets the session approve ANY spender for ANY amount of this token (ERC-20) or any token id (ERC-721). An approval outlives the session.",
+   "where": [
+    "src/wallet/sessions.ts:855 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.grant.noteTransferFrom": {
+   "en": "Moves tokens from any address that approved your account, to any recipient.",
+   "where": [
+    "src/wallet/sessions.ts:860 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.grant.noteApprovalForAll": {
+   "en": "Lets the session give an operator control of ALL your NFTs in this collection. It outlives the session.",
+   "where": [
+    "src/wallet/sessions.ts:864 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.grant.noMessages": {
+   "en": "A session key can never sign messages or logins for your account (ERC-1271 is switched off for it).",
+   "where": [
+    "src/wallet/sessions.ts:952 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.holder.deviceSecure": {
+   "en": "this device (secure storage)",
+   "where": [
+    "src/screens/SessionsScreen.tsx:2063 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.holder.device": {
+   "en": "this device",
+   "where": [
+    "src/screens/SessionsScreen.tsx:3025 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.holder.nobody": {
+   "en": "nobody (deleted)",
+   "where": [
+    "src/screens/SessionsScreen.tsx:3025 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.holder.merchant": {
+   "en": "the merchant once you hand it over; until then, this device’s secure storage",
+   "where": [
+    "src/wallet/subscriptions.ts:1155 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.holder.phoneOnly": {
+   "en": "this phone’s secure storage only, never shown or exported",
+   "where": [
+    "src/wallet/recurring.ts:169 literal",
+    "src/wallet/dca.ts:232 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.recurring.review.keyCannotSign": {
+   "en": "The payment key cannot sign messages, logins or permits for your account.",
+   "where": [
+    "src/wallet/recurring.ts:334 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.recurring.review.missed": {
+   "en": "Missed payments are not lost: a payment whose period passed while the wallet was closed can still be sent later, even right before the next one, until the end date.",
+   "where": [
+    "src/wallet/recurring.ts:342 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.recurring.review.keyLives": {
+   "en": "The payment key lives in this phone’s secure storage. Wiping the wallet or restoring it from the recovery phrase deletes it: payments then stop, while the permission stays on-chain until its end date. Revoke before wiping.",
+   "where": [
+    "src/wallet/recurring.ts:354 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.recurring.review.stop": {
+   "en": "Stop at any time with Revoke (one operation signed by your account key). Payments already sent are not returned.",
+   "where": [
+    "src/wallet/recurring.ts:357 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "dca.review.keyLives": {
+   "en": "The swap key lives in this phone’s secure storage. Wiping the wallet or restoring it from the recovery phrase deletes it: swaps then stop, while the permission stays on-chain until its end date. Revoke before wiping.",
+   "where": [
+    "src/wallet/dca.ts:764 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "staking.action.claim": {
+   "en": "Claim finished Lido withdrawals",
+   "where": [
+    "src/wallet/staking.ts:845 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "staking.contract.rocketPoolDeposit": {
+   "en": "Rocket Pool deposit pool (resolved from RocketStorage just now)",
+   "where": [
+    "src/wallet/staking.ts:545 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "staking.contract.rocketPoolReth": {
+   "en": "Rocket Pool rETH contract",
+   "where": [
+    "src/wallet/staking.ts:572 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "staking.contract.lidoSubmit": {
+   "en": "Lido stETH contract (submit)",
+   "where": [
+    "src/wallet/staking.ts:608 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "staking.contract.lidoStakeWrap": {
+   "en": "Lido wstETH contract (stake and wrap in one step)",
+   "where": [
+    "src/wallet/staking.ts:608 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "staking.contract.lidoWrap": {
+   "en": "Lido wstETH contract (wrap)",
+   "where": [
+    "src/wallet/staking.ts:630 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "staking.contract.lidoUnwrap": {
+   "en": "Lido wstETH contract (unwrap)",
+   "where": [
+    "src/wallet/staking.ts:651 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "staking.contract.lidoRequest": {
+   "en": "Lido withdrawal queue (request)",
+   "where": [
+    "src/wallet/staking.ts:676 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "staking.contract.lidoClaim": {
+   "en": "Lido withdrawal queue (claim)",
+   "where": [
+    "src/wallet/staking.ts:703 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.pinCost.button": {
+   "en": "Measure the PIN hashing cost",
+   "where": [
+    "src/wallet/pin-cost.ts:2 literal",
+    "src/wallet/pin-cost.ts:48 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.pinCost.stop": {
+   "en": "Stop the measurement",
+   "where": [
+    "src/wallet/pin-cost.ts:49 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.pinCost.nativeStop": {
+   "en": "This build hashes with native scrypt (react-native-quick-crypto), which cannot be interrupted inside one hash: Stop and the 120-second limit take effect between sizes, and a size already running finishes first.",
+   "where": [
+    "src/wallet/pin-cost.ts:57 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.pinCost.yes": {
+   "en": "yes",
+   "where": [
+    "src/wallet/pin-cost.ts:203 literal",
+    "src/wallet/pin-cost.ts:203 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.pinCost.no": {
+   "en": "no",
+   "where": [
+    "src/wallet/pin-cost.ts:203 literal",
+    "src/wallet/pin-cost.ts:203 literal"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.pinCost.failed": {
+   "en": "The measurement could not be run. Nothing was stored.",
+   "where": [
+    "src/wallet/pin-cost.ts:231 expr"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.pinHash.checking": {
+   "en": "PIN hashing path: checking…",
+   "where": [
+    "src/wallet/pin-native-scrypt.ts:272 literal"
+   ],
+   "base": "a9998cc"
   }
  },
  "template": {
@@ -10771,6 +11275,839 @@
     ""
    ],
    "base": "6a1d2bb"
+  },
+  "tokenGas.feeLabel": {
+   "en": "Network fee (paid in {symbol})",
+   "where": "src/wallet/token-gas.ts:591 expr",
+   "old": [
+    "Network fee (paid in ",
+    ")"
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.feeValue": {
+   "en": "up to {max} {symbol}",
+   "where": "src/wallet/token-gas.ts:317 expr",
+   "old": [
+    "up to ",
+    " ",
+    ""
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.circle.fee": {
+   "en": "Network fee paid in {symbol}: up to {max} {symbol}; the unused part is refunded in the same transaction; no ETH is needed for the fee.",
+   "where": "src/wallet/token-gas.ts:317 expr",
+   "old": [
+    "Network fee paid in ",
+    ": up to ",
+    " ",
+    "; the unused part is refunded in the same transaction; no ETH is needed for the fee."
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.circle.grant": {
+   "en": "A one-time permit letting Circle’s paymaster take at most {max} {symbol}. The permit is used up by this operation, so normally nothing stays approved.",
+   "where": "src/wallet/token-gas.ts:335 expr",
+   "old": [
+    "A one-time permit letting Circle’s paymaster take at most ",
+    " ",
+    ". The permit is used up by this operation, so normally nothing stays approved."
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.circle.rate": {
+   "en": "1 {native} = {price} {symbol}, from the paymaster’s on-chain oracle.",
+   "where": "src/wallet/token-gas.ts:345 expr",
+   "old": [
+    "1 ",
+    " = ",
+    " ",
+    ", from the paymaster’s on-chain oracle."
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.circle.spread": {
+   "en": "{percent}% ({bips} basis points), read from the paymaster",
+   "where": "src/wallet/token-gas.ts:364 expr",
+   "old": [
+    "",
+    "% (",
+    " basis points), read from the paymaster"
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.circle.worstCase": {
+   "en": "Worst case at {gwei} gwei max fee for up to {gas} gas, plus the paymaster’s fixed {fixed} gas, converted at the rate below. The exact gas is estimated after you approve, and the charge can never exceed this amount.",
+   "where": "src/wallet/token-gas.ts:375 expr",
+   "old": [
+    "Worst case at ",
+    " gwei max fee for up to ",
+    " gas, plus the paymaster’s fixed ",
+    " gas, converted at the rate below. The exact gas is estimated after you approve, and the charge can never exceed this amount."
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.circle.charged": {
+   "en": "Network fee charged: {actual} {symbol} (up to {max} {symbol} was permitted; the rest was refunded in the same transaction).",
+   "where": "src/wallet/token-gas.ts:402 expr",
+   "old": [
+    "Network fee charged: ",
+    " ",
+    " (up to ",
+    " ",
+    " was permitted; the rest was refunded in the same transaction)."
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.noChargeEvent": {
+   "en": "The receipt did not include {vendor}’s fee event, so the USDC charge could not be read from it.",
+   "where": "src/wallet/token-gas.ts:540 expr",
+   "old": [
+    "The receipt did not include ",
+    "’s fee event, so the USDC charge could not be read from it."
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.erc7677.paymasterName": {
+   "en": "{vendor}’s token paymaster",
+   "where": "src/wallet/token-gas.ts:425 expr",
+   "old": [
+    "",
+    "’s token paymaster"
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.erc7677.paymasterLabel": {
+   "en": "Paymaster ({vendor})",
+   "where": "src/wallet/token-gas.ts:610 expr",
+   "old": [
+    "Paymaster (",
+    ")"
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.erc7677.through": {
+   "en": "{vendor}’s paymaster",
+   "where": "src/wallet/token-gas.ts:455 expr",
+   "old": [
+    "",
+    "’s paymaster"
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.erc7677.fee": {
+   "en": "Network fee paid in {symbol}: up to {max} {symbol}. This operation first approves {vendor}’s paymaster for exactly {max} {symbol}; after your calls run, it takes the actual fee, which can be less. No ETH is needed for the fee.",
+   "where": "src/wallet/token-gas.ts:455 expr",
+   "old": [
+    "Network fee paid in ",
+    ": up to ",
+    " ",
+    ". This operation first approves ",
+    "’s paymaster for exactly ",
+    " ",
+    "; after your calls run, it takes the actual fee, which can be less. No ETH is needed for the fee."
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.erc7677.worstCase": {
+   "en": "Worst case at {gwei} gwei max fee for the bundler’s padded gas estimate ({gas} gas), plus the paymaster’s fixed {fixed} gas and the 10% charge on unused execution gas, converted at the rate below, plus {headroom}% headroom in case {vendor}’s rate moves before the operation is signed. If {vendor}’s final terms would cost more than this, nothing is signed.",
+   "where": "src/wallet/token-gas.ts:467 expr",
+   "old": [
+    "Worst case at ",
+    " gwei max fee for the bundler’s padded gas estimate (",
+    " gas), plus the paymaster’s fixed ",
+    " gas and the 10% charge on unused execution gas, converted at the rate below, plus ",
+    "% headroom in case ",
+    "’s rate moves before the operation is signed. If ",
+    "’s final terms would cost more than this, nothing is signed."
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.erc7677.rate": {
+   "en": "1 {native} = {rate} {symbol}, set by {vendor}’s service and signed into the operation; it is not read from an on-chain oracle.",
+   "where": "src/wallet/token-gas.ts:483 expr",
+   "old": [
+    "1 ",
+    " = ",
+    " ",
+    ", set by ",
+    "’s service and signed into the operation; it is not read from an on-chain oracle."
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.erc7677.markupNote": {
+   "en": "{vendor} says its fee is built into the exchange rate it returns, and services that resell its paymaster may add their own (ZeroDev documents a 5% premium on the rate).",
+   "where": "src/wallet/token-gas.ts:492 expr",
+   "old": [
+    "",
+    " says its fee is built into the exchange rate it returns, and services that resell its paymaster may add their own (ZeroDev documents a 5% premium on the rate)."
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.erc7677.permissioned": {
+   "en": "{vendor}’s paymaster is a permissioned service: its server signs each operation and can decline any of them. If it declines, nothing is sent.",
+   "where": "src/wallet/token-gas.ts:499 expr",
+   "old": [
+    "",
+    "’s paymaster is a permissioned service: its server signs each operation and can decline any of them. If it declines, nothing is sent."
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.erc7677.unstaked": {
+   "en": "This paymaster is not staked in the EntryPoint on {network}, so some bundlers may refuse operations that use it.",
+   "where": "src/wallet/token-gas.ts:506 expr",
+   "old": [
+    "This paymaster is not staked in the EntryPoint on ",
+    ", so some bundlers may refuse operations that use it."
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.erc7677.estimatePassed": {
+   "en": "Bundler gas estimate passed with {vendor}’s paymaster terms.",
+   "where": "src/wallet/token-gas.ts:528 expr",
+   "old": [
+    "Bundler gas estimate passed with ",
+    "’s paymaster terms."
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.erc7677.charged": {
+   "en": "Network fee charged: {actual} {symbol}. The approval allowed up to {max} {symbol}; what was not charged stays approved for {vendor}’s paymaster until a later operation through it replaces the approval.",
+   "where": "src/wallet/token-gas.ts:534 expr",
+   "old": [
+    "Network fee charged: ",
+    " ",
+    ". The approval allowed up to ",
+    " ",
+    "; what was not charged stays approved for ",
+    "’s paymaster until a later operation through it replaces the approval."
+   ],
+   "base": "a9998cc"
+  },
+  "tokenGas.maxAdjustment": {
+   "en": "The amount was lowered from {requested} to {amount} because the balance changed or the worst-case network fee rose after you tapped Max.",
+   "where": "src/wallet/token-gas.ts:1590 expr",
+   "old": [
+    "The amount was lowered from ",
+    " to ",
+    " because the balance changed or the worst-case network fee rose after you tapped Max."
+   ],
+   "base": "a9998cc"
+  },
+  "aa.maxAdjustment": {
+   "en": "The amount was lowered from {requested} to {amount} because the network fee rose after you tapped Max. The amount plus the worst-case fee now fits the smart account's balance; its EntryPoint deposit, if any, is left as a reserve for the fee.",
+   "where": "src/wallet/aa.ts:3017 expr",
+   "old": [
+    "The amount was lowered from ",
+    " to ",
+    " because the network fee rose after you tapped Max. The amount plus the worst-case fee now fits the smart account's balance; its EntryPoint deposit, if any, is left as a reserve for the fee."
+   ],
+   "base": "a9998cc"
+  },
+  "send.maxAdjustment": {
+   "en": "The amount was lowered from {requested} to {amount} because the network fee rose after you tapped Max. The amount plus the worst-case fee now equals your balance.",
+   "where": "src/wallet/send.ts:599 expr",
+   "old": [
+    "The amount was lowered from ",
+    " to ",
+    " because the network fee rose after you tapped Max. The amount plus the worst-case fee now equals your balance."
+   ],
+   "base": "a9998cc"
+  },
+  "settings.aa.bundlerVerified": {
+   "en": "Verified ✓ — the bundler reported chain id {chainId} ({network}) and eth_supportedEntryPoints includes EntryPoint v0.7 (checked {date})",
+   "where": "src/wallet/aa.ts:3073 expr",
+   "old": [
+    "Verified ✓ — the bundler reported chain id ",
+    " (",
+    ") and eth_supportedEntryPoints includes EntryPoint v0.7 (checked ",
+    ")"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.aa.bundlerVerifiedOld": {
+   "en": "Verified ✓ — eth_supportedEntryPoints includes EntryPoint v0.7 (checked {date}). Saved before the chain-id check existed: save it again to confirm which network it serves.",
+   "where": "src/wallet/aa.ts:3078 expr",
+   "old": [
+    "Verified ✓ — eth_supportedEntryPoints includes EntryPoint v0.7 (checked ",
+    "). Saved before the chain-id check existed: save it again to confirm which network it serves."
+   ],
+   "base": "a9998cc"
+  },
+  "settings.custom.tickNote": {
+   "en": "Only the well-known public test networks can be marked as test networks: {networks}. Any other network is treated as a main network whose funds may be real, so the smart-account features stay switched off on it and the other features carry the same “not yet cleared” status as on Ethereum mainnet.",
+   "where": "src/wallet/custom-networks.ts:214 expr",
+   "old": [
+    "Only the well-known public test networks can be marked as test networks: ",
+    ". Any other network is treated as a main network whose funds may be real, so the smart-account features stay switched off on it and the other features carry the same “not yet cleared” status as on Ethereum mainnet."
+   ],
+   "base": "a9998cc"
+  },
+  "settings.custom.blockTime": {
+   "en": "Block time: about {seconds} s per block, measured over {blocks} blocks when the network was added; the warning about contracts younger than 7 days counts blocks at that rate.",
+   "where": "src/wallet/custom-networks.ts:391 expr",
+   "old": [
+    "Block time: about ",
+    " s per block, measured over ",
+    " blocks when the network was added; the warning about contracts younger than 7 days counts blocks at that rate."
+   ],
+   "base": "a9998cc"
+  },
+  "settings.custom.removed.ok": {
+   "en": "“{name}” was removed.",
+   "where": "src/wallet/custom-networks.ts:1215 expr",
+   "old": [
+    "“",
+    "” was removed."
+   ],
+   "base": "a9998cc"
+  },
+  "settings.custom.removed.not": {
+   "en": "“{name}” was NOT removed, because some of its data could not be deleted; nothing else changed for it.",
+   "where": "src/wallet/custom-networks.ts:1216 expr",
+   "old": [
+    "“",
+    "” was NOT removed, because some of its data could not be deleted; nothing else changed for it."
+   ],
+   "base": "a9998cc"
+  },
+  "settings.custom.removed.deleted": {
+   "en": "Deleted for this chain: {items}.",
+   "where": "src/wallet/custom-networks.ts:1219 expr",
+   "old": [
+    "Deleted for this chain: ",
+    "."
+   ],
+   "base": "a9998cc"
+  },
+  "settings.custom.removed.failed": {
+   "en": "Could not delete: {items}. Try Remove again.",
+   "where": "src/wallet/custom-networks.ts:1224 expr",
+   "old": [
+    "Could not delete: ",
+    ". Try Remove again."
+   ],
+   "base": "a9998cc"
+  },
+  "settings.customNote.explorer": {
+   "en": "Explorer links assume the Etherscan-style paths {base}/tx/… and /address/…; the wallet did not check that the explorer uses them.",
+   "where": "src/config/evm-chain.ts:1183 expr",
+   "old": [
+    "Explorer links assume the Etherscan-style paths ",
+    "/tx/… and /address/…; the wallet did not check that the explorer uses them."
+   ],
+   "base": "a9998cc"
+  },
+  "settings.customNote.mainSmart": {
+   "en": "Smart-account features cannot be set up on it, because the wallet treats it as a main network: {refusal} Swaps are not offered, and tokens start with an empty list.",
+   "where": "src/config/evm-chain.ts:1189 expr",
+   "old": [
+    "Smart-account features cannot be set up on it, because the wallet treats it as a main network: ",
+    " Swaps are not offered, and tokens start with an empty list."
+   ],
+   "base": "a9998cc"
+  },
+  "settings.protect.protectedSince": {
+   "en": "Your recovery phrase is protected by biometrics (since {date}). Opening it needs your fingerprint or face every time. If you add or remove a fingerprint or face, or turn off the screen lock, this phone can no longer open it — keep your written recovery phrase safe.",
+   "where": "src/wallet/phrase-protection-copy.ts:83 expr",
+   "old": [
+    "Your recovery phrase is protected by biometrics (since ",
+    "). Opening it needs your fingerprint or face every time. If you add or remove a fingerprint or face, or turn off the screen lock, this phone can no longer open it — keep your written recovery phrase safe."
+   ],
+   "base": "a9998cc"
+  },
+  "settings.protect.subject.yourMany": {
+   "en": "Your {count} imported private keys",
+   "where": "src/wallet/phrase-protection-copy.ts:126 expr",
+   "old": [
+    "Your ",
+    " imported private keys"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.protect.subject.someOf": {
+   "en": "{count} of your {total} imported private keys",
+   "where": "src/wallet/phrase-protection-copy.ts:127 expr",
+   "old": [
+    "",
+    " of your ",
+    " imported private keys"
+   ],
+   "base": "a9998cc"
+  },
+  "accounts.backupHint.except": {
+   "en": "Every account here except the {kinds} ones comes from your one recovery phrase — backing up the phrase backs up all of those.",
+   "where": "src/wallet/imported-keys.ts:212 expr",
+   "old": [
+    "Every account here except the ",
+    " ones comes from your one recovery phrase — backing up the phrase backs up all of those."
+   ],
+   "base": "a9998cc"
+  },
+  "accounts.backupHint.exceptImported": {
+   "en": "Every account here except the {kinds} ones comes from your one recovery phrase. Imported accounts are NOT backed up by the phrase: keep their private keys yourself.",
+   "where": "src/wallet/imported-keys.ts:210 expr",
+   "old": [
+    "Every account here except the ",
+    " ones comes from your one recovery phrase. Imported accounts are NOT backed up by the phrase: keep their private keys yourself."
+   ],
+   "base": "a9998cc"
+  },
+  "accounts.removeImported.message": {
+   "en": "This deletes the private key of {name} ({address}) from this phone. Your recovery phrase cannot bring it back: unless you kept the private key yourself, this account and everything it holds will be lost for good. Funds on-chain are not moved.",
+   "where": "src/wallet/imported-keys.ts:251 expr",
+   "old": [
+    "This deletes the private key of ",
+    " (",
+    ") from this phone. Your recovery phrase cannot bring it back: unless you kept the private key yourself, this account and everything it holds will be lost for good. Funds on-chain are not moved."
+   ],
+   "base": "a9998cc"
+  },
+  "accounts.stopWatching.message": {
+   "en": "{name} ({address}) is removed from this wallet. Nothing secret is deleted, because the wallet never held a key for it, and nothing on-chain changes. You can watch it again at any time.",
+   "where": "src/wallet/watch-only.ts:377 expr",
+   "old": [
+    "",
+    " (",
+    ") is removed from this wallet. Nothing secret is deleted, because the wallet never held a key for it, and nothing on-chain changes. You can watch it again at any time."
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.grant.ownAccount": {
+   "en": "your own account ({address})",
+   "where": "src/wallet/sessions.ts:885 expr",
+   "old": [
+    "your own account (",
+    ")"
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.grant.callNoData": {
+   "en": "Call {who} with no data and no {symbol}",
+   "where": "src/wallet/sessions.ts:893 expr",
+   "old": [
+    "Call ",
+    " with no data and no ",
+    ""
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.grant.sendUpTo": {
+   "en": "Send up to {cap} per call to {who}",
+   "where": "src/wallet/sessions.ts:894 expr",
+   "old": [
+    "Send up to ",
+    " per call to ",
+    ""
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.grant.function": {
+   "en": "function {selector}",
+   "where": "src/wallet/sessions.ts:906 expr",
+   "old": [
+    "function ",
+    ""
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.grant.callOn": {
+   "en": "Call {fn} on {who}",
+   "where": "src/wallet/sessions.ts:907 expr",
+   "old": [
+    "Call ",
+    " on ",
+    ""
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.grant.sendsNone": {
+   "en": "Sends no {symbol} with the call.",
+   "where": "src/wallet/sessions.ts:910 expr",
+   "old": [
+    "Sends no ",
+    " with the call."
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.grant.sendsAtMost": {
+   "en": "Sends at most {cap} with each call.",
+   "where": "src/wallet/sessions.ts:911 expr",
+   "old": [
+    "Sends at most ",
+    " with each call."
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.grant.rule": {
+   "en": "Argument word at byte offset {offset} must be {condition} {params}.",
+   "where": "src/wallet/sessions.ts:916 expr",
+   "old": [
+    "Argument word at byte offset ",
+    " must be ",
+    " ",
+    "."
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.grant.expires": {
+   "en": "Expires {date} (unix {unix}); enforced on-chain by the account.",
+   "where": "src/wallet/sessions.ts:928 expr",
+   "old": [
+    "Expires ",
+    " (unix ",
+    "); enforced on-chain by the account."
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.grant.notBefore": {
+   "en": "Not valid before unix {unix}.",
+   "where": "src/wallet/sessions.ts:931 expr",
+   "old": [
+    "Not valid before unix ",
+    "."
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.grant.gasBudget": {
+   "en": "Gas budget: at most {amount} {symbol} in fees across all of the session’s operations (worst-case accounting).",
+   "where": "src/wallet/sessions.ts:934 expr",
+   "old": [
+    "Gas budget: at most ",
+    " ",
+    " in fees across all of the session’s operations (worst-case accounting)."
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.grant.noGasBudget": {
+   "en": "No gas budget: fees for the session’s operations are paid from the account’s {symbol} until it expires.",
+   "where": "src/wallet/sessions.ts:936 expr",
+   "old": [
+    "No gas budget: fees for the session’s operations are paid from the account’s ",
+    " until it expires."
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.grant.keyHeldBy": {
+   "en": "Session key (held by {holder})",
+   "where": "src/components/SessionGrantViews.tsx:68 expr",
+   "old": [
+    "Session key (held by ",
+    ")"
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.grant.permissionId": {
+   "en": "Kernel permission id {id}",
+   "where": "src/components/SessionGrantViews.tsx:74 expr",
+   "old": [
+    "Kernel permission id ",
+    ""
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.subscription.finalTerms": {
+   "en": "Final terms: the first payment can be taken from {start}, then one more every {period} ({count} in total); nothing after {end}.",
+   "where": "src/wallet/subscriptions.ts:1161 expr",
+   "old": [
+    "Final terms: the first payment can be taken from ",
+    ", then one more every ",
+    " (",
+    " in total); nothing after ",
+    "."
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.recurring.review.sentence": {
+   "en": "Pays {payee} up to {amount} every {period} until {end}: at most one payment per period, each sent by this wallet after you confirm it.",
+   "where": "src/wallet/recurring.ts:323 expr",
+   "old": [
+    "Pays ",
+    " up to ",
+    " every ",
+    " until ",
+    ": at most one payment per period, each sent by this wallet after you confirm it."
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.recurring.review.onlyNative": {
+   "en": "Only plain {symbol} transfers to {payee}, at most {amount} each.",
+   "where": "src/wallet/recurring.ts:327 expr",
+   "old": [
+    "Only plain ",
+    " transfers to ",
+    ", at most ",
+    " each."
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.recurring.review.onlyToken": {
+   "en": "Only {symbol} (contract {token}) transfers to {payee}, at most {amount} each.",
+   "where": "src/wallet/recurring.ts:328 expr",
+   "old": [
+    "Only ",
+    " (contract ",
+    ") transfers to ",
+    ", at most ",
+    " each."
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.recurring.review.nothingAfter": {
+   "en": "Nothing after {end}. The last payment falls due {lastDue} and can be sent until then.",
+   "where": "src/wallet/recurring.ts:331 expr",
+   "old": [
+    "Nothing after ",
+    ". The last payment falls due ",
+    " and can be sent until then."
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.recurring.review.fees": {
+   "en": "Network fees for the payments are paid by your account, at most {fee} in total.",
+   "where": "src/wallet/recurring.ts:333 expr",
+   "old": [
+    "Network fees for the payments are paid by your account, at most ",
+    " in total."
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.recurring.review.batching": {
+   "en": "ONE PAYMENT OPERATION CAN HOLD SEVERAL TRANSFERS. Your account checks each transfer against the cap but does not add them up, and it cannot refuse a batch. This wallet sends exactly one transfer per payment, but anyone who got the payment key off this phone could send several times {amount} in one operation — up to everything this account holds in {symbol} — though only to {payee}. Keep only what you are willing to pay in this account.",
+   "where": "src/wallet/recurring.ts:337 expr",
+   "old": [
+    "ONE PAYMENT OPERATION CAN HOLD SEVERAL TRANSFERS. Your account checks each transfer against the cap but does not add them up, and it cannot refuse a batch. This wallet sends exactly one transfer per payment, but anyone who got the payment key off this phone could send several times ",
+    " in one operation — up to everything this account holds in ",
+    " — though only to ",
+    ". Keep only what you are willing to pay in this account."
+   ],
+   "base": "a9998cc"
+  },
+  "sessions.recurring.finalTerms": {
+   "en": "Final terms: the first payment is due from {start}, then one more every {period} ({count} in total); nothing after {end}.",
+   "where": "src/wallet/recurring.ts:393 expr",
+   "old": [
+    "Final terms: the first payment is due from ",
+    ", then one more every ",
+    " (",
+    " in total); nothing after ",
+    "."
+   ],
+   "base": "a9998cc"
+  },
+  "dca.market.pool": {
+   "en": "Pool: Uniswap v3 {label}, {pool} (checked against Uniswap’s factory {factory} on every read).",
+   "where": "src/wallet/dca.ts:644 expr",
+   "old": [
+    "Pool: Uniswap v3 ",
+    ", ",
+    " (checked against Uniswap’s factory ",
+    " on every read)."
+   ],
+   "base": "a9998cc"
+  },
+  "dca.market.router": {
+   "en": "Router: Uniswap SwapRouter02, {router}.",
+   "where": "src/wallet/dca.ts:646 expr",
+   "old": [
+    "Router: Uniswap SwapRouter02, ",
+    "."
+   ],
+   "base": "a9998cc"
+  },
+  "dca.market.quote": {
+   "en": "Quote just now (Uniswap QuoterV2 {quoter}): {amount} {symbol} → {out}. A quote is a reading at one block, not a promise.",
+   "where": "src/wallet/dca.ts:650 expr",
+   "old": [
+    "Quote just now (Uniswap QuoterV2 ",
+    "): ",
+    " ",
+    " → ",
+    ". A quote is a reading at one block, not a promise."
+   ],
+   "base": "a9998cc"
+  },
+  "dca.market.minimumZero": {
+   "en": "Minimum to receive per swap: {percent} of that quote rounds down to 0 USDC, which is refused.",
+   "where": "src/wallet/dca.ts:662 expr",
+   "old": [
+    "Minimum to receive per swap: ",
+    " of that quote rounds down to 0 USDC, which is refused."
+   ],
+   "base": "a9998cc"
+  },
+  "dca.market.minimum": {
+   "en": "Minimum to receive per swap: {percent} of that quote = {floor}, fixed at set-up.",
+   "where": "src/wallet/dca.ts:663 expr",
+   "old": [
+    "Minimum to receive per swap: ",
+    " of that quote = ",
+    ", fixed at set-up."
+   ],
+   "base": "a9998cc"
+  },
+  "dca.review.keyOnly": {
+   "en": "The swap key can only buy {symbol} for this account: it may call only Uniswap’s SwapRouter02 to sell exactly the plan’s amount in the pinned pool, with this smart account ({account}) as the only recipient. It cannot send your ETH or tokens anywhere else, approve a spender, or sign messages, logins or permits.",
+   "where": "src/wallet/dca.ts:699 expr",
+   "old": [
+    "The swap key can only buy ",
+    " for this account: it may call only Uniswap’s SwapRouter02 to sell exactly the plan’s amount in the pinned pool, with this smart account (",
+    ") as the only recipient. It cannot send your ETH or tokens anywhere else, approve a spender, or sign messages, logins or permits."
+   ],
+   "base": "a9998cc"
+  },
+  "dca.review.grace": {
+   "en": "The last swap falls due {lastDue} and can be sent until {end}: the end date is two periods after it (one period more than the swaps alone need, as a grace period), so a late last swap can still be sent; this does not allow any extra swap.",
+   "where": "src/wallet/dca.ts:752 expr",
+   "old": [
+    "The last swap falls due ",
+    " and can be sent until ",
+    ": the end date is two periods after it (one period more than the swaps alone need, as a grace period), so a late last swap can still be sent; this does not allow any extra swap."
+   ],
+   "base": "a9998cc"
+  },
+  "dca.finalTerms": {
+   "en": "Final terms: the first swap is due from {start}, then one more every {period} ({count} in total); nothing after {end}. Each swap must return at least {minimum}.",
+   "where": "src/wallet/dca.ts:790 expr",
+   "old": [
+    "Final terms: the first swap is due from ",
+    ", then one more every ",
+    " (",
+    " in total); nothing after ",
+    ". Each swap must return at least ",
+    "."
+   ],
+   "base": "a9998cc"
+  },
+  "staking.action.stakeLido": {
+   "en": "Stake {amount} {symbol} with Lido for {receive}",
+   "where": "src/wallet/staking.ts:836 expr",
+   "old": [
+    "Stake ",
+    " ",
+    " with Lido for ",
+    ""
+   ],
+   "base": "a9998cc"
+  },
+  "staking.action.stakeRocketPool": {
+   "en": "Stake {amount} {symbol} with Rocket Pool for rETH",
+   "where": "src/wallet/staking.ts:837 expr",
+   "old": [
+    "Stake ",
+    " ",
+    " with Rocket Pool for rETH"
+   ],
+   "base": "a9998cc"
+  },
+  "staking.action.wrap": {
+   "en": "Wrap {amount} stETH into wstETH",
+   "where": "src/wallet/staking.ts:839 expr",
+   "old": [
+    "Wrap ",
+    " stETH into wstETH"
+   ],
+   "base": "a9998cc"
+  },
+  "staking.action.unwrap": {
+   "en": "Unwrap {amount} wstETH into stETH",
+   "where": "src/wallet/staking.ts:841 expr",
+   "old": [
+    "Unwrap ",
+    " wstETH into stETH"
+   ],
+   "base": "a9998cc"
+  },
+  "staking.action.unstake": {
+   "en": "Request to unstake {amount} stETH with Lido",
+   "where": "src/wallet/staking.ts:843 expr",
+   "old": [
+    "Request to unstake ",
+    " stETH with Lido"
+   ],
+   "base": "a9998cc"
+  },
+  "staking.action.burn": {
+   "en": "Redeem {amount} rETH with Rocket Pool",
+   "where": "src/wallet/staking.ts:847 expr",
+   "old": [
+    "Redeem ",
+    " rETH with Rocket Pool"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.pinCost.hint": {
+   "en": "Test networks only. Times the scrypt hash the app PIN uses, on this phone: one hash at each size from N = 2^12 to N = 2^16, so the PIN's cost setting can be chosen from a real figure (the PIN uses N = 2^{n} today, and unlocking computes two hashes at that size). It uses a random salt and a throwaway input, never your PIN or its record; nothing is stored and nothing leaves this phone. A size that runs longer than 120 seconds is stopped and the larger sizes are skipped.",
+   "where": "src/wallet/pin-cost.ts:51 expr",
+   "old": [
+    "Test networks only. Times the scrypt hash the app PIN uses, on this phone: one hash at each size from N = 2^12 to N = 2^16, so the PIN's cost setting can be chosen from a real figure (the PIN uses N = 2^",
+    " today, and unlocking computes two hashes at that size). It uses a random salt and a throwaway input, never your PIN or its record; nothing is stored and nothing leaves this phone. A size that runs longer than 120 seconds is stopped and the larger sizes are skipped."
+   ],
+   "base": "a9998cc"
+  },
+  "settings.pinCost.running": {
+   "en": "Measuring N = 2^{n}…",
+   "where": "src/wallet/pin-cost.ts:195 expr",
+   "old": [
+    "Measuring N = 2^",
+    "…"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.pinCost.total": {
+   "en": "Total time: {ms} ms (wall clock).",
+   "where": "src/wallet/pin-cost.ts:199 expr",
+   "old": [
+    "Total time: ",
+    " ms (wall clock)."
+   ],
+   "base": "a9998cc"
+  },
+  "settings.pinHash.native": {
+   "en": "PIN hashing path: {label}, self-check passed",
+   "where": "src/wallet/pin-native-scrypt.ts:273 expr",
+   "old": [
+    "PIN hashing path: ",
+    ", self-check passed"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.pinHash.absent": {
+   "en": "PIN hashing path: {label}: the native module is not in this build",
+   "where": "src/wallet/pin-native-scrypt.ts:277 expr",
+   "old": [
+    "PIN hashing path: ",
+    ": the native module is not in this build"
+   ],
+   "base": "a9998cc"
+  },
+  "settings.pinHash.loadFailed": {
+   "en": "PIN hashing path: {label}: the native module is in this build but could not be loaded.",
+   "where": "src/wallet/pin-native-scrypt.ts:279 expr",
+   "old": [
+    "PIN hashing path: ",
+    ": the native module is in this build but could not be loaded."
+   ],
+   "base": "a9998cc"
+  },
+  "settings.pinHash.selfCheckFailed": {
+   "en": "PIN hashing path: {label}: the native module failed its self-check against the RFC 7914 test vector, so it is not used.",
+   "where": "src/wallet/pin-native-scrypt.ts:281 expr",
+   "old": [
+    "PIN hashing path: ",
+    ": the native module failed its self-check against the RFC 7914 test vector, so it is not used."
+   ],
+   "base": "a9998cc"
+  },
+  "settings.pinHash.nativeError": {
+   "en": "PIN hashing path: {label}: the native module failed during a hash and is not used for the rest of this session.",
+   "where": "src/wallet/pin-native-scrypt.ts:283 expr",
+   "old": [
+    "PIN hashing path: ",
+    ": the native module failed during a hash and is not used for the rest of this session."
+   ],
+   "base": "a9998cc"
   }
  },
  "composite": {
@@ -11075,6 +12412,300 @@
    "where": "src/wallet/multisig.ts:2607 expr",
    "old": "`${received} of ${total} parts read. ` + `Show the next part … scan it; ${missing} ${missing === 1 ? 'part is' : 'parts are'} still missing.` (one missing)",
    "base": "6a1d2bb"
+  },
+  "tokenGas.erc7677.grant": {
+   "en": "This operation approves {vendor}’s paymaster to take up to {max} {symbol} from your smart account. It takes only the actual fee; the rest of the approval (up to {max} {symbol} minus the fee) stays in place afterwards. Only operations from this smart account that use this paymaster can draw on it, and the next one replaces it with a new exact approval.",
+   "where": "src/wallet/token-gas.ts:519 expr",
+   "old": "`This operation approves ${vendor}’s paymaster to take up to ${max} ${symbol} from your smart account` + (replaces !== null ? `, replacing … ${replaces} ${symbol}` : '') + '. It takes only the actual fee; …' (no earlier approval)",
+   "base": "a9998cc"
+  },
+  "tokenGas.erc7677.grantReplaces": {
+   "en": "This operation approves {vendor}’s paymaster to take up to {max} {symbol} from your smart account, replacing an earlier approval of {replaces} {symbol}. It takes only the actual fee; the rest of the approval (up to {max} {symbol} minus the fee) stays in place afterwards. Only operations from this smart account that use this paymaster can draw on it, and the next one replaces it with a new exact approval.",
+   "where": "src/wallet/token-gas.ts:519 expr",
+   "old": "`This operation approves ${vendor}’s paymaster to take up to ${max} ${symbol} from your smart account` + (replaces !== null ? `, replacing an earlier approval of ${replaces} ${symbol}` : '') + '. It takes only the actual fee; …' (an earlier approval)",
+   "base": "a9998cc"
+  },
+  "settings.custom.remove.confirm": {
+   "en": "Remove “{name}” (chain id {chainId}) from this wallet? This also deletes, for this chain only: {labels}.",
+   "where": "src/wallet/custom-networks.ts:1134 expr",
+   "old": "`Remove “${name}” (chain id ${chainId}) from this wallet? This also deletes, for this chain only: ` + `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}. ` (the labels joined with common.and)",
+   "base": "a9998cc"
+  },
+  "settings.dev.testNetworkHint": {
+   "en": "Switches the app’s EVM chain to a test network — {nets}, each paid in test ETH, or a test network you added under “Networks you added” below: balances, sends and WalletConnect run against the chosen network, as does the smart-account path on {kernel} (the test networks where the Kernel v3.3 contracts were verified); an orange TESTNET banner replaces the mainnet warning, and explorer links go to {hosts} (on a network you added, to the explorer you gave, if any). Each network keeps its own endpoint, indexer and Account Abstraction configuration — nothing is shared between mainnet and the test networks or between test networks, and choosing Off restores mainnet exactly as it was. The Account Abstraction section pre-fills the verified SimpleAccountFactory on {simple} and the Kernel v3.3 factory on {kernel}; the bundler URL still has to be pasted by you for each network, because bundler endpoints contain your own API key. Tracked ERC-20 tokens are kept per network too: each test network starts with the test tokens known for it (no value), and your mainnet token list is unchanged.",
+   "where": "src/screens/SettingsScreen.tsx:228 expr",
+   "old": "The DEVELOPER_TEST_NETWORK_HINT constant (an IIFE): `Switches the app’s EVM chain to a test network — ${nets}, …` + (simple.length > 0 ? `section pre-fills the verified SimpleAccountFactory on ${listJoin(simple, 'and')} and ` : 'section pre-fills ') + `the Kernel v3.3 factory on ${listJoin(kernel, 'and')}; …` (a network with a SimpleAccount pre-fill)",
+   "base": "a9998cc"
+  },
+  "settings.dev.testNetworkHintNoSimple": {
+   "en": "Switches the app’s EVM chain to a test network — {nets}, each paid in test ETH, or a test network you added under “Networks you added” below: balances, sends and WalletConnect run against the chosen network, as does the smart-account path on {kernel} (the test networks where the Kernel v3.3 contracts were verified); an orange TESTNET banner replaces the mainnet warning, and explorer links go to {hosts} (on a network you added, to the explorer you gave, if any). Each network keeps its own endpoint, indexer and Account Abstraction configuration — nothing is shared between mainnet and the test networks or between test networks, and choosing Off restores mainnet exactly as it was. The Account Abstraction section pre-fills the Kernel v3.3 factory on {kernel}; the bundler URL still has to be pasted by you for each network, because bundler endpoints contain your own API key. Tracked ERC-20 tokens are kept per network too: each test network starts with the test tokens known for it (no value), and your mainnet token list is unchanged.",
+   "where": "src/screens/SettingsScreen.tsx:228 expr",
+   "old": "The DEVELOPER_TEST_NETWORK_HINT constant (an IIFE), the branch with no SimpleAccount pre-fill: … + 'section pre-fills ' + `the Kernel v3.3 factory on ${listJoin(kernel, 'and')}; …`",
+   "base": "a9998cc"
+  },
+  "settings.customNote": {
+   "en": "{label} is a network you added. The wallet treats its fees like Ethereum’s: it does not detect layer-2 fee models, so on a rollup quotes may be refused or underestimate the fee. {smart} {explorer}",
+   "where": "src/config/evm-chain.ts:1193 expr",
+   "old": "`${profile.label} is a network you added. … underestimate the fee. ${smartAccounts}` + explorer (explorer begins with a space)",
+   "base": "a9998cc"
+  },
+  "settings.protect.platformRefused": {
+   "en": "This phone refused biometric-protected storage; the phrase stays in standard secure storage.",
+   "where": "src/wallet/phrase-protection-copy.ts:103 expr",
+   "old": "`This phone refused biometric-protected storage${paren(detail)}; the phrase stays in standard secure storage.` (no detail)",
+   "base": "a9998cc"
+  },
+  "settings.protect.platformRefusedDetail": {
+   "en": "This phone refused biometric-protected storage ({detail}); the phrase stays in standard secure storage.",
+   "where": "src/wallet/phrase-protection-copy.ts:103 expr",
+   "old": "`This phone refused biometric-protected storage${paren(detail)}; the phrase stays in standard secure storage.` with paren(detail) = ` (${detail})`",
+   "base": "a9998cc"
+  },
+  "settings.protect.verifyFailed": {
+   "en": "The protected copy could not be confirmed, so it was discarded; the phrase stays in standard storage.",
+   "where": "src/wallet/phrase-protection-copy.ts:108 expr",
+   "old": "'The protected copy could not be confirmed, so it was discarded; the phrase stays in standard ' + `storage${paren(detail)}.` (no detail)",
+   "base": "a9998cc"
+  },
+  "settings.protect.verifyFailedDetail": {
+   "en": "The protected copy could not be confirmed, so it was discarded; the phrase stays in standard storage ({detail}).",
+   "where": "src/wallet/phrase-protection-copy.ts:108 expr",
+   "old": "'The protected copy could not be confirmed, so it was discarded; the phrase stays in standard ' + `storage${paren(detail)}.` with paren(detail) = ` (${detail})`",
+   "base": "a9998cc"
+  },
+  "settings.protect.imported.unreadableOne": {
+   "en": "{subject} can no longer be opened on this phone after a biometric change; your recovery phrase cannot restore it, only a copy you kept yourself can.",
+   "where": "src/wallet/phrase-protection-copy.ts:157 expr",
+   "old": "`${importedKeysSubject(k.unreadable, k.total)} can no longer be opened … cannot restore ${pronoun(k.unreadable)}, only a copy you kept yourself can.` (one key: \"it\")",
+   "base": "a9998cc"
+  },
+  "settings.protect.imported.unreadableMany": {
+   "en": "{subject} can no longer be opened on this phone after a biometric change; your recovery phrase cannot restore them, only a copy you kept yourself can.",
+   "where": "src/wallet/phrase-protection-copy.ts:157 expr",
+   "old": "`${importedKeysSubject(k.unreadable, k.total)} can no longer be opened … cannot restore ${pronoun(k.unreadable)}, only a copy you kept yourself can.` (several keys: \"them\")",
+   "base": "a9998cc"
+  },
+  "settings.protect.imported.stillStandardOne": {
+   "en": "{subject} is still in standard secure storage, readable by code inside the app while the phone is unlocked.",
+   "where": "src/wallet/phrase-protection-copy.ts:164 expr",
+   "old": "`${importedKeysSubject(k.standard, k.total)} ${verb(k.standard)} still in standard secure storage, ` + 'readable by code inside the app while the phone is unlocked.' (one key: \"is\")",
+   "base": "a9998cc"
+  },
+  "settings.protect.imported.stillStandardMany": {
+   "en": "{subject} are still in standard secure storage, readable by code inside the app while the phone is unlocked.",
+   "where": "src/wallet/phrase-protection-copy.ts:164 expr",
+   "old": "`${importedKeysSubject(k.standard, k.total)} ${verb(k.standard)} still in standard secure storage, ` + 'readable by code inside the app while the phone is unlocked.' (several keys: \"are\")",
+   "base": "a9998cc"
+  },
+  "settings.protect.imported.movesOne": {
+   "en": "Protect with biometrics moves it too.",
+   "where": "src/wallet/phrase-protection-copy.ts:166 expr",
+   "old": "` Protect with biometrics moves ${pronoun(k.standard)} too.` (one key: \"it\"; the leading space is the joint)",
+   "base": "a9998cc"
+  },
+  "settings.protect.imported.movesMany": {
+   "en": "Protect with biometrics moves them too.",
+   "where": "src/wallet/phrase-protection-copy.ts:166 expr",
+   "old": "` Protect with biometrics moves ${pronoun(k.standard)} too.` (several keys: \"them\"; the leading space is the joint)",
+   "base": "a9998cc"
+  },
+  "settings.protect.imported.protectedOne": {
+   "en": "{subject} is protected by biometrics too.",
+   "where": "src/wallet/phrase-protection-copy.ts:170 expr",
+   "old": "`${importedKeysSubject(n, k.total - k.unreadable)} ${verb(n)} protected by biometrics too.` (one key)",
+   "base": "a9998cc"
+  },
+  "settings.protect.imported.protectedMany": {
+   "en": "{subject} are protected by biometrics too.",
+   "where": "src/wallet/phrase-protection-copy.ts:170 expr",
+   "old": "`${importedKeysSubject(n, k.total - k.unreadable)} ${verb(n)} protected by biometrics too.` (several keys)",
+   "base": "a9998cc"
+  },
+  "settings.protect.imported.standardOne": {
+   "en": "{subject} is in standard secure storage too.",
+   "where": "src/wallet/phrase-protection-copy.ts:174 expr",
+   "old": "`${importedKeysSubject(k.total, k.total)} ${verb(k.total)} in standard secure storage too` + '.' (one key, nothing can be moved now)",
+   "base": "a9998cc"
+  },
+  "settings.protect.imported.standardMany": {
+   "en": "{subject} are in standard secure storage too.",
+   "where": "src/wallet/phrase-protection-copy.ts:174 expr",
+   "old": "`${importedKeysSubject(k.total, k.total)} ${verb(k.total)} in standard secure storage too` + '.' (several keys, nothing can be moved now)",
+   "base": "a9998cc"
+  },
+  "settings.protect.imported.standardMovesOne": {
+   "en": "{subject} is in standard secure storage too; protecting the phrase moves it too.",
+   "where": "src/wallet/phrase-protection-copy.ts:174 expr",
+   "old": "`${importedKeysSubject(k.total, k.total)} ${verb(k.total)} in standard secure storage too` + `; protecting the phrase moves ${pronoun(k.total)} too.` (one key)",
+   "base": "a9998cc"
+  },
+  "settings.protect.imported.standardMovesMany": {
+   "en": "{subject} are in standard secure storage too; protecting the phrase moves them too.",
+   "where": "src/wallet/phrase-protection-copy.ts:174 expr",
+   "old": "`${importedKeysSubject(k.total, k.total)} ${verb(k.total)} in standard secure storage too` + `; protecting the phrase moves ${pronoun(k.total)} too.` (several keys)",
+   "base": "a9998cc"
+  },
+  "sessions.grant.rateOneFrom": {
+   "en": "Rate limit: at most {count} operation in total, one more becoming valid every {interval} s from {start}; a missed slot can be used later. Counted per operation, not per transfer.",
+   "where": "src/wallet/sessions.ts:944 expr",
+   "old": "`Rate limit: at most ${count} operation${count === 1 ? '' : 's'} in total, ` + `one more becoming valid every ${interval} s` + (startAt > 0 ? ` from ${utc}` : ' (no start time: …)') + '; a missed slot … per transfer.' (one operation, a start time)",
+   "base": "a9998cc"
+  },
+  "sessions.grant.rateManyFrom": {
+   "en": "Rate limit: at most {count} operations in total, one more becoming valid every {interval} s from {start}; a missed slot can be used later. Counted per operation, not per transfer.",
+   "where": "src/wallet/sessions.ts:944 expr",
+   "old": "The rate-limit line (several operations, a start time)",
+   "base": "a9998cc"
+  },
+  "sessions.grant.rateOneOpen": {
+   "en": "Rate limit: at most {count} operation in total, one more becoming valid every {interval} s (no start time: every slot is already open, so only the total is limited); a missed slot can be used later. Counted per operation, not per transfer.",
+   "where": "src/wallet/sessions.ts:944 expr",
+   "old": "The rate-limit line (one operation, no start time)",
+   "base": "a9998cc"
+  },
+  "sessions.grant.rateManyOpen": {
+   "en": "Rate limit: at most {count} operations in total, one more becoming valid every {interval} s (no start time: every slot is already open, so only the total is limited); a missed slot can be used later. Counted per operation, not per transfer.",
+   "where": "src/wallet/sessions.ts:944 expr",
+   "old": "The rate-limit line (several operations, no start time)",
+   "base": "a9998cc"
+  },
+  "sessions.grant.onlyOne": {
+   "en": "The session may ONLY do the following (1 allowed call):",
+   "where": "src/components/SessionGrantViews.tsx:41 jsx",
+   "old": "JSX: The session may ONLY do the following ({grant.calls.length} allowed call{grant.calls.length === 1 ? '' : 's'}): (one call)",
+   "base": "a9998cc"
+  },
+  "sessions.grant.onlyMany": {
+   "en": "The session may ONLY do the following ({count} allowed calls):",
+   "where": "src/components/SessionGrantViews.tsx:41 jsx",
+   "old": "JSX: The session may ONLY do the following ({grant.calls.length} allowed call{… 's'}): (several calls)",
+   "base": "a9998cc"
+  },
+  "sessions.subscription.shortOne": {
+   "en": "These terms last only {total} in total ({payments} payment, one every {period}). Handing the key to the merchant and the merchant's first pull happen inside the first period, so some payments may never be taken. Choose a longer period or more payments unless this is a quick test.",
+   "where": "src/wallet/subscriptions.ts:168 expr",
+   "old": "subscriptionShortWindowWarning: `These terms last only ${describePeriod(total)} in total (${payments} payment${payments === 1 ? '' : 's'}, ` + … (one payment)",
+   "base": "a9998cc"
+  },
+  "sessions.subscription.shortMany": {
+   "en": "These terms last only {total} in total ({payments} payments, one every {period}). Handing the key to the merchant and the merchant's first pull happen inside the first period, so some payments may never be taken. Choose a longer period or more payments unless this is a quick test.",
+   "where": "src/wallet/subscriptions.ts:168 expr",
+   "old": "subscriptionShortWindowWarning (several payments)",
+   "base": "a9998cc"
+  },
+  "sessions.recurring.review.countOne": {
+   "en": "At most {count} payment in total: the first from {start}, then one more every {period}.",
+   "where": "src/wallet/recurring.ts:329 expr",
+   "old": "`At most ${count} payment${count === 1 ? '' : 's'} in total: the first from ${formatUtc(sub.startAt)}, ` + `then one more every ${period}.` (one payment)",
+   "base": "a9998cc"
+  },
+  "sessions.recurring.review.countMany": {
+   "en": "At most {count} payments in total: the first from {start}, then one more every {period}.",
+   "where": "src/wallet/recurring.ts:329 expr",
+   "old": "The same line (several payments)",
+   "base": "a9998cc"
+  },
+  "sessions.recurring.review.missedGraced": {
+   "en": "Missed payments are not lost: a payment whose period passed while the wallet was closed can still be sent later, even right before the next one, until the end date. The end date is two periods after the last payment falls due (one period more than the terms alone would allow, as a grace period), so a late last payment can still be sent too; this does not allow any extra payment.",
+   "where": "src/wallet/recurring.ts:342 expr",
+   "old": "'Missed payments are not lost: … until the end date.' + (graced ? ' The end date is two periods after … extra payment.' : '') (graced)",
+   "base": "a9998cc"
+  },
+  "sessions.recurring.shortOne": {
+   "en": "These terms last only {total} in total: {count} payment, one every {period}, and the last one can still be sent for {untilLast} after it falls due. Payments are sent only while the wallet is open and after you confirm each one, so some may not be sent before the end date. Choose a longer period or more payments unless this is a quick test.",
+   "where": "src/wallet/recurring.ts:381 expr",
+   "old": "recurringShortWindowWarning: `These terms last only ${describePeriod(total)} in total: ${count} payment${count === 1 ? '' : 's'}, one ` + … (one payment)",
+   "base": "a9998cc"
+  },
+  "sessions.recurring.shortMany": {
+   "en": "These terms last only {total} in total: {count} payments, one every {period}, and the last one can still be sent for {untilLast} after it falls due. Payments are sent only while the wallet is open and after you confirm each one, so some may not be sent before the end date. Choose a longer period or more payments unless this is a quick test.",
+   "where": "src/wallet/recurring.ts:381 expr",
+   "old": "recurringShortWindowWarning (several payments)",
+   "base": "a9998cc"
+  },
+  "dca.shortOne": {
+   "en": "This plan lasts only {total} in total: {count} swap, one every {period}. Swaps are sent only while the wallet is open and after you confirm each one, so some may not be sent before the end date. Choose a longer period or more swaps unless this is a quick test.",
+   "where": "src/wallet/dca.ts:780 expr",
+   "old": "dcaShortWindowWarning: `This plan lasts only ${describePeriod(total)} in total: ${terms.count} swap${terms.count === 1 ? '' : 's'}, one ` + … (one swap)",
+   "base": "a9998cc"
+  },
+  "dca.shortMany": {
+   "en": "This plan lasts only {total} in total: {count} swaps, one every {period}. Swaps are sent only while the wallet is open and after you confirm each one, so some may not be sent before the end date. Choose a longer period or more swaps unless this is a quick test.",
+   "where": "src/wallet/dca.ts:780 expr",
+   "old": "dcaShortWindowWarning (several swaps)",
+   "base": "a9998cc"
+  },
+  "settings.pinCost.row.measured": {
+   "en": "N = 2^{n}: {ms} ms",
+   "where": "src/wallet/pin-cost.ts:185 expr",
+   "old": "`N = 2^${row.log2N}` (const size) then `${size}: ${formatMs(row.ms)} ms`",
+   "base": "a9998cc"
+  },
+  "settings.pinCost.row.ceiling": {
+   "en": "N = 2^{n}: stopped after {ms} ms, at the 120-second limit for one size (it takes longer than that).",
+   "where": "src/wallet/pin-cost.ts:185 expr",
+   "old": "`N = 2^${row.log2N}` (const size) then `${size}: stopped after ${formatMs(row.ms)} ms, at the 120-second limit …`",
+   "base": "a9998cc"
+  },
+  "settings.pinCost.row.stopped": {
+   "en": "N = 2^{n}: stopped by you after {ms} ms (not finished).",
+   "where": "src/wallet/pin-cost.ts:185 expr",
+   "old": "`N = 2^${row.log2N}` (const size) then `${size}: stopped by you after ${formatMs(row.ms)} ms (not finished).`",
+   "base": "a9998cc"
+  },
+  "settings.pinCost.row.skipped": {
+   "en": "N = 2^{n}: skipped (a smaller size reached the 120-second limit).",
+   "where": "src/wallet/pin-cost.ts:185 expr",
+   "old": "`N = 2^${row.log2N}` (const size) then `${size}: skipped (a smaller size reached the 120-second limit).`",
+   "base": "a9998cc"
+  },
+  "settings.pinCost.row.notMeasured": {
+   "en": "N = 2^{n}: not measured (stopped by you).",
+   "where": "src/wallet/pin-cost.ts:185 expr",
+   "old": "`N = 2^${row.log2N}` (const size) then `${size}: not measured (stopped by you).`",
+   "base": "a9998cc"
+  },
+  "settings.pinCost.platform": {
+   "en": "Platform: {os} · Hermes: {hermes} · development bundle (__DEV__): {dev}",
+   "where": "src/wallet/pin-cost.ts:203 expr",
+   "old": "`Platform: ${p.os} · Hermes: ${p.hermes ? 'yes' : 'no'} · development bundle (__DEV__): ${p.dev ? 'yes' : 'no'}`",
+   "base": "a9998cc"
+  },
+  "settings.pinCost.platformHashing": {
+   "en": "Platform: {os} · Hermes: {hermes} · development bundle (__DEV__): {dev} · Hashing: {path}",
+   "where": "src/wallet/pin-cost.ts:203 expr",
+   "old": "`${base} · Hashing: ${start}` (the same path at the start and the end)",
+   "base": "a9998cc"
+  },
+  "settings.pinCost.platformHashingChanged": {
+   "en": "Platform: {os} · Hermes: {hermes} · development bundle (__DEV__): {dev} · Hashing: {start} at the start, then {end} after the native hash failed during the run",
+   "where": "src/wallet/pin-cost.ts:203 expr",
+   "old": "`${base} · Hashing: ${start} at the start, then ${end} after the native hash failed during the run`",
+   "base": "a9998cc"
+  },
+  "settings.pinCost.platformSpoken": {
+   "en": "Platform: {os}. Hermes: {hermes}. Development bundle: {dev}.",
+   "where": "src/wallet/pin-cost.ts:203 expr",
+   "old": "pinCostPlatformSpokenText: the visible line with ' development bundle (__DEV__): ' → ' Development bundle: ', split at ' · ', joined with '. ', ending '.'",
+   "base": "a9998cc"
+  },
+  "settings.pinCost.platformHashingSpoken": {
+   "en": "Platform: {os}. Hermes: {hermes}. Development bundle: {dev}. Hashing: {path}.",
+   "where": "src/wallet/pin-cost.ts:203 expr",
+   "old": "pinCostPlatformSpokenText of the line with one hashing path",
+   "base": "a9998cc"
+  },
+  "settings.pinCost.platformHashingChangedSpoken": {
+   "en": "Platform: {os}. Hermes: {hermes}. Development bundle: {dev}. Hashing: {start} at the start, then {end} after the native hash failed during the run.",
+   "where": "src/wallet/pin-cost.ts:203 expr",
+   "old": "pinCostPlatformSpokenText of the line whose hashing path changed during the run",
+   "base": "a9998cc"
+  },
+  "settings.pinCost.resultNote": {
+   "en": "Each figure is one hash. Unlocking with the app PIN computes two hashes at the PIN's size. Nothing was stored.",
+   "where": "src/wallet/pin-cost.ts:228 expr",
+   "old": "PIN_COST_RESULT_NOTE: 'Each figure is one hash. Unlocking with the app PIN computes two hashes at the PIN\\'s size. Nothing was stored.' (the source escapes the apostrophe)",
+   "base": "a9998cc"
   }
  },
  "new": [

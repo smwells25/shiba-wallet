@@ -11,6 +11,7 @@ import {
   type UpgradeResult,
 } from './storage.ts';
 import { localDateLabel } from '../config/dates.ts';
+import { t } from '../i18n/index.ts';
 
 /** What the Settings section shows for one storageProtection() result. */
 export interface ProtectionStatusView {
@@ -69,7 +70,7 @@ export const STANDARD_COPY_NOTE =
  * other Settings status lines use for their check dates.
  */
 export function protectionDate(ms: number | null): string {
-  if (ms === null || !Number.isFinite(ms)) return 'unknown date';
+  if (ms === null || !Number.isFinite(ms)) return t('settings.protect.unknownDate');
   return localDateLabel(ms);
 }
 
@@ -79,12 +80,9 @@ function paren(detail: string | null): string {
 }
 
 export function protectedText(protectedSince: number | null): string {
-  return (
-    `Your recovery phrase is protected by biometrics (since ${protectionDate(protectedSince)}). ` +
-    'Opening it needs your fingerprint or face every time. If you add or remove a fingerprint or ' +
-    'face, or turn off the screen lock, this phone can no longer open it — keep your written ' +
-    'recovery phrase safe.'
-  );
+  // Through the string table (phase 23 item 8, fourth pass); in English
+  // exactly the sentence this function built before.
+  return t('settings.protect.protectedSince', { date: protectionDate(protectedSince) });
 }
 
 export const NO_STRONG_BIOMETRICS_TEXT =
@@ -100,14 +98,11 @@ export const REVERTED_TEXT =
 export const POLICY_OFF_TEXT = 'Biometric protection is turned off for this build.';
 
 export function platformRefusedText(detail: string | null): string {
-  return `This phone refused biometric-protected storage${paren(detail)}; the phrase stays in standard secure storage.`;
+  return detail ? t('settings.protect.platformRefusedDetail', { detail }) : t('settings.protect.platformRefused');
 }
 
 export function verifyFailedText(detail: string | null): string {
-  return (
-    'The protected copy could not be confirmed, so it was discarded; the phrase stays in standard ' +
-    `storage${paren(detail)}.`
-  );
+  return detail ? t('settings.protect.verifyFailedDetail', { detail }) : t('settings.protect.verifyFailed');
 }
 
 function keysWord(n: number): string {
@@ -127,12 +122,16 @@ export function importedKeysSubject(count: number, total: number): string {
   return count === 1 ? 'One of your imported private keys' : `${count} of your ${total} imported private keys`;
 }
 
-/** "is" / "are", and "it" / "them", for importedKeysSubject's count. */
-function verb(count: number): string {
-  return count === 1 ? 'is' : 'are';
-}
-function pronoun(count: number): string {
-  return count === 1 ? 'it' : 'them';
+
+/**
+ * importedKeysSubject through the string table, for the Settings note below
+ * (phase 23 item 8, fourth pass). importedKeysSubject itself stays English:
+ * the protect dialog's message (protectConfirmMessage), not migrated yet,
+ * builds an English sentence around it.
+ */
+function importedKeysSubjectText(count: number, total: number): string {
+  if (count >= total) return count === 1 ? t('settings.protect.subject.yourOne') : t('settings.protect.subject.yourMany', { count });
+  return count === 1 ? t('settings.protect.subject.oneOf') : t('settings.protect.subject.someOf', { count, total });
 }
 
 /**
@@ -144,38 +143,39 @@ function pronoun(count: number): string {
 export function importedKeysProtectionNote(s: StorageProtection): string | null {
   const k = s.importedKeys;
   if (!k) return null;
-  if (k.damaged) {
-    return (
-      'The record of imported private keys on this phone could not be read, so where they are kept is ' +
-      'unknown. No key was deleted.'
-    );
-  }
+  // Through the string table (phase 23 item 8, fourth pass): one entry per
+  // number (one key / several) so a translation can agree its verb and
+  // pronoun; in English exactly the sentences this function built before.
+  if (k.damaged) return t('settings.protect.imported.damaged');
   if (k.total === 0) return null;
   const parts: string[] = [];
   if (k.unreadable > 0) {
-    parts.push(
-      `${importedKeysSubject(k.unreadable, k.total)} can no longer be opened on this phone after a biometric ` +
-        `change; your recovery phrase cannot restore ${pronoun(k.unreadable)}, only a copy you kept yourself can.`,
-    );
+    const subject = importedKeysSubjectText(k.unreadable, k.total);
+    parts.push(k.unreadable === 1 ? t('settings.protect.imported.unreadableOne', { subject }) : t('settings.protect.imported.unreadableMany', { subject }));
   }
   if (s.phrase === 'protected' || s.phrase === 'unreadable') {
     if (k.standard > 0) {
+      const subject = importedKeysSubjectText(k.standard, k.total);
+      const one = k.standard === 1;
       parts.push(
-        `${importedKeysSubject(k.standard, k.total)} ${verb(k.standard)} still in standard secure storage, ` +
-          'readable by code inside the app while the phone is unlocked.' +
-          (s.canProtectNow ? ` Protect with biometrics moves ${pronoun(k.standard)} too.` : ''),
+        (one ? t('settings.protect.imported.stillStandardOne', { subject }) : t('settings.protect.imported.stillStandardMany', { subject })) +
+          (s.canProtectNow ? ` ${one ? t('settings.protect.imported.movesOne') : t('settings.protect.imported.movesMany')}` : ''),
       );
     } else if (k.protected - k.unreadable > 0) {
       const n = k.protected - k.unreadable;
-      parts.push(`${importedKeysSubject(n, k.total - k.unreadable)} ${verb(n)} protected by biometrics too.`);
+      const subject = importedKeysSubjectText(n, k.total - k.unreadable);
+      parts.push(n === 1 ? t('settings.protect.imported.protectedOne', { subject }) : t('settings.protect.imported.protectedMany', { subject }));
     }
   } else if (s.phrase === 'standard') {
+    const subject = importedKeysSubjectText(k.total, k.total);
+    const one = k.total === 1;
     parts.push(
-      `${importedKeysSubject(k.total, k.total)} ${verb(k.total)} in standard secure storage too` +
-        (s.canProtectNow ? `; protecting the phrase moves ${pronoun(k.total)} too.` : '.'),
+      s.canProtectNow
+        ? one ? t('settings.protect.imported.standardMovesOne', { subject }) : t('settings.protect.imported.standardMovesMany', { subject })
+        : one ? t('settings.protect.imported.standardOne', { subject }) : t('settings.protect.imported.standardMany', { subject }),
     );
   }
-  parts.push('The recovery phrase does not back up imported keys.');
+  parts.push(t('settings.protect.imported.notBackedUp'));
   return parts.join(' ');
 }
 
@@ -193,7 +193,7 @@ export function describeProtectionStatus(s: StorageProtection): ProtectionStatus
     case 'none':
       return view(null, { showProtectButton: false });
     case 'unreadable':
-      return view(PHRASE_UNREADABLE_MESSAGE, { warning: true, showProtectButton: false });
+      return view(t('settings.protect.unreadable'), { warning: true, showProtectButton: false });
     case 'protected':
       return view(protectedText(s.protectedSince), {
         note: s.standardCopyPresent ? STANDARD_COPY_NOTE : null,

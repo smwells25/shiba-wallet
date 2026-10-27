@@ -61,6 +61,7 @@ import {
   readLidoAvailability,
   readRocketPoolAvailability,
   readStakingBalances,
+  stakingActionLabel,
   stakingActionTitle,
   stakingBalancesHolderLine,
   stakingOfferFor,
@@ -680,7 +681,7 @@ export function StakingScreen({ navigation }: Props) {
     return (
       <ScrollView key="staking-success" style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
         <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}>{aaResult ? tx('Sent to the bundler ✓') : tx('Sent ✓')}</Text>
-        <Text style={[styles.hint, { color: theme.textMuted }]}>{stakingActionTitle(plan.action, symbol)}.</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{stakingActionLabel(plan.action, symbol)}.</Text>
         {approveTxid ? <Text style={[styles.hint, { color: theme.textMuted }]}>{t('staking.success.approvalTx', { hash: approveTxid })}</Text> : null}
         <Text style={[styles.label, { color: theme.textMuted }]}>{aaResult ? tx('UserOperation hash') : tx('Transaction id')}</Text>
         <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
@@ -782,7 +783,7 @@ export function StakingScreen({ navigation }: Props) {
         <Row label="From account" value={activeAccount?.name ?? '—'} sub={account.address} spoken={`From account: ${activeAccount?.name ?? 'unknown'}, ${spokenShortAddress(account.address)}`} theme={theme} />
         <ImportedKeyNotice show={activeAccount?.imported === true} />
         <Text style={[styles.hint, { color: theme.text }]}>
-          {t('staking.approve.intro', { contract: plan.contractLabel, symbol: plan.approval.symbol, amount: exact18(plan.approval.amount) })}
+          {t('staking.approve.intro', { contract: localize(plan.contractLabel), symbol: plan.approval.symbol, amount: exact18(plan.approval.amount) })}
         </Text>
         <Row label="Token" value={plan.approval.token} mono theme={theme} />
         <Row label="Spender" value={plan.approval.spender} mono theme={theme} />
@@ -846,7 +847,7 @@ export function StakingScreen({ navigation }: Props) {
           sendingView(tx('Signing and broadcasting…'))
         ) : (
           <>
-            <Button title={stakingActionTitle(plan.action, symbol)} onPress={() => void onSend()} disabled={!eoaQuote.simulation.ok} />
+            <Button title={stakingActionLabel(plan.action, symbol)} onPress={() => void onSend()} disabled={!eoaQuote.simulation.ok} />
             <Button title="Back" variant="secondary" onPress={() => backToForm('')} />
           </>
         )}
@@ -867,7 +868,7 @@ export function StakingScreen({ navigation }: Props) {
         <StakeOutcomeCard url={url} plan={plan} theme={theme} nativeSymbol={symbol} />
         {batch && plan.approval ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            {t('staking.aa.batch', { amount: exact18(plan.approval.amount), symbol: plan.approval.symbol, contract: plan.contractLabel })}
+            {t('staking.aa.batch', { amount: exact18(plan.approval.amount), symbol: plan.approval.symbol, contract: localize(plan.contractLabel) })}
           </Text>
         ) : null}
         {aaQuote.calls.map((c, i) => (
@@ -915,7 +916,7 @@ export function StakingScreen({ navigation }: Props) {
           sendingView(tx('Signing and submitting to the bundler…'))
         ) : (
           <>
-            <Button title={t('staking.aa.button', { action: stakingActionTitle(plan.action, symbol) })} onPress={() => void onAaSend()} />
+            <Button title={t('staking.aa.button', { action: stakingActionLabel(plan.action, symbol) })} onPress={() => void onAaSend()} />
             <Button title="Back" variant="secondary" onPress={() => backToForm('')} />
           </>
         )}

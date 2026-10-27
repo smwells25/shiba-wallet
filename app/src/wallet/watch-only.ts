@@ -373,10 +373,9 @@ export const WATCH_ONLY_LIST_HINT =
 export const REMOVE_WATCH_ONLY_TITLE = 'Stop watching this address?';
 
 export function removeWatchOnlyMessage(name: string, address: string): string {
-  return (
-    `${name} (${address}) is removed from this wallet. Nothing secret is deleted, because the wallet ` +
-    'never held a key for it, and nothing on-chain changes. You can watch it again at any time.'
-  );
+  // Through the string table (phase 23 item 8, fourth pass); in English
+  // exactly the message this function built before.
+  return t('accounts.stopWatching.message', { name, address });
 }
 
 /** Receive for a watch-only account: what the code on the screen is. */

@@ -3,6 +3,7 @@ import { Platform, StyleSheet, Text, View } from 'react-native';
 import type { SessionKeyGrant } from '@shiba-wallet/chains-evm';
 import { WarningBox } from '../components';
 import { useTheme } from '../theme';
+import { useI18n } from '../i18n/useI18n';
 import { describeAllowedCall, describeGrantLimits } from '../wallet/sessions';
 
 const mono = Platform.select({ ios: 'Menlo', default: 'monospace' });
@@ -35,11 +36,15 @@ export function GrantReview({
   permissionId?: string | null;
 }) {
   const theme = useTheme();
+  // Through the string table (phase 23 item 8, fourth pass); in English
+  // exactly the text this view rendered before.
+  const { t, localize } = useI18n();
   return (
     <View style={styles.block}>
       <Text style={[styles.label, { color: theme.textMuted }]}>
-        The session may ONLY do the following ({grant.calls.length} allowed call
-        {grant.calls.length === 1 ? '' : 's'}):
+        {grant.calls.length === 1
+          ? t('sessions.grant.onlyOne')
+          : t('sessions.grant.onlyMany', { count: grant.calls.length })}
       </Text>
       {grant.calls.map((call, i) => {
         const d = describeAllowedCall(call, { symbol, account, ...(nameFor ? { nameFor } : {}) });
@@ -65,13 +70,13 @@ export function GrantReview({
           {line}
         </Text>
       ))}
-      <Text style={[styles.label, { color: theme.textMuted }]}>Session key (held by {sessionKeyHolder})</Text>
+      <Text style={[styles.label, { color: theme.textMuted }]}>{t('sessions.grant.keyHeldBy', { holder: localize(sessionKeyHolder) })}</Text>
       <Text selectable style={[styles.mono, { color: theme.text }]}>
         {grant.sessionKey}
       </Text>
       {permissionId ? (
         <Text selectable style={[styles.detail, { color: theme.textMuted }]}>
-          Kernel permission id {permissionId}
+          {t('sessions.grant.permissionId', { id: permissionId })}
         </Text>
       ) : null}
     </View>

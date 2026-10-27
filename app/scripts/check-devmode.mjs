@@ -1465,7 +1465,10 @@ console.log('\n== Arbitrum Sepolia profile (third test network) ==');
   const read = (rel) => readFs(new globalThis.URL(rel, import.meta.url), 'utf8');
   const settings = read('../src/screens/SettingsScreen.tsx');
   check('Settings → Developer text is built from the profiles (no hand-written network list)',
-    settings.includes('{DEVELOPER_TEST_NETWORK_HINT}') && !settings.includes('Sepolia (chain id 11155111) or Base Sepolia') && !settings.includes('between\n          the two test networks'));
+    // Phase 23 item 8 (fourth pass): the builder moved to custom-networks.ts
+    // (developerTestNetworkHint, through the string table); Settings renders it.
+    settings.includes('{developerTestNetworkHint()}') && !settings.includes('Sepolia (chain id 11155111) or Base Sepolia') && !settings.includes('between\n          the two test networks') &&
+      !read('../src/wallet/custom-networks.ts').includes('Sepolia (chain id 11155111) or Base Sepolia'));
   check('readiness hints are built from the profiles', !read('../src/config/readiness.ts').includes("'Turn on a test network (Ethereum Sepolia or Base Sepolia)"));
 }
 
@@ -1680,18 +1683,19 @@ console.log('\n== Hoodi and OP Sepolia profiles (phase 18) ==');
 
 // Phase 18 emulator finding 7: the Developer hint said the smart-account
 // path runs on every test network, Hoodi included (no Kernel v3.3 there).
-// The hint is evaluated from SettingsScreen.tsx's own source (the IIFE and
-// its listJoin helper) against the real profile table.
+// Phase 23 item 8 (fourth pass): the builder moved from a SettingsScreen.tsx
+// constant to custom-networks.ts developerTestNetworkHint(profiles), built
+// at render time through the string table; it is called here with the real
+// profile table and with a changed one.
 console.log('\n# Developer hint: the smart-account clause follows kernelV33Verified');
 {
   const { readFileSync: readFs } = await import('node:fs');
   const settingsSrc = readFs(new globalThis.URL('../src/screens/SettingsScreen.tsx', import.meta.url), 'utf8');
-  const listJoinTs = /function listJoin\([\s\S]*?\n\}\n/.exec(settingsSrc)?.[0] ?? '';
-  const listJoinJs = listJoinTs.replace("items: string[], conjunction: 'and' | 'or'): string", 'items, conjunction)');
-  const iife = /const DEVELOPER_TEST_NETWORK_HINT = (\(\(\) => \{[\s\S]*?\n\}\)\(\));/.exec(settingsSrc)?.[1] ?? '';
-  check('the hint builder and its helper were found in SettingsScreen.tsx (and the helper is type-free once stripped)',
-    listJoinJs !== listJoinTs && iife !== '' && !/:\s*string/.test(listJoinJs));
-  const hintFor = (profiles) => new Function('EVM_TEST_PROFILES', `${listJoinJs}\nreturn ${iife};`)(profiles);
+  const { developerTestNetworkHint } = await import('../src/wallet/custom-networks.ts');
+  check('the hint builder is custom-networks.ts developerTestNetworkHint, and SettingsScreen.tsx renders it and keeps no copy of the builder',
+    typeof developerTestNetworkHint === 'function' && settingsSrc.includes('{developerTestNetworkHint()}') &&
+      !settingsSrc.includes('const DEVELOPER_TEST_NETWORK_HINT') && !/function listJoin\(/.test(settingsSrc));
+  const hintFor = (profiles) => developerTestNetworkHint(profiles);
   const hint = hintFor(EVM_TEST_PROFILES);
   const clause = /as does the smart-account path on ([^(]+) \(the test networks where the Kernel v3\.3 contracts were verified\)/.exec(hint);
   check('the clause names exactly the Kernel-verified test networks (exact)',

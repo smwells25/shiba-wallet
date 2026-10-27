@@ -380,8 +380,13 @@ const store = memoryStore();
     check('a custom TEST network keeps the pre-fill note (a factory can be pasted and verified there)',
       testNote.includes('No smart-account deployment is pre-filled (paste a factory under Account Abstraction and the wallet checks it on-chain before saving)') && !testNote.includes(refusal));
     const settingsSrc = readFileSync(join(HERE, '../src/screens/SettingsScreen.tsx'), 'utf8');
+    // Phase 23 item 8 (fourth pass): Settings shows the note through
+    // customNetworkNoteText (custom-networks.ts, the string table), which in
+    // English is evm-chain.ts's customNetworkNote byte for byte.
     check('Settings → Developer passes the kernel-smart-account refusal to the note',
-      settingsSrc.includes("{localize(customNetworkNote(evmChain, { smartAccountRefusal: readinessRefusal('kernel-smart-account') }))}"));
+      settingsSrc.includes("{customNetworkNoteText(evmChain, { smartAccountRefusal: readinessRefusal('kernel-smart-account') })}") &&
+        cn.customNetworkNoteText(polygon, { smartAccountRefusal: refusal }) === mainNote && cn.customNetworkNoteText(linea, { smartAccountRefusal: refusal }) === testNote &&
+        cn.customNetworkNoteText(polygon) === evm.customNetworkNote(polygon) && cn.customNetworkNoteText(linea) === evm.customNetworkNote(linea));
   }
 
   // The single read path: a store with a saved network and choice, read cold.
@@ -584,9 +589,13 @@ console.log('Settings source checks');
       EN_TABLE['settings.dev.testModeOn'].startsWith('Test mode is ON ({network}).') && !/\{sepolia \? \(/.test(settings));
   check('Developer shows the custom networks section with chips', settings.includes('<CustomNetworksSection customNetworks={customNetworks} choice={testNetwork} onChoose={setTestNetwork} />') && settings.includes('style={styles.choiceChip}'));
   check('removal asks for the device check when spending limits would be deleted', settings.includes("requireLocalAuth('Remove the network and its spending limits')"));
+  // Phase 23 item 8 (fourth pass): the intro is built by custom-networks.ts
+  // developerTestNetworkHint through the string table; Settings renders it.
+  const devHint = cn.developerTestNetworkHint();
   check('the Developer intro mentions a test network you added (finding 9)',
-    settings.includes('`Switches the app’s EVM chain to a test network — ${nets}, each paid in test ETH, or a test network you ` +\n    \'added under “Networks you added” below: balances, sends and WalletConnect run against the chosen \' +') &&
-      settings.includes('(on a network you added, to the explorer ` +\n    \'you gave, if any).'));
+    settings.includes('{developerTestNetworkHint()}') &&
+      devHint.includes(', each paid in test ETH, or a test network you added under “Networks you added” below: balances, sends and WalletConnect run against the chosen ') &&
+      devHint.includes('(on a network you added, to the explorer you gave, if any).'));
   const readiness = await import('../src/config/readiness.ts');
   check('the readiness hint and intro mention a test network you added (finding 9)',
     readiness.READINESS_TESTNET_HINT.includes(', or a test network you added, in Settings → Developer') &&
