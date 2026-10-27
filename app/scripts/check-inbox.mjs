@@ -20,6 +20,7 @@
 //   node scripts/check-inbox.mjs
 
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { serializeSessionKeyGrant } from '@shiba-wallet/chains-evm';
@@ -654,6 +655,45 @@ console.log('check-inbox: routes, links and allow lists');
       screen.includes('title="Reset the inbox"') && screen.includes('title={INBOX_MARK_ALL_READ}') && screen.includes('{INBOX_SCHEDULED_NOTE}'));
   check('exact strings', I.INBOX_PIN_NOTE.startsWith('The app PIN is on, so the wallet posts no phone notifications. The inbox still lists') &&
     I.INBOX_EMPTY === 'Nothing yet. Reminders, alerts and sent transactions will be listed here.' && I.inboxUnreadText(1) === '1 unread entry.' && I.inboxTimeText(Date.UTC(2026, 9, 19, 3, 30)) === '2026-10-19 03:30 UTC');
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-inbox: the app scheme in app.json (phase 23 item 2)');
+// ---------------------------------------------------------------------------
+// The links this module reads arrive outside Expo Go only if app.json
+// declares the scheme: Expo's default config plugins then add it to the
+// Android main activity's VIEW intent filter and to the iOS
+// CFBundleURLTypes (@expo/config-plugins build/android/Scheme.js setScheme
+// lines 40-62, build/ios/Scheme.js setScheme lines 33-48; both are applied
+// by @expo/prebuild-config build/plugins/withDefaultPlugins.js lines 126
+// and 157). The installed plugins' own functions are called here on the
+// real app.json, so a future edit cannot drop or rename the scheme
+// without failing this check.
+const schemeRequire = createRequire(join(APP, 'package.json'));
+const { AndroidConfig: SchemeAndroid, IOSConfig: SchemeIos } = schemeRequire('@expo/config-plugins');
+/** True when the given app.json object declares the wallet's link scheme for both platforms. */
+function schemeDeclared(appJsonObject) {
+  const expo = appJsonObject?.expo ?? {};
+  const android = SchemeAndroid.Scheme.getScheme(expo);
+  const plist = SchemeIos.Scheme.setScheme(expo, {});
+  const iosSchemes = (plist.CFBundleURLTypes ?? []).flatMap((t) => t.CFBundleURLSchemes ?? []);
+  return expo.scheme === D.APP_LINK_SCHEME && android.includes(D.APP_LINK_SCHEME) && iosSchemes.includes(D.APP_LINK_SCHEME);
+}
+{
+  const appJsonObject = JSON.parse(read('app.json'));
+  check('the parser reads the scheme "shibawallet"', D.APP_LINK_SCHEME === 'shibawallet');
+  check('app.json declares "scheme": "shibawallet", which the installed config plugins turn into an Android intent-filter scheme and an iOS URL type',
+    schemeDeclared(appJsonObject), JSON.stringify(appJsonObject.expo?.scheme));
+  check('no platform-specific scheme overrides or adds to it (one scheme, the same on both platforms)',
+    appJsonObject.expo?.android?.scheme === undefined && appJsonObject.expo?.ios?.scheme === undefined);
+  check('a link in that scheme opens a screen (shibawallet://inbox → Inbox)', D.parseDeepLink(`${appJsonObject.expo?.scheme}://inbox`).route === 'Inbox');
+  const noScheme = structuredClone(appJsonObject);
+  delete noScheme.expo.scheme;
+  const renamed = structuredClone(appJsonObject);
+  renamed.expo.scheme = 'shiba-wallet';
+  mutants += 2;
+  mutantCaught('M16 the scheme removed from app.json', !schemeDeclared(noScheme));
+  mutantCaught('M17 the scheme renamed in app.json (the parser would no longer read its links)', !schemeDeclared(renamed));
 }
 
 // ---------------------------------------------------------------------------

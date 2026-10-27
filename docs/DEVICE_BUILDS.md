@@ -130,6 +130,66 @@ with lazy bundling switched off. Expo Go also loads a lazily bundled app
 from Metro, and Connected apps opened in it in earlier passes (phase 16);
 why only the development client failed was not established.
 
+### The release-candidate configuration (phase 23 item 2)
+
+Three native configuration changes landed together, so every development
+or release build made before them must be rebuilt (see "Rebuild after
+native configuration changes" above); Expo Go carries none of the first
+two. `docs/RELEASE.md` section 3 has the sources for each.
+
+- **The link scheme.** `app/app.json` declares `"scheme": "shibawallet"`.
+  Prebuild adds it to the main activity's VIEW intent filter on Android
+  and to `CFBundleURLTypes` on iOS (seen in a local `expo prebuild
+  --platform android` and in `npx expo config --type introspect` on
+  2026-10-27). A custom scheme is not verified: Android lets any app
+  register an intent filter for the same scheme
+  (developer.android.com/privacy-and-security/risks/unsafe-use-of-deeplinks,
+  fetched 2026-10-27), so a `shibawallet://` link may open another app,
+  and the wallet treats every link as untrusted input. Verified Android
+  App Links and iOS universal links need an `https` domain the wallet
+  controls: an input, not done.
+- **The launcher-badge permissions.** The wallet's own config plugin
+  `app/plugins/withoutShortcutBadger.js` writes
+  `<uses-permission … tools:node="remove"/>` for the sixteen permissions
+  that ShortcutBadger 1.1.22 (pulled in by `expo-notifications`) declares.
+- **The navigation bar.** `expo-navigation-bar` 57.0.3 is a new native
+  dependency. `App.tsx`'s `NavigationBarStyle` sets the bar's button style
+  from the colour scheme at launch and on every scheme change, through
+  `app/src/wallet/navigation-bar.ts` (Android only; nothing happens when
+  the module is missing; a failure is one log line). The package cannot
+  set a background colour (removed in its 56.0.0); the bar stays
+  transparent. Whether Expo Go carries the module: the cached Expo Go
+  57.0.9 APK in `~/.expo/android-apk-cache` contains the class
+  `expo.modules.navigationbar.NavigationBarModule` (read from its dex
+  files on 2026-10-27), but whether the Expo Go on the emulator is that
+  APK, and whether its module answers `setStyle`, is not verified; the
+  guard makes either answer safe.
+
+What the next build must verify (none of it can be seen without one):
+
+1. The MERGED manifest of a debug and a release APK (`aapt2 dump
+   permissions` and `aapt2 dump xmltree --file AndroidManifest.xml`):
+   none of the sixteen badge permissions remains, no other permission was
+   removed by mistake (compare with the 31 / 32 entries of the kept
+   APKs), and the main activity's VIEW intent filter carries
+   `shibawallet`.
+2. A deep link in the development build:
+   `adb shell am start -a android.intent.action.VIEW -d "shibawallet://inbox"`
+   opens the Inbox (and the other routes and refusals of
+   `deep-links.ts`), including a link held behind the lock and a launch
+   link after a force-stop; whether Android shows a chooser when another
+   app claims the scheme.
+3. The navigation bar on screen: with the system switched to dark mode
+   while the app runs (`adb shell cmd uimode night yes`), the white strip
+   under the TESTNET banner (pass p20c finding 15) turns dark, in
+   gesture and in three-button navigation, in both directions, and no
+   "Navigation bar style not applied" line appears in logcat. If the strip
+   stays light, the next option is the library's `enforceContrast: false`
+   plugin option (the bar then draws no scrim at all, so content and the
+   buttons share the bar area): a decision, not taken here.
+4. Reminders still work after the badge permissions are gone (a reminder
+   posts and a tap opens Sessions).
+
 ### The native scrypt for the app PIN (phase 22 item 2)
 
 On the Chairperson's decision of 2026-10-19 (`docs/THREAT_MODEL.md` F-81),

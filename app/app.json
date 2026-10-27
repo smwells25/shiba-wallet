@@ -2,6 +2,7 @@
   "expo": {
     "name": "Shiba Wallet",
     "slug": "shiba-wallet",
+    "scheme": "shibawallet",
     "version": "0.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -57,7 +58,8 @@
           "color": "#a65d13"
         }
       ],
-      "react-native-quick-crypto"
+      "react-native-quick-crypto",
+      "./plugins/withoutShortcutBadger"
     ]
   }
 }

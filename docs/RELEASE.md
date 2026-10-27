@@ -138,6 +138,8 @@ generated Info.plist, entitlements and AndroidManifest.
 | `expo-secure-store` plugin | **`faceIDPermission`** set (new) | Writes `NSFaceIDUsageDescription` (securestore docs, plugin table). Needed for `requireAuthentication` on iOS (the protected phrase class) |
 | `expo-local-authentication` plugin | Listed explicitly with the same `faceIDPermission` (new) | The plugin also writes `NSFaceIDUsageDescription` and adds `USE_BIOMETRIC` and `USE_FINGERPRINT`. It was already applied automatically as a "legacy" plugin (`@expo/prebuild-config` `withDefaultPlugins.js` `legacyExpoPlugins`), but with Expo's default text; listing it makes the text explicit and identical. Docs: without `NSFaceIDUsageDescription`, "the module will authenticate using device passcode" |
 | `expo-notifications` plugin | **`icon: ./assets/notification-icon.png`, `color: #a65d13`** (phase 18) | The Android notification small icon and tint for the local reminders; see "Notification icon" below. The plugin also sets the iOS `aps-environment` entitlement, which it already did automatically before the entry was listed (accepted by the Chairperson on 2026-10-11) |
+| `scheme` | **`shibawallet`** (phase 23 item 2) | The custom URL scheme that `app/src/wallet/deep-links.ts` reads (`APP_LINK_SCHEME`). See "The app scheme" below |
+| `./plugins/withoutShortcutBadger` plugin | Listed last in `expo.plugins` (phase 23 item 2) | The wallet's own config plugin; removes the sixteen launcher-badge permissions that ShortcutBadger adds. See "Launcher-badge permissions removed" below |
 | `ios.associatedDomains` | `webcredentials:passkey-domain-not-configured.invalid` (unchanged) | Placeholder for passkeys, as recorded in `AGENTS.md` and `docs/DEVICE_BUILDS.md`. Note: the v57 app-config page documents entries in the `applinks:` form; the `webcredentials:` form comes from the passkey library's README |
 | `ios.supportsTablet` | `true` (unchanged) | A product decision: if it stays `true` the app is offered on iPad, and the iPad layout and screenshots must be checked |
 | `ios.config.usesNonExemptEncryption` | Not set | Section 6 |
@@ -415,6 +417,113 @@ The docs note `blockedPermissions` is "Not available in Expo Go", which
 is irrelevant there. `SYSTEM_ALERT_WINDOW` (from Expo's template) was left
 alone: the app does not use it, but whether removing it affects the
 development client's tools was not checked.
+
+**The app scheme (phase 23 item 2; approved with the phase 23 plan).**
+`app/app.json` declares `"scheme": "shibawallet"`. Expo's default config
+plugins turn it into native configuration (both are applied by
+`@expo/prebuild-config` 57.0.17, `build/plugins/withDefaultPlugins.js`,
+lines 126 and 157):
+
+- Android: `@expo/config-plugins` 57.0.10, `build/android/Scheme.js`,
+  `setScheme` (lines 40-62) adds `<data android:scheme="shibawallet"/>` to
+  every VIEW intent filter of the `singleTask` main activity
+  (`appendScheme`, lines 160-187). A local `expo prebuild --platform
+  android` on 2026-10-27 (worktree only, not committed) wrote exactly
+  that: the main activity's VIEW / DEFAULT / BROWSABLE intent filter
+  carries `shibawallet` and the development client's `exp+shiba-wallet`.
+- iOS: `build/ios/Scheme.js`, `setScheme` (lines 33-48) writes a
+  `CFBundleURLTypes` entry; `npx expo config --type introspect` shows
+  `CFBundleURLSchemes: ['shibawallet', …]` beside `exp+shiba-wallet`.
+  (Introspection fills a placeholder bundle identifier, which `setScheme`
+  appends to the same list, lines 36-38; the real identifier is an input.)
+
+`app/scripts/check-inbox.mjs` calls those plugin functions on the real
+`app.json` and fails if the scheme is removed or renamed.
+
+**The custom-scheme caveat.** A custom scheme is not owned by anyone:
+Android's guidance says "By design, Android allows multiple apps to
+register intent filters for the same deep link URI"
+(developer.android.com/privacy-and-security/risks/unsafe-use-of-deeplinks,
+fetched 2026-10-27), and links that are not verified "are subject to the
+system disambiguation dialog" (developer.android.com/training/app-links,
+fetched 2026-10-27). Another app can therefore receive a `shibawallet://`
+link, and the wallet can receive one from anyone; `deep-links.ts` treats
+every link as untrusted input (an allow list of screens, a payment request
+only pre-fills Send, nothing is signed without review). Verified Android
+App Links (and iOS universal links) need an `https` domain the wallet
+controls, with its association file published there: an **input** (the
+domain), not done.
+
+**Launcher-badge permissions removed (phase 23 item 2).**
+`expo-notifications` 57.0.22 depends on `me.leolin:ShortcutBadger:1.1.22`
+(`android/build.gradle`, line 45) so it can draw an unread count on the
+launcher icon; the wallet never sets one (`shouldSetBadge: false` and
+`allowBadge: false` in `app/src/wallet/notifications.ts`). The library's
+own `AndroidManifest.xml` (inside `ShortcutBadger-1.1.22.aar` in the
+local Gradle cache, sha256 `cd1610dc…dad8c3`) declares **sixteen**
+`<uses-permission>` entries (lines 19-50): Samsung
+`com.sec.android.provider.badge.permission.READ` / `WRITE`, HTC
+`com.htc.launcher.permission.READ_SETTINGS` / `UPDATE_SHORTCUT`, Sony
+`com.sonyericsson.home.permission.BROADCAST_BADGE` and
+`com.sonymobile.home.permission.PROVIDER_INSERT_BADGE`, Apex
+`com.anddoes.launcher.permission.UPDATE_COUNT`, Solid
+`com.majeur.launcher.permission.UPDATE_BADGE`, Huawei
+`com.huawei.android.launcher.permission.CHANGE_BADGE` / `READ_SETTINGS` /
+`WRITE_SETTINGS`, ZUK `android.permission.READ_APP_BADGE`, OPPO
+`com.oppo.launcher.permission.READ_SETTINGS` / `WRITE_SETTINGS`, and
+EverythingMe `me.everything.badger.permission.BADGE_COUNT_READ` /
+`BADGE_COUNT_WRITE`. Its four `com.android.launcher.permission.*` lines
+(12-15) are commented out. `aapt2 dump permissions` on all five kept
+APKs in `.local/builds` (2026-10-27) lists exactly these sixteen. (This
+corrects the earlier record of "twenty" in section 10 and in `AGENTS.md`,
+phase 21.)
+
+The wallet's own config plugin `app/plugins/withoutShortcutBadger.js`
+(listed in `expo.plugins`) removes them from the merged manifest through
+Expo's `AndroidConfig.Permissions.withBlockedPermissions`, which declares
+the `tools` namespace (`build/android/Manifest.js`, `ensureToolsAvailable`,
+line 224) and writes `<uses-permission android:name="…"
+tools:node="remove"/>` for each name (`build/android/Permissions.js`,
+lines 48 and 89-101). Android's manifest merger documents the marker:
+"Remove this element from the merged manifest. Used when you discover an
+element in your merged manifest that you don't need that was provided by a
+lower-priority manifest file that's out of your control (such as an
+imported library)", and "All markers belong to the Android tools
+namespace, so you must first declare this namespace in the `<manifest>`
+element" (developer.android.com/build/manage-manifests, fetched
+2026-10-27). The local prebuild of 2026-10-27 wrote all sixteen remove
+entries and the `xmlns:tools` declaration into
+`android/app/src/main/AndroidManifest.xml`.
+`app/scripts/check-notifications.mjs` pins the plugin entry, the sixteen
+names and the plugin's manifest change. **Not verified without a Gradle
+build:** that the MERGED manifest of a debug and a release build carries
+none of the sixteen (`aapt2 dump permissions` on the new APK), and that
+reminders still work.
+
+**The navigation bar (phase 23 item 2; pass p20c finding 15).**
+`expo-navigation-bar` 57.0.3 is a dependency (the version
+`expo/bundledNativeModules.json` pins for SDK 57). Its 57 API has no
+background-colour function: `setBackgroundColorAsync`,
+`setButtonStyleAsync` and the `backgroundColor` plugin property were
+removed in 56.0.0 (its `CHANGELOG.md`, lines 49-51); the bar stays
+transparent, as React Native's edge-to-edge set-up makes it
+(`react-native` 0.86.3, `ReactAndroid/.../views/view/WindowUtil.kt`,
+`enableEdgeToEdge`, lines 164-190). What it can do is set the bar's
+appearance (`NavigationBarModule.kt`, AsyncFunction `setStyle`, lines
+126-133), which React Native sets only once, when the window is created.
+`App.tsx` mounts `NavigationBarStyle` (beside the `StatusBar` component), which
+calls it through `app/src/wallet/navigation-bar.ts` at launch and on every
+colour-scheme change: Android only, nothing when the native module is
+missing, any failure one log line. The library's own Android manifest is
+empty (no permission), it depends only on `androidx.core` and
+`androidx.appcompat`, and its sources make no network request. Its config
+plugin is applied automatically by prebuild (`withDefaultPlugins.js` line
+171) and changes nothing without options; the wallet sets none, so
+`enforceNavigationBarContrast` keeps its default (on). **Not verified
+without a device:** that the system's contrast scrim turns dark with the
+dark appearance (the white strip of finding 15), and the button colour
+(the library documents a visible effect only on a button navigation bar
+with `enforceContrast: false`, `src/NavigationBar.types.ts` lines 34-42).
 
 ---
 
@@ -696,24 +805,17 @@ Every item must be checked for the exact commit being built.
   level read on a device, and a network capture of a fresh install.
 - Seen in a local debug development build's merged manifest on
   2026-10-15 (commit 45506f2; the build is kept at
-  `.local/builds/shiba-devclient-45506f2-debug.apk`, git-ignored): twenty
-  launcher badge and shortcut permissions that are not in the list above
-  (`android.permission.READ_APP_BADGE`,
-  `com.android.launcher.permission.INSTALL_SHORTCUT` /
-  `UNINSTALL_SHORTCUT` / `READ_SETTINGS` / `WRITE_SETTINGS`, and the
-  Samsung, HTC, Sony, Huawei, Oppo, Nova (`com.anddoes`), Apex
-  (`com.majeur`) and EverythingMe badge permissions). All twenty come
-  from the library `me.leolin:ShortcutBadger:1.1.22`, which
-  `expo-notifications` 57.0.22 declares in its `android/build.gradle`
-  (line 45) so it can draw an unread count on the launcher icon. The
-  wallet never sets a badge count (`shouldSetBadge: false` and
-  `allowBadge: false` in `app/src/wallet/notifications.ts`), so the
-  permissions are declared but unused; they are normal-protection
-  launcher permissions that need no user prompt. Removing them would need
-  `tools:node="remove"` entries in the manifest through a config plugin,
-  which has not been tried. The debug manifest also carries the
-  dev-launcher's `CHANGE_WIFI_MULTICAST_STATE`; the release manifest was
-  not rebuilt on 2026-10-15.
+  `.local/builds/shiba-devclient-45506f2-debug.apk`, git-ignored): the
+  launcher badge and shortcut permissions of `me.leolin:ShortcutBadger:1.1.22`,
+  which `expo-notifications` 57.0.22 declares in its `android/build.gradle`
+  (line 45). The record of that day said "twenty", including four
+  `com.android.launcher.permission.*` entries; re-read on 2026-10-27, the
+  library's manifest declares sixteen (its four `com.android.launcher`
+  lines are commented out) and `aapt2 dump permissions` on that APK lists
+  sixteen. Since phase 23 item 2 the wallet's own config plugin removes
+  them (section 3, "Launcher-badge permissions removed"); the merged
+  manifest of a rebuilt APK has not been read yet. The debug manifest also
+  carries the dev-launcher's `CHANGE_WIFI_MULTICAST_STATE`.
 - App Store Connect's phased-release controls.
 - The export-compliance answer (legal input).
 

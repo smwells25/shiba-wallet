@@ -16,6 +16,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { createRequire } from 'node:module';
 import { serializeSessionKeyGrant } from '@shiba-wallet/chains-evm';
 import { DEFAULT_PREFS, loadPrefs, savePrefs } from '../src/config/prefs.ts';
 import {
@@ -1246,6 +1247,77 @@ console.log('check-notifications: wiring and the import rule (source)');
   const privacyDoc = readFileSync(join(appDir, '../docs/PRIVACY.md'), 'utf8');
   check('docs/PRIVACY.md describes the local reminders and that no notification server is contacted',
     /Local reminders/.test(privacyDoc) && /no push service/i.test(privacyDoc));
+}
+
+// Phase 23 item 2: the launcher-badge permissions that ShortcutBadger 1.1.22
+// (a dependency of expo-notifications, android/build.gradle line 45) adds
+// to the Android manifest are removed by the wallet's own config plugin
+// app/plugins/withoutShortcutBadger.js. The sixteen names below are the
+// <uses-permission> entries of the library's own AndroidManifest.xml
+// (ShortcutBadger-1.1.22.aar, lines 19-50; its four
+// com.android.launcher.permission.* lines are commented out) and exactly
+// the badge entries `aapt2 dump permissions` listed in every kept APK on
+// 2026-10-27. The plugin's manifest change is run here on a fake manifest;
+// the MERGED manifest needs a Gradle build and is checked there.
+{
+  const SHORTCUT_BADGER_1_1_22 = [
+    'com.sec.android.provider.badge.permission.READ',
+    'com.sec.android.provider.badge.permission.WRITE',
+    'com.htc.launcher.permission.READ_SETTINGS',
+    'com.htc.launcher.permission.UPDATE_SHORTCUT',
+    'com.sonyericsson.home.permission.BROADCAST_BADGE',
+    'com.sonymobile.home.permission.PROVIDER_INSERT_BADGE',
+    'com.anddoes.launcher.permission.UPDATE_COUNT',
+    'com.majeur.launcher.permission.UPDATE_BADGE',
+    'com.huawei.android.launcher.permission.CHANGE_BADGE',
+    'com.huawei.android.launcher.permission.READ_SETTINGS',
+    'com.huawei.android.launcher.permission.WRITE_SETTINGS',
+    'android.permission.READ_APP_BADGE',
+    'com.oppo.launcher.permission.READ_SETTINGS',
+    'com.oppo.launcher.permission.WRITE_SETTINGS',
+    'me.everything.badger.permission.BADGE_COUNT_READ',
+    'me.everything.badger.permission.BADGE_COUNT_WRITE',
+  ];
+  const PLUGIN_ENTRY = './plugins/withoutShortcutBadger';
+  const pluginListed = (appJsonObject) => (appJsonObject?.expo?.plugins ?? []).filter((p) => (Array.isArray(p) ? p[0] : p) === PLUGIN_ENTRY).length === 1;
+  const appJsonObject = JSON.parse(read('app.json'));
+  check('app.json lists the wallet\'s own plugin ./plugins/withoutShortcutBadger exactly once', pluginListed(appJsonObject));
+  const notificationsLib = read('node_modules/expo-notifications/android/build.gradle');
+  check('the installed expo-notifications still depends on ShortcutBadger 1.1.22 (the version the list was read from)',
+    notificationsLib.includes("implementation 'me.leolin:ShortcutBadger:1.1.22@aar'"));
+  const pluginRequire = createRequire(join(appDir, 'package.json'));
+  const plugin = pluginRequire(join(appDir, 'plugins/withoutShortcutBadger.js'));
+  check('the plugin removes exactly the sixteen permissions ShortcutBadger 1.1.22 declares, nothing more',
+    JSON.stringify([...plugin.SHORTCUT_BADGER_PERMISSIONS]) === JSON.stringify(SHORTCUT_BADGER_1_1_22), JSON.stringify(plugin.SHORTCUT_BADGER_PERMISSIONS));
+  const applyPlugin = async (fn) => {
+    const config = fn({ name: 'Shiba Wallet', slug: 'shiba-wallet' });
+    const modResults = {
+      manifest: {
+        $: { 'xmlns:android': 'http://schemas.android.com/apk/res/android' },
+        'uses-permission': [{ $: { 'android:name': 'android.permission.INTERNET' } }, { $: { 'android:name': 'android.permission.POST_NOTIFICATIONS' } }],
+      },
+    };
+    const out = await config.mods.android.manifest({
+      ...config,
+      modResults,
+      modRequest: { platform: 'android', modName: 'manifest', projectRoot: appDir, platformProjectRoot: appDir, introspect: true },
+    });
+    return out.modResults.manifest;
+  };
+  const generated = await applyPlugin(plugin);
+  const removed = generated['uses-permission'].filter((u) => u.$['tools:node'] === 'remove').map((u) => u.$['android:name']);
+  const kept = generated['uses-permission'].filter((u) => u.$['tools:node'] === undefined).map((u) => u.$['android:name']);
+  check('its manifest change declares the tools namespace (Android: "All markers belong to the Android tools namespace")',
+    generated.$['xmlns:tools'] === 'http://schemas.android.com/tools');
+  check('…and writes one <uses-permission tools:node="remove"> per name, in the library\'s order',
+    JSON.stringify(removed) === JSON.stringify(SHORTCUT_BADGER_1_1_22), JSON.stringify(removed));
+  check('…leaving every other permission alone (INTERNET and the reminders\' POST_NOTIFICATIONS stay requested)',
+    JSON.stringify(kept) === JSON.stringify(['android.permission.INTERNET', 'android.permission.POST_NOTIFICATIONS']), JSON.stringify(kept));
+  check('the wallet never asks for a badge (the reason the permissions can go)',
+    FOREGROUND_BEHAVIOR.shouldSetBadge === false && read('src/wallet/notifications.ts').includes('allowBadge: false'));
+  const unlisted = structuredClone(appJsonObject);
+  unlisted.expo.plugins = unlisted.expo.plugins.filter((p) => (Array.isArray(p) ? p[0] : p) !== PLUGIN_ENTRY);
+  check('mutant (the plugin dropped from app.json) is caught', !pluginListed(unlisted));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
