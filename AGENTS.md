@@ -14267,3 +14267,88 @@ to the Chairperson at once.
       zone-dependent output must be recorded under a pinned zone, and CI runs
       in UTC — any future fixture of local-calendar dates follows this pin.
       No app code changed; localDateLabel keeps the local calendar.
+- [x] Pass p23-cctp-recheck's bug FIXED — THE BRIDGE SEARCH PLANNED FROM
+      TIME, AND CCTP READS usedNonces BEFORE ANY LOG SEARCH (commit
+      CCTPWIN_HASH; 10 files — new packages/chains-evm/src/bridge/search.ts,
+      types.ts, cctp-v2.ts, layerzero-oft.ts, index.ts, bridge.test.ts and
+      bridge-cctp.test.ts, app/src/wallet/bridge.ts, BridgeScreen.tsx and
+      check-bridge.mjs; engine 1,269 → 1,290 (chains-evm +21), check-bridge
+      396 (was 370); offline runner ALL GREEN in the CTO's isolated
+      worktree TWICE — on HEAD e4db9d3 before the CI fix (engine 1,290, app
+      10,612 across 65 suites) and again on HEAD 40af9ae after it (the
+      counts below); lint 0/0, tsc clean; checkout 0 / apply 0 / 10 files;
+      the staged patch id equals the verified tree's and the agent's stated
+      3b82dde1…c97cac; the scan clean; seven engine and five app hand
+      mutants caught (the "time bound ignored" mutant needed a second form
+      because `if (true)` broke the transform — then 3 of 70 failed); not
+      seen on a device; nothing sent). THE CAUSE RESTATED: the old reader
+      counted BLOCKS from the burn's destination block (9,000 × 12 =
+      108,000) and refused older transfers with BRIDGE_LOG_TOO_OLD_CCTP from
+      inside track(), so on Base Sepolia (0.2000 s per block, measured over
+      two 20,000-block spans on two RPCs; Arbitrum Sepolia 0.2579–0.2626 s)
+      a transfer six hours old could neither be followed nor minted. THE
+      FIX: (1) ENGINE search.ts — BRIDGE_SEARCH_WINDOW_BLOCKS 9,000,
+      BRIDGE_SEARCH_BOUND_SECONDS 7 days, BRIDGE_SEARCH_START_MARGIN_SECONDS
+      600 (the last two judgements, stated in the doc comments);
+      findBlockAtOrBefore(target time) walks back from the head by
+      interpolating the block time from the headers it has read and
+      bisects to the block whose timestamp is at or before the target
+      with the next one after it; planDestinationSearch(sending block's
+      time − the margin → the head, bounded at 7 days) and
+      searchPlannedLogs over 9,000-block windows; BridgeBlockReader and
+      BridgeDestinationSearch in types.ts; onChain.nonceUsed on the CCTP
+      status. (2) CCTP cctp-v2.ts — CCTP_USED_NONCES_SELECTOR 0xfeb61724
+      (usedNonces(bytes32) — BaseMessageTransmitter.sol line 58 and
+      MessageTransmitterV2.sol lines 130 / 221 / 313 at circlefin/
+      evm-cctp-contracts 63ab1f0a, cited in the doc comment; the selector
+      recomputed in the tests), encodeUsedNonces / decodeUsedNonces; with an
+      attested message in hand the adapter reads usedNonces(nonce) on the
+      receiving network's MessageTransmitterV2 FIRST — 0 → 'attested' with
+      the mint call and NO log search at all, 1 → 'delivered' with the log
+      search only to name the mint transaction (a delivered state with no
+      transaction named when the logs are out of reach); the delivered
+      rule still requires MintAndWithdraw to the recipient for the amount.
+      (3) LayerZero layerzero-oft.ts — the same time-planned search, with
+      a stated bound sentence when the 7 days are exceeded (Stargate has
+      no usedNonces equivalent, so a transfer older than the bound stays
+      "unknown" there — stated). (4) APP bridge.ts — contractReader (the
+      usedNonces eth_call through the chain transport with failover),
+      blockHeaderReader (eth_getBlockByNumber headers with a per-session
+      cache; resetBridgeReadCaches for the tests), destinationLogReader now
+      takes the planned range (the old BRIDGE_LOG_MAX_WINDOWS cap and its
+      refusal are gone — pinned by a source check); bridgeCheckErrorText(e)
+      keeps a BridgeRefusal WHOLE as the check error (the second bug: line
+      160 of BridgeScreen.tsx had passed it through sanitizeEndpointMessage,
+      which keeps only the first sentence; endpoint failures still go
+      through the sanitiser). PINNED (check-bridge, from the live records):
+      the stranded Arbitrum → Base transfer (Circle nonce 0xd402ca89…f86b,
+      burned 2026-10-26 12:23:51 UTC) with usedNonces 0 → attested with the
+      mint offered and zero log reads; usedNonces 1 with no log in reach →
+      delivered with no transaction named; the live Base → Arbitrum mint
+      0x425891cf…96ddb matched by nonce, recipient and amount with
+      nonceUsed true; a mint to another recipient still refused; the search
+      planned from the sending block's time less 10 minutes, not from a
+      block count; the whole two-sentence refusal on the panel line. LIVE
+      READ-ONLY CHECK of the planner (scratchpad p23-cctpwin/live-search):
+      for the stranded transfer it planned Base Sepolia blocks 50,474,815 →
+      50,759,270 (2026-10-26 12:13 → 2026-10-27 04:02 UTC, unbounded, 14
+      header reads, 284,456 blocks = 32 windows) and the start block's
+      timestamp 1793016831 ≤ the target with the next block's 1793016832
+      above it; usedNonces through the engine encoder → false (the USDC is
+      still unminted). FINDING on the way: publicnode's Base Sepolia
+      endpoint PRUNES history below block 46,500,000 (eth_getBlockByNumber
+      → code 4444 "pruned history unavailable"), which a naive bisection
+      hit; the walk-back from the head avoids it for recent transfers, but
+      a target older than the pruning point would fail the plan on that
+      endpoint (CTO: not failed over — a follow-up; the 7-day bound keeps
+      the plan inside about 3 million Base blocks). DECISIONS (CTO
+      accepted): the walk-back search; the 600 s margin and the 7-day
+      bound; no LayerZero usedNonces equivalent; the docs (BRIDGE_PROVIDERS
+      §6's "12 × 9,000-block search limit", BRIDGING, THREAT_MODEL T-84)
+      at the refresh. RE-CHECK (the Bridge mint pass, Metro moved to this
+      HEAD): the stranded 1 USDC record on Arbitrum and on Base Sepolia
+      reads "Attested" with the Mint sentence and "Switch to Base
+      Sepolia"; the in-app mint from Account 1 on Base Sepolia (prompt
+      "Mint the bridged USDC on Base Sepolia") → usedNonces 0 → 1, Base
+      USDC 1,500,000 → 2,500,000, "Delivered on Base Sepolia"; the switch
+      button's label and hint under TalkBack; the attested-state idle test.
