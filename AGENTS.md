@@ -14803,3 +14803,118 @@ to the Chairperson at once.
       period lines and their layout; a recipient account's Activity rows;
       TalkBack; a non-reth node signalling pruned history with another
       code is not recognised and still throws, as before.
+- [x] Item 2, the configuration half — THE SCHEME, THE BADGE PERMISSIONS
+      REMOVED, expo-navigation-bar (commit a71ef32; 13 files, +626 / −51, incl. the new app/plugins/withoutShortcutBadger.js and
+      app/src/wallet/navigation-bar.ts; check-inbox 110 (was 104),
+      check-notifications 192 (184), check-devmode 459 (447),
+      check-screen-protection 87 unchanged; offline runner ALL GREEN in
+      the CTO's isolated worktree on HEAD 5d2683d with --skip-bundle and
+      the installed expo-navigation-bar 57.0.3 cloned into its
+      node_modules: engine 1,296, app 10,757 across 65 suites, lint 0/0,
+      tsc clean; checkout 0 / apply 0 / 13 files; the staged patch id
+      equals the verified tree's and the agent's stated 6815c374…13f039;
+      the scan clean; expo-doctor 20/21 before and after (the same five
+      Expo patch updates); four hand mutants on the real files caught;
+      the CTO read the plugin and the loader; NO GRADLE, no prebuild
+      output committed, no emulator — the build and its dev-build pass
+      are the next slice once the emulator is free). TWO CORRECTIONS TO
+      THE RECORD: (a) SIXTEEN badge permissions, not twenty —
+      ShortcutBadger 1.1.22's own AndroidManifest.xml (the cached AAR under
+      .local/gradle-home, lines 19–50) declares 16 and its four
+      com.android.launcher.permission.* lines (12–15) are COMMENTED OUT;
+      com.anddoes is Apex, com.majeur is Solid, there is no Nova entry;
+      `aapt2 dump permissions` on all five kept APKs incl. the 45506f2
+      build lists exactly these 16 (32 / 31 permissions in total, not 35);
+      RELEASE.md and PRIVACY.md corrected; the phase 21 record above and
+      FEATURE_UNIVERSE row 93 still say "twenty" (the refresh); (b)
+      expo-navigation-bar 57 HAS NO BACKGROUND-COLOUR CALL —
+      setBackgroundColorAsync and setButtonStyleAsync were removed in
+      56.0.0 (its CHANGELOG lines 49–51); the bar stays transparent and
+      only its appearance can be set (the native setStyle,
+      NavigationBarModule.kt 126–133: "dark" = dark buttons on a light
+      bar). (1) THE SCHEME: app.json line 5 "scheme": "shibawallet";
+      Expo's default plugins turn it into native config (@expo/
+      config-plugins 57.0.10 build/android/Scheme.js setScheme 40–62 and
+      appendScheme 160–187; build/ios/Scheme.js 33–48; applied by
+      withDefaultPlugins.js 126 and 157); `expo config --type introspect`
+      in the worktree shows CFBundleURLSchemes ['shibawallet',
+      'com.placeholder.appid'] plus exp+shiba-wallet on iOS and the main
+      activity's VIEW intent filter carrying shibawallet and
+      exp+shiba-wallet on Android (the generated manifest agreed, lines
+      49–55); deep-links.ts's parser unchanged (APP_LINK_SCHEME line 75,
+      the match line 153 — its header comment, which said app.json sets
+      no scheme, rewritten); the caveat in RELEASE.md, DEVICE_BUILDS.md and
+      that comment — Android's own guidance (fetched 2026-10-27): "By
+      design, Android allows multiple apps to register intent filters for
+      the same deep link URI"; verified App Links need an https domain
+      (INPUT); pinned in check-inbox by calling the installed plugins'
+      functions on the real app.json (two in-suite mutants — the scheme
+      removed, renamed — caught). (2) THE BADGE PERMISSIONS:
+      withoutShortcutBadger.js, registered in app.json line 62, passes
+      the 16 names to Expo's own AndroidConfig.Permissions.withBlockedPermissions,
+      which declares the tools namespace (Manifest.js ensureToolsAvailable
+      line 224) and writes one <uses-permission android:name="…"
+      tools:node="remove"/> per name (Permissions.js withBlockedPermissions
+      line 48, ensureBlockedPermission 89–101); Android's manifest-merge
+      page (fetched 2026-10-27) quoted for tools:node="remove" and the
+      namespace rule; a worktree prebuild's AndroidManifest.xml carries
+      xmlns:tools on line 1 and all 16 remove entries (a copy in the
+      scratchpad p23-rc; the prebuild's android/ folder and its app.json
+      / package.json edits — associatedDomains reformatted,
+      android.permissions and android.package added, the scripts
+      switched to expo run:* — REVERTED before the patch was cut,
+      package-lock.json byte-equal); pinned in check-notifications (the
+      plugin entry, the installed ShortcutBadger:1.1.22@aar dependency
+      line, the exact 16, the plugin's change on a fake manifest, one
+      in-suite mutant); THE MERGED MANIFEST OF A REAL BUILD IS
+      UNVERIFIED. (3) expo-navigation-bar 57.0.3 (the SDK's pin; MIT;
+      the lockfile 946 → 947 packages, its only dependency debug already
+      present; npm audit 8 → 14 findings — six new low ones, the deepmerge
+      advisory inside Expo's own tree, NOT caused by the install: the
+      untouched 5d2683d lockfile audited at the same moment also gives 14,
+      a new database entry; its Android manifest empty, androidx.core and
+      androidx.appcompat only, no network code — PRIVACY.md open item 7);
+      navigation-bar.ts calls the native module directly after
+      requireOptionalNativeModule (the package's own entry calls
+      requireNativeModule, which throws when the module is absent, and
+      its setStyle wrapper drops the returned promise —
+      src/NavigationBar.android.ts line 80); navigationBarStyleFor(dark)
+      → "light" buttons in dark mode, "dark" in light; any failure ONE
+      log line "Navigation bar style not applied: …", a missing module
+      'unavailable' with nothing logged; the NavigationBarStyle component
+      re-applies on every theme.dark change, MOUNTED right after
+      <StatusBar style="auto" /> (App.tsx line 432) — not beside
+      ScreenProtection, because check-screen-protection pins
+      <PrefsProvider><ScreenProtection /><WalletProvider> and loosening
+      that pin was refused; the edge-to-edge facts cited (WindowUtil.kt
+      enableEdgeToEdge 164–190: the bar transparent, the appearance
+      chosen once from dark mode at window creation; the prebuild
+      confirms configChanges includes uiMode, so a scheme change does
+      not recreate the window); Expo Go: the cached Expo Go 57.0.9 APK
+      contains NavigationBarModule — whether the AVD's Expo Go is that
+      build and answers setStyle is unverified, the guard makes either
+      answer safe; pinned in check-devmode (12 checks incl. 3 in-suite
+      mutants: the mount, Android-only, failure-tolerant). (4) DOCS:
+      RELEASE.md and DEVICE_BUILDS.md for the scheme, the plugin and the
+      dependency; PRIVACY.md item 7. NOTED: prebuild warns that
+      userInterfaceStyle needs expo-system-ui on Android (pre-existing,
+      left); a plain `npx eslint App.tsx` flags line 190, untouched by
+      this slice, while the runner's gate `expo lint --max-warnings 0`
+      passes. DECISION FOR THE CTO (deferred to the build pass): if the
+      style alone does not turn the white strip dark, the library's
+      enforceContrast: false removes the system scrim entirely (content
+      and buttons then share the bar area) — not taken. THE BUILD SLICE
+      MUST VERIFY: the merged manifest of a debug and a release APK (none
+      of the 16 left, nothing else lost, shibawallet on the main
+      activity's VIEW filter); `adb shell am start -a
+      android.intent.action.VIEW -d "shibawallet://inbox"` and the other
+      routes in the development build incl. a link behind the lock and
+      a launch link after a force-stop; the strip under the TESTNET
+      banner with dark mode switched while the app runs, in gesture and
+      three-button navigation, with no "Navigation bar style not
+      applied" line in logcat; reminders still working without the badge
+      permissions; the bundle smoke test (skipped in the worktree by
+      rule). CTO HOUSEKEEPING: the installed expo-navigation-bar 57.0.3
+      was cloned into the main checkout's app/node_modules and into
+      wt-app's, so the next Metro move and every worktree clone carry it
+      (CI installs from the committed lockfile).
