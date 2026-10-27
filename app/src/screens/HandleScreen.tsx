@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, ScrollView, Text, TextInput, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -56,11 +56,11 @@ import {
   checkHandleSubLabel,
   describeHandleError,
   forgetPendingHandle,
-  formatBlockTime,
   formatUsdc,
   gateRegister,
   handleAccountRefusal,
   handleCallLines,
+  handleCardLiveText,
   handleOfferFor,
   handlePromptTitle,
   loadPendingHandles,
@@ -71,11 +71,16 @@ import {
   preflightRegister,
   quoteHandle,
   readHandleProgress,
+  readProgressUntil,
   readRegistrarAllowance,
+  readSubnameState,
+  refreshPrimaryNameUntil,
   resetPendingHandles,
   revokeRegistrarApprovalCall,
   savePendingHandle,
   smartOwnerRefusal,
+  spokenTxId,
+  spokenWithShortAddresses,
   waitForTx,
   waitingSentence,
   type HandleOwnerKind,
@@ -83,6 +88,7 @@ import {
   type HandleQuote,
   type PendingHandle,
   type PendingHandles,
+  type SubnameState,
 } from '../wallet/handle';
 import { CallLines, Note, handleStyles, primaryNames, usePrimaryName } from './HandleViews';
 import { NetworkBadge, Row, exact18, stakingStyles as styles } from './StakingViews';
@@ -108,7 +114,22 @@ interface Job {
   prepareIndex: number | null;
   /** The name the success view names (the handle, or the sub-name). */
   name: string;
+  /** For 'revoke': whose approval is set to 0 (the regular or the smart account). */
+  revokeOwner?: string;
+  /**
+   * For 'register': true when the register pre-flight (an eth_call of
+   * register() from the owner — the smart account's own address for a
+   * smart owner) passed just before this job was opened (pass p23-handle
+   * finding 7: the smart-account review now says so too).
+   */
+  preflightOk?: boolean;
 }
+
+/** Where the main view scrolls to when it is next laid out (pass p23-handle finding 2). */
+type ScrollAnchor = 'notice' | 'card' | 'answer' | 'sub';
+
+/** How long after its first scroll an anchor keeps following layout changes (a judgement). */
+const ANCHOR_SETTLE_MS = 3_000;
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -188,9 +209,35 @@ export function HandleScreen({ navigation }: Props) {
   const [eoaQuote, setEoaQuote] = useState<EvmSendQuote | null>(null);
   const [aaQuote, setAaQuote] = useState<AaSendQuote | null>(null);
   const [quotedUrl, setQuotedUrl] = useState<string | null>(null);
-  const [result, setResult] = useState<{ txid: string; explorerUrl: string | null; title: string; body: string } | null>(null);
+  const [result, setResult] = useState<{ txid: string; explorerUrl: string | null; title: string; body: string; anchor?: ScrollAnchor } | null>(null);
   const [subLabel, setSubLabel] = useState(HANDLE_SUB_LABEL_DEFAULT);
   const [subError, setSubError] = useState<string | null>(null);
+
+  // Pass p23-handle finding 2: every other phase replaces the main view, so
+  // coming back to it (after Check, a confirm screen or an included step)
+  // mounted a fresh ScrollView at the top, five intro paragraphs above the
+  // answer or the registration card. The main view now scrolls to what it
+  // was opened for: each anchor reports its offset when laid out, and while
+  // an anchor is pending every layout pass of it scrolls there again
+  // (content above it can still change height as reads finish), for
+  // ANCHOR_SETTLE_MS after the first scroll; the user's first drag ends the
+  // pending state earlier (the Settings section-anchor pattern,
+  // SettingsScreen.tsx scrollToSection). The time limit keeps a later
+  // layout change (the countdown's text every block) from pulling a
+  // screen-reader user, who moves without dragging, back to the anchor.
+  const mainScroll = useRef<ScrollView>(null);
+  const pendingAnchor = useRef<{ anchor: ScrollAnchor; until: number | null } | null>(null);
+  const onAnchorLayout = (anchor: ScrollAnchor, y: number) => {
+    const pending = pendingAnchor.current;
+    if (!pending || pending.anchor !== anchor) return;
+    const now = Date.now();
+    if (pending.until === null) pending.until = now + ANCHOR_SETTLE_MS;
+    else if (now > pending.until) {
+      pendingAnchor.current = null;
+      return;
+    }
+    mainScroll.current?.scrollTo({ y: Math.max(0, y - 8), animated: true });
+  };
 
   useEffect(() => {
     navigation.setOptions({ title: t('handle.title') });
@@ -301,6 +348,30 @@ export function HandleScreen({ navigation }: Props) {
     primary?.status === 'ok' && /^[a-z0-9-]+\.eth$/.test(primary.name) ? primary.name : null;
   const smartPrimary = usePrimaryName(shownSmartAddress, caip2);
 
+  // Where the sub-name points now (pass p23-handle finding 10): read forward
+  // through the Universal Resolver, after a short pause so a name being
+  // typed is not read on every keystroke (600 ms, a judgement), and again on
+  // Check now and after each step. A failed read keeps "Add the sub-name".
+  const subCheck = checkHandleSubLabel(subLabel);
+  const subName = parentName && subCheck.ok ? `${subCheck.label}.${parentName}` : null;
+  const subKey = `${subName ?? ''}|${shownSmartAddress ?? ''}|${url ?? ''}|${reloadTick}`;
+  const [subState, setSubState] = useState<{ key: string; value: SubnameState } | null>(null);
+  useEffect(() => {
+    if (!subName || !shownSmartAddress || !url) return undefined;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      readSubnameState(simulationTransport(url), subName, shownSmartAddress).then(
+        (value) => !cancelled && setSubState({ key: subKey, value }),
+        () => undefined,
+      );
+    }, 600);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [subName, shownSmartAddress, url, subKey]);
+  const subPoints = subState && subState.key === subKey ? subState.value : null;
+
   // ------------------------------------------------------------- guards
   if (gate) {
     return (
@@ -342,7 +413,8 @@ export function HandleScreen({ navigation }: Props) {
     return quoteEndpointChange(pinned, now);
   };
   const reload = () => setReloadTick((n) => n + 1);
-  const backToMain = (message: string | null) => {
+  const backToMain = (message: string | null, anchor: ScrollAnchor = message ? 'notice' : 'card') => {
+    pendingAnchor.current = { anchor, until: null };
     setNotice(message);
     setJob(null);
     setEoaQuote(null);
@@ -429,14 +501,17 @@ export function HandleScreen({ navigation }: Props) {
   /** After an included step: read the chain again and open what comes next. */
   const afterStep = async (done: Job, sent: { txid: string; explorerUrl: string | null }) => {
     if (done.kind === 'subname' || done.kind === 'targetReverse' || done.kind === 'revoke') {
-      if (done.kind === 'targetReverse' && shownSmartAddress) primaryNames.forget(caip2, shownSmartAddress);
+      // The smart account's own name was just set: read it again now (finding 1).
+      if (done.kind === 'targetReverse' && shownSmartAddress) void refreshPrimaryNameUntil(primaryNames, caip2, shownSmartAddress, done.name);
       setResult({
         ...sent,
         title: t('handle.sent.title'),
+        anchor: done.kind === 'revoke' ? 'card' : 'sub',
         body:
           done.kind === 'subname' ? t('handle.sub.done', { sub: done.name, target: shownSmartAddress ?? '' })
           : done.kind === 'targetReverse' ? t('handle.sub.reverseDone', { sub: done.name, target: shownSmartAddress ?? '' })
-          : t('handle.revoke.note', { who: done.record?.owner ?? address }),
+          // Pass p23-handle finding 9: the result, not the instruction.
+          : t('handle.revoke.done', { who: done.revokeOwner ?? address }),
       });
       setPhase('success');
       return;
@@ -448,28 +523,37 @@ export function HandleScreen({ navigation }: Props) {
     }
     // A load-balanced endpoint can answer from a backend that has not seen
     // the block just mined yet: while the chain still shows the step that was
-    // just included as not done, read again (at most 4 times, 4 s apart).
+    // just included as not done, read again — every HANDLE_STEP_POLL_MS for
+    // up to HANDLE_STEP_POLL_MAX_MS (handle.ts readProgressUntil; pass
+    // p23-handle finding 3: it used to give up after 4 reads 4 s apart and
+    // leave the card behind until Check now was tapped).
     const stale = (q: HandleProgress) =>
       (done.kind === 'prepare' && q.kind === 'prepare' && (done.prepareIndex === null || q.next <= done.prepareIndex)) ||
       (done.kind === 'register' && (q.kind === 'ready' || q.kind === 'wait')) ||
       (done.kind === 'reverse' && q.kind === 'reverse');
     const node = simulationTransport(url);
-    let p = await readHandleProgress(node, rec);
-    for (let attempt = 0; attempt < 4 && stale(p); attempt++) {
-      await new Promise<void>((resolve) => setTimeout(resolve, 4_000));
-      p = await readHandleProgress(node, rec);
-    }
-    if (stale(p)) {
-      backToMain(null);
+    let p: HandleProgress;
+    try {
+      const read = await readProgressUntil(() => readHandleProgress(node, rec), stale);
+      if (read.stale) {
+        backToMain(t('handle.tx.notSeen', { hash: sent.txid }));
+        return;
+      }
+      p = read.progress;
+    } catch (e) {
+      backToMain(describeHandleError(e, rec.name));
       return;
     }
     if (p.kind === 'done') {
       // Registered and shown for the owner: the secret has no use any more.
       await forgetPendingHandle(AsyncStorage, rec.signer).catch(() => undefined);
-      primaryNames.forget(caip2, rec.owner);
-      setResult({ ...sent, title: t('handle.success.title'), body: t('handle.success.body', { name: rec.name, owner: rec.owner }) });
+      setResult({ ...sent, title: t('handle.success.title'), body: t('handle.success.body', { name: rec.name, owner: rec.owner }), anchor: 'sub' });
       setPhase('success');
       reload();
+      // Pass p23-handle finding 1: read the owner's primary name again now
+      // (it used to be cleared here and read only on the next focus), so the
+      // sub-name section appears without leaving the screen.
+      void refreshPrimaryNameUntil(primaryNames, caip2, rec.owner, rec.name);
       return;
     }
     const next = p.kind === 'prepare' || p.kind === 'reverse' ? jobFor(rec, p) : null;
@@ -559,7 +643,7 @@ export function HandleScreen({ navigation }: Props) {
     if (!(await authorizeJob(job, aaQuote, url))) return;
     setPhase('aa-sending');
     try {
-      const { userOpHash } = await signWith(EVM_CHAIN_ID, address, (signer) => sendAa(bundle, signer, aaQuote, { kind: 'other' }));
+      const { userOpHash } = await signWith(EVM_CHAIN_ID, address, (signer) => sendAa(bundle, signer, aaQuote, { kind: 'handle' }));
       const { summary } = await waitForAaReceipt(bundle, userOpHash, { timeoutMs: 120_000, pollMs: 3_000 });
       if (summary.success === true && summary.txHash) {
         await afterStep(job, { txid: summary.txHash, explorerUrl: evmChain.explorerTxBase ? `${evmChain.explorerTxBase}${summary.txHash}` : null });
@@ -586,6 +670,10 @@ export function HandleScreen({ navigation }: Props) {
       setFormError(t('handle.owner.smartUnavailable'));
       return;
     }
+    // While the registrar is read the main view is replaced by a spinner (so
+    // nothing else on it can be tapped meanwhile); a refusal brings the main
+    // view back scrolled to the answer (finding 2), and the review opens as
+    // its own screen at its top.
     setPhase('checking');
     try {
       const start = await currentEndpoint();
@@ -593,6 +681,7 @@ export function HandleScreen({ navigation }: Props) {
       setQuoted(q);
       setPhase('review');
     } catch (e) {
+      pendingAnchor.current = { anchor: 'answer', until: null };
       setFormError(describeHandleError(e, check.name));
       setPhase('main');
     }
@@ -633,7 +722,10 @@ export function HandleScreen({ navigation }: Props) {
         }
       }
       const next = jobFor(record, p);
-      if (next) await openJob(next);
+      // The pre-flight above passed for a register job (both owners: it is an
+      // eth_call of register() from record.owner, the smart account's own
+      // address for a smart owner); the review says so (finding 7).
+      if (next) await openJob(next.kind === 'register' ? { ...next, preflightOk: true } : next);
       else backToMain(null);
     } catch (e) {
       backToMain(describeHandleError(e, record.name));
@@ -668,7 +760,7 @@ export function HandleScreen({ navigation }: Props) {
     void openJob({
       kind: 'revoke', path: kind === 'smart' ? 'aa' : 'eoa', calls: [revokeRegistrarApprovalCall()],
       lines: [t('handle.revoke.note', { who: owner })], position: null, title: handlePromptTitle('revoke', { name: '' }),
-      record: null, prepareIndex: null, name: '',
+      record: null, prepareIndex: null, name: '', revokeOwner: owner,
     });
   };
 
@@ -721,6 +813,10 @@ export function HandleScreen({ navigation }: Props) {
       <Text style={[styles.hint, { color: theme.textMuted }]}>{text}</Text>
     </View>
   );
+  /** The ENS resolver a job's call lines may name in full (the owner's own resolver, a contract). */
+  const jobResolver = (j: Job): string | null => (j.kind === 'subname' ? j.calls[0]!.to : (j.record?.resolver ?? null));
+  /** The owner of the name a job is for, so the risk card can name that owner's resolver (finding 5). */
+  const jobNameOwner = (j: Job): string | null => (j.record ? j.record.owner : j.kind === 'subname' ? address : null);
   const stepTitle = (j: Job) => (j.kind === 'prepare' ? t('handle.prepare.title') : j.kind === 'register' || j.kind === 'reverse' ? t('handle.register.title') : t('handle.title'));
 
   // ------------------------------------------------------------- success
@@ -728,10 +824,13 @@ export function HandleScreen({ navigation }: Props) {
     return (
       <ScrollView key="handle-success" style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
         <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}>{result.title}</Text>
-        <Text style={[styles.hint, { color: theme.text }]}>{result.body}</Text>
-        <Text style={[styles.label, { color: theme.textMuted }]}>{t('send.txId')}</Text>
-        <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
-          <Text selectable style={[styles.monoText, { color: theme.text }]}>{result.txid}</Text>
+        <Text accessibilityLabel={spokenWithShortAddresses(result.body)} style={[styles.hint, { color: theme.text }]}>{result.body}</Text>
+        {/* Spoken as one stop, "Transaction id 0x1234…abcd" (finding 12); the full id stays visible and selectable. */}
+        <View accessible accessibilityLabel={spokenTxId(result.txid)}>
+          <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.label, { color: theme.textMuted }]}>{t('send.txId')}</Text>
+          <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <Text selectable importantForAccessibility="no" accessibilityElementsHidden style={[styles.monoText, { color: theme.text }]}>{result.txid}</Text>
+          </View>
         </View>
         {result.explorerUrl ? <Button title={t('send.explorer')} variant="secondary" onPress={() => void Linking.openURL(result.explorerUrl!)} /> : null}
         <TransactionNoteField network={caip2} txid={result.txid} userOpHash={null} />
@@ -739,8 +838,9 @@ export function HandleScreen({ navigation }: Props) {
           title={t('send.done')}
           onPress={() =>
             dismissKeyboardThenClose(() => {
+              const anchor = result.anchor ?? 'card';
               setResult(null);
-              backToMain(null);
+              backToMain(null, anchor);
             })
           }
         />
@@ -762,14 +862,14 @@ export function HandleScreen({ navigation }: Props) {
         <Row label={t('handle.row.owner')} value={activeAccount?.name ?? '—'} sub={address} spoken={`${t('handle.row.owner')}: ${activeAccount?.name ?? ''}, ${spokenShortAddress(address)}`} theme={theme} />
         <ImportedKeyNotice show={activeAccount?.imported === true} />
         {job.kind === 'prepare' ? <Note text={t('handle.prepare.regularNote', { count: 3 })} theme={theme} /> : null}
-        <CallLines lines={job.lines} theme={theme} />
+        <CallLines lines={job.lines} theme={theme} resolver={jobResolver(job)} />
         {job.kind === 'prepare' && job.prepareIndex === 2 ? <Note text={t('handle.secretNote')} theme={theme} /> : null}
         <Row label={t('send.row.maxFeePaidIn', { symbol })} value={`${exact18(eoaQuote.fee)} ${symbol}`} theme={theme} />
         <BalanceChangePreview
           url={quotedUrl}
           request={{ from: address, to: eoaQuote.to, value: eoaQuote.amount, ...(eoaQuote.data ? { data: eoaQuote.data } : {}) }}
         />
-        <RiskWarnings url={quotedUrl} wallet={address} to={eoaQuote.to} data={eoaQuote.data} />
+        <RiskWarnings url={quotedUrl} wallet={address} to={eoaQuote.to} data={eoaQuote.data} ensResolverOwner={jobNameOwner(job)} />
         <SpendingPolicyNotice
           owner={address}
           quote={eoaQuote}
@@ -801,10 +901,10 @@ export function HandleScreen({ navigation }: Props) {
       <ScrollView key="handle-aa-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
         <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>{stepTitle(job)}</Text>
-        <Row label={t('handle.row.owner')} value={aaQuote.sender} mono theme={theme} />
+        <Row label={t('handle.row.owner')} value={aaQuote.sender} mono spoken={`${t('handle.row.owner')}: ${spokenShortAddress(aaQuote.sender)}`} theme={theme} />
         <ImportedKeyNotice show={activeAccount?.imported === true} />
         {job.kind === 'prepare' ? <Note text={t('handle.prepare.smartNote', { count: job.calls.length })} theme={theme} /> : null}
-        <CallLines lines={job.lines} theme={theme} />
+        <CallLines lines={job.lines} theme={theme} resolver={jobResolver(job)} />
         {job.kind === 'prepare' ? <Note text={t('handle.secretNote')} theme={theme} /> : null}
         <Row label={t('handle.row.feeSmart')} value={aaQuote.sponsored ? '0' : `${exact18(aaQuote.fee)} ${symbol}`} theme={theme} />
         <AaDepositNote fee={aaQuote.fee} deposit={aaQuote.deposit} sponsored={aaQuote.sponsored} symbol={symbol} />
@@ -813,13 +913,17 @@ export function HandleScreen({ navigation }: Props) {
           request={{ from: aaQuote.sender, to: aaQuote.calls[0]!.to, value: aaQuote.calls[0]!.value, data: aaQuote.calls[0]!.data }}
           batch={aaQuote.calls.map((c) => ({ from: aaQuote.sender, to: c.to, value: c.value, data: c.data }))}
         />
-        <RiskWarnings url={url} wallet={aaQuote.sender} to={job.calls[0]!.to} data={job.calls[0]!.data} />
+        <RiskWarnings url={url} wallet={aaQuote.sender} to={job.calls[0]!.to} data={job.calls[0]!.data} ensResolverOwner={jobNameOwner(job)} />
         <SpendingPolicyNotice
           owner={address}
           quote={aaQuote}
           from={address}
           {...(job.kind === 'register' && job.record ? { quoteOutflows: [{ token: HANDLE_USDC.address, amount: BigInt(job.record.total) }] } : {})}
         />
+        {/* The register pre-flight ran from the smart account's address before this review opened (finding 7). */}
+        {job.kind === 'register' && job.preflightOk ? (
+          <Text style={[styles.simulationOk, { color: theme.success }]}>{t('handle.preflight.ok')}</Text>
+        ) : null}
         {phase === 'aa-sending' ? (
           busy(t('handle.tx.waiting'))
         ) : (
@@ -845,8 +949,12 @@ export function HandleScreen({ navigation }: Props) {
         <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>{t('handle.prepare.title')}</Text>
         <Text style={[styles.notice, { color: theme.text }]}>{t('handle.quote.available', { name: q.name })}</Text>
         <Text style={[styles.hint, { color: theme.text }]}>{t('handle.quote.fee', { amount: formatUsdc(q.total), days: HANDLE_DURATION_DAYS })}</Text>
-        <Note text={t('handle.quote.balance', { who: ownerLabelOf(q.owner, ownerKind), amount: formatUsdc(quoted.usdcBalance) })} theme={theme} />
-        <Row label={t('handle.row.owner')} value={q.owner} mono theme={theme} />
+        <Note
+          text={t('handle.quote.balance', { who: ownerLabelOf(q.owner, ownerKind), amount: formatUsdc(quoted.usdcBalance) })}
+          spoken={spokenWithShortAddresses(t('handle.quote.balance', { who: ownerLabelOf(q.owner, ownerKind), amount: formatUsdc(quoted.usdcBalance) }))}
+          theme={theme}
+        />
+        <Row label={t('handle.row.owner')} value={q.owner} mono spoken={`${t('handle.row.owner')}: ${spokenShortAddress(q.owner)}`} theme={theme} />
         <Row label={t('handle.row.registrar')} value={ENS_V2_SEPOLIA.ethRegistrar} mono theme={theme} />
         <Row label={t('handle.row.usdc')} value={HANDLE_USDC.address} mono theme={theme} />
         <Note
@@ -873,16 +981,30 @@ export function HandleScreen({ navigation }: Props) {
   const p = current?.value ?? null;
   const allowanceRows = openAllowances.map((a) => (
     <View key={a.owner} style={styles.choiceRow}>
-      <Note text={t('handle.allowance', { amount: formatUsdc(a.amount), who: ownerLabelOf(a.owner, a.kind) })} theme={theme} />
+      <Note
+        text={t('handle.allowance', { amount: formatUsdc(a.amount), who: ownerLabelOf(a.owner, a.kind) })}
+        spoken={spokenWithShortAddresses(t('handle.allowance', { amount: formatUsdc(a.amount), who: ownerLabelOf(a.owner, a.kind) }))}
+        theme={theme}
+      />
       <Button title={t('handle.button.revoke')} variant="secondary" onPress={() => onRevoke(a.owner, a.kind)} />
     </View>
   ));
   const labelField = fieldLabel('handle-label', t('handle.label.caption'));
   const subField = fieldLabel('handle-sub', t('handle.sub.caption'));
   const showForm = !record && !pending.damaged;
+  const liveText = record ? handleCardLiveText(p, record.name) : null;
 
   return (
-    <ScrollView key="handle-main" style={screenStyle(theme)} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+    <ScrollView
+      key="handle-main"
+      ref={mainScroll}
+      onScrollBeginDrag={() => {
+        pendingAnchor.current = null;
+      }}
+      style={screenStyle(theme)}
+      contentContainerStyle={styles.content}
+      keyboardShouldPersistTaps="handled"
+    >
       <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
       <ImportedKeyNotice show={activeAccount?.imported === true} />
       <Text style={[styles.hint, { color: theme.text }]}>{t('handle.intro')}</Text>
@@ -891,7 +1013,11 @@ export function HandleScreen({ navigation }: Props) {
       <Note text={t('handle.intro.fee', { symbol })} theme={theme} />
       <Note text={t('handle.intro.steps')} theme={theme} />
       <WarningBox>{t('handle.intro.redeploy')}</WarningBox>
-      {notice ? <Text accessibilityLiveRegion="polite" style={[styles.notice, { color: theme.accent }]}>{notice}</Text> : null}
+      {notice ? (
+        <Text accessibilityLiveRegion="polite" onLayout={(e) => onAnchorLayout('notice', e.nativeEvent.layout.y)} style={[styles.notice, { color: theme.accent }]}>
+          {notice}
+        </Text>
+      ) : null}
 
       {pending.damaged ? (
         <>
@@ -901,9 +1027,9 @@ export function HandleScreen({ navigation }: Props) {
       ) : null}
 
       {record ? (
-        <View style={[handleStyles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+        <View onLayout={(e) => onAnchorLayout('card', e.nativeEvent.layout.y)} style={[handleStyles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <Text accessibilityRole="header" style={[handleStyles.cardTitle, { color: theme.text }]}>{t('handle.card.title')}</Text>
-          <Row label={t('handle.row.owner')} value={record.owner} mono theme={theme} />
+          <Row label={t('handle.row.owner')} value={record.owner} mono spoken={`${t('handle.row.owner')}: ${spokenShortAddress(record.owner)}`} theme={theme} />
           {!url ? <WarningBox>{t('handle.refusal.noBlock')}</WarningBox> : null}
           {current?.error ? <WarningBox>{t('handle.refusal.other', { detail: current.error })}</WarningBox> : null}
           {url && !current ? <ActivityIndicator color={theme.accent} /> : null}
@@ -913,30 +1039,52 @@ export function HandleScreen({ navigation }: Props) {
               <Button title={t('handle.button.continue')} onPress={() => void onRegisterOrContinue()} />
             </>
           ) : null}
+          {/* The card's one polite live region (finding 11): the same sentence
+              for the whole wait, changing once to "… can be registered now";
+              the countdown below it is a plain Text, so it is not
+              re-announced on every 12-second block step. */}
+          {liveText !== null ? (
+            <Text accessibilityLiveRegion="polite" style={[styles.hint, { color: theme.text }]}>
+              {liveText}
+            </Text>
+          ) : null}
           {p?.kind === 'wait' ? (
             <>
-              <Text accessibilityLiveRegion="polite" style={[styles.hint, { color: theme.text }]}>{waitingSentence(record.name, p.readiness)}</Text>
+              <Text style={[styles.hint, { color: theme.text }]}>{waitingSentence(record.name, p.readiness)}</Text>
               <Note text={t('handle.card.waitingNote', { margin: HANDLE_READY_MARGIN_SECONDS.toString() })} theme={theme} />
             </>
           ) : null}
-          {p?.kind === 'ready' ? (
-            <>
-              <Text style={[styles.hint, { color: theme.text }]}>{t('handle.card.ready', { name: record.name, until: formatBlockTime(p.expiresAt) })}</Text>
-              <Button title={t('handle.button.register')} onPress={() => void onRegisterOrContinue()} />
-            </>
-          ) : null}
+          {p?.kind === 'ready' ? <Button title={t('handle.button.register')} onPress={() => void onRegisterOrContinue()} /> : null}
           {p?.kind === 'reverse' ? (
             <>
-              <Text style={[styles.hint, { color: theme.text }]}>{t('handle.card.reverse', { name: record.name, owner: record.owner })}</Text>
+              <Text
+                accessibilityLabel={spokenWithShortAddresses(t('handle.card.reverse', { name: record.name, owner: record.owner }))}
+                style={[styles.hint, { color: theme.text }]}
+              >
+                {t('handle.card.reverse', { name: record.name, owner: record.owner })}
+              </Text>
               <Button title={t('handle.button.reverse')} onPress={() => void onRegisterOrContinue()} />
             </>
           ) : null}
-          {p?.kind === 'done' ? <Text style={[styles.hint, { color: theme.text }]}>{t('handle.card.done', { name: record.name, owner: record.owner })}</Text> : null}
+          {p?.kind === 'done' ? (
+            <Text
+              accessibilityLabel={spokenWithShortAddresses(t('handle.card.done', { name: record.name, owner: record.owner }))}
+              style={[styles.hint, { color: theme.text }]}
+            >
+              {t('handle.card.done', { name: record.name, owner: record.owner })}
+            </Text>
+          ) : null}
           {p?.kind === 'expired' ? <WarningBox>{t('handle.card.expired', { name: record.name })}</WarningBox> : null}
           {p?.kind === 'taken' ? <WarningBox>{t('handle.card.taken', { name: record.name })}</WarningBox> : null}
           <Button title={t('handle.button.check')} variant="secondary" onPress={reload} />
           {p?.kind === 'done' ? (
-            <Button title={t('send.done')} onPress={() => void forgetPendingHandle(AsyncStorage, record.signer).then(() => backToMain(null), () => backToMain(null))} />
+            <Button
+              title={t('send.done')}
+              onPress={() => {
+                void refreshPrimaryNameUntil(primaryNames, caip2, record.owner, record.name);
+                void forgetPendingHandle(AsyncStorage, record.signer).then(() => backToMain(null, 'sub'), () => backToMain(null, 'sub'));
+              }}
+            />
           ) : (
             <Button title={t('handle.button.forget')} variant="destructive" onPress={onForget} />
           )}
@@ -978,19 +1126,24 @@ export function HandleScreen({ navigation }: Props) {
             placeholder={t('handle.label.placeholder')}
             placeholderTextColor={theme.textMuted}
           />
-          {formError ? <WarningBox announce>{formError}</WarningBox> : null}
+          {formError ? (
+            <View onLayout={(e) => onAnchorLayout('answer', e.nativeEvent.layout.y)}>
+              <WarningBox announce>{formError}</WarningBox>
+            </View>
+          ) : null}
           <Button title={t('handle.check')} onPress={() => void onCheck()} disabled={!url} />
         </>
       ) : null}
 
       {/* The smart account's record-only sub-name, under a name the regular account holds. */}
       {parentName && (!record || p?.kind === 'done') ? (
-        <View style={[handleStyles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+        <View onLayout={(e) => onAnchorLayout('sub', e.nativeEvent.layout.y)} style={[handleStyles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <Text accessibilityRole="header" style={[handleStyles.cardTitle, { color: theme.text }]}>{t('handle.sub.heading')}</Text>
           {bundle && shownSmartAddress ? (
             <>
               <Note
                 text={t('handle.sub.intro', { sub: `${subLabel.trim() || HANDLE_SUB_LABEL_DEFAULT}.${parentName}`, target: shownSmartAddress, name: parentName })}
+                spoken={spokenWithShortAddresses(t('handle.sub.intro', { sub: `${subLabel.trim() || HANDLE_SUB_LABEL_DEFAULT}.${parentName}`, target: shownSmartAddress, name: parentName }))}
                 theme={theme}
               />
               {smartPrimary?.status === 'ok' ? <Note text={t('handle.primary.ok', { name: smartPrimary.name })} theme={theme} /> : null}
@@ -1006,8 +1159,26 @@ export function HandleScreen({ navigation }: Props) {
                 placeholderTextColor={theme.textMuted}
               />
               {subError ? <WarningBox announce>{subError}</WarningBox> : null}
-              <Button title={t('handle.sub.button')} onPress={() => void onAddSubname()} />
-              <Note text={t('handle.sub.reverseNote', { sub: `${subLabel.trim() || HANDLE_SUB_LABEL_DEFAULT}.${parentName}`, target: shownSmartAddress })} theme={theme} />
+              {subName && subPoints?.kind === 'points' ? (
+                // Finding 10: nothing to add when the record already points here.
+                <Note text={t('handle.sub.already', { sub: subName })} theme={theme} />
+              ) : (
+                <>
+                  {subName && subPoints?.kind === 'elsewhere' ? (
+                    <Note
+                      text={t('handle.sub.elsewhere', { sub: subName, address: subPoints.address })}
+                      spoken={spokenWithShortAddresses(t('handle.sub.elsewhere', { sub: subName, address: subPoints.address }))}
+                      theme={theme}
+                    />
+                  ) : null}
+                  <Button title={t('handle.sub.button')} onPress={() => void onAddSubname()} />
+                </>
+              )}
+              <Note
+                text={t('handle.sub.reverseNote', { sub: `${subLabel.trim() || HANDLE_SUB_LABEL_DEFAULT}.${parentName}`, target: shownSmartAddress })}
+                spoken={spokenWithShortAddresses(t('handle.sub.reverseNote', { sub: `${subLabel.trim() || HANDLE_SUB_LABEL_DEFAULT}.${parentName}`, target: shownSmartAddress }))}
+                theme={theme}
+              />
               <Button title={t('handle.sub.reverseButton')} variant="secondary" onPress={() => void onTargetReverse()} />
             </>
           ) : (

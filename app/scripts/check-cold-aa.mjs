@@ -835,7 +835,7 @@ console.log('check-cold-aa: mutation checks (broken copies must fail)');
     check('M8 caught: a factory that attaches the saved paymaster makes a sponsored bundle, which the cold path refuses', b.sponsored === true && thrown(() => ca.assertColdAaBundle(b))?.message === ca.COLD_AA_BUNDLE_REFUSAL);
   }
   // M9: the pending registry without the new origin.
-  const m9 = await mutant('src/wallet/pending-transactions.ts', "  'cold-aa',\n  'other',\n];", "  'other',\n];");
+  const m9 = await mutant('src/wallet/pending-transactions.ts', "  'cold-aa',\n  'handle',\n  'other',\n];", "  'handle',\n  'other',\n];");
   {
     const legacy = { kind: 'userop', chain: SEPOLIA, userOpHash: '0x' + 'cd'.repeat(32), sender: SENDER.toLowerCase(), owner: OWNER.toLowerCase(), sentAt: NOW, resend: null, origin: 'cold-aa' };
     check('M9 caught: without "cold-aa" in USEROP_ORIGINS a cold record makes the pending list read-only',
