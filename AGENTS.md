@@ -14135,3 +14135,104 @@ to the Chairperson at once.
       Base USDC 1,500,000 → 2,500,000, "Delivered on Base Sepolia"), the
       switch button's label and hint under TalkBack, the attested-state
       idle test.
+- [x] Item 8, the fourth localisation pass — THE SENTENCES BUILT INSIDE THE
+      WALLET MODULES (commit 65d92ed; 26 files, +3,484 / −430, incl. the new
+      golden fixture app/scripts/fixtures/i18n-fourth-pass-golden.json (606
+      cases, 575 KB); check-i18n 142 (was 124; mutants 22 → 28) the only
+      count that moved, check-aa 404 / check-custom-networks 199 /
+      check-devmode 447 with pins changed in place; offline runner ALL
+      GREEN in the CTO's isolated worktree on HEAD 2e93a0d (code 10e2832)
+      with --skip-bundle: engine 1,269, app 10,586 across 65 suites, lint
+      0/0, tsc clean; checkout 0 / apply 0 / 26 files; the staged patch id
+      equals both the verified tree's and the agent's stated b94e6dd6…aba2a;
+      the scan clean; the agent was cut once by the session limit and
+      resumed from its worktree; not seen on a device). IDS: 204 in four
+      blocks headed "Phase 23 item 8 (fourth pass)", fixture base a9998cc
+      — 71 literals, 84 templates, 49 composites (the composite map now
+      101): token-gas.ts 33 (confirm lines, the charged line, the Max
+      adjustment), aa.ts 3 (Max adjustment, bundlerVerifiedLine), send.ts
+      1, custom-networks.ts 23 (the tick note, block time, the removal
+      confirmation and report, data labels, the Developer hint — its
+      builder and the listJoin helper MOVED out of SettingsScreen.tsx into
+      custom-networks.ts as developerTestNetworkHint(profiles), which
+      check-devmode now calls directly with the real profile table and the
+      Hoodi-flipped one), customNetworkNoteText 6 (evm-chain.ts stays
+      import-free, so the translated note lives in custom-networks.ts and
+      check-custom-networks requires it to equal evm-chain's
+      customNetworkNote on every branch), phrase-protection-copy.ts plus
+      storage.ts's unreadable message 25, imported-keys.ts and watch-only.ts
+      9 (the backup hint, the kinds, both removal messages), staking.ts 15
+      (action labels, contract labels — stakingActionTitle for prompts
+      reads the English table), sessions.ts describeAllowedCall /
+      describeGrantLimits, SessionGrantViews and the key holders 32,
+      subscriptions.ts 3, recurring.ts 16, dca.ts 11, pin-cost.ts and
+      pin-native-scrypt.ts 27; existing ids reused (send.aa.row.smartBalance,
+      common.and / common.or, multisig.cosign.network,
+      settings.section.nftIndexer); no English entry changed, nothing
+      listed as "new". BYTE IDENTITY PROVEN: the harness (scratchpad
+      p23-i18n4/tools/cmp.mjs) imports each a9998cc module beside the
+      migrated one over amounts, symbols, addresses and every branch —
+      3,119 / 3,119 equal (token-gas 137, aa 9, send 3, custom-networks 32,
+      phrase-protection 2,578, accounts 26, staking 32, sessions 54,
+      subscriptions 24, recurring 72, dca 105, pin-cost 47); THE HARNESS
+      CAUGHT A REAL BUG on the way — the recurring "At most {count}
+      payment" line was missing its count — fixed; the golden fixture
+      holds one case per distinct a9998cc output and check-i18n replays
+      every migrated function with each case's arguments and requires the
+      recorded English, and checks the cases cover all 33 migrated
+      functions. THE NEW check-i18n SECTION also pins the per-module
+      counts, Spanish for every id, the earlier passes untouched (474 /
+      690 / 336), one exact English entry per module, testNetworkTickNote()
+      = TEST_NETWORK_TICK_NOTE and developerTestNetworkHint() = the old
+      Settings constant, Spanish answers with no {placeholder} left, the
+      staking prompt titles English, the subscription / recurring / DCA
+      summaries built without the accessor, SessionGrantViews through the
+      table, 14 new CONSTANTS entries; six in-suite mutants (a Spanish line
+      missing, an entry changed by one character, an unused id, a golden
+      output drifting by one character, a staking prompt built through the
+      label, a stored summary through the accessor) and nine hand mutants
+      on the real files all caught — one of them (the imported-keys "not
+      backed up" sentence dropped) by check-i18n's golden cases, NOT by
+      check-settings-protection. PINS (each to the new source form plus a
+      behaviour check): check-aa's "through" phrases as
+      t('tokenGas.circle.through') / t('tokenGas.erc7677.through', {vendor})
+      with the confirm lines' value equal to tokenGasThroughPhrase for both
+      sources; check-custom-networks' Settings render of
+      customNetworkNoteText and the finding-9 intro on
+      developerTestNetworkHint()'s output; check-devmode's Settings render
+      of {developerTestNetworkHint()} and "builder found in
+      custom-networks.ts, Settings keeps no copy". CALL SITES outside the
+      modules: SettingsScreen (three render sites), StakingScreen (three
+      stakingActionLabel sites, two localize(plan.contractLabel)),
+      PinCostMeasurement (localize(PIN_COST_RESULT_NOTE)), SessionGrantViews
+      (t with localize(sessionKeyHolder)). DESIGN: importedKeysSubject and
+      erc7677PaymasterName stay English because untranslated dialogs build
+      English sentences around them (translated twins feed the Settings
+      note and the confirm lines); the KNOWN_FUNCTIONS notes are ids read
+      at describe time. REVERTED BEFORE THE CUT (the CTO's coordination
+      note named endpoint-probe.ts as the log-window fix's file): the
+      migration of describeDefaultChoice / describeDefaultFallbackNote and
+      the Settings endpoint tag line, 7 ids dropped — the endpoint "default
+      (n of N: host)" tag and the fallback notes STAY ENGLISH, a later
+      slice. SCANNER COLLISION: the id sessions.holder.subscription matched
+      a .dev-wallet line (the same "subscription" fragment f023d98 hit) and
+      became sessions.holder.merchant; the scanner unchanged. STAYS
+      ENGLISH: biometric prompt titles; stored summaries; the engine's
+      describeSubscription, describeDca caveats, describePeriod ("2
+      minutes" stays English inside Spanish sentences — a wallet-side
+      period describer with ids is a follow-up) and the rule condition
+      names; the readinessRefusal text inside the custom-network note; the
+      PIN hashing path names; the "Technical detail: …" tails; amounts,
+      addresses, hashes, brand names; NOT MIGRATED (later):
+      importedRemovalStrandedSentence, stakingSummaryLines, the Send form's
+      token-fee choice / checking / needs-bundler sentences and
+      tokenGasThroughPhrase (the Spanish confirm says "el paymaster de
+      Circle" while the form keeps English), protectConfirmMessage /
+      describeUpgradeOutcome, the module error messages beyond those
+      listed. CTO DECISIONS: the 575 KB golden fixture is accepted (a test
+      asset, the thing that makes the byte-identity claim checkable in CI;
+      thin the describeProtectionStatus cases only if it keeps growing);
+      the endpoint-probe sentences return as a small slice after the
+      log-window fix lands. INPUT still needed: a native Spanish reviewer.
+      UNVERIFIED (device): Spanish layout length on Settings, Sessions and
+      Staking.
