@@ -1977,4 +1977,13 @@ export const es: Readonly<Partial<Record<StringId, string>>> = {
   'settings.pinHash.loadFailed': 'Ruta del hash del PIN: {label}: el módulo nativo está en esta compilación pero no se pudo cargar.',
   'settings.pinHash.selfCheckFailed': 'Ruta del hash del PIN: {label}: el módulo nativo no superó su autocomprobación con el vector de prueba de RFC 7914, así que no se usa.',
   'settings.pinHash.nativeError': 'Ruta del hash del PIN: {label}: el módulo nativo falló durante un hash y no se usa durante el resto de esta sesión.',
+  // ---- Phase 23 item 8 (fifth pass): Settings → Network endpoints — the status tag and the fallback note (config/endpoint-probe.ts describeDefaultChoice / describeDefaultFallbackNote, screens/SettingsScreen.tsx EndpointRow) ----
+  'settings.endpoint.tag.default': 'predeterminado',
+  'settings.endpoint.tag.custom': 'personalizado',
+  'settings.endpoint.tag.choice': 'predeterminado ({index} de {total}: {host})',
+  'settings.endpoint.tag.choiceBehind': 'predeterminado ({index} de {total}: {host}, por detrás de la cadena)',
+  'settings.endpoint.fallback.allStale': 'Ninguno de los {total} puntos de conexión predeterminados superó la última comprobación. El que está en uso ({host}) responde, pero su bloque más reciente parecía más antiguo de lo esperado, así que los saldos y las cotizaciones pueden estar desactualizados. Si la fecha y la hora de este teléfono son incorrectas, corregirlas lo soluciona; si no, puedes configurar un punto de conexión personalizado con Editar.',
+  'settings.endpoint.fallback.noneAnswered': 'Ninguno de los {total} puntos de conexión predeterminados respondió a la última comprobación (el principal es {primary}). Las solicitudes pueden fallar hasta que uno se recupere; puedes configurar un punto de conexión personalizado con Editar.',
+  'settings.endpoint.fallback.primaryStale': 'El punto de conexión predeterminado principal ({primary}) va por detrás de la cadena ahora mismo (su bloque más reciente es más antiguo de lo esperado), así que se usa uno predeterminado de respaldo. El principal se vuelve a probar en el próximo inicio de la aplicación o cuando falle el de respaldo.',
+  'settings.endpoint.fallback.primaryUnreachable': 'El punto de conexión predeterminado principal ({primary}) no responde ahora mismo, así que se usa uno predeterminado de respaldo. El principal se vuelve a probar en el próximo inicio de la aplicación o cuando falle el de respaldo.',
 };

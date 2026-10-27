@@ -1,0 +1,1200 @@
+{
+ "base": "337c60c",
+ "about": "Phase 23 item 8 (the fifth localisation pass): calls of config/endpoint-probe.ts describeDefaultChoice and describeDefaultFallbackNote with the English each gave in the checkout of commit 337c60c, before the two moved to the string table. Recorded by calling the 337c60c module over every branch (url null, index below 0, stale or not, the four notes and the null answers) and keeping a spread of the distinct outputs; scripts/check-i18n.mjs calls the migrated functions with the same arguments and requires the same English.",
+ "cases": [
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": null,
+     "index": -1,
+     "total": 4,
+     "healthy": false,
+     "primaryUnreachable": false
+    }
+   ],
+   "out": "default"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": null,
+     "index": 0,
+     "total": 4,
+     "healthy": true,
+     "primaryUnreachable": false
+    }
+   ],
+   "out": "default"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "https://eth-sepolia-testnet.api.pocket.network/",
+     "index": -1,
+     "total": 4,
+     "healthy": true,
+     "primaryUnreachable": false
+    }
+   ],
+   "out": "default"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "https://ethereum-sepolia-rpc.publicnode.com",
+     "index": 0,
+     "total": 1,
+     "healthy": true,
+     "primaryUnreachable": false
+    }
+   ],
+   "out": "default (1 of 1: ethereum-sepolia-rpc.publicnode.com)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "https://ethereum-sepolia-rpc.publicnode.com",
+     "index": 0,
+     "total": 1,
+     "healthy": true,
+     "primaryUnreachable": false,
+     "stale": false
+    }
+   ],
+   "out": "default (1 of 1: ethereum-sepolia-rpc.publicnode.com)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "https://ethereum-sepolia-rpc.publicnode.com",
+     "index": 0,
+     "total": 1,
+     "healthy": true,
+     "primaryUnreachable": false,
+     "stale": true
+    }
+   ],
+   "out": "default (1 of 1: ethereum-sepolia-rpc.publicnode.com, behind the chain)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "https://eth-sepolia-testnet.api.pocket.network/",
+     "index": 1,
+     "total": 2,
+     "healthy": true,
+     "primaryUnreachable": false
+    }
+   ],
+   "out": "default (2 of 2: eth-sepolia-testnet.api.pocket.network)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "https://eth-sepolia-testnet.api.pocket.network/",
+     "index": 1,
+     "total": 2,
+     "healthy": true,
+     "primaryUnreachable": false,
+     "stale": false
+    }
+   ],
+   "out": "default (2 of 2: eth-sepolia-testnet.api.pocket.network)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "https://eth-sepolia-testnet.api.pocket.network/",
+     "index": 1,
+     "total": 2,
+     "healthy": true,
+     "primaryUnreachable": false,
+     "stale": true
+    }
+   ],
+   "out": "default (2 of 2: eth-sepolia-testnet.api.pocket.network, behind the chain)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 3,
+     "healthy": true,
+     "primaryUnreachable": false
+    }
+   ],
+   "out": "default (3 of 3: 0xrpc.io)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 3,
+     "healthy": true,
+     "primaryUnreachable": false,
+     "stale": false
+    }
+   ],
+   "out": "default (3 of 3: 0xrpc.io)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 3,
+     "healthy": true,
+     "primaryUnreachable": false,
+     "stale": true
+    }
+   ],
+   "out": "default (3 of 3: 0xrpc.io, behind the chain)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "https://public.1rpc.io/sepolia",
+     "index": 3,
+     "total": 4,
+     "healthy": true,
+     "primaryUnreachable": false
+    }
+   ],
+   "out": "default (4 of 4: public.1rpc.io)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "https://public.1rpc.io/sepolia",
+     "index": 3,
+     "total": 4,
+     "healthy": true,
+     "primaryUnreachable": false,
+     "stale": false
+    }
+   ],
+   "out": "default (4 of 4: public.1rpc.io)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "https://public.1rpc.io/sepolia",
+     "index": 3,
+     "total": 4,
+     "healthy": true,
+     "primaryUnreachable": false,
+     "stale": true
+    }
+   ],
+   "out": "default (4 of 4: public.1rpc.io, behind the chain)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "https://blockstream.info/api",
+     "index": 0,
+     "total": 10,
+     "healthy": true,
+     "primaryUnreachable": false
+    }
+   ],
+   "out": "default (1 of 10: blockstream.info)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "https://blockstream.info/api",
+     "index": 0,
+     "total": 10,
+     "healthy": true,
+     "primaryUnreachable": false,
+     "stale": false
+    }
+   ],
+   "out": "default (1 of 10: blockstream.info)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "https://blockstream.info/api",
+     "index": 0,
+     "total": 10,
+     "healthy": true,
+     "primaryUnreachable": false,
+     "stale": true
+    }
+   ],
+   "out": "default (1 of 10: blockstream.info, behind the chain)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "https://solana.publicnode.com:443/path?q=1#x",
+     "index": 1,
+     "total": 1,
+     "healthy": true,
+     "primaryUnreachable": false
+    }
+   ],
+   "out": "default (2 of 1: solana.publicnode.com)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "https://solana.publicnode.com:443/path?q=1#x",
+     "index": 1,
+     "total": 1,
+     "healthy": true,
+     "primaryUnreachable": false,
+     "stale": false
+    }
+   ],
+   "out": "default (2 of 1: solana.publicnode.com)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "https://solana.publicnode.com:443/path?q=1#x",
+     "index": 1,
+     "total": 1,
+     "healthy": true,
+     "primaryUnreachable": false,
+     "stale": true
+    }
+   ],
+   "out": "default (2 of 1: solana.publicnode.com, behind the chain)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "http://10.0.2.2:3002/api",
+     "index": 2,
+     "total": 2,
+     "healthy": true,
+     "primaryUnreachable": false
+    }
+   ],
+   "out": "default (3 of 2: 10.0.2.2)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "http://10.0.2.2:3002/api",
+     "index": 2,
+     "total": 2,
+     "healthy": true,
+     "primaryUnreachable": false,
+     "stale": false
+    }
+   ],
+   "out": "default (3 of 2: 10.0.2.2)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "http://10.0.2.2:3002/api",
+     "index": 2,
+     "total": 2,
+     "healthy": true,
+     "primaryUnreachable": false,
+     "stale": true
+    }
+   ],
+   "out": "default (3 of 2: 10.0.2.2, behind the chain)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "wss://not-http.example/rpc",
+     "index": 3,
+     "total": 3,
+     "healthy": true,
+     "primaryUnreachable": false
+    }
+   ],
+   "out": "default (4 of 3: wss://not-http.example/rpc)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "wss://not-http.example/rpc",
+     "index": 3,
+     "total": 3,
+     "healthy": true,
+     "primaryUnreachable": false,
+     "stale": false
+    }
+   ],
+   "out": "default (4 of 3: wss://not-http.example/rpc)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "wss://not-http.example/rpc",
+     "index": 3,
+     "total": 3,
+     "healthy": true,
+     "primaryUnreachable": false,
+     "stale": true
+    }
+   ],
+   "out": "default (4 of 3: wss://not-http.example/rpc, behind the chain)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "not a url",
+     "index": 0,
+     "total": 4,
+     "healthy": true,
+     "primaryUnreachable": false
+    }
+   ],
+   "out": "default (1 of 4: not a url)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "not a url",
+     "index": 0,
+     "total": 4,
+     "healthy": true,
+     "primaryUnreachable": false,
+     "stale": false
+    }
+   ],
+   "out": "default (1 of 4: not a url)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "not a url",
+     "index": 0,
+     "total": 4,
+     "healthy": true,
+     "primaryUnreachable": false,
+     "stale": true
+    }
+   ],
+   "out": "default (1 of 4: not a url, behind the chain)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "https://{host}.example/$&",
+     "index": 1,
+     "total": 10,
+     "healthy": true,
+     "primaryUnreachable": false
+    }
+   ],
+   "out": "default (2 of 10: {host}.example)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "https://{host}.example/$&",
+     "index": 1,
+     "total": 10,
+     "healthy": true,
+     "primaryUnreachable": false,
+     "stale": false
+    }
+   ],
+   "out": "default (2 of 10: {host}.example)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultChoice",
+   "args": [
+    {
+     "url": "https://{host}.example/$&",
+     "index": 1,
+     "total": 10,
+     "healthy": true,
+     "primaryUnreachable": false,
+     "stale": true
+    }
+   ],
+   "out": "default (2 of 10: {host}.example, behind the chain)"
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 1,
+     "healthy": true,
+     "primaryUnreachable": false
+    },
+    []
+   ],
+   "out": null
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 1,
+     "healthy": true,
+     "primaryUnreachable": false,
+     "primaryFailureKind": "unreachable"
+    },
+    []
+   ],
+   "out": null
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": null,
+     "index": -1,
+     "total": 1,
+     "healthy": true,
+     "primaryUnreachable": false
+    },
+    []
+   ],
+   "out": null
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 1,
+     "healthy": true,
+     "primaryUnreachable": true
+    },
+    [
+     "https://ethereum-sepolia-rpc.publicnode.com"
+    ]
+   ],
+   "out": "The primary default (ethereum-sepolia-rpc.publicnode.com) is unreachable right now, so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 1,
+     "healthy": true,
+     "primaryUnreachable": true,
+     "primaryFailureKind": "unreachable"
+    },
+    [
+     "https://ethereum-sepolia-rpc.publicnode.com"
+    ]
+   ],
+   "out": "The primary default (ethereum-sepolia-rpc.publicnode.com) is unreachable right now, so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 1,
+     "healthy": true,
+     "primaryUnreachable": true,
+     "primaryFailureKind": "stale"
+    },
+    [
+     "https://ethereum-sepolia-rpc.publicnode.com"
+    ]
+   ],
+   "out": "The primary default (ethereum-sepolia-rpc.publicnode.com) is behind the chain right now (its newest block is older than expected), so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": null,
+     "index": -1,
+     "total": 1,
+     "healthy": true,
+     "primaryUnreachable": true
+    },
+    [
+     "https://ethereum-sepolia-rpc.publicnode.com"
+    ]
+   ],
+   "out": "The primary default (ethereum-sepolia-rpc.publicnode.com) is unreachable right now, so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": null,
+     "index": -1,
+     "total": 1,
+     "healthy": true,
+     "primaryUnreachable": true,
+     "primaryFailureKind": "stale"
+    },
+    [
+     "https://ethereum-sepolia-rpc.publicnode.com"
+    ]
+   ],
+   "out": "The primary default (ethereum-sepolia-rpc.publicnode.com) is behind the chain right now (its newest block is older than expected), so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 1,
+     "healthy": true,
+     "primaryUnreachable": true,
+     "stale": false,
+     "primaryFailureKind": "stale"
+    },
+    [
+     "https://ethereum-sepolia-rpc.publicnode.com"
+    ]
+   ],
+   "out": "The primary default (ethereum-sepolia-rpc.publicnode.com) is behind the chain right now (its newest block is older than expected), so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 1,
+     "healthy": false,
+     "primaryUnreachable": true
+    },
+    [
+     "https://ethereum-sepolia-rpc.publicnode.com"
+    ]
+   ],
+   "out": "None of the 1 default endpoints answered the last check (the primary is ethereum-sepolia-rpc.publicnode.com). Requests may fail until one recovers; you can set a custom endpoint with Edit."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 1,
+     "healthy": false,
+     "primaryUnreachable": true,
+     "primaryFailureKind": "unreachable"
+    },
+    [
+     "https://ethereum-sepolia-rpc.publicnode.com"
+    ]
+   ],
+   "out": "None of the 1 default endpoints answered the last check (the primary is ethereum-sepolia-rpc.publicnode.com). Requests may fail until one recovers; you can set a custom endpoint with Edit."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": null,
+     "index": -1,
+     "total": 1,
+     "healthy": false,
+     "primaryUnreachable": true
+    },
+    [
+     "https://ethereum-sepolia-rpc.publicnode.com"
+    ]
+   ],
+   "out": "None of the 1 default endpoints answered the last check (the primary is ethereum-sepolia-rpc.publicnode.com). Requests may fail until one recovers; you can set a custom endpoint with Edit."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 1,
+     "healthy": false,
+     "primaryUnreachable": true,
+     "stale": true
+    },
+    [
+     "https://ethereum-sepolia-rpc.publicnode.com"
+    ]
+   ],
+   "out": "None of the 1 default endpoints passed the last check. The one in use (0xrpc.io) answers, but its newest block looked older than expected, so balances and quotes may be out of date. If this phone's date and time are wrong, correcting them fixes this; otherwise you can set a custom endpoint with Edit."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 1,
+     "healthy": false,
+     "primaryUnreachable": true,
+     "stale": true,
+     "primaryFailureKind": "unreachable"
+    },
+    [
+     "https://ethereum-sepolia-rpc.publicnode.com"
+    ]
+   ],
+   "out": "None of the 1 default endpoints passed the last check. The one in use (0xrpc.io) answers, but its newest block looked older than expected, so balances and quotes may be out of date. If this phone's date and time are wrong, correcting them fixes this; otherwise you can set a custom endpoint with Edit."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 4,
+     "healthy": false,
+     "primaryUnreachable": true
+    },
+    [
+     "https://ethereum-sepolia-rpc.publicnode.com",
+     "https://eth-sepolia-testnet.api.pocket.network/",
+     "https://0xrpc.io/sep",
+     "https://public.1rpc.io/sepolia"
+    ]
+   ],
+   "out": "None of the 4 default endpoints answered the last check (the primary is ethereum-sepolia-rpc.publicnode.com). Requests may fail until one recovers; you can set a custom endpoint with Edit."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 4,
+     "healthy": false,
+     "primaryUnreachable": true,
+     "primaryFailureKind": "unreachable"
+    },
+    [
+     "https://ethereum-sepolia-rpc.publicnode.com",
+     "https://eth-sepolia-testnet.api.pocket.network/",
+     "https://0xrpc.io/sep",
+     "https://public.1rpc.io/sepolia"
+    ]
+   ],
+   "out": "None of the 4 default endpoints answered the last check (the primary is ethereum-sepolia-rpc.publicnode.com). Requests may fail until one recovers; you can set a custom endpoint with Edit."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": null,
+     "index": -1,
+     "total": 4,
+     "healthy": false,
+     "primaryUnreachable": true
+    },
+    [
+     "https://ethereum-sepolia-rpc.publicnode.com",
+     "https://eth-sepolia-testnet.api.pocket.network/",
+     "https://0xrpc.io/sep",
+     "https://public.1rpc.io/sepolia"
+    ]
+   ],
+   "out": "None of the 4 default endpoints answered the last check (the primary is ethereum-sepolia-rpc.publicnode.com). Requests may fail until one recovers; you can set a custom endpoint with Edit."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 4,
+     "healthy": false,
+     "primaryUnreachable": true,
+     "stale": true
+    },
+    [
+     "https://ethereum-sepolia-rpc.publicnode.com",
+     "https://eth-sepolia-testnet.api.pocket.network/",
+     "https://0xrpc.io/sep",
+     "https://public.1rpc.io/sepolia"
+    ]
+   ],
+   "out": "None of the 4 default endpoints passed the last check. The one in use (0xrpc.io) answers, but its newest block looked older than expected, so balances and quotes may be out of date. If this phone's date and time are wrong, correcting them fixes this; otherwise you can set a custom endpoint with Edit."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 4,
+     "healthy": false,
+     "primaryUnreachable": true,
+     "stale": true,
+     "primaryFailureKind": "unreachable"
+    },
+    [
+     "https://ethereum-sepolia-rpc.publicnode.com",
+     "https://eth-sepolia-testnet.api.pocket.network/",
+     "https://0xrpc.io/sep",
+     "https://public.1rpc.io/sepolia"
+    ]
+   ],
+   "out": "None of the 4 default endpoints passed the last check. The one in use (0xrpc.io) answers, but its newest block looked older than expected, so balances and quotes may be out of date. If this phone's date and time are wrong, correcting them fixes this; otherwise you can set a custom endpoint with Edit."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 2,
+     "healthy": true,
+     "primaryUnreachable": true
+    },
+    [
+     "not a url",
+     "https://eth-sepolia-testnet.api.pocket.network/"
+    ]
+   ],
+   "out": "The primary default (not a url) is unreachable right now, so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 2,
+     "healthy": true,
+     "primaryUnreachable": true,
+     "primaryFailureKind": "unreachable"
+    },
+    [
+     "not a url",
+     "https://eth-sepolia-testnet.api.pocket.network/"
+    ]
+   ],
+   "out": "The primary default (not a url) is unreachable right now, so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 2,
+     "healthy": true,
+     "primaryUnreachable": true,
+     "primaryFailureKind": "stale"
+    },
+    [
+     "not a url",
+     "https://eth-sepolia-testnet.api.pocket.network/"
+    ]
+   ],
+   "out": "The primary default (not a url) is behind the chain right now (its newest block is older than expected), so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": null,
+     "index": -1,
+     "total": 2,
+     "healthy": true,
+     "primaryUnreachable": true
+    },
+    [
+     "not a url",
+     "https://eth-sepolia-testnet.api.pocket.network/"
+    ]
+   ],
+   "out": "The primary default (not a url) is unreachable right now, so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": null,
+     "index": -1,
+     "total": 2,
+     "healthy": true,
+     "primaryUnreachable": true,
+     "primaryFailureKind": "stale"
+    },
+    [
+     "not a url",
+     "https://eth-sepolia-testnet.api.pocket.network/"
+    ]
+   ],
+   "out": "The primary default (not a url) is behind the chain right now (its newest block is older than expected), so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 2,
+     "healthy": true,
+     "primaryUnreachable": true,
+     "stale": false,
+     "primaryFailureKind": "stale"
+    },
+    [
+     "not a url",
+     "https://eth-sepolia-testnet.api.pocket.network/"
+    ]
+   ],
+   "out": "The primary default (not a url) is behind the chain right now (its newest block is older than expected), so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 2,
+     "healthy": false,
+     "primaryUnreachable": true
+    },
+    [
+     "not a url",
+     "https://eth-sepolia-testnet.api.pocket.network/"
+    ]
+   ],
+   "out": "None of the 2 default endpoints answered the last check (the primary is not a url). Requests may fail until one recovers; you can set a custom endpoint with Edit."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 2,
+     "healthy": false,
+     "primaryUnreachable": true,
+     "primaryFailureKind": "unreachable"
+    },
+    [
+     "not a url",
+     "https://eth-sepolia-testnet.api.pocket.network/"
+    ]
+   ],
+   "out": "None of the 2 default endpoints answered the last check (the primary is not a url). Requests may fail until one recovers; you can set a custom endpoint with Edit."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": null,
+     "index": -1,
+     "total": 2,
+     "healthy": false,
+     "primaryUnreachable": true
+    },
+    [
+     "not a url",
+     "https://eth-sepolia-testnet.api.pocket.network/"
+    ]
+   ],
+   "out": "None of the 2 default endpoints answered the last check (the primary is not a url). Requests may fail until one recovers; you can set a custom endpoint with Edit."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 2,
+     "healthy": false,
+     "primaryUnreachable": true,
+     "stale": true
+    },
+    [
+     "not a url",
+     "https://eth-sepolia-testnet.api.pocket.network/"
+    ]
+   ],
+   "out": "None of the 2 default endpoints passed the last check. The one in use (0xrpc.io) answers, but its newest block looked older than expected, so balances and quotes may be out of date. If this phone's date and time are wrong, correcting them fixes this; otherwise you can set a custom endpoint with Edit."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 2,
+     "healthy": false,
+     "primaryUnreachable": true,
+     "stale": true,
+     "primaryFailureKind": "unreachable"
+    },
+    [
+     "not a url",
+     "https://eth-sepolia-testnet.api.pocket.network/"
+    ]
+   ],
+   "out": "None of the 2 default endpoints passed the last check. The one in use (0xrpc.io) answers, but its newest block looked older than expected, so balances and quotes may be out of date. If this phone's date and time are wrong, correcting them fixes this; otherwise you can set a custom endpoint with Edit."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 1,
+     "healthy": true,
+     "primaryUnreachable": true
+    },
+    [
+     "https://{host}.example/$&"
+    ]
+   ],
+   "out": "The primary default ({host}.example) is unreachable right now, so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 1,
+     "healthy": true,
+     "primaryUnreachable": true,
+     "primaryFailureKind": "unreachable"
+    },
+    [
+     "https://{host}.example/$&"
+    ]
+   ],
+   "out": "The primary default ({host}.example) is unreachable right now, so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 1,
+     "healthy": true,
+     "primaryUnreachable": true,
+     "primaryFailureKind": "stale"
+    },
+    [
+     "https://{host}.example/$&"
+    ]
+   ],
+   "out": "The primary default ({host}.example) is behind the chain right now (its newest block is older than expected), so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": null,
+     "index": -1,
+     "total": 1,
+     "healthy": true,
+     "primaryUnreachable": true
+    },
+    [
+     "https://{host}.example/$&"
+    ]
+   ],
+   "out": "The primary default ({host}.example) is unreachable right now, so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": null,
+     "index": -1,
+     "total": 1,
+     "healthy": true,
+     "primaryUnreachable": true,
+     "primaryFailureKind": "stale"
+    },
+    [
+     "https://{host}.example/$&"
+    ]
+   ],
+   "out": "The primary default ({host}.example) is behind the chain right now (its newest block is older than expected), so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 1,
+     "healthy": true,
+     "primaryUnreachable": true,
+     "stale": false,
+     "primaryFailureKind": "stale"
+    },
+    [
+     "https://{host}.example/$&"
+    ]
+   ],
+   "out": "The primary default ({host}.example) is behind the chain right now (its newest block is older than expected), so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 1,
+     "healthy": false,
+     "primaryUnreachable": true
+    },
+    [
+     "https://{host}.example/$&"
+    ]
+   ],
+   "out": "None of the 1 default endpoints answered the last check (the primary is {host}.example). Requests may fail until one recovers; you can set a custom endpoint with Edit."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": "https://0xrpc.io/sep",
+     "index": 2,
+     "total": 1,
+     "healthy": false,
+     "primaryUnreachable": true,
+     "primaryFailureKind": "unreachable"
+    },
+    [
+     "https://{host}.example/$&"
+    ]
+   ],
+   "out": "None of the 1 default endpoints answered the last check (the primary is {host}.example). Requests may fail until one recovers; you can set a custom endpoint with Edit."
+  },
+  {
+   "module": "config/endpoint-probe.ts",
+   "fn": "describeDefaultFallbackNote",
+   "args": [
+    {
+     "url": null,
+     "index": -1,
+     "total": 1,
+     "healthy": false,
+     "primaryUnreachable": true
+    },
+    [
+     "https://{host}.example/$&"
+    ]
+   ],
+   "out": "None of the 1 default endpoints answered the last check (the primary is {host}.example). Requests may fail until one recovers; you can set a custom endpoint with Edit."
+  }
+ ]
+}

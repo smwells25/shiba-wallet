@@ -1976,4 +1976,13 @@ export const en = {
   'settings.pinHash.loadFailed': 'PIN hashing path: {label}: the native module is in this build but could not be loaded.',
   'settings.pinHash.selfCheckFailed': 'PIN hashing path: {label}: the native module failed its self-check against the RFC 7914 test vector, so it is not used.',
   'settings.pinHash.nativeError': 'PIN hashing path: {label}: the native module failed during a hash and is not used for the rest of this session.',
+  // ---- Phase 23 item 8 (fifth pass): Settings → Network endpoints — the status tag and the fallback note (config/endpoint-probe.ts describeDefaultChoice / describeDefaultFallbackNote, screens/SettingsScreen.tsx EndpointRow) ----
+  'settings.endpoint.tag.default': 'default',
+  'settings.endpoint.tag.custom': 'custom',
+  'settings.endpoint.tag.choice': 'default ({index} of {total}: {host})',
+  'settings.endpoint.tag.choiceBehind': 'default ({index} of {total}: {host}, behind the chain)',
+  'settings.endpoint.fallback.allStale': 'None of the {total} default endpoints passed the last check. The one in use ({host}) answers, but its newest block looked older than expected, so balances and quotes may be out of date. If this phone\'s date and time are wrong, correcting them fixes this; otherwise you can set a custom endpoint with Edit.',
+  'settings.endpoint.fallback.noneAnswered': 'None of the {total} default endpoints answered the last check (the primary is {primary}). Requests may fail until one recovers; you can set a custom endpoint with Edit.',
+  'settings.endpoint.fallback.primaryStale': 'The primary default ({primary}) is behind the chain right now (its newest block is older than expected), so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails.',
+  'settings.endpoint.fallback.primaryUnreachable': 'The primary default ({primary}) is unreachable right now, so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails.',
 } as const;

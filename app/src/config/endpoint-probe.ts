@@ -3,6 +3,11 @@
 // check-balances.mjs), which resolve relative specifiers literally. The
 // import is type-only, so nothing from ./defaults.ts is evaluated here.
 import type { NetworkDefault, NetworkKind } from './defaults.ts';
+// The Settings tag and note below are built through the string table
+// (phase 23 item 8, the fifth localisation pass). ../i18n/index.ts is pure
+// (no React, no react-native), so this module still loads under Node's type
+// stripping; Node's checks never set a language, so they read the English.
+import { t } from '../i18n/index.ts';
 
 /**
  * Default-endpoint fallback: health probing and in-memory selection among a
@@ -656,9 +661,9 @@ export function endpointHost(url: string): string {
  * "default (3 of 4: 0xrpc.io, behind the chain)" for a stale last resort.
  */
 export function describeDefaultChoice(choice: DefaultChoice): string {
-  if (choice.url === null || choice.index < 0) return 'default';
-  const behind = choice.stale === true ? ', behind the chain' : '';
-  return `default (${choice.index + 1} of ${choice.total}: ${endpointHost(choice.url)}${behind})`;
+  if (choice.url === null || choice.index < 0) return t('settings.endpoint.tag.default');
+  const params = { index: choice.index + 1, total: choice.total, host: endpointHost(choice.url) };
+  return choice.stale === true ? t('settings.endpoint.tag.choiceBehind', params) : t('settings.endpoint.tag.choice', params);
 }
 
 /**
@@ -672,34 +677,15 @@ export function describeDefaultFallbackNote(
   if (!choice.primaryUnreachable || candidates.length === 0) return null;
   const primary = endpointHost(candidates[0]);
   if (!choice.healthy && choice.stale === true && choice.url !== null) {
-    return (
-      `None of the ${choice.total} default endpoints passed the last check. ` +
-      `The one in use (${endpointHost(choice.url)}) answers, but its newest block ` +
-      'looked older than expected, so balances and quotes may be out of date. ' +
-      "If this phone's date and time are wrong, correcting them fixes this; " +
-      'otherwise you can set a custom endpoint with Edit.'
-    );
+    return t('settings.endpoint.fallback.allStale', { total: choice.total, host: endpointHost(choice.url) });
   }
   if (!choice.healthy) {
-    return (
-      `None of the ${choice.total} default endpoints answered the last check ` +
-      `(the primary is ${primary}). Requests may fail until one recovers; ` +
-      'you can set a custom endpoint with Edit.'
-    );
+    return t('settings.endpoint.fallback.noneAnswered', { total: choice.total, primary });
   }
   if (choice.primaryFailureKind === 'stale') {
-    return (
-      `The primary default (${primary}) is behind the chain right now (its ` +
-      'newest block is older than expected), so a fallback default is in use. ' +
-      'The primary is tried again on the next app launch or whenever the ' +
-      'fallback fails.'
-    );
+    return t('settings.endpoint.fallback.primaryStale', { primary });
   }
-  return (
-    `The primary default (${primary}) is unreachable right now, so a ` +
-    'fallback default is in use. The primary is tried again on the next ' +
-    'app launch or whenever the fallback fails.'
-  );
+  return t('settings.endpoint.fallback.primaryUnreachable', { primary });
 }
 
 // ---------------------------------------------------------------------------

@@ -250,7 +250,7 @@ function EndpointRow({
   // Which default candidate is active ("default (2 of 2: host)") and, when
   // the primary failed its probe, a short plain-language note. In-memory
   // state from config/networks.ts; nothing new is stored.
-  const tag = isOverride ? 'custom' : defaultChoice ? describeDefaultChoice(defaultChoice) : 'default';
+  const tag = isOverride ? t('settings.endpoint.tag.custom') : defaultChoice ? describeDefaultChoice(defaultChoice) : t('settings.endpoint.tag.default');
   const fallbackNote =
     !isOverride && defaultChoice
       ? describeDefaultFallbackNote(defaultChoice, network.defaultUrls)

@@ -1,6 +1,6 @@
 {
  "base": "c5baff6",
- "about": "The English each migrated string-table entry had in the app at commit c5baff6, before the localisation groundwork (phase 22 item 6). Generated from that checkout: \"literal\" entries were found as a string literal, a folded string concatenation or a JSX text (whitespace collapsed as JSX does) at the places listed; \"template\" entries have their static parts (the text between placeholders) found in that order in a template literal, a string concatenation or a JSX element; \"composite\" entries were assembled from several pieces, described with their place; \"new\" entries did not exist (Settings → Language). scripts/check-i18n.mjs compares app/src/i18n/en.ts with this file. \"changed\" entries are migrated entries whose English was reworded on purpose after the migration: \"before\" is the text at c5baff6 (equal to the entry's own record above), \"en\" the text now, \"why\" the reason; the \"new\" list also holds the ids added since (the Settings → Language note on shared texts and the passphrase forms of the app-lock notes, phase 22 polish). Phase 23 item 8 (the second localisation pass): entries carrying \"base\": \"5cb4601\" were located the same way in the checkout of commit 5cb4601, where the screens they come from stood when they were migrated (the base above applies to every entry without one). Phase 23 item 8 (the third localisation pass): entries carrying \"base\": \"6a1d2bb\" were located the same way in the checkout of commit 6a1d2bb (Bridge, Multisig and the rest of Home). Phase 23 item 8 (the fourth localisation pass): entries carrying \"base\": \"a9998cc\" were located the same way in the checkout of commit a9998cc (the sentences built inside the wallet modules).",
+ "about": "The English each migrated string-table entry had in the app at commit c5baff6, before the localisation groundwork (phase 22 item 6). Generated from that checkout: \"literal\" entries were found as a string literal, a folded string concatenation or a JSX text (whitespace collapsed as JSX does) at the places listed; \"template\" entries have their static parts (the text between placeholders) found in that order in a template literal, a string concatenation or a JSX element; \"composite\" entries were assembled from several pieces, described with their place; \"new\" entries did not exist (Settings → Language). scripts/check-i18n.mjs compares app/src/i18n/en.ts with this file. \"changed\" entries are migrated entries whose English was reworded on purpose after the migration: \"before\" is the text at c5baff6 (equal to the entry's own record above), \"en\" the text now, \"why\" the reason; the \"new\" list also holds the ids added since (the Settings → Language note on shared texts and the passphrase forms of the app-lock notes, phase 22 polish). Phase 23 item 8 (the second localisation pass): entries carrying \"base\": \"5cb4601\" were located the same way in the checkout of commit 5cb4601, where the screens they come from stood when they were migrated (the base above applies to every entry without one). Phase 23 item 8 (the third localisation pass): entries carrying \"base\": \"6a1d2bb\" were located the same way in the checkout of commit 6a1d2bb (Bridge, Multisig and the rest of Home). Phase 23 item 8 (the fourth localisation pass): entries carrying \"base\": \"a9998cc\" were located the same way in the checkout of commit a9998cc (the sentences built inside the wallet modules). Phase 23 item 8 (the fifth localisation pass): entries carrying \"base\": \"337c60c\" were located the same way in the checkout of commit 337c60c (the Settings endpoint tag and its fallback note, which the fourth pass had left for the log-window fix).",
  "literal": {
   "common.cancel": {
    "en": "Cancel",
@@ -8179,6 +8179,21 @@
     "src/wallet/pin-native-scrypt.ts:272 literal"
    ],
    "base": "a9998cc"
+  },
+  "settings.endpoint.tag.default": {
+   "en": "default",
+   "where": [
+    "src/config/endpoint-probe.ts:659 literal",
+    "src/screens/SettingsScreen.tsx:253 literal"
+   ],
+   "base": "337c60c"
+  },
+  "settings.endpoint.tag.custom": {
+   "en": "custom",
+   "where": [
+    "src/screens/SettingsScreen.tsx:253 literal"
+   ],
+   "base": "337c60c"
   }
  },
  "template": {
@@ -12108,6 +12123,44 @@
     ": the native module failed during a hash and is not used for the rest of this session."
    ],
    "base": "a9998cc"
+  },
+  "settings.endpoint.fallback.allStale": {
+   "en": "None of the {total} default endpoints passed the last check. The one in use ({host}) answers, but its newest block looked older than expected, so balances and quotes may be out of date. If this phone's date and time are wrong, correcting them fixes this; otherwise you can set a custom endpoint with Edit.",
+   "where": "src/config/endpoint-probe.ts:676 expr",
+   "old": [
+    "None of the ",
+    " default endpoints passed the last check. The one in use (",
+    ") answers, but its newest block looked older than expected, so balances and quotes may be out of date. If this phone's date and time are wrong, correcting them fixes this; otherwise you can set a custom endpoint with Edit."
+   ],
+   "base": "337c60c"
+  },
+  "settings.endpoint.fallback.noneAnswered": {
+   "en": "None of the {total} default endpoints answered the last check (the primary is {primary}). Requests may fail until one recovers; you can set a custom endpoint with Edit.",
+   "where": "src/config/endpoint-probe.ts:685 expr",
+   "old": [
+    "None of the ",
+    " default endpoints answered the last check (the primary is ",
+    "). Requests may fail until one recovers; you can set a custom endpoint with Edit."
+   ],
+   "base": "337c60c"
+  },
+  "settings.endpoint.fallback.primaryStale": {
+   "en": "The primary default ({primary}) is behind the chain right now (its newest block is older than expected), so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails.",
+   "where": "src/config/endpoint-probe.ts:692 expr",
+   "old": [
+    "The primary default (",
+    ") is behind the chain right now (its newest block is older than expected), so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails."
+   ],
+   "base": "337c60c"
+  },
+  "settings.endpoint.fallback.primaryUnreachable": {
+   "en": "The primary default ({primary}) is unreachable right now, so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails.",
+   "where": "src/config/endpoint-probe.ts:699 expr",
+   "old": [
+    "The primary default (",
+    ") is unreachable right now, so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails."
+   ],
+   "base": "337c60c"
   }
  },
  "composite": {
@@ -12706,6 +12759,18 @@
    "where": "src/wallet/pin-cost.ts:228 expr",
    "old": "PIN_COST_RESULT_NOTE: 'Each figure is one hash. Unlocking with the app PIN computes two hashes at the PIN\\'s size. Nothing was stored.' (the source escapes the apostrophe)",
    "base": "a9998cc"
+  },
+  "settings.endpoint.tag.choice": {
+   "en": "default ({index} of {total}: {host})",
+   "where": "src/config/endpoint-probe.ts:661 expr",
+   "old": "`default (${choice.index + 1} of ${choice.total}: ${endpointHost(choice.url)}${behind})` with behind = '' (choice.stale !== true)",
+   "base": "337c60c"
+  },
+  "settings.endpoint.tag.choiceBehind": {
+   "en": "default ({index} of {total}: {host}, behind the chain)",
+   "where": "src/config/endpoint-probe.ts:661 expr",
+   "old": "`default (${choice.index + 1} of ${choice.total}: ${endpointHost(choice.url)}${behind})` with behind = ', behind the chain' (choice.stale === true)",
+   "base": "337c60c"
   }
  },
  "new": [

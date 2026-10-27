@@ -95,6 +95,8 @@ import * as MS from '../src/wallet/multisig.ts';
 import { FOREIGN_DELEGATE_WARNING, delegationLabelSuffix } from '../src/wallet/delegation.ts';
 import { MULTISIG_UNVERIFIED_NETWORK_NOTE } from '../src/config/evm-chain.ts';
 import { tokenSendFeeSentence } from '../src/wallet/token-gas.ts';
+// Phase 23 item 8 (the fifth pass): the Settings endpoint tag and its fallback note.
+import * as EP from '../src/config/endpoint-probe.ts';
 // Phase 23 item 8 (the fourth pass): the wallet modules whose own sentences now go through the table.
 import * as TGM from '../src/wallet/token-gas.ts';
 import * as STK from '../src/wallet/staking.ts';
@@ -501,6 +503,11 @@ function oldSpoken(visible) {
     'settings.pinCost.platformHashingChangedSpoken': [oldSpoken(`Platform: ${'android'} · Hermes: ${true ? 'yes' : 'no'} · development bundle (__DEV__): ${false ? 'yes' : 'no'} · Hashing: ${PNS.PIN_HASH_NATIVE_LABEL} at the start, then ${PNS.PIN_HASH_JS_LABEL} after the native hash failed during the run`),
       PCOST.pinCostPlatformSpokenText({ os: 'android', hermes: true, dev: false }, { start: { kind: 'native' }, end: { kind: 'js', reason: 'native-error' } })],
     'settings.pinCost.resultNote': ['Each figure is one hash. Unlocking with the app PIN computes two hashes at the PIN\'s size. Nothing was stored.', en['settings.pinCost.resultNote']],
+    // Phase 23 item 8 (the fifth pass): the Settings endpoint tag, one template literal at 337c60c with a `behind` suffix chosen by choice.stale.
+    'settings.endpoint.tag.choice': [`default (${1 + 1} of ${4}: ${'eth-sepolia-testnet.api.pocket.network'}${false ? ', behind the chain' : ''})`,
+      EP.describeDefaultChoice({ url: 'https://eth-sepolia-testnet.api.pocket.network/', index: 1, total: 4, healthy: true, primaryUnreachable: true })],
+    'settings.endpoint.tag.choiceBehind': [`default (${2 + 1} of ${4}: ${'0xrpc.io'}${true ? ', behind the chain' : ''})`,
+      EP.describeDefaultChoice({ url: 'https://0xrpc.io/sep', index: 2, total: 4, healthy: false, primaryUnreachable: true, stale: true })],
   };
   const bad = Object.entries(old).filter(([, [a, b]]) => a !== b).map(([id, [a, b]]) => `${id}: ${a} ≠ ${b}`);
   check(`the ${Object.keys(old).length} composites assemble to exactly the old text`, bad.length === 0, bad.join('; '));
@@ -1352,6 +1359,117 @@ const FOURTH_MODULES = Object.fromEntries(await Promise.all(FOURTH_MODULE_FILES.
 check(`fourth pass: at least four mutants of its own, all caught (${FOURTH_CAUGHT} of ${FOURTH_MUTANTS})`, FOURTH_MUTANTS >= 4 && FOURTH_CAUGHT === FOURTH_MUTANTS);
 
 // ---------------------------------------------------------------------------
+console.log('check-i18n: the fifth localisation pass (phase 23 item 8: the Settings endpoint tag and its fallback note)');
+// ---------------------------------------------------------------------------
+// The fourth pass left config/endpoint-probe.ts describeDefaultChoice and
+// describeDefaultFallbackNote, and Settings' endpoint tag, in English while
+// the log-window fix owned that file. They were located in the checkout of
+// commit 337c60c (the fixture records "base": "337c60c"); every entry is
+// checked above against that record like the earlier passes' entries. Here:
+// the ids, their Spanish draft, the earlier passes untouched, exact English,
+// the GOLDEN CASES (each function called with the arguments the 337c60c module
+// was called with, requiring that module's English output: scripts/fixtures/
+// i18n-fifth-pass-golden.json, every branch), the call sites, hosts passing
+// through untouched, and mutants of its own.
+let FIFTH_MUTANTS = 0;
+let FIFTH_CAUGHT = 0;
+function caught5(name, wasCaught) {
+  FIFTH_MUTANTS += 1;
+  if (wasCaught) FIFTH_CAUGHT += 1;
+  check(`mutant caught: ${name}`, wasCaught);
+}
+const GOLDEN5 = JSON.parse(read('scripts/fixtures/i18n-fifth-pass-golden.json'));
+const FIFTH_MODULES = { 'config/endpoint-probe.ts': EP };
+const FIFTH_IDS = ['settings.endpoint.tag.default', 'settings.endpoint.tag.custom', 'settings.endpoint.tag.choice', 'settings.endpoint.tag.choiceBehind',
+  'settings.endpoint.fallback.allStale', 'settings.endpoint.fallback.noneAnswered', 'settings.endpoint.fallback.primaryStale', 'settings.endpoint.fallback.primaryUnreachable'];
+/** A template's English as a whole-string pattern, each placeholder any text. */
+const templatePattern = (text) => new RegExp(`^${text.split(/\{[A-Za-z][A-Za-z0-9]*\}/).map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.+?')}$`);
+{
+  const FIFTH = ['literal', 'template', 'composite'].flatMap((s) => Object.entries(FIXTURE[s]).filter(([, f]) => f.base === '337c60c').map(([id]) => id));
+  check(`fifth pass: ${FIFTH.length} ids migrated from 337c60c (2 literals, 4 templates, 2 composites), exactly the endpoint tag and fallback-note ids, each with a Spanish draft that differs from the English`,
+    FIFTH.length === 8 && FIFTH_IDS.every((id) => FIFTH.includes(id)) &&
+      FIFTH_IDS.filter((id) => FIXTURE.literal[id]).length === 2 && FIFTH_IDS.filter((id) => FIXTURE.template[id]).length === 4 && FIFTH_IDS.filter((id) => FIXTURE.composite[id]).length === 2 &&
+      FIFTH.every((id) => typeof en[id] === 'string' && typeof es[id] === 'string' && es[id] !== id && es[id] !== en[id]),
+    FIFTH.filter((id) => typeof es[id] !== 'string').join(', '));
+  const count = (base) => ['literal', 'template', 'composite'].flatMap((s) => Object.values(FIXTURE[s]).filter((f) => f.base === base)).length;
+  check('…the earlier passes are untouched: 204 entries of the fourth pass (a9998cc), 474 of the third (6a1d2bb), 690 of the second (5cb4601) and the 336 of the groundwork (c5baff6) keep their record, and nothing of this pass is listed as new or changed',
+    count('a9998cc') === 204 && count('6a1d2bb') === 474 && count('5cb4601') === 690 &&
+      Object.keys(FIXTURE.literal).filter((id) => FIXTURE.literal[id].base === undefined).length === 336 && FIXTURE.base === 'c5baff6' &&
+      !FIFTH_IDS.some((id) => FIXTURE.new.includes(id) || id in (FIXTURE.changed ?? {})));
+  const EXACT5 = {
+    'settings.endpoint.tag.default': 'default',
+    'settings.endpoint.tag.custom': 'custom',
+    'settings.endpoint.tag.choiceBehind': 'default ({index} of {total}: {host}, behind the chain)',
+    'settings.endpoint.fallback.primaryStale': 'The primary default ({primary}) is behind the chain right now (its newest block is older than expected), so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails.',
+  };
+  check('…exact English for the two tag literals, the stale tag and the primary-stale note',
+    Object.entries(EXACT5).every(([id, v]) => en[id] === v), Object.entries(EXACT5).filter(([id, v]) => en[id] !== v).map(([id]) => id).join(', '));
+  // The golden cases: the 337c60c English of both functions, branch by branch.
+  const goldenBad = await goldenProblems(GOLDEN5.cases, FIFTH_MODULES);
+  const fns = new Set(GOLDEN5.cases.map((c) => c.fn));
+  check(`the golden cases (${GOLDEN5.cases.length}, recorded from the 337c60c module): describeDefaultChoice and describeDefaultFallbackNote give exactly the English they gave there`,
+    GOLDEN5.base === '337c60c' && GOLDEN5.cases.length >= 60 && GOLDEN5.cases.every((c) => c.module === 'config/endpoint-probe.ts') &&
+      fns.has('describeDefaultChoice') && fns.has('describeDefaultFallbackNote') && goldenBad.length === 0, goldenBad.slice(0, 3).join('; '));
+  // Every branch is among the cases: each id endpoint-probe.ts builds matches some recorded output, and the note's null answer is there too.
+  const outs = GOLDEN5.cases.map((c) => c.out);
+  const probeIds = FIFTH_IDS.filter((id) => id !== 'settings.endpoint.tag.custom');
+  const uncovered = probeIds.filter((id) => !outs.some((o) => typeof o === 'string' && templatePattern(en[id]).test(o)));
+  check(`…the golden cases cover every branch: the plain "default", both tags, the four notes (${probeIds.length}) and the note's null answer`,
+    uncovered.length === 0 && GOLDEN5.cases.some((c) => c.fn === 'describeDefaultFallbackNote' && c.out === null), uncovered.join(', '));
+  check('…hosts pass through untouched (a host with braces and "$&" in it reads back exactly; a non-http URL is shown whole)',
+    GOLDEN5.cases.some((c) => typeof c.out === 'string' && c.out.includes('{host}.example')) &&
+      EP.describeDefaultChoice({ url: 'https://{host}.example/$&', index: 0, total: 1, healthy: true, primaryUnreachable: false }) === 'default (1 of 1: {host}.example)' &&
+      EP.describeDefaultFallbackNote({ url: 'x', index: 1, total: 2, healthy: true, primaryUnreachable: true }, ['wss://a.example/$1']) ===
+        'The primary default (wss://a.example/$1) is unreachable right now, so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails.');
+  // The call sites: the two functions build no English of their own; Settings' tag goes through the table.
+  const probeSrc = read('src/config/endpoint-probe.ts');
+  const fnPlain = (src) => ['describeDefaultChoice', 'describeDefaultFallbackNote'].every((n) => {
+    const body = fnBodyOf(src, n);
+    return body !== '' && !/'default'|behind the chain|None of the|The primary default|fallback default/.test(body) && /\bt\('settings\.endpoint\./.test(body);
+  });
+  check('endpoint-probe.ts: describeDefaultChoice and describeDefaultFallbackNote build their text only through t() (no English left in their bodies)', fnPlain(probeSrc));
+  const settingsSrc5 = read('src/screens/SettingsScreen.tsx');
+  const TAG_LINE = "const tag = isOverride ? t('settings.endpoint.tag.custom') : defaultChoice ? describeDefaultChoice(defaultChoice) : t('settings.endpoint.tag.default');";
+  const tagThroughTable = (src) => src.includes(TAG_LINE) && !/isOverride \? 'custom'/.test(src);
+  check('SettingsScreen: the endpoint tag goes through the table (custom, the chosen default, plain default), the old English-only line gone', tagThroughTable(settingsSrc5));
+  // In Spanish they answer in Spanish, hosts and numbers unchanged, no placeholder left.
+  const spanish5 = (() => {
+    I.setActiveLanguage('es');
+    try {
+      return [
+        EP.describeDefaultChoice({ url: 'https://0xrpc.io/sep', index: 2, total: 4, healthy: false, primaryUnreachable: true, stale: true }),
+        EP.describeDefaultChoice({ url: null, index: -1, total: 0, healthy: false, primaryUnreachable: false }),
+        EP.describeDefaultFallbackNote({ url: 'https://0xrpc.io/sep', index: 2, total: 4, healthy: false, primaryUnreachable: true, stale: true }, ['https://ethereum-sepolia-rpc.publicnode.com']),
+        EP.describeDefaultFallbackNote({ url: 'https://b.example', index: 1, total: 2, healthy: true, primaryUnreachable: true, primaryFailureKind: 'stale' }, ['https://a.example']),
+        I.t('settings.endpoint.tag.custom'),
+      ];
+    } finally {
+      I.setActiveLanguage('en');
+    }
+  })();
+  check('…in Spanish they answer in Spanish ("predeterminado (3 de 4: 0xrpc.io, por detrás de la cadena)", "Ninguno de los 4 puntos de conexión…", "personalizado"), hosts and numbers unchanged, with no {placeholder} left',
+    spanish5[0] === 'predeterminado (3 de 4: 0xrpc.io, por detrás de la cadena)' && spanish5[1] === 'predeterminado' &&
+      spanish5[2].startsWith('Ninguno de los 4 puntos de conexión') && spanish5[2].includes('(0xrpc.io)') && spanish5[3].includes('(a.example)') && spanish5[4] === 'personalizado' &&
+      spanish5.every((x) => typeof x === 'string' && !/\{[A-Za-z]+\}/.test(x)), spanish5.join(' | '));
+  // Mutants (each must be caught by the checks above).
+  const esMissing5 = { ...es };
+  delete esMissing5['settings.endpoint.fallback.noneAnswered'];
+  caught5('fifth pass: a Spanish line missing for a migrated id', FIFTH_IDS.some((id) => typeof esMissing5[id] !== 'string'));
+  caught5('fifth pass: an English entry changed (the stale tag with "the" dropped)',
+    fixtureProblems({ ...en, 'settings.endpoint.tag.choiceBehind': 'default ({index} of {total}: {host}, behind chain)' }, FIXTURE).length >= 1);
+  const drifted5 = GOLDEN5.cases.find((c) => c.fn === 'describeDefaultFallbackNote' && typeof c.out === 'string');
+  caught5('fifth pass: a function whose English drifted from 337c60c (a golden case one character off)',
+    (await goldenProblems([{ ...drifted5, out: `${drifted5.out}x` }], FIFTH_MODULES)).length === 1);
+  caught5('fifth pass: the old English-only tag line restored in Settings',
+    !tagThroughTable(settingsSrc5.replace(TAG_LINE, "const tag = isOverride ? 'custom' : defaultChoice ? describeDefaultChoice(defaultChoice) : 'default';")));
+  caught5('fifth pass: the old stale-tag literal restored in describeDefaultChoice',
+    !fnPlain(probeSrc.replace("return t('settings.endpoint.tag.default');", "return 'default';")));
+  const enUnused5 = { ...en, 'settings.endpoint.tag.unused': 'an endpoint tag no screen shows' };
+  caught5('fifth pass: an unused id added to the table', unusedIds(enUnused5, SCANS).includes('settings.endpoint.tag.unused') && fixtureProblems(enUnused5, FIXTURE).length === 1);
+}
+check(`fifth pass: at least four mutants of its own, all caught (${FIFTH_CAUGHT} of ${FIFTH_MUTANTS})`, FIFTH_MUTANTS >= 4 && FIFTH_CAUGHT === FIFTH_MUTANTS);
+
+// ---------------------------------------------------------------------------
 console.log('check-i18n: the stored language choice (device-wide, through the storage seam)');
 // ---------------------------------------------------------------------------
 function memoryStore() {
@@ -1539,5 +1657,5 @@ function caught(name, wasCaught) {
 check(`at least six mutants, all caught (${mutantsCaught} of ${mutants + 5} including the table mutants)`, mutants + 5 >= 6 && mutantsCaught === mutants + 5);
 check(`phase 23 item 8: at least three mutants of its own, all caught (${ITEM8_CAUGHT} of ${ITEM8_MUTANTS})`, ITEM8_MUTANTS >= 3 && ITEM8_CAUGHT === ITEM8_MUTANTS);
 
-console.log(`\ncheck-i18n: ${passed} passed, ${failed} failed (${mutants + 5 + ITEM8_MUTANTS + THIRD_MUTANTS + FOURTH_MUTANTS} mutants)`);
+console.log(`\ncheck-i18n: ${passed} passed, ${failed} failed (${mutants + 5 + ITEM8_MUTANTS + THIRD_MUTANTS + FOURTH_MUTANTS + FIFTH_MUTANTS} mutants)`);
 if (failed > 0) process.exit(1);
