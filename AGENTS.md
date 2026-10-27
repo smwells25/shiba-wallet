@@ -14236,3 +14236,34 @@ to the Chairperson at once.
       log-window fix lands. INPUT still needed: a native Spanish reviewer.
       UNVERIFIED (device): Spanish layout length on Settings, Sessions and
       Staking.
+- [x] CI RED ON e4db9d3 FIXED — THE FOURTH PASS'S GOLDEN REPLAY PINNED TO UTC
+      (commit b9a68a4; app/scripts/check-i18n.mjs and the fixture
+      scripts/fixtures/i18n-fourth-pass-golden.json only; check-i18n 143 (was
+      142); offline runner ALL GREEN in the CTO's isolated worktree on HEAD
+      e4db9d3 with --skip-bundle: engine 1,290, app 10,587 across 65 suites,
+      lint 0/0, tsc clean; checkout 0 / apply 0 / 2 files; the staged patch id
+      equals the verified one; the scan clean). THE CAUSE, read from the
+      downloaded CI job log (the run failed one check: "the golden cases
+      (606…)" with protectionDate(0) giving "1970-01-01" against the recorded
+      "1969-12-31") and confirmed by a three-zone probe: config/dates.ts
+      localDateLabel labels a timestamp in the LOCAL calendar by design
+      (getFullYear / getMonth / getDate), so the golden case for timestamp 0,
+      recorded on this Mac in America/New_York, expects 1969-12-31 while
+      GitHub's runners are in UTC and get 1970-01-01 (Asia/Tokyo also
+      1970-01-01; the 1791000000000 case is the same in every zone probed) —
+      not flaky, and NOT reproducible from a fresh clone on this Mac, which is
+      why the local verify was green. FIX: check-i18n.mjs assigns
+      process.env.TZ = 'UTC' right after its imports (Node re-reads the zone
+      on that assignment — probed: a Date made before reads 31 December, one
+      made after 1 January — and nothing imported formats a date at import
+      time), the golden fixture was re-recorded under TZ=UTC with the pass's
+      own harness (exactly the two timestamp-0 cases changed, protectionDate
+      and protectedText, to 1970-01-01; the other 604 byte-identical), and a
+      new check pins both: TZ is UTC, timestamp 0 labels as 1970-01-01, and
+      the fixture holds that value. check-i18n now passes under TZ=UTC,
+      America/New_York and Asia/Tokyo; two mutants caught — the pin removed
+      under America/New_York (the pin check and the golden check fail) and the
+      old fixture under UTC (both fail). RULE: a golden recorded from
+      zone-dependent output must be recorded under a pinned zone, and CI runs
+      in UTC — any future fixture of local-calendar dates follows this pin.
+      No app code changed; localDateLabel keeps the local calendar.
