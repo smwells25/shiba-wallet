@@ -70,6 +70,17 @@ import {
   type BridgeLog,
   type BridgeReceiptLogReader,
   type BridgeTransfer,
+  type BridgeBlockReader,
+  BRIDGE_BLOCK_SEARCH_MAX_PROBES,
+  BRIDGE_SEARCH_BOUND_SECONDS,
+  BRIDGE_SEARCH_START_MARGIN_SECONDS,
+  BRIDGE_SEARCH_WINDOW_BLOCKS,
+  findBlockAtOrBefore,
+  planDestinationSearch,
+  searchPlannedLogs,
+  searchRangeText,
+  searchSpanText,
+  searchTimeText,
 } from '../src/index.js';
 
 const SEPOLIA = 11155111;
@@ -890,6 +901,103 @@ describe('LayerZero OFT adapter: follow-ups from the live run (docs/BRIDGING.md 
     expect(dst.asked[0]!.chainId).toBe(ARB_SEPOLIA);
   });
 
+  // Pass p23-cctp-recheck: the receiving chain is searched from the
+  // sending transaction's time (bridge/search.ts) when a block reader is
+  // given. Sepolia at 12 s per block, OP Sepolia at 2 s; the send at
+  // 2026-10-15 05:28:00 UTC (leg A's day).
+  const SEND_BLOCK = 11_917_629n;
+  const SEND_TS = 1_792_042_080n;
+  const sepTs = (n: bigint) => SEND_TS - (SEND_BLOCK - n) * 12n;
+  const OP_AT_SEND = 50_115_500n;
+  const opTs = (n: bigint) => SEND_TS - (OP_AT_SEND - n) * 2n;
+  function timedReader(opHead: bigint): BridgeBlockReader {
+    return async ({ chainId, block }) => {
+      const head = chainId === OP_SEPOLIA ? opHead : SEND_BLOCK + 100n;
+      const n = block === 'latest' ? head : block;
+      if (n > head) throw new Error('beyond the head');
+      return { number: n, timestamp: chainId === OP_SEPOLIA ? opTs(n) : sepTs(n) };
+    };
+  }
+  function rangedReader(logs: BridgeLog[]) {
+    const asked: Parameters<BridgeEventLogReader>[0][] = [];
+    const read: BridgeEventLogReader = async (req) => {
+      asked.push(req);
+      return logs.filter(
+        (l) =>
+          l.address.toLowerCase() === req.address.toLowerCase() &&
+          (req.fromBlock === undefined || BigInt(l.blockNumber!) >= req.fromBlock) &&
+          (req.toBlock === undefined || BigInt(l.blockNumber!) <= req.toBlock) &&
+          req.topics.every((t, i) => t === null || l.topics[i] === t),
+      );
+    };
+    return { asked, read };
+  }
+  const timedProvider = (dst: BridgeEventLogReader, opHead: bigint, scan?: string | null) =>
+    createLayerZeroOftProvider({
+      deployments: STARGATE_V2_TESTNET_NATIVE_POOLS,
+      readContract: async () => '0x',
+      readSourceReceipt: async () => ({ status: 'success', logs: legALogs(), blockNumber: SEND_BLOCK }),
+      readDestinationLogs: dst,
+      readBlock: timedReader(opHead),
+      ...(scan !== undefined ? { fetchMessageStatus: async () => (scan === null ? null : { status: scan }) } : {}),
+    });
+  const atBlock = (l: BridgeLog, n: bigint): BridgeLog => ({ ...l, blockNumber: '0x' + n.toString(16) });
+
+  it('track() with a block reader: searched from the receiving block at the send’s time less 10 minutes, in 9,000-block windows, delivered when found', async () => {
+    const delivery = atBlock(oftReceived(OP_SEPOLIA, GUID_A, 40161), OP_AT_SEND + 45n);
+    const dst = rangedReader([delivery]);
+    const st = await timedProvider(dst.read, OP_AT_SEND + 200_000n, 'DELIVERED').track(transferAB());
+    expect(st.state).toBe('delivered');
+    expect(st.destinationTxHash).toBe(DELIVERY_TX_A);
+    const start = OP_AT_SEND - 300n; // 600 s at 2 s per block
+    expect(st.onChain!.search).toMatchObject({ fromBlock: start, toBlock: OP_AT_SEND + 200_000n, fromTimestamp: SEND_TS - 600n, bounded: false });
+    expect(dst.asked).toEqual([{ chainId: OP_SEPOLIA, address: pool(OP_SEPOLIA).address, topics: [OFT_RECEIVED_TOPIC, GUID_A], fromBlock: start, toBlock: start + 8_999n }]);
+  });
+
+  it('track() with a block reader: a delivery older than the old 108,000-block cap is still found (the search is not capped by a block count)', async () => {
+    const late = OP_AT_SEND + 150_000n; // about 3.5 days of 2-second blocks after the send
+    const dst = rangedReader([atBlock(oftReceived(OP_SEPOLIA, GUID_A, 40161), late)]);
+    const st = await timedProvider(dst.read, OP_AT_SEND + 200_000n).track(transferAB());
+    expect(st.state).toBe('delivered');
+    expect(dst.asked.length).toBeGreaterThan(12);
+  });
+
+  it('track() with a block reader: nothing found within the week the wallet searches → not known, the span and range stated, Scan beside it', async () => {
+    const head = OP_AT_SEND + (8n * 86_400n) / 2n; // 8 days of 2-second blocks
+    const dst = rangedReader([]);
+    const st = await timedProvider(dst.read, head, 'DELIVERED').track(transferAB());
+    const search = st.onChain!.search!;
+    expect(search.bounded).toBe(true);
+    expect(search.toBlock).toBe(OP_AT_SEND - 300n + BRIDGE_SEARCH_BOUND_SECONDS / 2n);
+    expect(search.toTimestamp - search.fromTimestamp).toBe(BRIDGE_SEARCH_BOUND_SECONDS);
+    expect(st.state).toBe('unknown');
+    expect(st.onChain!.status).toBe('unknown');
+    expect(st.detail).toBe(
+      `The message was sent (GUID ${GUID_A}), but no delivery for it was found in the 168 hours this wallet searched on the receiving network (blocks ${search.fromBlock} to ${search.toBlock}, from 2026-10-15 05:18 UTC to 2026-10-22 05:18 UTC), which is as far as it searches after the sending transaction, so the wallet cannot tell whether it arrived later. LayerZero Scan reports DELIVERED; the wallet goes by the chains' own events.`,
+    );
+    expect(st.detail).not.toMatch(/too long ago/);
+    // Both the delivery and the cache were searched over the whole planned span, never past it.
+    expect(dst.asked.every((q) => q.toBlock! <= search.toBlock && q.fromBlock! >= search.fromBlock)).toBe(true);
+    expect(dst.asked.filter((q) => q.topics[0] === UNRECEIVED_TOKEN_CACHED_TOPIC).length).toBeGreaterThan(0);
+  });
+
+  it('track() with a block reader: a cached transfer deep in the span stops the search at its window', async () => {
+    const transfer = transferAB(KERNEL);
+    const hit = OP_AT_SEND + 40_000n;
+    const dst = rangedReader([atBlock(cached(OP_SEPOLIA, GUID_A, 40161), hit)]);
+    const st = await createLayerZeroOftProvider({
+      deployments: STARGATE_V2_TESTNET_NATIVE_POOLS,
+      readContract: async () => '0x',
+      readSourceReceipt: async () => ({ status: 'success', logs: [oftSent(SEPOLIA, GUID_A, 40232, AMOUNT, KERNEL), packetSent(SEPOLIA, OP_SEPOLIA, GUID_A)], blockNumber: SEND_BLOCK }),
+      readDestinationLogs: dst.read,
+      readBlock: timedReader(OP_AT_SEND + 300_000n),
+    }).track(transfer);
+    expect(st.onChain!.status).toBe('cached-needs-retry');
+    const cachedAsks = dst.asked.filter((q) => q.topics[0] === UNRECEIVED_TOKEN_CACHED_TOPIC);
+    expect(cachedAsks[cachedAsks.length - 1]!.toBlock! >= hit).toBe(true);
+    expect(cachedAsks[cachedAsks.length - 1]!.toBlock! < OP_AT_SEND + 300_000n).toBe(true);
+  });
+
   describe('quotes', () => {
     const quoteOftAnswer = (sent: bigint, received: bigint) => oftIface.encodeFunctionResult('quoteOFT', [[1n, 10n ** 21n], [], [sent, received]]);
     const read = async (req: { data: string }) => {
@@ -1022,5 +1130,143 @@ describe('LayerZero OFT adapter: follow-ups from the live run (docs/BRIDGING.md 
       // The wallet's own options stay empty in the call it builds.
       expect(oftIface.decodeFunctionData('send', q.calls[0]!.data)[0][4]).toBe('0x');
     });
+  });
+});
+
+
+describe('bridge search: the receiving chain searched from the sending transaction’s time (pass p23-cctp-recheck)', () => {
+  // An irregular chain: 0.25 s blocks (timestamps repeat four times, as on
+  // Arbitrum Sepolia), then 0.2 s (Base Sepolia), then 12 s (Ethereum).
+  const T0 = 1_700_000_000n;
+  const ts = (n: bigint) =>
+    n < 3_000_000n ? T0 + n / 4n : n < 6_000_000n ? T0 + 750_000n + (n - 3_000_000n) / 5n : T0 + 1_350_000n + (n - 6_000_000n) * 12n;
+  const HEAD = 6_100_000n;
+  function chain(head = HEAD) {
+    const asked: bigint[] = [];
+    let latest = 0;
+    const read: BridgeBlockReader = async ({ chainId, block }) => {
+      if (chainId !== 7) throw new Error('another chain');
+      if (block === 'latest') {
+        latest += 1;
+        return { number: head, timestamp: ts(head) };
+      }
+      if (block > head) throw new Error('beyond the head');
+      asked.push(block);
+      return { number: block, timestamp: ts(block) };
+    };
+    return { read, asked, latestReads: () => latest };
+  }
+  const correct = (r: bigint, target: bigint, head = HEAD) => ts(r) <= target && (r === head || ts(r + 1n) > target);
+
+  it('finds the highest block at or before a time on a chain with irregular block times, in few reads', async () => {
+    let seed = 12345n;
+    const targets: bigint[] = [ts(0n), ts(1n), ts(2_999_999n), ts(3_000_000n), ts(5_999_999n), ts(6_000_000n), ts(HEAD) - 1n, ts(HEAD) - 13n];
+    for (let i = 0; i < 120; i++) {
+      seed = (seed * 6364136223846793005n + 1442695040888963407n) % 2n ** 64n;
+      targets.push(T0 + (seed % (ts(HEAD) - T0)));
+    }
+    let worst = 0;
+    for (const target of targets) {
+      const c = chain();
+      const { block, reads } = await findBlockAtOrBefore(c.read, 7, target);
+      expect(correct(block.number, target)).toBe(true);
+      expect(block.timestamp).toBe(ts(block.number));
+      worst = Math.max(worst, reads);
+    }
+    expect(worst).toBeLessThanOrEqual(BRIDGE_BLOCK_SEARCH_MAX_PROBES);
+    // On a steady stretch (well inside the 12 s blocks) a few reads do: interpolation lands next to the answer.
+    // (Across a change of block time the interpolation is poor and the bisection steps carry it.)
+    for (const n of [6_050_000n, 6_080_000n, 6_099_000n]) {
+      const { block, reads } = await findBlockAtOrBefore(chain().read, 7, ts(n) + 5n);
+      expect(block.number).toBe(n);
+      expect(reads).toBeLessThanOrEqual(8);
+    }
+    // A time at or after the head gives the head; before the first block, block 0.
+    expect((await findBlockAtOrBefore(chain().read, 7, ts(HEAD) + 100n)).block.number).toBe(HEAD);
+    expect((await findBlockAtOrBefore(chain().read, 7, T0 - 5n)).block.number).toBe(0n);
+  });
+
+  it('never asks for blocks much older than the answer, so a pruned node can serve it (base-sepolia-rpc.publicnode.com refused block 33,554,432 on 2026-10-27)', async () => {
+    // A Base Sepolia-like chain (0.2 s blocks) whose node keeps only blocks from 46,500,000, as publicnode answered.
+    const B0 = 1_783_000_000n;
+    const bts = (n: bigint) => B0 + n / 5n;
+    const head = 50_745_664n;
+    const asked: bigint[] = [];
+    const pruned: BridgeBlockReader = async ({ block }) => {
+      const n = block === 'latest' ? head : block;
+      if (n < 46_500_000n) throw new Error(`pruned history unavailable: requested ${n}, earliest available 46500000`);
+      asked.push(n);
+      return { number: n, timestamp: bts(n) };
+    };
+    for (const back of [1_000n, 300_000n, 3_024_000n]) {
+      asked.length = 0;
+      const want = head - back;
+      const { block, reads } = await findBlockAtOrBefore(pruned, 84532, bts(want));
+      expect(block.number).toBe((want / 5n) * 5n + 4n); // five blocks share each second: the last of them
+      expect(reads).toBeLessThanOrEqual(12);
+      expect(asked.every((n) => n >= want - back / 2n - 1_000n)).toBe(true);
+    }
+    // Bisecting from block 0 would have asked for block 25,372,832 or older first and failed there.
+    await expect(pruned({ chainId: 84532, block: 25_372_832n })).rejects.toThrow('pruned history unavailable');
+  });
+
+  it('with a cache, a later pass for the same time reads nothing but the head', async () => {
+    const cache = new Map();
+    const a = chain();
+    const first = await planDestinationSearch(a.read, { chainId: 7, sinceTimestamp: ts(6_080_000n), cache });
+    const b = chain(HEAD + 75n);
+    const again = await planDestinationSearch(b.read, { chainId: 7, sinceTimestamp: ts(6_080_000n), cache });
+    expect(a.asked.length).toBeGreaterThan(0);
+    expect(b.asked).toEqual([]);
+    expect(again.fromBlock).toBe(first.fromBlock);
+  });
+
+  it('plans from the block 10 minutes before the send to the head, or to a week later when the head is further', async () => {
+    expect(BRIDGE_SEARCH_START_MARGIN_SECONDS).toBe(600n);
+    expect(BRIDGE_SEARCH_BOUND_SECONDS).toBe(604_800n);
+    expect(BRIDGE_SEARCH_WINDOW_BLOCKS).toBe(9_000n);
+    const since = ts(6_080_000n); // 20,000 blocks of 12 s before the head: under a week
+    const near = await planDestinationSearch(chain().read, { chainId: 7, sinceTimestamp: since });
+    expect(correct(near.fromBlock, since - 600n)).toBe(true);
+    expect(near).toMatchObject({ toBlock: HEAD, toTimestamp: ts(HEAD), bounded: false });
+    // A send two months back on the 0.25 s segment: the head is beyond the week, so the search stops a week after the start.
+    const old = ts(1_000_000n);
+    const far = await planDestinationSearch(chain().read, { chainId: 7, sinceTimestamp: old });
+    expect(correct(far.fromBlock, old - 600n)).toBe(true);
+    expect(far.bounded).toBe(true);
+    expect(far.toBlock < HEAD && far.toBlock > far.fromBlock).toBe(true);
+    // The end block is estimated from the two ends' timestamps, then read: the span stated is the span searched.
+    expect(far.toTimestamp).toBe(ts(far.toBlock));
+    expect(far.toTimestamp - far.fromTimestamp).toBeGreaterThan(0n);
+    expect(searchRangeText(far)).toBe(`blocks ${far.fromBlock} to ${far.toBlock}, from ${searchTimeText(far.fromTimestamp)} to ${searchTimeText(far.toTimestamp)}`);
+    await expect(planDestinationSearch(chain().read, { chainId: 7, sinceTimestamp: since, boundSeconds: 0n })).rejects.toThrow('must be positive');
+  });
+
+  it('searches the plan forward in 9,000-block windows, stopping at the window where the caller’s test is met', async () => {
+    const asked: [bigint, bigint][] = [];
+    const hit: BridgeLog = { address: OTHER, topics: ['0x01'], data: '0x', blockNumber: '0x' + (20_500n).toString(16) };
+    const read: BridgeEventLogReader = async (q) => {
+      asked.push([q.fromBlock!, q.toBlock!]);
+      return BigInt(hit.blockNumber!) >= q.fromBlock! && BigInt(hit.blockNumber!) <= q.toBlock! ? [hit] : [];
+    };
+    const all = await searchPlannedLogs(read, { fromBlock: 1_000n, toBlock: 40_000n }, { chainId: 7, address: OTHER, topics: [] });
+    expect(all).toEqual([hit]);
+    expect(asked).toEqual([[1_000n, 9_999n], [10_000n, 18_999n], [19_000n, 27_999n], [28_000n, 36_999n], [37_000n, 40_000n]]);
+    asked.length = 0;
+    await searchPlannedLogs(read, { fromBlock: 1_000n, toBlock: 40_000n }, { chainId: 7, address: OTHER, topics: [] }, (logs) => logs.length > 0);
+    expect(asked).toEqual([[1_000n, 9_999n], [10_000n, 18_999n], [19_000n, 27_999n]]);
+  });
+
+  it('words a span and a time plainly', () => {
+    expect(searchSpanText(604_800n)).toBe('168 hours');
+    expect(searchSpanText(90n)).toBe('2 minutes');
+    expect(searchSpanText(60n)).toBe('1 minute');
+    expect(searchSpanText(7_200n)).toBe('2 hours');
+    expect(searchTimeText(1_793_017_431n)).toBe('2026-10-26 12:23 UTC');
+  });
+
+  it('refuses a node that answers another block than the one asked for', async () => {
+    const liar: BridgeBlockReader = async ({ block }) => ({ number: block === 'latest' ? 1_000n : (block as bigint) + 1n, timestamp: 5n });
+    await expect(findBlockAtOrBefore(liar, 7, 1n)).rejects.toThrow('when block');
   });
 });

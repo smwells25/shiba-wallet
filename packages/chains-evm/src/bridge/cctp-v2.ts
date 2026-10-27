@@ -5,7 +5,9 @@ import type { Call } from '../smart-account.js';
 import type {
   BridgeAsset,
   BridgeAttestation,
+  BridgeBlockReader,
   BridgeCall,
+  BridgeDestinationSearch,
   BridgeEventLogReader,
   BridgeLog,
   BridgeOnChainDelivery,
@@ -19,6 +21,7 @@ import type {
   BridgeTransferStatus,
   BridgeTrustStatement,
 } from './types.js';
+import { planDestinationSearch, searchPlannedLogs, searchRangeText, searchSpanText, type BridgeSearchCache } from './search.js';
 import { addressToBytes32, assertUint, checksumAddress, equalPin, exactApprovalCall, isZeroAddress, sameAsset } from './util.js';
 
 /**
@@ -165,6 +168,40 @@ export function depositForBurnPins(p: CctpDepositForBurnParams) {
 }
 
 /** Calldata for MessageTransmitterV2.receiveMessage(message, attestation) on the destination. */
+/**
+ * MessageTransmitterV2.usedNonces (BaseMessageTransmitter.sol line 58 at
+ * circlefin/evm-cctp-contracts 63ab1f0a: `mapping(bytes32 => uint256)
+ * public usedNonces`). receiveMessage requires `usedNonces[_nonce] == 0`
+ * ("Nonce already used", MessageTransmitterV2.sol line 313) and then sets
+ * it to NONCE_USED = 1 (line 221; the constant at BaseMessageTransmitter.sol
+ * line 44) before it hands the message to TokenMessengerV2, which mints in
+ * the same call; a reverted receiveMessage undoes the write. So 1 means a
+ * receiveMessage carrying that nonce succeeded on that chain. The
+ * initializer also marks the zero nonce used (MessageTransmitterV2.sol line
+ * 130); the adapter never asks about the zero nonce (an attestation with
+ * nonce 0 is refused before).
+ */
+export const CCTP_USED_NONCES_SIGNATURE = 'usedNonces(bytes32)';
+/** keccak256(signature)[0:4]; recomputed in the tests. */
+export const CCTP_USED_NONCES_SELECTOR = '0xfeb61724';
+/** BaseMessageTransmitter.NONCE_USED. */
+export const CCTP_NONCE_USED = 1n;
+
+/** Calldata for MessageTransmitterV2.usedNonces(nonce). */
+export function encodeUsedNonces(nonce: string): Uint8Array {
+  if (typeof nonce !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(nonce)) throw new Error('A CCTP nonce is 32 bytes of hex.');
+  return encodeFunctionCall(CCTP_USED_NONCES_SIGNATURE, [{ kind: 'fixedBytes', value: toBytes(nonce) }]);
+}
+
+/** Reads usedNonces' answer: 0 → false, NONCE_USED (1) → true; anything else is refused. */
+export function decodeUsedNonces(result: string): boolean {
+  if (typeof result !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(result)) throw new Error('usedNonces answered something other than one 32-byte word.');
+  const v = BigInt(result);
+  if (v === 0n) return false;
+  if (v === CCTP_NONCE_USED) return true;
+  throw new Error(`usedNonces answered ${v}, which is neither 0 nor NONCE_USED (1).`);
+}
+
 export function encodeReceiveMessage(message: string, attestation: string): Uint8Array {
   const m = toBytes(message);
   const a = toBytes(attestation);
@@ -562,6 +599,24 @@ export interface CctpV2ProviderOptions {
   readSourceReceipt?: BridgeReceiptLogReader;
   /** eth_getLogs on the receiving chain, to find MessageReceived and MintAndWithdraw for the message's nonce. */
   readDestinationLogs?: BridgeEventLogReader;
+  /**
+   * eth_call on a chain (pass p23-cctp-recheck). With the log readers, the
+   * adapter reads MessageTransmitterV2.usedNonces(nonce) on the receiving
+   * chain, and that, not a log search, decides whether the USDC was minted:
+   * 0 → the mint call is offered, whatever the logs show or fail to show;
+   * 1 → delivered, the logs then only supply the receiving transaction and
+   * the amount for display.
+   */
+  readContract?: (request: { chainId: number; to: string; data: string }) => Promise<string>;
+  /**
+   * eth_getBlockByNumber (bridge/search.ts). With it, the receiving chain is
+   * searched from the block at the burn's time, to the head or a week later,
+   * whatever the chains' block times; without it the log reader chooses the
+   * range, as before.
+   */
+  readBlock?: BridgeBlockReader;
+  /** The receiving blocks found for a time, kept by the app between tracking passes so a later pass reads only the head. */
+  searchCache?: BridgeSearchCache;
 }
 
 export const CCTP_V2_TRUST: BridgeTrustStatement = {
@@ -754,7 +809,7 @@ export function createCctpV2Provider(options: CctpV2ProviderOptions = {}): Bridg
         'The sending transaction does not carry exactly one CCTP burn matching this transfer (route, recipient, amount, a Standard Transfer with no fee), so it is not followed as this transfer.',
       );
     }
-    const sourceBlock = burn.block;
+    const sourceBlock = burn.block ?? (typeof receipt.blockNumber === 'bigint' ? receipt.blockNumber : null);
     const blockText = sourceBlock === null ? '' : ` (block ${sourceBlock})`;
     let attested: { message: string; attestation: string } | null = null;
     let fromStore = false;
@@ -814,9 +869,59 @@ export function createCctpV2Provider(options: CctpV2ProviderOptions = {}): Bridg
     const tm = CCTP_V2_TESTNET.tokenMessengerV2;
     const tmWord = addressToBytes32(tm).toLowerCase();
     const sourceDomain = CCTP_V2_TESTNET_DOMAINS[r.sourceChainId]!;
-    const received = await readDestinationLogs({ chainId: r.destinationChainId, address: mt, topics: [CCTP_MESSAGE_RECEIVED_TOPIC, null, nonce] });
-    const receivedTxs: string[] = [];
+    const mint: Call = { to: mt, value: 0n, data: encodeReceiveMessage(attestation.message, attestation.attestation) };
+    const attestedResult = (nonceUsed: boolean | undefined, search?: BridgeDestinationSearch): BridgeTransferStatus =>
+      result(
+        'awaiting-destination-action',
+        {
+          status: 'attested',
+          guid: nonce,
+          destinationTx: null,
+          amountReceived: null,
+          apiStatus: null,
+          sourceBlock,
+          ...(search ? { search } : {}),
+          ...(nonceUsed !== undefined ? { nonceUsed } : {}),
+        },
+        `Circle attested the burn (nonce ${nonce}). The USDC is minted on the receiving network by a receiveMessage transaction there, which anyone with gas on that network may send; the recipient and amount are fixed by the attested message.`,
+        { destinationCalls: [mint], attestation },
+      );
+
+    // Whether the mint happened is the receiving chain's own record, read
+    // with one eth_call (pass p23-cctp-recheck): an unused nonce means the
+    // mint is still to be sent, and no log search can say otherwise.
+    let nonceUsed: boolean | undefined;
+    if (options.readContract) {
+      nonceUsed = decodeUsedNonces(await options.readContract({ chainId: r.destinationChainId, to: mt, data: toHex(encodeUsedNonces(nonce)) }));
+      if (!nonceUsed) return attestedResult(false);
+    }
+
+    // Where to search for the receiving transaction: from the burn's time
+    // when a block reader was given and the burn's block is known.
+    let plan: (BridgeDestinationSearch & { reads: number }) | null = null;
+    let search: BridgeDestinationSearch | undefined;
     let mismatched = false;
+    const extraOnChain = (): Pick<BridgeOnChainDelivery, 'search' | 'nonceUsed'> => ({
+      ...(search ? { search } : {}),
+      ...(nonceUsed !== undefined ? { nonceUsed } : {}),
+    });
+    try {
+    if (options.readBlock && sourceBlock !== null) {
+      const burnHeader = await options.readBlock({ chainId: r.sourceChainId, block: sourceBlock });
+      if (!burnHeader || burnHeader.number !== sourceBlock || typeof burnHeader.timestamp !== 'bigint') {
+        throw new Error(`The node did not return the burn's block ${sourceBlock}.`);
+      }
+      plan = await planDestinationSearch(options.readBlock, { chainId: r.destinationChainId, sinceTimestamp: burnHeader.timestamp, cache: options.searchCache });
+    }
+    search = plan
+      ? { fromBlock: plan.fromBlock, toBlock: plan.toBlock, fromTimestamp: plan.fromTimestamp, toTimestamp: plan.toTimestamp, bounded: plan.bounded, boundSeconds: plan.boundSeconds }
+      : undefined;
+    const receivedQuery = { chainId: r.destinationChainId, address: mt, topics: [CCTP_MESSAGE_RECEIVED_TOPIC, null, nonce] };
+    const received = plan
+      ? await searchPlannedLogs(readDestinationLogs, plan, receivedQuery, (logs) => logs.some((l) => topicIs(l, CCTP_MESSAGE_RECEIVED_TOPIC)))
+      : await readDestinationLogs(receivedQuery);
+    const receivedTxs: string[] = [];
+    const receivedBlocks: bigint[] = [];
     for (const log of received) {
       if (!sameAddress(log.address, mt) || !topicIs(log, CCTP_MESSAGE_RECEIVED_TOPIC)) continue;
       let ev: CctpMessageReceivedEvent;
@@ -831,14 +936,27 @@ export function createCctpV2Provider(options: CctpV2ProviderOptions = {}): Bridg
         continue;
       }
       receivedTxs.push(log.transactionHash.toLowerCase());
+      if (typeof log.blockNumber === 'string' && /^0x[0-9a-fA-F]+$/.test(log.blockNumber)) receivedBlocks.push(BigInt(log.blockNumber));
     }
     if (receivedTxs.length > 0) {
       const usdcDest = CCTP_V2_TESTNET_USDC[r.destinationChainId]!;
-      const mints = await readDestinationLogs({
+      const mintQuery = {
         chainId: r.destinationChainId,
         address: tm,
         topics: [CCTP_MINT_AND_WITHDRAW_TOPIC, addressToBytes32(recipient).toLowerCase(), addressToBytes32(usdcDest).toLowerCase()],
-      });
+      };
+      // MintAndWithdraw is emitted in the receiving transaction itself, so
+      // with a planned search only the blocks that hold MessageReceived are asked.
+      const mints =
+        plan === null
+          ? await readDestinationLogs(mintQuery)
+          : receivedBlocks.length === receivedTxs.length
+            ? await searchPlannedLogs(
+                readDestinationLogs,
+                { fromBlock: receivedBlocks.reduce((m, b) => (b < m ? b : m)), toBlock: receivedBlocks.reduce((m, b) => (b > m ? b : m)) },
+                mintQuery,
+              )
+            : await searchPlannedLogs(readDestinationLogs, plan, mintQuery);
       const want = transfer.amountIn - a.body.feeExecuted;
       for (const log of mints) {
         if (!sameAddress(log.address, tm) || !topicIs(log, CCTP_MINT_AND_WITHDRAW_TOPIC)) continue;
@@ -853,7 +971,7 @@ export function createCctpV2Provider(options: CctpV2ProviderOptions = {}): Bridg
           const destinationTx = log.transactionHash;
           return result(
             'delivered',
-            { status: 'delivered', guid: nonce, destinationTx, amountReceived: m.amount, apiStatus: null, sourceBlock },
+            { status: 'delivered', guid: nonce, destinationTx, amountReceived: m.amount, apiStatus: null, sourceBlock, ...extraOnChain() },
             `Delivered: the receiving network shows MessageReceived for this transfer's message (nonce ${nonce}) and MintAndWithdraw of ${m.amount} base units of USDC to ${recipient} in transaction ${destinationTx}.`,
             { attestation },
           );
@@ -861,20 +979,37 @@ export function createCctpV2Provider(options: CctpV2ProviderOptions = {}): Bridg
       }
       mismatched = true;
     }
+    } catch (e) {
+      // The mint already happened (usedNonces 1): a search the receiving
+      // network's endpoint could not serve (a pruned node, a failure) only
+      // costs the transaction's hash, so the transfer is still delivered.
+      if (nonceUsed !== true) throw e;
+      return result(
+        'delivered',
+        { status: 'delivered', guid: nonce, destinationTx: null, amountReceived: null, apiStatus: null, sourceBlock, nonceUsed },
+        `Delivered: Circle's MessageTransmitterV2 on the receiving network records this transfer's message (nonce ${nonce}) as used, which happens only when a receiveMessage carrying it succeeds, so the USDC was minted to ${recipient}. The receiving transaction was not looked up: the receiving network's endpoint did not serve the search just now.`,
+        { attestation },
+      );
+    }
     if (mismatched) {
       return result(
         'unknown',
-        { status: 'unknown', guid: nonce, destinationTx: null, amountReceived: null, apiStatus: null, sourceBlock },
+        { status: 'unknown', guid: nonce, destinationTx: null, amountReceived: null, apiStatus: null, sourceBlock, ...extraOnChain() },
         `The receiving network shows events for nonce ${nonce} that do not match this transfer (source, recipient, token or amount), so the wallet does not call it delivered and builds no mint.`,
       );
     }
-    const mint: Call = { to: mt, value: 0n, data: encodeReceiveMessage(attestation.message, attestation.attestation) };
-    return result(
-      'awaiting-destination-action',
-      { status: 'attested', guid: nonce, destinationTx: null, amountReceived: null, apiStatus: null, sourceBlock },
-      `Circle attested the burn (nonce ${nonce}). The USDC is minted on the receiving network by a receiveMessage transaction there, which anyone with gas on that network may send; the recipient and amount are fixed by the attested message.`,
-      { destinationCalls: [mint], attestation },
-    );
+    if (nonceUsed === true) {
+      const where = search
+        ? ` (${searchRangeText(search)}${search.bounded ? `; it searches only the ${searchSpanText(search.boundSeconds)} after the burn` : ''})`
+        : '';
+      return result(
+        'delivered',
+        { status: 'delivered', guid: nonce, destinationTx: null, amountReceived: null, apiStatus: null, sourceBlock, ...extraOnChain() },
+        `Delivered: Circle's MessageTransmitterV2 on the receiving network records this transfer's message (nonce ${nonce}) as used, which happens only when a receiveMessage carrying it succeeds, so the USDC was minted to ${recipient}. The receiving transaction was not found in the blocks this wallet searched${where}.`,
+        { attestation },
+      );
+    }
+    return attestedResult(nonceUsed, search);
   }
 
   async function trackByApi(transfer: BridgeTransfer): Promise<BridgeTransferStatus> {

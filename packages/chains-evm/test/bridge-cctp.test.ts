@@ -12,6 +12,11 @@ import {
   CCTP_V2_TESTNET,
   CCTP_V2_TESTNET_MEASURED,
   CCTP_V2_TESTNET_USDC,
+  CCTP_USED_NONCES_SELECTOR,
+  CCTP_USED_NONCES_SIGNATURE,
+  decodeUsedNonces,
+  encodeUsedNonces,
+  type BridgeBlockReader,
   cctpAttestedMatchesSent,
   cctpTimeEstimate,
   createCctpV2Provider,
@@ -293,5 +298,219 @@ describe('CCTP V2: tracking from the chains’ own events', () => {
     const st = await provider.track({ ...transfer, recipient: OTHER });
     expect(st.state).toBe('unknown');
     expect(st.detail).toMatch(/does not carry exactly one CCTP burn matching this transfer/);
+  });
+});
+
+
+/**
+ * Pass p23-cctp-recheck (2026-10-26): an attested CCTP transfer older than
+ * the app's old 108,000-block search (12 windows of 9,000; six hours on
+ * Base Sepolia's 0.2-second blocks) could never be minted from the wallet.
+ * Now MessageTransmitterV2.usedNonces on the receiving chain decides whether
+ * the mint happened, and the log search (planned from the burn's time, to
+ * the head or a week later) only supplies the receiving transaction.
+ */
+describe('CCTP V2: usedNonces decides the mint; the search starts from the burn’s time', () => {
+  // The live leg's burn block on Base Sepolia (2026-10-25 14:16:23 UTC) and
+  // mint block on Arbitrum Sepolia (14:32:59 UTC); the chains below run at
+  // 0.2 s (Base) and 0.25 s (Arbitrum) per block around those blocks.
+  const BURN_TS = 1_792_937_783n;
+  const MINT_BLOCK = 322_726_898n;
+  const MINT_TS = 1_792_938_779n;
+  const baseTs = (n: bigint) => BURN_TS - (BURN_BLOCK - n) / 5n;
+  const arbTs = (n: bigint) => MINT_TS - (MINT_BLOCK - n) / 4n;
+  const blockAt = (ts: (n: bigint) => bigint, target: bigint, head: bigint) => {
+    let lo = 0n;
+    let hi = head;
+    while (lo < hi) {
+      const mid = (lo + hi + 1n) >> 1n;
+      if (ts(mid) <= target) lo = mid;
+      else hi = mid - 1n;
+    }
+    return lo;
+  };
+
+  function harness2(o: { arbHead: bigint; used: bigint | null; sloppy?: boolean; arbPrunedBelow?: bigint }) {
+    const base = harness();
+    const state = { ...base.state, used: o.used, arbHead: o.arbHead, contractCalls: [] as { chainId: number; to: string; data: string }[], blockReads: 0 };
+    const readBlock: BridgeBlockReader = async ({ chainId, block }) => {
+      state.blockReads += 1;
+      const head = chainId === ARB ? state.arbHead : BURN_BLOCK + 1_000_000n;
+      const n = block === 'latest' ? head : block;
+      if (n > head) throw new Error('beyond the head');
+      if (chainId === ARB && o.arbPrunedBelow !== undefined && n < o.arbPrunedBelow) throw new Error(`pruned history unavailable: requested ${n}`);
+      return { number: n, timestamp: chainId === ARB ? arbTs(n) : baseTs(n) };
+    };
+    const readDestinationLogs: BridgeEventLogReader = async (q) => {
+      state.destQueries.push(q);
+      return state.dest.filter(
+        (l) =>
+          l.address.toLowerCase() === q.address.toLowerCase() &&
+          (q.fromBlock === undefined || BigInt(l.blockNumber ?? '0x0') >= q.fromBlock) &&
+          (q.toBlock === undefined || BigInt(l.blockNumber ?? '0x0') <= q.toBlock) &&
+          (o.sloppy ? q.topics.slice(0, 1) : q.topics).every((t, i) => t === null || (typeof t === 'string' && l.topics[i]?.toLowerCase() === t.toLowerCase())),
+      );
+    };
+    const provider = createCctpV2Provider({
+      readSourceReceipt: async () => state.receipt,
+      readDestinationLogs,
+      fetchAttestation: async () => {
+        state.fetches += 1;
+        return state.attestation;
+      },
+      readContract: async (req) => {
+        state.contractCalls.push(req);
+        if (state.used === null) throw new Error('no usedNonces answer');
+        return '0x' + state.used.toString(16).padStart(64, '0');
+      },
+      readBlock,
+    });
+    state.receipt = { status: 'success', logs: [sentLog(), depositLog()] };
+    state.attestation = { status: 'complete', message: ATTESTED, attestation: ATTESTATION };
+    return { state, provider, transfer: base.transfer };
+  }
+  const at = (n: bigint) => ({ blockNumber: '0x' + n.toString(16) });
+  const receivedAt = (n: bigint, over: Partial<{ nonce: string; src: number }> = {}) => ({ ...receivedLog(over), ...at(n) });
+  const mintAt = (n: bigint, amount = AMOUNT, recipient = ME) => {
+    const l = log(TM, 'MintAndWithdraw', [recipient, amount, CCTP_V2_TESTNET_USDC[ARB], 0n], { transactionHash: MINT_TX });
+    return { ...l, ...at(n) };
+  };
+
+  it('pins usedNonces: the selector, the calldata (ethers agrees) and the answer (0, 1, anything else refused)', () => {
+    const mtIface = new Interface(['function usedNonces(bytes32) view returns (uint256)']);
+    expect(id(CCTP_USED_NONCES_SIGNATURE).slice(0, 10)).toBe(CCTP_USED_NONCES_SELECTOR);
+    expect(toHex(encodeUsedNonces(NONCE))).toBe(mtIface.encodeFunctionData('usedNonces', [NONCE]));
+    expect(decodeUsedNonces('0x' + '00'.repeat(32))).toBe(false);
+    expect(decodeUsedNonces('0x' + '00'.repeat(31) + '01')).toBe(true);
+    expect(() => decodeUsedNonces('0x' + '00'.repeat(31) + '02')).toThrow('neither 0 nor NONCE_USED');
+    expect(() => decodeUsedNonces('0x')).toThrow('one 32-byte word');
+    expect(() => encodeUsedNonces('0x1234')).toThrow('32 bytes');
+  });
+
+  it('usedNonces 0: the mint is offered and no log is searched, whatever the receiving chain’s logs hold', async () => {
+    const { state, provider, transfer } = harness2({ arbHead: MINT_BLOCK + 600_000n, used: 0n });
+    // Even a matching delivery in the logs does not override the chain's own record.
+    state.dest = [receivedAt(MINT_BLOCK), mintAt(MINT_BLOCK)];
+    const st = await provider.track(transfer);
+    expect(st.state).toBe('awaiting-destination-action');
+    expect(st.onChain).toMatchObject({ status: 'attested', guid: NONCE, destinationTx: null, nonceUsed: false });
+    expect(st.destinationCalls).toHaveLength(1);
+    expect(toHex(st.destinationCalls![0]!.data)).toBe(ev.encodeFunctionData('receiveMessage', [ATTESTED, ATTESTATION]));
+    expect(state.destQueries).toHaveLength(0);
+    expect(state.contractCalls).toEqual([{ chainId: ARB, to: MT, data: toHex(encodeUsedNonces(NONCE)) }]);
+  });
+
+  it('the stranded case: an attested transfer whose receiving head is 600,000 blocks past the burn (older than the old 108,000-block cap) still gets its mint', async () => {
+    const { provider, transfer, state } = harness2({ arbHead: MINT_BLOCK + 600_000n, used: 0n });
+    const st = await provider.track({ ...transfer, attested: { message: ATTESTED, attestation: ATTESTATION } });
+    expect(st.state).toBe('awaiting-destination-action');
+    expect(st.destinationCalls).toHaveLength(1);
+    expect(st.detail).not.toMatch(/too long ago/);
+    expect(state.fetches).toBe(0);
+  });
+
+  it('usedNonces 1 with the logs found: delivered with the receiving transaction, searched from the block at the burn’s time less 10 minutes', async () => {
+    const { state, provider, transfer } = harness2({ arbHead: MINT_BLOCK + 600_000n, used: 1n });
+    state.dest = [receivedAt(MINT_BLOCK), mintAt(MINT_BLOCK)];
+    const st = await provider.track(transfer);
+    expect(st.state).toBe('delivered');
+    expect(st.destinationTxHash).toBe(MINT_TX);
+    expect(st.onChain).toMatchObject({ status: 'delivered', destinationTx: MINT_TX, amountReceived: AMOUNT, nonceUsed: true });
+    const start = blockAt(arbTs, BURN_TS - 600n, MINT_BLOCK + 600_000n);
+    expect(st.onChain!.search).toMatchObject({ fromBlock: start, fromTimestamp: arbTs(start), bounded: false, toBlock: MINT_BLOCK + 600_000n });
+    const first = state.destQueries[0]!;
+    expect(first).toMatchObject({ chainId: ARB, address: MT, topics: [CCTP_MESSAGE_RECEIVED_TOPIC, null, NONCE], fromBlock: start, toBlock: start + 8_999n });
+    // The search stopped at the window holding MessageReceived, and MintAndWithdraw was asked in that block only.
+    const last = state.destQueries[state.destQueries.length - 1]!;
+    expect(last).toMatchObject({ address: TM, fromBlock: MINT_BLOCK, toBlock: MINT_BLOCK });
+    const windows = state.destQueries.filter((q) => q.address === MT);
+    expect(windows[windows.length - 1]!.toBlock! >= MINT_BLOCK && windows[windows.length - 1]!.fromBlock! <= MINT_BLOCK).toBe(true);
+    for (let i = 1; i < windows.length; i++) expect(windows[i]!.fromBlock).toBe(windows[i - 1]!.toBlock! + 1n);
+  });
+
+  it('usedNonces 1 with no log found: delivered, the receiving transaction stated as not found in the blocks searched', async () => {
+    const { state, provider, transfer } = harness2({ arbHead: MINT_BLOCK + 20_000n, used: 1n });
+    const st = await provider.track(transfer);
+    const search = st.onChain!.search!;
+    expect(st.state).toBe('delivered');
+    expect(st.destinationTxHash).toBeUndefined();
+    expect(st.onChain).toMatchObject({ status: 'delivered', destinationTx: null, amountReceived: null, nonceUsed: true });
+    expect(st.detail).toBe(
+      `Delivered: Circle's MessageTransmitterV2 on the receiving network records this transfer's message (nonce ${NONCE}) as used, which happens only when a receiveMessage carrying it succeeds, so the USDC was minted to ${ME}. The receiving transaction was not found in the blocks this wallet searched (blocks ${search.fromBlock} to ${search.toBlock}, from 2026-10-25 14:06 UTC to 2026-10-25 15:56 UTC).`,
+    );
+    expect(state.destQueries.every((q) => q.fromBlock !== undefined && q.toBlock !== undefined && q.toBlock - q.fromBlock < 9_000n)).toBe(true);
+  });
+
+  it('usedNonces 1, the search bounded at a week after the burn: delivered, and the sentence says the search ends there', async () => {
+    // 9 days of Arbitrum blocks past the mint block.
+    const { provider, transfer } = harness2({ arbHead: MINT_BLOCK + 9n * 86_400n * 4n, used: 1n });
+    const st = await provider.track(transfer);
+    const search = st.onChain!.search!;
+    expect(search.bounded).toBe(true);
+    expect(search.toTimestamp - search.fromTimestamp).toBe(7n * 86_400n);
+    expect(st.state).toBe('delivered');
+    expect(st.detail).toMatch(/; it searches only the 168 hours after the burn\)\.$/);
+    expect(st.detail).not.toMatch(/too long ago/);
+  });
+
+  it('the delivered rule still refuses a mint to another recipient or of another amount (usedNonces 1)', async () => {
+    for (const mint of [mintAt(MINT_BLOCK, AMOUNT, OTHER), mintAt(MINT_BLOCK, AMOUNT - 1n)]) {
+      const { state, provider, transfer } = harness2({ arbHead: MINT_BLOCK + 1_000n, used: 1n });
+      state.dest = [receivedAt(MINT_BLOCK), mint];
+      const st = await provider.track(transfer);
+      expect(st.state).toBe('unknown');
+      expect(st.destinationCalls).toBeUndefined();
+      expect(st.detail).toMatch(/do not match this transfer/);
+    }
+    const { state, provider, transfer } = harness2({ arbHead: MINT_BLOCK + 1_000n, used: 1n });
+    state.dest = [receivedAt(MINT_BLOCK, { src: 0 }), mintAt(MINT_BLOCK)];
+    expect((await provider.track(transfer)).state).toBe('unknown');
+    // A node that ignores the topic filters hands back a mint to someone else in the same transaction: still not this delivery.
+    const sloppy = harness2({ arbHead: MINT_BLOCK + 1_000n, used: 1n, sloppy: true });
+    sloppy.state.dest = [receivedAt(MINT_BLOCK), mintAt(MINT_BLOCK, AMOUNT, OTHER)];
+    const st = await sloppy.provider.track(sloppy.transfer);
+    expect(st.state).toBe('unknown');
+    expect(st.destinationTxHash).toBeUndefined();
+  });
+
+  it('a usedNonces answer that is neither 0 nor 1, or no answer at all, stops the pass (nothing is decided)', async () => {
+    const odd = harness2({ arbHead: MINT_BLOCK + 1_000n, used: 2n });
+    await expect(odd.provider.track(odd.transfer)).rejects.toThrow('neither 0 nor NONCE_USED');
+    const noAnswer = harness2({ arbHead: MINT_BLOCK + 1_000n, used: null });
+    await expect(noAnswer.provider.track(noAnswer.transfer)).rejects.toThrow('no usedNonces answer');
+  });
+
+  it('without a contract reader the logs decide as before, over the search planned from the burn’s time', async () => {
+    const readBlock: BridgeBlockReader = async ({ chainId, block }) => {
+      const head = chainId === ARB ? MINT_BLOCK + 200_000n : BURN_BLOCK + 1_000n;
+      const n = block === 'latest' ? head : block;
+      return { number: n, timestamp: chainId === ARB ? arbTs(n) : baseTs(n) };
+    };
+    const asked: Parameters<BridgeEventLogReader>[0][] = [];
+    const provider = createCctpV2Provider({
+      readSourceReceipt: async () => ({ status: 'success', logs: [sentLog(), depositLog()] }),
+      readDestinationLogs: async (q) => {
+        asked.push(q);
+        return [];
+      },
+      fetchAttestation: async () => ({ status: 'complete', message: ATTESTED, attestation: ATTESTATION }),
+      readBlock,
+    });
+    const route = provider.supportedRoutes().find((r) => r.sourceChainId === BASE && r.destinationChainId === ARB)!;
+    const st = await provider.track({ providerId: 'cctp-v2', route, sourceTxHash: BURN_TX, amountIn: AMOUNT, recipient: ME });
+    expect(st.state).toBe('awaiting-destination-action');
+    expect(st.onChain!.nonceUsed).toBeUndefined();
+    expect(asked.length).toBeGreaterThan(12); // more than the old 12-window cap: 200,000 blocks past the burn
+    expect(asked.every((q) => q.fromBlock !== undefined)).toBe(true);
+  });
+
+  it('usedNonces 1 and a receiving node that cannot serve the search (pruned): still delivered, the transaction not looked up; usedNonces 0 never searches', async () => {
+    const pruned = harness2({ arbHead: MINT_BLOCK + 600_000n, used: 1n, arbPrunedBelow: MINT_BLOCK + 500_000n });
+    const st = await pruned.provider.track(pruned.transfer);
+    expect(st.state).toBe('delivered');
+    expect(st.onChain).toMatchObject({ status: 'delivered', destinationTx: null, nonceUsed: true });
+    expect(st.detail).toMatch(/The receiving transaction was not looked up: the receiving network's endpoint did not serve the search just now\.$/);
+    const unused = harness2({ arbHead: MINT_BLOCK + 600_000n, used: 0n, arbPrunedBelow: MINT_BLOCK + 500_000n });
+    expect((await unused.provider.track(unused.transfer)).state).toBe('awaiting-destination-action');
   });
 });
