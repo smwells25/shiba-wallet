@@ -1,17 +1,21 @@
 /**
  * Deep links into the wallet's own screens (phase 22 item 5, feature 80).
  *
- * WHICH LINKS ARRIVE. The app has no custom URL scheme of its own today:
- * app/app.json sets no `scheme`, and Expo's Android config plugin adds an
- * intent filter only for the schemes listed there (@expo/config-plugins
- * build/android/Scheme.js setScheme, lines 40-45: with none, nothing is
- * added). The development build's manifest therefore carries only the
- * development client's own `exp+shiba-wallet` scheme
- * (expo-dev-client plugin/build/getDefaultScheme.js:25, `exp+${scheme}`),
- * which this module leaves alone. So:
- *  - `shibawallet://…` is the scheme this module reads; links in that form
- *    reach the app only once app.json carries `"scheme": "shibawallet"` and
- *    the app is rebuilt (a native configuration change, outside this module);
+ * WHICH LINKS ARRIVE. Since phase 23 item 2, app/app.json declares
+ * `"scheme": "shibawallet"`. Expo's default config plugins turn it into a
+ * `<data android:scheme="shibawallet"/>` entry on the main activity's VIEW
+ * intent filter (@expo/config-plugins 57.0.10 build/android/Scheme.js
+ * setScheme, lines 40-62) and a CFBundleURLTypes entry on iOS
+ * (build/ios/Scheme.js setScheme, lines 33-48). A development build also
+ * carries the development client's own `exp+shiba-wallet` scheme
+ * (expo-dev-client plugin/build/getDefaultScheme.js:25, `exp+${scheme}`,
+ * made from the slug), which this module leaves alone. So:
+ *  - `shibawallet://…` is the scheme this module reads; such links reach a
+ *    build made after the scheme was added (a native configuration change:
+ *    a build made before it does not register the scheme, and Expo Go never
+ *    does). Any Android app may declare the same custom scheme, so a link in
+ *    this form proves nothing about who sent it; every link is treated as
+ *    untrusted input (see THE LINKS below);
  *  - in Expo Go, a link to the running project has the form
  *    `exp://<host>/--/<path>` (Expo Go's own scheme, path after "/--/"; the
  *    SDK 57 Linking documentation, docs.expo.dev/versions/v57.0.0/sdk/linking,
@@ -67,7 +71,7 @@ import {
   type SendRequestPrefill,
 } from './payment-request.ts';
 
-/** The URL scheme this module reads (to be declared as app.json `scheme`). */
+/** The URL scheme this module reads (declared as app.json `scheme`; scripts/check-inbox.mjs checks they agree). */
 export const APP_LINK_SCHEME = 'shibawallet';
 /** Longest link read; a payment request alone may be 2,048 characters (payment-request.ts). */
 export const MAX_DEEP_LINK_LENGTH = 8192;

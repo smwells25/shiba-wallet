@@ -217,12 +217,13 @@ detail and the sources.
 The same notification library also brings in a small helper library
 (ShortcutBadger) whose only job is to show an unread count on the app's
 icon on phones from Samsung, HTC, Sony, Huawei, Oppo and a few
-third-party launchers. It declares twenty launcher permissions in the
-Android app (seen in the wallet's own development build on 2026-10-15).
-The wallet never shows a badge count, these permissions let an app talk
-only to the phone's own launcher, and nothing in them sends data off the
-phone; they are listed here so the permission list of a real build is
-not a surprise.
+third-party launchers. It declares sixteen launcher permissions (an
+earlier draft said twenty; its own manifest lists sixteen, and so did
+every build of the wallet). The wallet never shows a badge count, these
+permissions let an app talk only to the phone's own launcher, and nothing
+in them sends data off the phone. Since phase 23 the wallet removes all
+sixteen from its Android app with a build setting of its own; that a
+rebuilt app no longer lists them is to be confirmed on the next build.
 
 A notification can appear on the lock screen, so it says only what kind
 of event happened ("A recurring payment is due", "Someone started a
@@ -397,6 +398,16 @@ These must be settled before this draft is published:
    the app has none yet (app-code follow-up).
 6. **Publisher details and URL** (section 7) are inputs from the
    Chairperson.
+7. **Phase 23 item 2 additions, read from their sources (2026-10-27).**
+   `expo-navigation-bar` 57.0.3 (the Android navigation bar's button
+   style) declares no permission (its `android/src/main/AndroidManifest.xml`
+   is empty), depends only on `androidx.core` and `androidx.appcompat`,
+   and its JavaScript, Kotlin and config-plugin sources make no network
+   request (the only URLs are source references in comments). The
+   `shibawallet://` link scheme sends nothing anywhere; it lets other apps
+   and web pages open screens of the wallet, which treats every link as
+   untrusted input. Neither changes section 2.
+
 
 ## Sources (for maintainers)
 

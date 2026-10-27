@@ -2339,5 +2339,81 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
       EN_TABLE['settings.blockbook.editLabel'] === 'Edit the {network} Blockbook endpoint');
 }
 
+// Phase 23 item 2: the Android navigation bar follows the colour scheme
+// (pass p20c finding 15). src/wallet/navigation-bar.ts is driven here with an
+// injected native layer; App.tsx and the module's own loader are checked in
+// source. What only a device shows (the scrim colour, the buttons) is listed
+// as unverified in docs/DEVICE_BUILDS.md.
+{
+  const NB = await import('../src/wallet/navigation-bar.ts');
+  const { readFileSync: readNb } = await import('node:fs');
+  const readApp = (rel) => readNb(new globalThis.URL(`../${rel}`, import.meta.url), 'utf8');
+  check('navigation bar: dark mode asks for light buttons on a dark bar, light mode for dark buttons on a light bar (NavigationBarModule.kt line 127: "dark" = light background)',
+    NB.navigationBarStyleFor(true) === 'light' && NB.navigationBarStyleFor(false) === 'dark');
+  const calls = [];
+  const logs = [];
+  const fake = { setStyle: async (style) => { calls.push(style); } };
+  const r1 = await NB.applyNavigationBarStyle(async () => fake, true, (l) => logs.push(l));
+  const r2 = await NB.applyNavigationBarStyle(async () => fake, false, (l) => logs.push(l));
+  check('navigation bar: each scheme is applied once through the native setStyle, nothing logged',
+    r1 === 'applied' && r2 === 'applied' && JSON.stringify(calls) === JSON.stringify(['light', 'dark']) && logs.length === 0);
+  const r3 = await NB.applyNavigationBarStyle(async () => null, true, (l) => logs.push(l));
+  check('navigation bar: a build without the module (or iOS) is "unavailable", silently', r3 === 'unavailable' && logs.length === 0);
+  let threw = false;
+  let r4;
+  let r5;
+  try {
+    r4 = await NB.applyNavigationBarStyle(async () => ({ setStyle: async () => { throw new Error('setStyle rejected\nsecond line'); } }), true, (l) => logs.push(l));
+    r5 = await NB.applyNavigationBarStyle(async () => { throw new Error('module load failed'); }, false, (l) => logs.push(l));
+  } catch {
+    threw = true;
+  }
+  check('navigation bar: a rejected setStyle or a failed load is "failed" with exactly one one-line log each, never a throw',
+    !threw && r4 === 'failed' && r5 === 'failed' && logs.length === 2 && logs.every((l) => !l.includes('\n')) &&
+      logs[0] === 'Navigation bar style not applied: setStyle rejected' && logs[1] === 'Navigation bar style not applied: module load failed', JSON.stringify(logs));
+  const nbSrc = readApp('src/wallet/navigation-bar.ts');
+  const loader = nbSrc.slice(nbSrc.indexOf('export async function loadNavigationBarNative'));
+  const androidOnly = (src) => {
+    const l = src.slice(src.indexOf('export async function loadNavigationBarNative'));
+    const guard = l.indexOf("if (Platform.OS !== 'android') return null;");
+    const lookup = l.indexOf("requireOptionalNativeModule<{ setStyle?: (style: string) => Promise<void> }>('ExpoNavigationBar')");
+    return guard > 0 && lookup > guard && l.indexOf("await import('expo')") > guard && l.includes("if (!nav || typeof nav.setStyle !== 'function') return null;");
+  };
+  check('navigation bar: the loader returns null off Android before touching expo, and looks the module up with requireOptionalNativeModule (no throw when absent)',
+    androidOnly(nbSrc) && loader.length > 0);
+  check('navigation bar: the failure path catches everything in applyNavigationBarStyle (one try / catch around load and setStyle)',
+    /try \{\n\s+const native = await load\(\);[\s\S]*?await native\.setStyle\(navigationBarStyleFor\(dark\)\);[\s\S]*?\} catch \(e\) \{/.test(nbSrc));
+  // expo-navigation-bar's own entry throws at import when its native module
+  // is missing (src/ExpoNavigationBar.android.ts, requireNativeModule), so no
+  // app file may import the package itself.
+  const { readdirSync: listNb, statSync: statNb } = await import('node:fs');
+  const srcFiles = [];
+  const walkNb = (dir) => {
+    for (const name of listNb(new globalThis.URL(`../${dir}`, import.meta.url))) {
+      const rel = `${dir}/${name}`;
+      if (statNb(new globalThis.URL(`../${rel}`, import.meta.url)).isDirectory()) walkNb(rel);
+      else if (/\.tsx?$/.test(name)) srcFiles.push(rel);
+    }
+  };
+  walkNb('src');
+  const appSources = [readApp('App.tsx'), ...srcFiles.map(readApp)];
+  check(`navigation bar: no file (App.tsx and ${srcFiles.length} files under src) imports the expo-navigation-bar package (its entry throws when the native module is missing)`,
+    appSources.every((src) => !/from 'expo-navigation-bar'|import\('expo-navigation-bar'\)|require\('expo-navigation-bar'\)/.test(src)));
+  const app = readApp('App.tsx');
+  const mounted = (src) =>
+    src.includes('          <StatusBar style="auto" />\n          <NavigationBarStyle />\n') &&
+    /function NavigationBarStyle\(\) \{\n\s+const theme = useTheme\(\);\n\s+React\.useEffect\(\(\) => \{\n\s+void applyNavigationBarStyle\(loadNavigationBarNative, theme\.dark\);\n\s+\}, \[theme\.dark\]\);\n\s+return null;\n\}/.test(src);
+  check('navigation bar: App.tsx mounts NavigationBarStyle beside the StatusBar component, applying the style at launch and on every scheme change (effect keyed on theme.dark)',
+    mounted(app));
+  const pkg = JSON.parse(readApp('package.json'));
+  const bundled = JSON.parse(readApp('node_modules/expo/bundledNativeModules.json'));
+  check('navigation bar: expo-navigation-bar is the version Expo SDK 57 pins (expo/bundledNativeModules.json)',
+    pkg.dependencies['expo-navigation-bar'] === bundled['expo-navigation-bar'] && bundled['expo-navigation-bar'] === '~57.0.3', `${pkg.dependencies['expo-navigation-bar']} vs ${bundled['expo-navigation-bar']}`);
+  // In-suite mutants, each must fail the check it targets.
+  check('mutant caught: the component no longer mounted', !mounted(app.replace('          <NavigationBarStyle />\n', '')));
+  check('mutant caught: the style applied only at launch (effect not keyed on the scheme)', !mounted(app.replace('}, [theme.dark]);\n  return null;\n}\n\n/**\n * Persistent orange', '}, []);\n  return null;\n}\n\n/**\n * Persistent orange')));
+  check('mutant caught: the Android guard removed from the loader', !androidOnly(nbSrc.replace("if (Platform.OS !== 'android') return null;", '')));
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

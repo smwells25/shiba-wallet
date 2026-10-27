@@ -58,6 +58,7 @@ import { PriceAlertsScreen } from './src/screens/PriceAlertsScreen';
 import { ColdSignScreen } from './src/screens/ColdSignScreen';
 import { HandleScreen } from './src/screens/HandleScreen';
 import { appScreenProtection } from './src/wallet/screen-protection';
+import { applyNavigationBarStyle, loadNavigationBarNative } from './src/wallet/navigation-bar';
 import { appLanguage } from './src/i18n/app-language';
 import { testnetBannerText } from './src/i18n/banner';
 import { tx } from './src/i18n/index';
@@ -91,6 +92,30 @@ function ScreenProtection() {
   React.useEffect(() => {
     void appScreenProtection().update({ prefsLoaded: ready, enabled: screenProtection });
   }, [ready, screenProtection]);
+  return null;
+}
+
+/**
+ * The Android navigation bar's button style, set from the app's colour scheme
+ * at launch and again on every scheme change (phase 23 item 2; pass p20c
+ * finding 15: a white strip under the TESTNET banner in dark mode). React
+ * Native sets the bar's appearance only once, when the window is created
+ * (react-native 0.86.3 ReactAndroid views/view/WindowUtil.kt
+ * enableEdgeToEdge, lines 164-190, with enforceNavigationBarContrast on by
+ * default), so a scheme switched while the app runs left the light
+ * appearance in place. src/wallet/navigation-bar.ts does the work through
+ * expo-navigation-bar 57.0.3's native module: Android only, nothing when the
+ * module is absent, and a failure is one log line, never a crash. The bar's
+ * background cannot be set (that package removed its background-colour
+ * function in 56.0.0); it stays transparent. Mounted beside the status
+ * bar's own component; it needs no wallet or preference state. Renders
+ * nothing.
+ */
+function NavigationBarStyle() {
+  const theme = useTheme();
+  React.useEffect(() => {
+    void applyNavigationBarStyle(loadNavigationBarNative, theme.dark);
+  }, [theme.dark]);
   return null;
 }
 
@@ -404,20 +429,7 @@ export default function App() {
         <ScreenProtection />
         <WalletProvider>
           <StatusBar style="auto" />
-          {/* Android navigation bar (pass p20c finding 15: a white strip under
-              the TESTNET banner in dark mode). The app is edge to edge, so the
-              banner already paints behind the bar (its bottom padding is the
-              inset). The strip is the system contrast scrim: React Native sets
-              the bar appearance once, when the window is created, from the
-              theme at that moment (react-native 0.86.3 ReactAndroid
-              views/view/WindowUtil.kt enableEdgeToEdge, lines 164-190, with
-              enforceNavigationBarContrast on by default), and a theme switched
-              while the app runs does not change it. Nothing installed can set
-              it from JavaScript, and app.json androidNavigationBar is
-              deprecated with no effect (@expo/config-plugins SystemBars.js).
-              Following the theme at run time needs the expo-navigation-bar
-              module (Expo SDK 57 pins ~57.0.3 in expo/bundledNativeModules.json;
-              not a dependency yet). */}
+          <NavigationBarStyle />
           {/* LockGate sits inside both providers (it needs wallet status and
               the auto-lock preference) and wraps the whole navigator so the
               lock overlay covers every screen without resetting navigation. */}
