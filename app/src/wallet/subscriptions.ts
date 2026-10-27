@@ -50,6 +50,7 @@ import {
   type SessionSubscriptionMeta,
 } from './sessions.ts';
 import { suggestFeesRetryingOnce } from './fee-read.ts';
+import { t } from '../i18n/index.ts';
 
 /**
  * Subscriptions (phase 12 item 2, app half): a grant TEMPLATE on the
@@ -164,12 +165,11 @@ export function subscriptionShortWindowWarning(sub: Pick<SubscriptionGrant, 'sta
   const total = sub.validUntil - sub.startAt;
   if (!(total < SUBSCRIPTION_SHORT_WINDOW_SECONDS)) return null;
   const payments = subscriptionPeriodCount(sub);
-  return (
-    `These terms last only ${describePeriod(total)} in total (${payments} payment${payments === 1 ? '' : 's'}, ` +
-    `one every ${describePeriod(sub.periodSeconds)}). Handing the key to the merchant and the merchant's first pull ` +
-    'happen inside the first period, so some payments may never be taken. Choose a longer period or more payments ' +
-    'unless this is a quick test.'
-  );
+  // Through the string table (phase 23 item 8, fourth pass); the periods are
+  // the engine's describePeriod (English by rule). In English exactly the
+  // sentence this function built before.
+  const params = { total: describePeriod(total), payments, period: describePeriod(sub.periodSeconds) };
+  return payments === 1 ? t('sessions.subscription.shortOne', params) : t('sessions.subscription.shortMany', params);
 }
 
 /** Most payments one subscription may allow from the form (the engine allows more). */
@@ -1157,10 +1157,14 @@ export const SUBSCRIPTION_KEY_HOLDER_TEXT = 'the merchant once you hand it over;
 /** The success screen's line with the dates the install actually carries. */
 export function subscriptionFinalDatesLine(sub: SubscriptionGrant): string {
   const count = subscriptionPeriodCount(sub);
-  return (
-    `Final terms: the first payment can be taken from ${utc(sub.startAt)}, then one more every ` +
-    `${describePeriod(sub.periodSeconds)} (${count} in total); nothing after ${utc(sub.validUntil)}.`
-  );
+  // Through the string table (phase 23 item 8, fourth pass); in English
+  // exactly the line this function built before.
+  return t('sessions.subscription.finalTerms', {
+    start: utc(sub.startAt),
+    period: describePeriod(sub.periodSeconds),
+    count,
+    end: utc(sub.validUntil),
+  });
 }
 
 /**

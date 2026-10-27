@@ -37,7 +37,6 @@ import {
   EVM_MAINNET,
   EVM_PROFILES,
   EVM_TEST_PROFILES,
-  customNetworkNote,
   l1CostInGasNote,
   type EvmChainProfile,
   type EvmNetworkChoice,
@@ -51,15 +50,17 @@ import {
   CUSTOM_NETWORK_NAME_PLACEHOLDER,
   CUSTOM_NETWORKS_READ_ONLY_MESSAGE,
   NATIVE_SYMBOL_NOTE,
-  TEST_NETWORK_TICK_NOTE,
   addCustomNetwork,
   blockTimeLine,
+  customNetworkNoteText,
+  developerTestNetworkHint,
   describeRemoval,
   loadCustomNetworks,
   removalConfirmationText,
   removeCustomNetwork,
   resetCustomNetworks,
   supersededCustomNetworkNote,
+  testNetworkTickNote,
   supersededCustomNetworks,
   type CustomNetworkRecord,
 } from '../wallet/custom-networks';
@@ -205,41 +206,6 @@ import {
   lockCopy,
   wipeWithLockNote,
 } from '../wallet/duress';
-
-/** "A, B and C" / "A, B or C". */
-function listJoin(items: string[], conjunction: 'and' | 'or'): string {
-  return items.length > 1 ? `${items.slice(0, -1).join(', ')} ${conjunction} ${items[items.length - 1]}` : items.join('');
-}
-
-/**
- * Settings → Developer: what the test-network choice does, built from the
- * test profiles (config/evm-chain.ts) so a new profile is described without
- * editing this text, and nothing here assumes how many test networks exist.
- */
-const DEVELOPER_TEST_NETWORK_HINT = (() => {
-  const nets = listJoin(EVM_TEST_PROFILES.map((p) => `${p.label} (chain id ${p.chainIdDecimal})`), 'or');
-  const hosts = listJoin(
-    EVM_TEST_PROFILES.map((p) => /^https:\/\/([^/]+)\//.exec(p.explorerTxBase)?.[1] ?? p.explorerTxBase),
-    'or',
-  );
-  const kernel = EVM_TEST_PROFILES.filter((p) => p.kernelV33Verified).map((p) => p.label);
-  const simple = EVM_TEST_PROFILES.filter((p) => p.aaPrefill !== null).map((p) => p.label);
-  return (
-    `Switches the app’s EVM chain to a test network — ${nets}, each paid in test ETH, or a test network you ` +
-    'added under “Networks you added” below: balances, sends and WalletConnect run against the chosen ' +
-    `network, as does the smart-account path on ${listJoin(kernel, 'and')} (the test networks where the ` +
-    'Kernel v3.3 contracts were verified); an orange TESTNET banner ' +
-    `replaces the mainnet warning, and explorer links go to ${hosts} (on a network you added, to the explorer ` +
-    'you gave, if any). Each network keeps its own endpoint, ' +
-    'indexer and Account Abstraction configuration — nothing is shared between mainnet and the test networks ' +
-    'or between test networks, and choosing Off restores mainnet exactly as it was. The Account Abstraction ' +
-    (simple.length > 0 ? `section pre-fills the verified SimpleAccountFactory on ${listJoin(simple, 'and')} and ` : 'section pre-fills ') +
-    `the Kernel v3.3 factory on ${listJoin(kernel, 'and')}; the bundler URL still has to be pasted by you for ` +
-    'each network, because bundler endpoints contain your own API key. Tracked ERC-20 tokens are kept per ' +
-    'network too: each test network starts with the test tokens known for it (no value), and your mainnet ' +
-    'token list is unchanged.'
-  );
-})();
 
 /**
  * The chains where the pinned Kernel v3.3 addresses were checked on-chain
@@ -1441,7 +1407,7 @@ function CustomNetworksSection({
               onValueChange={(v) => setForm((f) => ({ ...f, testnet: v }))}
             />
           </View>
-          <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{TEST_NETWORK_TICK_NOTE}</Text>
+          <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{testNetworkTickNote()}</Text>
           {formError ? <WarningBox>{formError}</WarningBox> : null}
           <View style={styles.endpointButtons}>
             <Button
@@ -2883,7 +2849,7 @@ export function SettingsScreen({ navigation, route }: Props) {
             />
           ))}
         </View>
-        <Text style={[styles.hint, { color: theme.textMuted }]}>{DEVELOPER_TEST_NETWORK_HINT}</Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{developerTestNetworkHint()}</Text>
         {/* evmChain.testnet, not the `sepolia` flag: a network the user added
             may be a MAIN network, and must never be called test mode. */}
         {evmChain.testnet ? (
@@ -2898,7 +2864,7 @@ export function SettingsScreen({ navigation, route }: Props) {
         ) : null}
         {evmChain.custom ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            {localize(customNetworkNote(evmChain, { smartAccountRefusal: readinessRefusal('kernel-smart-account') }))}
+            {customNetworkNoteText(evmChain, { smartAccountRefusal: readinessRefusal('kernel-smart-account') })}
           </Text>
         ) : null}
         {evmChain.l1DataFee ? (

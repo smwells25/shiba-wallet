@@ -66,6 +66,7 @@ import {
 import { formatUnits, parseUnits } from './balances.ts';
 import type { BroadcastSpend } from './broadcast-spend.ts';
 import { readAtInclusionBlock } from './recovery.ts';
+import { t, type StringId } from '../i18n/index.ts';
 import { WALLET_7702_DELEGATE } from './delegation.ts';
 import { EVM_CHAIN_ID, validateRecipient } from './send.ts';
 import type { KeyValueStore } from './tokens.ts';
@@ -847,22 +848,13 @@ export function newSessionKey(): { privateKey: Uint8Array; address: string } {
  * the engine's selector() (never hard-coded hex). Signatures from ERC-20
  * (EIP-20) and ERC-721 (EIP-721).
  */
-const KNOWN_FUNCTIONS: { signature: string; note: string | null }[] = [
+// The notes are string-table ids (phase 23 item 8, fourth pass), read when
+// a call is described so they follow the chosen language.
+const KNOWN_FUNCTIONS: { signature: string; note: StringId | null }[] = [
   { signature: 'transfer(address,uint256)', note: null },
-  {
-    signature: 'approve(address,uint256)',
-    note:
-      'Lets the session approve ANY spender for ANY amount of this token (ERC-20) or any token id ' +
-      '(ERC-721). An approval outlives the session.',
-  },
-  {
-    signature: 'transferFrom(address,address,uint256)',
-    note: 'Moves tokens from any address that approved your account, to any recipient.',
-  },
-  {
-    signature: 'setApprovalForAll(address,bool)',
-    note: 'Lets the session give an operator control of ALL your NFTs in this collection. It outlives the session.',
-  },
+  { signature: 'approve(address,uint256)', note: 'sessions.grant.noteApprove' },
+  { signature: 'transferFrom(address,address,uint256)', note: 'sessions.grant.noteTransferFrom' },
+  { signature: 'setApprovalForAll(address,bool)', note: 'sessions.grant.noteApprovalForAll' },
 ];
 const KNOWN_BY_SELECTOR = new Map(
   KNOWN_FUNCTIONS.map((f) => [toHex(abiSelector(f.signature)), f] as const),
@@ -882,7 +874,11 @@ export function describeAllowedCall(
 ): AllowedCallDescription {
   const name = context.nameFor?.(call.target) ?? null;
   const self = same(call.target, context.account);
-  const who = self ? `your own account (${call.target})` : name ? `${name} (${call.target})` : call.target;
+  // Through the string table (phase 23 item 8, fourth pass); in English
+  // exactly the lines this function built before. The KNOWN_FUNCTIONS
+  // notes are entries too (ids, read here); the rule's condition and values are
+  // shown as the engine names them.
+  const who = self ? t('sessions.grant.ownAccount', { address: call.target }) : name ? `${name} (${call.target})` : call.target;
   const cap = `${formatUnits(call.valueLimit, 18, 18)} ${context.symbol}`;
   const details: string[] = [];
   let title: string;
@@ -890,66 +886,64 @@ export function describeAllowedCall(
   if (call.selector === null) {
     title =
       call.valueLimit === 0n
-        ? `Call ${who} with no data and no ${context.symbol}`
-        : `Send up to ${cap} per call to ${who}`;
+        ? t('sessions.grant.callNoData', { who, symbol: context.symbol })
+        : t('sessions.grant.sendUpTo', { cap, who });
     // The account's CallPolicy keys an empty-calldata call as function
     // 0x00000000, so calldata that merely STARTS with four zero bytes
     // matches the same entry (engine: kernel-permissions.ts
     // SessionAllowedCall.selector). Said plainly rather than overstated.
-    details.push(
-      'No contract function: meant for a plain transfer with empty calldata. The account enforces this as ' +
-        'function 0x00000000, so a call whose data begins with 0x00000000 would also be allowed. That matters ' +
-        'only if the target is a contract.',
-    );
+    details.push(t('sessions.grant.noFunction'));
   } else {
     const known = KNOWN_BY_SELECTOR.get(call.selector.toLowerCase());
-    const fn = known ? `${known.signature} (${call.selector})` : `function ${call.selector}`;
-    title = `Call ${fn} on ${who}`;
+    const fn = known ? `${known.signature} (${call.selector})` : t('sessions.grant.function', { selector: call.selector });
+    title = t('sessions.grant.callOn', { fn, who });
     details.push(
       call.valueLimit === 0n
-        ? `Sends no ${context.symbol} with the call.`
-        : `Sends at most ${cap} with each call.`,
+        ? t('sessions.grant.sendsNone', { symbol: context.symbol })
+        : t('sessions.grant.sendsAtMost', { cap }),
     );
-    if (!call.rules || call.rules.length === 0) details.push('Any arguments are allowed.');
+    if (!call.rules || call.rules.length === 0) details.push(t('sessions.grant.anyArguments'));
     for (const rule of call.rules ?? []) {
       details.push(
-        `Argument word at byte offset ${rule.offset} must be ${rule.condition} ${rule.params.join(', ')}.`,
+        t('sessions.grant.rule', { offset: rule.offset, condition: rule.condition, params: rule.params.join(', ') }),
       );
     }
-    warning = known?.note ?? null;
+    warning = known?.note ? t(known.note) : null;
   }
-  details.push('The cap is per call, not a total: the session may repeat this call until it expires.');
+  details.push(t('sessions.grant.perCall'));
   return { title, details, warning };
 }
 
 /** The window and budget lines of a grant. */
 export function describeGrantLimits(grant: SessionKeyGrant, symbol: string): string[] {
-  const lines = [
-    `Expires ${new Date(grant.validUntil * 1000).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC')} ` +
-      `(unix ${grant.validUntil}); enforced on-chain by the account.`,
-  ];
-  if (grant.validAfter > 0) lines.push(`Not valid before unix ${grant.validAfter}.`);
+  // Through the string table (phase 23 item 8, fourth pass); in English
+  // exactly the lines this function built before.
+  const utcOf = (unix: number) => new Date(unix * 1000).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
+  const lines = [t('sessions.grant.expires', { date: utcOf(grant.validUntil), unix: grant.validUntil })];
+  if (grant.validAfter > 0) lines.push(t('sessions.grant.notBefore', { unix: grant.validAfter }));
   lines.push(
     grant.gasBudgetWei !== undefined
-      ? `Gas budget: at most ${formatUnits(grant.gasBudgetWei, 18, 18)} ${symbol} in fees across all of the ` +
-          'session’s operations (worst-case accounting).'
-      : `No gas budget: fees for the session’s operations are paid from the account’s ${symbol} until it expires.`,
+      ? t('sessions.grant.gasBudget', { amount: formatUnits(grant.gasBudgetWei, 18, 18), symbol })
+      : t('sessions.grant.noGasBudget', { symbol }),
   );
   if (grant.rateLimit) {
     // RateLimitPolicy semantics (verified source, see the engine's
     // kernel-subscription.ts header): `count` operations IN TOTAL, the k-th
     // valid from startAt + k × interval; a missed slot can be used later.
     const startAt = grant.rateLimit.startAt ?? 0;
+    const rate = { count: grant.rateLimit.count, interval: grant.rateLimit.intervalSeconds };
+    const one = grant.rateLimit.count === 1;
     lines.push(
-      `Rate limit: at most ${grant.rateLimit.count} operation${grant.rateLimit.count === 1 ? '' : 's'} in total, ` +
-        `one more becoming valid every ${grant.rateLimit.intervalSeconds} s` +
-        (startAt > 0
-          ? ` from ${new Date(startAt * 1000).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC')}`
-          : ' (no start time: every slot is already open, so only the total is limited)') +
-        '; a missed slot can be used later. Counted per operation, not per transfer.',
+      startAt > 0
+        ? one
+          ? t('sessions.grant.rateOneFrom', { ...rate, start: utcOf(startAt) })
+          : t('sessions.grant.rateManyFrom', { ...rate, start: utcOf(startAt) })
+        : one
+          ? t('sessions.grant.rateOneOpen', rate)
+          : t('sessions.grant.rateManyOpen', rate),
     );
   }
-  lines.push('A session key can never sign messages or logins for your account (ERC-1271 is switched off for it).');
+  lines.push(t('sessions.grant.noMessages'));
   return lines;
 }
 

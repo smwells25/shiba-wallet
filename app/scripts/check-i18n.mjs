@@ -95,6 +95,13 @@ import * as MS from '../src/wallet/multisig.ts';
 import { FOREIGN_DELEGATE_WARNING, delegationLabelSuffix } from '../src/wallet/delegation.ts';
 import { MULTISIG_UNVERIFIED_NETWORK_NOTE } from '../src/config/evm-chain.ts';
 import { tokenSendFeeSentence } from '../src/wallet/token-gas.ts';
+// Phase 23 item 8 (the fourth pass): the wallet modules whose own sentences now go through the table.
+import * as TGM from '../src/wallet/token-gas.ts';
+import * as STK from '../src/wallet/staking.ts';
+import * as PCOST from '../src/wallet/pin-cost.ts';
+import * as PNS from '../src/wallet/pin-native-scrypt.ts';
+import * as EVMC from '../src/config/evm-chain.ts';
+import { PHRASE_UNREADABLE_MESSAGE } from '../src/wallet/storage.ts';
 
 let passed = 0;
 let failed = 0;
@@ -277,6 +284,44 @@ const THIRD_PASS_NEW = ['multisig.cosigner.scanLabel'];
     fixtureProblems({ ...en, 'readiness.bridge.reason': FIXTURE.changed['readiness.bridge.reason'].before }, FIXTURE).length === 1);
 }
 
+// Phase 23 item 8 (the fourth pass): two pieces of the old code the
+// composites below are assembled with. The Developer hint was a constant in
+// SettingsScreen.tsx (an IIFE over EVM_TEST_PROFILES with a listJoin helper);
+// this is that code at commit a9998cc with its types removed and the profile
+// table as a parameter. The PIN measurement's spoken platform line was the
+// visible line rewritten word for word (pin-cost.ts at a9998cc).
+function oldDeveloperHint(EVM_TEST_PROFILES) {
+  function listJoin(items, conjunction) {
+    return items.length > 1 ? `${items.slice(0, -1).join(', ')} ${conjunction} ${items[items.length - 1]}` : items.join('');
+  }
+  const nets = listJoin(EVM_TEST_PROFILES.map((p) => `${p.label} (chain id ${p.chainIdDecimal})`), 'or');
+  const hosts = listJoin(
+    EVM_TEST_PROFILES.map((p) => /^https:\/\/([^/]+)\//.exec(p.explorerTxBase)?.[1] ?? p.explorerTxBase),
+    'or',
+  );
+  const kernel = EVM_TEST_PROFILES.filter((p) => p.kernelV33Verified).map((p) => p.label);
+  const simple = EVM_TEST_PROFILES.filter((p) => p.aaPrefill !== null).map((p) => p.label);
+  return (
+    `Switches the app’s EVM chain to a test network — ${nets}, each paid in test ETH, or a test network you ` +
+    'added under “Networks you added” below: balances, sends and WalletConnect run against the chosen ' +
+    `network, as does the smart-account path on ${listJoin(kernel, 'and')} (the test networks where the ` +
+    'Kernel v3.3 contracts were verified); an orange TESTNET banner ' +
+    `replaces the mainnet warning, and explorer links go to ${hosts} (on a network you added, to the explorer ` +
+    'you gave, if any). Each network keeps its own endpoint, ' +
+    'indexer and Account Abstraction configuration — nothing is shared between mainnet and the test networks ' +
+    'or between test networks, and choosing Off restores mainnet exactly as it was. The Account Abstraction ' +
+    (simple.length > 0 ? `section pre-fills the verified SimpleAccountFactory on ${listJoin(simple, 'and')} and ` : 'section pre-fills ') +
+    `the Kernel v3.3 factory on ${listJoin(kernel, 'and')}; the bundler URL still has to be pasted by you for ` +
+    'each network, because bundler endpoints contain your own API key. Tracked ERC-20 tokens are kept per ' +
+    'network too: each test network starts with the test tokens known for it (no value), and your mainnet ' +
+    'token list is unchanged.'
+  );
+}
+function oldSpoken(visible) {
+  const parts = visible.replace(' development bundle (__DEV__): ', ' Development bundle: ').split(' · ').map((part) => part.trim());
+  return `${parts.join('. ')}.`;
+}
+
 // The composites, assembled the old way from their pieces.
 {
   const old = {
@@ -357,6 +402,95 @@ const THIRD_PASS_NEW = ['multisig.cosigner.scanLabel'];
       I.t('multisig.qr.progress', { received: 1, total: 3, missing: 2 })],
     'multisig.qr.progressOne': [`${2} of ${3} parts read. ` + `Show the next part on the other phone (Next part) and scan it; ${1} ${1 === 1 ? 'part is' : 'parts are'} still missing.`,
       I.t('multisig.qr.progressOne', { received: 2, total: 3, missing: 1 })],
+    // Phase 23 item 8 (the fourth pass): the module sentences each branch of
+    // which the old code built from pieces, assembled here as it built them.
+    'tokenGas.erc7677.grant': [`This operation approves ${'Pimlico'}’s paymaster to take up to ${'4.466678'} ${'USDC'} from your smart account` +
+      (null !== null ? `, replacing an earlier approval of ${null} ${'USDC'}` : '') + '. It takes only the actual fee; the rest of the approval (up to ' +
+      `${'4.466678'} ${'USDC'} minus the fee) stays in place afterwards. Only operations from this smart account that ` + 'use this paymaster can draw on it, and the next one replaces it with a new exact approval.',
+      TGM.erc7677GrantSentence('4.466678', 'USDC', 'Pimlico', null)],
+    'tokenGas.erc7677.grantReplaces': [`This operation approves ${'Pimlico'}’s paymaster to take up to ${'4.466678'} ${'USDC'} from your smart account` +
+      ('3.0576' !== null ? `, replacing an earlier approval of ${'3.0576'} ${'USDC'}` : '') + '. It takes only the actual fee; the rest of the approval (up to ' +
+      `${'4.466678'} ${'USDC'} minus the fee) stays in place afterwards. Only operations from this smart account that ` + 'use this paymaster can draw on it, and the next one replaces it with a new exact approval.',
+      TGM.erc7677GrantSentence('4.466678', 'USDC', 'Pimlico', '3.0576')],
+    'settings.custom.remove.confirm': [`Remove “${'Linea Sepolia'}” (chain id ${'59141'}) from this wallet? This also deletes, for this chain only: ` +
+      `${['a', 'b', 'c'].slice(0, -1).join(', ')} and ${['a', 'b', 'c'][2]}.`, I.t('settings.custom.remove.confirm', { name: 'Linea Sepolia', chainId: '59141', labels: cnets.joinList(['a', 'b', 'c'], 'and') })],
+    'settings.dev.testNetworkHint': [oldDeveloperHint(EVM_TEST_PROFILES.map((p, i) => ({ ...p, aaPrefill: i === 0 ? { factory: '0x0' } : null }))),
+      cnets.developerTestNetworkHint(EVM_TEST_PROFILES.map((p, i) => ({ ...p, aaPrefill: i === 0 ? { factory: '0x0' } : null })))],
+    'settings.dev.testNetworkHintNoSimple': [oldDeveloperHint(EVM_TEST_PROFILES.map((p) => ({ ...p, aaPrefill: null }))),
+      cnets.developerTestNetworkHint(EVM_TEST_PROFILES.map((p) => ({ ...p, aaPrefill: null })))],
+    'settings.customNote': [EVMC.customNetworkNote({ label: 'Linea Sepolia', testnet: true, custom: { explorerBase: 'https://sepolia.lineascan.build' } }),
+      cnets.customNetworkNoteText({ label: 'Linea Sepolia', testnet: true, custom: { explorerBase: 'https://sepolia.lineascan.build' } })],
+    'settings.protect.platformRefused': [`This phone refused biometric-protected storage${''}; the phrase stays in standard secure storage.`, ppc.platformRefusedText(null)],
+    'settings.protect.platformRefusedDetail': [`This phone refused biometric-protected storage${' (x)'}; the phrase stays in standard secure storage.`, ppc.platformRefusedText('x')],
+    'settings.protect.verifyFailed': ['The protected copy could not be confirmed, so it was discarded; the phrase stays in standard ' + `storage${''}.`, ppc.verifyFailedText(null)],
+    'settings.protect.verifyFailedDetail': ['The protected copy could not be confirmed, so it was discarded; the phrase stays in standard ' + `storage${' (x)'}.`, ppc.verifyFailedText('x')],
+    'settings.protect.imported.unreadableOne': [`${'Your imported private key'} can no longer be opened on this phone after a biometric ` + `change; your recovery phrase cannot restore ${'it'}, only a copy you kept yourself can.`,
+      I.t('settings.protect.imported.unreadableOne', { subject: 'Your imported private key' })],
+    'settings.protect.imported.unreadableMany': [`${'Your 2 imported private keys'} can no longer be opened on this phone after a biometric ` + `change; your recovery phrase cannot restore ${'them'}, only a copy you kept yourself can.`,
+      I.t('settings.protect.imported.unreadableMany', { subject: 'Your 2 imported private keys' })],
+    'settings.protect.imported.stillStandardOne': [`${'Your imported private key'} ${'is'} still in standard secure storage, ` + 'readable by code inside the app while the phone is unlocked.',
+      I.t('settings.protect.imported.stillStandardOne', { subject: 'Your imported private key' })],
+    'settings.protect.imported.stillStandardMany': [`${'Your 2 imported private keys'} ${'are'} still in standard secure storage, ` + 'readable by code inside the app while the phone is unlocked.',
+      I.t('settings.protect.imported.stillStandardMany', { subject: 'Your 2 imported private keys' })],
+    'settings.protect.imported.movesOne': [` Protect with biometrics moves ${'it'} too.`.slice(1), en['settings.protect.imported.movesOne']],
+    'settings.protect.imported.movesMany': [` Protect with biometrics moves ${'them'} too.`.slice(1), en['settings.protect.imported.movesMany']],
+    'settings.protect.imported.protectedOne': [`${'One of your imported private keys'} ${'is'} protected by biometrics too.`, I.t('settings.protect.imported.protectedOne', { subject: 'One of your imported private keys' })],
+    'settings.protect.imported.protectedMany': [`${'2 of your 3 imported private keys'} ${'are'} protected by biometrics too.`, I.t('settings.protect.imported.protectedMany', { subject: '2 of your 3 imported private keys' })],
+    'settings.protect.imported.standardOne': [`${'Your imported private key'} ${'is'} in standard secure storage too` + (false ? 'x' : '.'), I.t('settings.protect.imported.standardOne', { subject: 'Your imported private key' })],
+    'settings.protect.imported.standardMany': [`${'Your 2 imported private keys'} ${'are'} in standard secure storage too` + (false ? 'x' : '.'), I.t('settings.protect.imported.standardMany', { subject: 'Your 2 imported private keys' })],
+    'settings.protect.imported.standardMovesOne': [`${'Your imported private key'} ${'is'} in standard secure storage too` + (true ? `; protecting the phrase moves ${'it'} too.` : '.'),
+      I.t('settings.protect.imported.standardMovesOne', { subject: 'Your imported private key' })],
+    'settings.protect.imported.standardMovesMany': [`${'Your 2 imported private keys'} ${'are'} in standard secure storage too` + (true ? `; protecting the phrase moves ${'them'} too.` : '.'),
+      I.t('settings.protect.imported.standardMovesMany', { subject: 'Your 2 imported private keys' })],
+    'sessions.grant.rateOneFrom': [`Rate limit: at most ${1} operation${1 === 1 ? '' : 's'} in total, ` + `one more becoming valid every ${120} s` + (1 > 0 ? ` from ${'2026-09-21 14:13:20 UTC'}` : ' (no start time: every slot is already open, so only the total is limited)') +
+      '; a missed slot can be used later. Counted per operation, not per transfer.', I.t('sessions.grant.rateOneFrom', { count: 1, interval: 120, start: '2026-09-21 14:13:20 UTC' })],
+    'sessions.grant.rateManyFrom': [`Rate limit: at most ${3} operation${3 === 1 ? '' : 's'} in total, ` + `one more becoming valid every ${86400} s` + (1 > 0 ? ` from ${'2026-09-21 14:13:20 UTC'}` : ' (no start time: every slot is already open, so only the total is limited)') +
+      '; a missed slot can be used later. Counted per operation, not per transfer.', I.t('sessions.grant.rateManyFrom', { count: 3, interval: 86400, start: '2026-09-21 14:13:20 UTC' })],
+    'sessions.grant.rateOneOpen': [`Rate limit: at most ${1} operation${1 === 1 ? '' : 's'} in total, ` + `one more becoming valid every ${60} s` + (0 > 0 ? ' from x' : ' (no start time: every slot is already open, so only the total is limited)') +
+      '; a missed slot can be used later. Counted per operation, not per transfer.', I.t('sessions.grant.rateOneOpen', { count: 1, interval: 60 })],
+    'sessions.grant.rateManyOpen': [`Rate limit: at most ${5} operation${5 === 1 ? '' : 's'} in total, ` + `one more becoming valid every ${3600} s` + (0 > 0 ? ' from x' : ' (no start time: every slot is already open, so only the total is limited)') +
+      '; a missed slot can be used later. Counted per operation, not per transfer.', I.t('sessions.grant.rateManyOpen', { count: 5, interval: 3600 })],
+    // SessionGrantViews' JSX text: "…following (" {n} " allowed call" {'' | 's'} "):".
+    'sessions.grant.onlyOne': ['The session may ONLY do the following (' + 1 + ' allowed call' + (1 === 1 ? '' : 's') + '):', en['sessions.grant.onlyOne']],
+    'sessions.grant.onlyMany': ['The session may ONLY do the following (' + 4 + ' allowed call' + (4 === 1 ? '' : 's') + '):', I.t('sessions.grant.onlyMany', { count: 4 })],
+    'sessions.subscription.shortOne': [`These terms last only ${'4 minutes'} in total (${1} payment${1 === 1 ? '' : 's'}, ` + `one every ${'2 minutes'}). Handing the key to the merchant and the merchant's first pull ` +
+      'happen inside the first period, so some payments may never be taken. Choose a longer period or more payments ' + 'unless this is a quick test.', I.t('sessions.subscription.shortOne', { total: '4 minutes', payments: 1, period: '2 minutes' })],
+    'sessions.subscription.shortMany': [`These terms last only ${'6 minutes'} in total (${3} payment${3 === 1 ? '' : 's'}, ` + `one every ${'2 minutes'}). Handing the key to the merchant and the merchant's first pull ` +
+      'happen inside the first period, so some payments may never be taken. Choose a longer period or more payments ' + 'unless this is a quick test.', I.t('sessions.subscription.shortMany', { total: '6 minutes', payments: 3, period: '2 minutes' })],
+    'sessions.recurring.review.countOne': [`At most ${1} payment${1 === 1 ? '' : 's'} in total: the first from ${'2026-09-21 14:13 UTC'}, ` + `then one more every ${'1 hour'}.`,
+      I.t('sessions.recurring.review.countOne', { count: 1, start: '2026-09-21 14:13 UTC', period: '1 hour' })],
+    'sessions.recurring.review.countMany': [`At most ${3} payment${3 === 1 ? '' : 's'} in total: the first from ${'2026-09-21 14:13 UTC'}, ` + `then one more every ${'1 hour'}.`,
+      I.t('sessions.recurring.review.countMany', { count: 3, start: '2026-09-21 14:13 UTC', period: '1 hour' })],
+    'sessions.recurring.review.missedGraced': ['Missed payments are not lost: a payment whose period passed while the wallet was closed can still be sent ' + 'later, even right before the next one, until the end date.' +
+      (true ? ' The end date is two periods after the last payment falls due (one period more than the terms alone ' + 'would allow, as a grace period), so a late last payment can still be sent too; this does not allow any ' + 'extra payment.' : ''),
+      en['sessions.recurring.review.missedGraced']],
+    'sessions.recurring.shortOne': [`These terms last only ${'6 minutes'} in total: ${1} payment${1 === 1 ? '' : 's'}, one ` + `every ${'2 minutes'}, and the last one can still be sent for ` +
+      `${'4 minutes'} after it falls due. Payments are sent only while the wallet is open and after you ` + 'confirm each one, so some may not be sent before the end date. Choose a longer period or more payments ' + 'unless this is a quick test.',
+      I.t('sessions.recurring.shortOne', { total: '6 minutes', count: 1, period: '2 minutes', untilLast: '4 minutes' })],
+    'sessions.recurring.shortMany': [`These terms last only ${'8 minutes'} in total: ${3} payment${3 === 1 ? '' : 's'}, one ` + `every ${'2 minutes'}, and the last one can still be sent for ` +
+      `${'4 minutes'} after it falls due. Payments are sent only while the wallet is open and after you ` + 'confirm each one, so some may not be sent before the end date. Choose a longer period or more payments ' + 'unless this is a quick test.',
+      I.t('sessions.recurring.shortMany', { total: '8 minutes', count: 3, period: '2 minutes', untilLast: '4 minutes' })],
+    'dca.shortOne': [`This plan lasts only ${'4 minutes'} in total: ${1} swap${1 === 1 ? '' : 's'}, one ` + `every ${'2 minutes'}. Swaps are sent only while the wallet is open and after you confirm ` +
+      'each one, so some may not be sent before the end date. Choose a longer period or more swaps unless this is a ' + 'quick test.', I.t('dca.shortOne', { total: '4 minutes', count: 1, period: '2 minutes' })],
+    'dca.shortMany': [`This plan lasts only ${'8 minutes'} in total: ${3} swap${3 === 1 ? '' : 's'}, one ` + `every ${'2 minutes'}. Swaps are sent only while the wallet is open and after you confirm ` +
+      'each one, so some may not be sent before the end date. Choose a longer period or more swaps unless this is a ' + 'quick test.', I.t('dca.shortMany', { total: '8 minutes', count: 3, period: '2 minutes' })],
+    'settings.pinCost.row.measured': [`${`N = 2^${12}`}: ${'33'} ms`, PCOST.pinCostRowText({ log2N: 12, status: 'measured', ms: 33 })],
+    'settings.pinCost.row.ceiling': [`${`N = 2^${16}`}: stopped after ${'150,000'} ms, at the 120-second limit for one size (it takes longer than that).`, PCOST.pinCostRowText({ log2N: 16, status: 'ceiling', ms: 150000 })],
+    'settings.pinCost.row.stopped': [`${`N = 2^${15}`}: stopped by you after ${'16,575'} ms (not finished).`, PCOST.pinCostRowText({ log2N: 15, status: 'stopped', ms: 16575 })],
+    'settings.pinCost.row.skipped': [`${`N = 2^${16}`}: skipped (a smaller size reached the 120-second limit).`, PCOST.pinCostRowText({ log2N: 16, status: 'skipped', reason: 'ceiling' })],
+    'settings.pinCost.row.notMeasured': [`${`N = 2^${16}`}: not measured (stopped by you).`, PCOST.pinCostRowText({ log2N: 16, status: 'skipped', reason: 'cancelled' })],
+    'settings.pinCost.platform': [`Platform: ${'android'} · Hermes: ${true ? 'yes' : 'no'} · development bundle (__DEV__): ${false ? 'yes' : 'no'}`, PCOST.pinCostPlatformText({ os: 'android', hermes: true, dev: false })],
+    'settings.pinCost.platformHashing': [`${`Platform: ${'ios'} · Hermes: ${false ? 'yes' : 'no'} · development bundle (__DEV__): ${true ? 'yes' : 'no'}`} · Hashing: ${PNS.PIN_HASH_NATIVE_LABEL}`,
+      PCOST.pinCostPlatformText({ os: 'ios', hermes: false, dev: true }, { start: { kind: 'native' }, end: { kind: 'native' } })],
+    'settings.pinCost.platformHashingChanged': [`${`Platform: ${'android'} · Hermes: ${true ? 'yes' : 'no'} · development bundle (__DEV__): ${false ? 'yes' : 'no'}`} · Hashing: ${PNS.PIN_HASH_NATIVE_LABEL} at the start, then ${PNS.PIN_HASH_JS_LABEL} after the native hash failed during the run`,
+      PCOST.pinCostPlatformText({ os: 'android', hermes: true, dev: false }, { start: { kind: 'native' }, end: { kind: 'js', reason: 'native-error' } })],
+    'settings.pinCost.platformSpoken': [oldSpoken(`Platform: ${'android'} · Hermes: ${true ? 'yes' : 'no'} · development bundle (__DEV__): ${false ? 'yes' : 'no'}`),
+      PCOST.pinCostPlatformSpokenText({ os: 'android', hermes: true, dev: false })],
+    'settings.pinCost.platformHashingSpoken': [oldSpoken(`Platform: ${'ios'} · Hermes: ${false ? 'yes' : 'no'} · development bundle (__DEV__): ${true ? 'yes' : 'no'} · Hashing: ${PNS.PIN_HASH_JS_LABEL}`),
+      PCOST.pinCostPlatformSpokenText({ os: 'ios', hermes: false, dev: true }, { start: { kind: 'js', reason: 'absent' }, end: { kind: 'js', reason: 'absent' } })],
+    'settings.pinCost.platformHashingChangedSpoken': [oldSpoken(`Platform: ${'android'} · Hermes: ${true ? 'yes' : 'no'} · development bundle (__DEV__): ${false ? 'yes' : 'no'} · Hashing: ${PNS.PIN_HASH_NATIVE_LABEL} at the start, then ${PNS.PIN_HASH_JS_LABEL} after the native hash failed during the run`),
+      PCOST.pinCostPlatformSpokenText({ os: 'android', hermes: true, dev: false }, { start: { kind: 'native' }, end: { kind: 'js', reason: 'native-error' } })],
+    'settings.pinCost.resultNote': ['Each figure is one hash. Unlocking with the app PIN computes two hashes at the PIN\'s size. Nothing was stored.', en['settings.pinCost.resultNote']],
   };
   const bad = Object.entries(old).filter(([, [a, b]]) => a !== b).map(([id, [a, b]]) => `${id}: ${a} ≠ ${b}`);
   check(`the ${Object.keys(old).length} composites assemble to exactly the old text`, bad.length === 0, bad.join('; '));
@@ -548,6 +682,14 @@ const CONSTANTS = {
   'multisig.refused.guardians': MS.multisigFeatureRefusal('guardians'), 'multisig.refused.inheritance': MS.multisigFeatureRefusal('inheritance'),
   'multisig.refused.passkeys': MS.multisigFeatureRefusal('passkeys'), 'multisig.refused.sessionKeys': MS.multisigFeatureRefusal('session-keys'),
   'multisig.refused.eip7702': MS.multisigFeatureRefusal('eip7702'), 'multisig.refused.ownerRotation': MS.multisigFeatureRefusal('owner-rotation'),
+  // Phase 23 item 8 (the fourth pass): the module constants the migrated functions now read through the table.
+  'tokenGas.circle.spreadNote': TGM.TOKEN_GAS_SPREAD_NOTE, 'tokenGas.oracle.baseSepolia': TGM.TOKEN_GAS_FIXED_ORACLE_NOTE,
+  'tokenGas.circle.estimateAfterApproval': TGM.TOKEN_GAS_ESTIMATE_AFTER_APPROVAL, 'tokenGas.erc7677.markupLabel': TGM.ERC7677_MARKUP_LABEL,
+  'tokenGas.erc7677.markupValue': TGM.ERC7677_MARKUP_VALUE, 'settings.custom.remove.kept': cnets.KEPT_ON_REMOVAL_SENTENCE,
+  'settings.protect.unreadable': PHRASE_UNREADABLE_MESSAGE, 'accounts.backupHint.phraseOnly': ikeys.ACCOUNTS_PHRASE_ONLY_HINT,
+  'accounts.backupHint.imported': ikeys.ACCOUNTS_WITH_IMPORTED_HINT, 'sessions.holder.merchant': subsMod.SUBSCRIPTION_KEY_HOLDER_TEXT,
+  'sessions.holder.phoneOnly': recMod.RECURRING_KEY_HOLDER_TEXT, 'settings.pinCost.button': PCOST.PIN_COST_BUTTON,
+  'settings.pinCost.stop': PCOST.PIN_COST_STOP_BUTTON, 'settings.pinCost.nativeStop': PCOST.PIN_COST_NATIVE_STOP_NOTE,
 };
 {
   const bad = Object.entries(CONSTANTS).filter(([id, v]) => en[id] !== v).map(([id, v]) => `${id}: ${JSON.stringify(en[id])} ≠ ${JSON.stringify(v)}`);
@@ -1013,6 +1155,190 @@ function caught3(name, wasCaught) {
 check(`third pass: at least four mutants of its own, all caught (${THIRD_CAUGHT} of ${THIRD_MUTANTS})`, THIRD_MUTANTS >= 4 && THIRD_CAUGHT === THIRD_MUTANTS);
 
 // ---------------------------------------------------------------------------
+console.log('check-i18n: the fourth localisation pass (phase 23 item 8: the sentences built inside the wallet modules)');
+// ---------------------------------------------------------------------------
+// The entries migrated in this pass were located in the checkout of commit
+// a9998cc (the fixture records "base": "a9998cc" on each of them); every one
+// is checked above against that record like the earlier passes' entries.
+// Here: the ids per module, their Spanish draft, the earlier passes untouched,
+// one exact English entry per module, the GOLDEN CASES (each migrated
+// function called with the arguments the a9998cc module was called with,
+// requiring that module's English output: scripts/fixtures/
+// i18n-fourth-pass-golden.json), the prompt titles and the stored summaries
+// kept English, and mutants of its own.
+let FOURTH_MUTANTS = 0;
+let FOURTH_CAUGHT = 0;
+function caught4(name, wasCaught) {
+  FOURTH_MUTANTS += 1;
+  if (wasCaught) FOURTH_CAUGHT += 1;
+  check(`mutant caught: ${name}`, wasCaught);
+}
+const GOLDEN = JSON.parse(read('scripts/fixtures/i18n-fourth-pass-golden.json'));
+const GOLDEN_FNS = { wei: (x) => `${x} wei`, payee: (a) => (a.startsWith('0x69') ? 'Payee' : null) };
+function goldenArg(v) {
+  if (Array.isArray(v)) return v.map(goldenArg);
+  if (v && typeof v === 'object') {
+    if (typeof v.$b === 'string') return BigInt(v.$b);
+    if (v.$u === 1) return undefined;
+    if (typeof v.$f === 'string') return GOLDEN_FNS[v.$f];
+    return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, goldenArg(x)]));
+  }
+  return v;
+}
+const goldenSer = (v) => JSON.stringify(v, (_, x) => (typeof x === 'bigint' ? `${x}n` : x));
+/** The golden cases whose migrated function no longer gives the recorded English. */
+async function goldenProblems(cases, modules) {
+  const bad = [];
+  for (const c of cases) {
+    const fn = modules[c.module]?.[c.fn];
+    if (typeof fn !== 'function') { bad.push(`${c.module} ${c.fn}: no such function`); continue; }
+    const out = fn(...goldenArg(c.args));
+    if (goldenSer(out) !== goldenSer(c.out)) bad.push(`${c.module} ${c.fn}: ${goldenSer(out).slice(0, 120)} ≠ ${goldenSer(c.out).slice(0, 120)}`);
+  }
+  return bad;
+}
+const FOURTH_MODULE_FILES = ['wallet/token-gas.ts', 'wallet/aa.ts', 'wallet/send.ts', 'wallet/custom-networks.ts', 'wallet/phrase-protection-copy.ts', 'wallet/imported-keys.ts',
+  'wallet/watch-only.ts', 'wallet/staking.ts', 'wallet/sessions.ts', 'wallet/subscriptions.ts', 'wallet/recurring.ts', 'wallet/dca.ts', 'wallet/pin-cost.ts', 'wallet/pin-native-scrypt.ts'];
+const FOURTH_MODULES = Object.fromEntries(await Promise.all(FOURTH_MODULE_FILES.map(async (f) => [f, await import(`../src/${f}`)])));
+{
+  const FOURTH = ['literal', 'template', 'composite'].flatMap((s) => Object.entries(FIXTURE[s]).filter(([, f]) => f.base === 'a9998cc').map(([id]) => id));
+  // Ids per module (the module whose sentences they are).
+  const GROUPS = {
+    'wallet/token-gas.ts': (id) => id.startsWith('tokenGas.'),
+    'wallet/aa.ts': (id) => ['aa.maxAdjustment', 'settings.aa.bundlerVerified', 'settings.aa.bundlerVerifiedOld'].includes(id),
+    'wallet/send.ts': (id) => id === 'send.maxAdjustment',
+    'wallet/custom-networks.ts (incl. the Developer hint moved from SettingsScreen.tsx)': (id) => id.startsWith('settings.custom.') || id.startsWith('settings.dev.'),
+    'config/evm-chain.ts customNetworkNote (built in custom-networks.ts)': (id) => id === 'settings.customNote' || id.startsWith('settings.customNote.'),
+    'wallet/phrase-protection-copy.ts (and storage.ts\'s unreadable message)': (id) => id.startsWith('settings.protect.'),
+    'wallet/imported-keys.ts and wallet/watch-only.ts': (id) => id.startsWith('accounts.'),
+    'wallet/staking.ts': (id) => id.startsWith('staking.'),
+    'wallet/sessions.ts and components/SessionGrantViews.tsx': (id) => id.startsWith('sessions.grant.') || id.startsWith('sessions.holder.'),
+    'wallet/subscriptions.ts': (id) => id.startsWith('sessions.subscription.'),
+    'wallet/recurring.ts': (id) => id.startsWith('sessions.recurring.'),
+    'wallet/dca.ts': (id) => id.startsWith('dca.'),
+    'wallet/pin-cost.ts and wallet/pin-native-scrypt.ts': (id) => id.startsWith('settings.pinCost.') || id.startsWith('settings.pinHash.'),
+  };
+  const EXPECTED = { 'wallet/token-gas.ts': 33, 'wallet/aa.ts': 3, 'wallet/send.ts': 1, 'wallet/custom-networks.ts (incl. the Developer hint moved from SettingsScreen.tsx)': 23,
+    'config/evm-chain.ts customNetworkNote (built in custom-networks.ts)': 6, 'wallet/phrase-protection-copy.ts (and storage.ts\'s unreadable message)': 25,
+    'wallet/imported-keys.ts and wallet/watch-only.ts': 9, 'wallet/staking.ts': 15, 'wallet/sessions.ts and components/SessionGrantViews.tsx': 32, 'wallet/subscriptions.ts': 3,
+    'wallet/recurring.ts': 16, 'wallet/dca.ts': 11, 'wallet/pin-cost.ts and wallet/pin-native-scrypt.ts': 27 };
+  const counts = Object.fromEntries(Object.entries(GROUPS).map(([g, f]) => [g, FOURTH.filter(f).length]));
+  const ungrouped = FOURTH.filter((id) => !Object.values(GROUPS).some((f) => f(id)));
+  check(`fourth pass: ${FOURTH.length} ids migrated from a9998cc, each in one module's group, each with a Spanish draft that differs from the id`,
+    FOURTH.length === 204 && ungrouped.length === 0 && FOURTH.every((id) => typeof en[id] === 'string' && typeof es[id] === 'string' && es[id] !== id),
+    [...ungrouped, ...FOURTH.filter((id) => typeof es[id] !== 'string')].slice(0, 5).join(', '));
+  check(`…per module: ${Object.entries(counts).map(([g, n]) => `${g.split(' ')[0]} ${n}`).join(', ')}`,
+    Object.entries(EXPECTED).every(([g, n]) => counts[g] === n), JSON.stringify(counts));
+  const second = ['literal', 'template', 'composite'].flatMap((s) => Object.entries(FIXTURE[s]).filter(([, f]) => f.base === '5cb4601'));
+  const third = ['literal', 'template', 'composite'].flatMap((s) => Object.entries(FIXTURE[s]).filter(([, f]) => f.base === '6a1d2bb'));
+  check('…the earlier passes are untouched: 474 entries of the third pass (6a1d2bb), 690 of the second (5cb4601) and the 336 of the groundwork (c5baff6) keep their record, and nothing of this pass is listed as new or changed',
+    third.length === 474 && second.length === 690 && Object.keys(FIXTURE.literal).filter((id) => FIXTURE.literal[id].base === undefined).length === 336 && FIXTURE.base === 'c5baff6' &&
+      !FOURTH.some((id) => FIXTURE.new.includes(id) || id in (FIXTURE.changed ?? {})));
+  const EXACT4 = {
+    'tokenGas.circle.fee': 'Network fee paid in {symbol}: up to {max} {symbol}; the unused part is refunded in the same transaction; no ETH is needed for the fee.',
+    'aa.maxAdjustment': "The amount was lowered from {requested} to {amount} because the network fee rose after you tapped Max. The amount plus the worst-case fee now fits the smart account's balance; its EntryPoint deposit, if any, is left as a reserve for the fee.",
+    'send.maxAdjustment': 'The amount was lowered from {requested} to {amount} because the network fee rose after you tapped Max. The amount plus the worst-case fee now equals your balance.',
+    'settings.custom.blockTimeNone': 'Block time: not measured, so the warning about recently created contracts is not shown on this network (the rule for every network the wallet has no figure for).',
+    'settings.customNote.noExplorer': 'No block explorer was given, so the wallet shows no explorer links here.',
+    'settings.protect.imported.notBackedUp': 'The recovery phrase does not back up imported keys.',
+    'accounts.stopWatching.message': '{name} ({address}) is removed from this wallet. Nothing secret is deleted, because the wallet never held a key for it, and nothing on-chain changes. You can watch it again at any time.',
+    'accounts.backupHint.except': 'Every account here except the {kinds} ones comes from your one recovery phrase — backing up the phrase backs up all of those.',
+    'staking.action.claim': 'Claim finished Lido withdrawals',
+    'sessions.grant.perCall': 'The cap is per call, not a total: the session may repeat this call until it expires.',
+    'sessions.subscription.finalTerms': 'Final terms: the first payment can be taken from {start}, then one more every {period} ({count} in total); nothing after {end}.',
+    'sessions.recurring.review.keyCannotSign': 'The payment key cannot sign messages, logins or permits for your account.',
+    'dca.market.router': 'Router: Uniswap SwapRouter02, {router}.',
+    'settings.pinCost.total': 'Total time: {ms} ms (wall clock).',
+    'settings.pinHash.checking': 'PIN hashing path: checking…',
+  };
+  check('…exact English for one entry of each module (token-gas, aa, send, custom networks, the custom-network note, phrase protection, imported keys, watch-only, the accounts\' backup hint, staking, sessions, subscriptions, recurring, DCA, the PIN measurement and its hashing path)',
+    Object.entries(EXACT4).every(([id, v]) => en[id] === v), Object.entries(EXACT4).filter(([id, v]) => en[id] !== v).map(([id]) => id).join(', '));
+  // The golden cases: the a9998cc English of every migrated function, branch by branch.
+  const perModule = {};
+  for (const c of GOLDEN.cases) perModule[c.module] = (perModule[c.module] ?? 0) + 1;
+  const goldenBad = await goldenProblems(GOLDEN.cases, FOURTH_MODULES);
+  check(`the golden cases (${GOLDEN.cases.length}, recorded from the a9998cc modules): every migrated function gives exactly the English it gave there — ${Object.entries(perModule).map(([m, n]) => `${m.replace(/^.*\//, '')} ${n}`).join(', ')}`,
+    GOLDEN.base === 'a9998cc' && GOLDEN.cases.length >= 600 && FOURTH_MODULE_FILES.every((f) => perModule[f] > 0) && goldenBad.length === 0, goldenBad.slice(0, 3).join('; '));
+  const goldenFns = new Set(GOLDEN.cases.map((c) => `${c.module} ${c.fn}`));
+  const MIGRATED_FNS = ['wallet/token-gas.ts tokenGasConfirmLines', 'wallet/token-gas.ts tokenGasChargedLine', 'wallet/token-gas.ts tokenGasMaxAdjustmentSentence',
+    'wallet/aa.ts aaMaxAdjustmentSentence', 'wallet/aa.ts bundlerVerifiedLine', 'wallet/send.ts maxAdjustmentSentence', 'wallet/custom-networks.ts blockTimeLine',
+    'wallet/custom-networks.ts removalConfirmationText', 'wallet/custom-networks.ts describeRemoval', 'wallet/phrase-protection-copy.ts describeProtectionStatus',
+    'wallet/imported-keys.ts accountsBackupHint', 'wallet/imported-keys.ts removeImportedMessage', 'wallet/watch-only.ts removeWatchOnlyMessage',
+    'wallet/staking.ts stakingActionTitle', 'wallet/staking.ts stakingActionLabel', 'wallet/sessions.ts describeAllowedCall', 'wallet/sessions.ts describeGrantLimits',
+    'wallet/subscriptions.ts subscriptionShortWindowWarning', 'wallet/subscriptions.ts subscriptionFinalDatesLine', 'wallet/recurring.ts recurringReview',
+    'wallet/recurring.ts recurringShortWindowWarning', 'wallet/recurring.ts recurringFinalDatesLine', 'wallet/dca.ts dcaMarketLines', 'wallet/dca.ts dcaKeyOnlyLine',
+    'wallet/dca.ts dcaReview', 'wallet/dca.ts dcaShortWindowWarning', 'wallet/dca.ts dcaFinalDatesLine', 'wallet/pin-cost.ts pinCostHint', 'wallet/pin-cost.ts pinCostRowText',
+    'wallet/pin-cost.ts pinCostPlatformText', 'wallet/pin-cost.ts pinCostPlatformSpokenText', 'wallet/pin-cost.ts pinCostFailedText', 'wallet/pin-native-scrypt.ts pinHashPathLine'];
+  check(`…the golden cases cover every migrated function (${MIGRATED_FNS.length})`, MIGRATED_FNS.every((f) => goldenFns.has(f)), MIGRATED_FNS.filter((f) => !goldenFns.has(f)).join(', '));
+  // The functions whose English twin stays in place: the same English.
+  const notes = [{ label: 'Linea Sepolia', testnet: true, custom: { explorerBase: 'https://sepolia.lineascan.build' } }, { label: 'Polygon PoS', testnet: false, custom: { explorerBase: null } }];
+  check('custom-networks.ts: testNetworkTickNote() is TEST_NETWORK_TICK_NOTE, customNetworkNoteText is evm-chain.ts customNetworkNote (every branch), developerTestNetworkHint() is the old Settings constant',
+    cnets.testNetworkTickNote() === cnets.TEST_NETWORK_TICK_NOTE &&
+      notes.every((p) => [{}, { smartAccountRefusal: 'Refused.' }].every((o) => cnets.customNetworkNoteText(p, o) === EVMC.customNetworkNote(p, o))) &&
+      cnets.developerTestNetworkHint() === oldDeveloperHint(EVM_TEST_PROFILES));
+  // In Spanish the migrated functions answer in Spanish, with no placeholder left.
+  const spanish = (() => {
+    I.setActiveLanguage('es');
+    try {
+      const tgFix = { decimals: 6, symbol: 'USDC', maxTokenCharge: 60070n, tokenBalance: 1n, source: 'circle', nativeTokenPrice: 3000000000n, feeSpreadBips: 0n,
+        paymaster: '0x31BE08D380A21fc740883c0BC434FcFc88740b58', estimationGasCeiling: 1n, paymasterVerificationGasLimit: 1n, paymasterPostOpGasLimit: 1n, additionalGasCharge: 1n };
+      return [
+        TGM.tokenGasConfirmLines(tgFix, { chainCaip2: 'eip155:84532', nativeSymbol: 'test ETH', maxFeePerGas: 1n }).feeSentence,
+        cnets.blockTimeLine(12000), cnets.removalConfirmationText('Linea Sepolia', '59141', true), cnets.developerTestNetworkHint(),
+        ppc.describeProtectionStatus({ phrase: 'protected', reason: null, detail: null, biometricsAvailable: true, protectedSince: 1791000000000, standardCopyPresent: false, sessionKeys: 'standard', policy: 'opt-in', canProtectNow: true,
+          importedKeys: { total: 2, standard: 1, protected: 1, unreadable: 0, damaged: false } }).importedNote,
+        ikeys.accountsBackupHint(true, { watchOnly: true, multisig: true }), STK.stakingActionLabel({ kind: 'wrap', amount: 10n ** 15n }, 'test ETH'),
+        PCOST.pinCostRowText({ log2N: 16, status: 'skipped', reason: 'ceiling' }), PNS.pinHashPathLine(null),
+      ];
+    } finally {
+      I.setActiveLanguage('en');
+    }
+  })();
+  check('…in Spanish they answer in Spanish ("Comisión de red pagada en USDC…", "Tiempo de bloque…", "¿Eliminar «Linea Sepolia»…"), with no {placeholder} left',
+    spanish[0].startsWith('Comisión de red pagada en USDC') && spanish[1].startsWith('Tiempo de bloque') && spanish[2].startsWith('¿Eliminar «Linea Sepolia»') &&
+      spanish[6] === 'Envolver 0.001 stETH en wstETH' && spanish.every((x) => typeof x === 'string' && !/\{[A-Za-z]+\}/.test(x)), spanish.find((x) => /\{[A-Za-z]+\}/.test(x)) ?? '');
+  // Prompt titles stay English; what is stored or shared stays English.
+  const stakingSrc4 = read('src/screens/StakingScreen.tsx');
+  const promptsEnglish = (src) =>
+    src.includes('requireLocalAuth(stakingActionTitle(plan.action, symbol))') && src.includes('requireLocalAuth(`${stakingActionTitle(plan.action, symbol)} from your smart account`)') &&
+    src.includes('requireLocalAuth(`Approve exactly ${exact18(approval.amount)} ${approval.symbol} for ${plan.contractLabel}`)') && !/requireLocalAuth\([^)]*stakingActionLabel/.test(src);
+  check('the staking prompt titles stay English (stakingActionTitle reads the English table; buttons and the success line use stakingActionLabel)',
+    promptsEnglish(stakingSrc4) && (() => {
+      I.setActiveLanguage('es');
+      try {
+        return STK.stakingActionTitle({ kind: 'claim' }, 'test ETH') === 'Claim finished Lido withdrawals' && STK.stakingActionLabel({ kind: 'claim' }, 'test ETH') === es['staking.action.claim'];
+      } finally {
+        I.setActiveLanguage('en');
+      }
+    })());
+  const STORED_SUMMARIES = { 'src/wallet/subscriptions.ts': ['subscriptionSummary'], 'src/wallet/recurring.ts': ['recurringSummary'], 'src/wallet/dca.ts': ['dcaSummary'] };
+  const summariesPlain = (sources) => Object.entries(STORED_SUMMARIES).every(([f, names]) => names.every((n) => fnBodyOf(sources[f], n) !== '' && !/\b(?:t|tx|localize)\(/.test(fnBodyOf(sources[f], n))));
+  const summarySources = Object.fromEntries(Object.keys(STORED_SUMMARIES).map((f) => [f, read(f)]));
+  check('…the one-line summaries the cards and records keep (subscription, recurring payment, recurring swap) are built without the accessor', summariesPlain(summarySources));
+  const grantViews = read('src/components/SessionGrantViews.tsx');
+  check('SessionGrantViews: the review\'s own lines through the table, the key holder through localize, the old JSX text gone',
+    grantViews.includes("t('sessions.grant.onlyOne')") && grantViews.includes("t('sessions.grant.onlyMany', { count: grant.calls.length })") &&
+      grantViews.includes("t('sessions.grant.keyHeldBy', { holder: localize(sessionKeyHolder) })") && grantViews.includes("t('sessions.grant.permissionId', { id: permissionId })") &&
+      !grantViews.includes('The session may ONLY do the following ('));
+  // Mutants (each must be caught by the checks above).
+  const esMissing4 = { ...es };
+  delete esMissing4['tokenGas.circle.fee'];
+  caught4('fourth pass: a Spanish line missing for a migrated id', FOURTH.some((id) => typeof esMissing4[id] !== 'string'));
+  caught4('fourth pass: an English entry changed by one character (the block-time line without its final period)',
+    fixtureProblems({ ...en, 'settings.custom.blockTimeNone': en['settings.custom.blockTimeNone'].slice(0, -1) }, FIXTURE).length >= 1);
+  const enUnused4 = { ...en, 'sessions.grant.unusedLine': 'A grant sentence no screen shows.' };
+  caught4('fourth pass: an unused id added to the table', unusedIds(enUnused4, SCANS).includes('sessions.grant.unusedLine') && fixtureProblems(enUnused4, FIXTURE).length === 1);
+  const driftedCase = GOLDEN.cases.find((c) => c.module === 'wallet/send.ts' && typeof c.out === 'string');
+  caught4('fourth pass: a migrated function whose English drifted from a9998cc (a golden case one character off)',
+    (await goldenProblems([{ ...driftedCase, out: `${driftedCase.out}x` }], FOURTH_MODULES)).length === 1);
+  caught4('fourth pass: a staking prompt title built through the label (it would follow the language)',
+    !promptsEnglish(stakingSrc4.replace('requireLocalAuth(stakingActionTitle(plan.action, symbol))', 'requireLocalAuth(stakingActionLabel(plan.action, symbol))')));
+  caught4('fourth pass: a stored summary built through the accessor',
+    !summariesPlain({ ...summarySources, 'src/wallet/recurring.ts': summarySources['src/wallet/recurring.ts'].replace(/(export function recurringSummary\([^)]*\)[^{]*\{\n)/, "$1  void t('dca.market.router', { router: 'x' });\n") }));
+}
+check(`fourth pass: at least four mutants of its own, all caught (${FOURTH_CAUGHT} of ${FOURTH_MUTANTS})`, FOURTH_MUTANTS >= 4 && FOURTH_CAUGHT === FOURTH_MUTANTS);
+
+// ---------------------------------------------------------------------------
 console.log('check-i18n: the stored language choice (device-wide, through the storage seam)');
 // ---------------------------------------------------------------------------
 function memoryStore() {
@@ -1200,5 +1526,5 @@ function caught(name, wasCaught) {
 check(`at least six mutants, all caught (${mutantsCaught} of ${mutants + 5} including the table mutants)`, mutants + 5 >= 6 && mutantsCaught === mutants + 5);
 check(`phase 23 item 8: at least three mutants of its own, all caught (${ITEM8_CAUGHT} of ${ITEM8_MUTANTS})`, ITEM8_MUTANTS >= 3 && ITEM8_CAUGHT === ITEM8_MUTANTS);
 
-console.log(`\ncheck-i18n: ${passed} passed, ${failed} failed (${mutants + 5 + ITEM8_MUTANTS + THIRD_MUTANTS} mutants)`);
+console.log(`\ncheck-i18n: ${passed} passed, ${failed} failed (${mutants + 5 + ITEM8_MUTANTS + THIRD_MUTANTS + FOURTH_MUTANTS} mutants)`);
 if (failed > 0) process.exit(1);

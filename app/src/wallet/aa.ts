@@ -3013,11 +3013,9 @@ export function aaMaxAdjustmentSentence(
   format: (value: bigint) => string,
 ): string | null {
   if (!quote.maxAdjustment) return null;
-  return (
-    `The amount was lowered from ${format(quote.maxAdjustment.requested)} to ${format(quote.amount)} ` +
-    'because the network fee rose after you tapped Max. The amount plus the worst-case fee now fits the ' +
-    "smart account's balance; its EntryPoint deposit, if any, is left as a reserve for the fee."
-  );
+  // Through the string table (phase 23 item 8, fourth pass); in English
+  // exactly the sentence this function built before.
+  return t('aa.maxAdjustment', { requested: format(quote.maxAdjustment.requested), amount: format(quote.amount) });
 }
 
 /** Neutral confirm-screen sentence for a Kernel deployment through any non-Alchemy bundler. */
@@ -3068,16 +3066,12 @@ export function bundlerVerifiedLine(
   chainLabel: string,
   checked: string,
 ): string {
+  // Through the string table (phase 23 item 8, fourth pass); in English
+  // exactly the lines this function built before.
   if (config.bundlerChainIdVerified) {
-    return (
-      `Verified ✓ — the bundler reported chain id ${config.bundlerChainIdVerified} (${chainLabel}) and ` +
-      `eth_supportedEntryPoints includes EntryPoint v0.7 (checked ${checked})`
-    );
+    return t('settings.aa.bundlerVerified', { chainId: String(config.bundlerChainIdVerified), network: chainLabel, date: checked });
   }
-  return (
-    `Verified ✓ — eth_supportedEntryPoints includes EntryPoint v0.7 (checked ${checked}). ` +
-    'Saved before the chain-id check existed: save it again to confirm which network it serves.'
-  );
+  return t('settings.aa.bundlerVerifiedOld', { date: checked });
 }
 
 /**

@@ -57,6 +57,7 @@ import { assertFeatureAllowed, isFeatureAllowed } from '../config/readiness.ts';
 import { NO_ANSWER_SENTENCE, sanitizeEndpointMessage } from '../config/endpoint-probe.ts';
 import { broadcastOutcomeReasonOf, isBroadcastOutcomeUnknown } from './broadcast-outcome.ts';
 import { BROADCAST_TIMEOUT_MS } from '@shiba-wallet/chains-evm';
+import { t } from '../i18n/index.ts';
 
 /**
  * Recurring payments pushed by this phone (phase 15 item 1; the slice
@@ -319,43 +320,31 @@ export function recurringReview(
   const period = describePeriod(sub.periodSeconds);
   const count = subscriptionPeriodCount(sub);
   const fee = `${formatBaseUnits(sub.feeBudgetWei, 18)} ${context.nativeSymbol}`;
-  const sentence =
-    `Pays ${payee} up to ${amount} every ${period} until ${formatUtc(end)}: at most one payment ` +
-    'per period, each sent by this wallet after you confirm it.';
+  // Through the string table (phase 23 item 8, fourth pass); the period is
+  // the engine's describePeriod (English by rule). In English exactly the
+  // review this function built before.
+  const sentence = t('sessions.recurring.review.sentence', { payee, amount, period, end: formatUtc(end) });
   const enforced = [
     isNativeSubscription(sub)
-      ? `Only plain ${context.tokenSymbol} transfers to ${sub.merchant}, at most ${amount} each.`
-      : `Only ${context.tokenSymbol} (contract ${sub.token}) transfers to ${sub.merchant}, at most ${amount} each.`,
-    `At most ${count} payment${count === 1 ? '' : 's'} in total: the first from ${formatUtc(sub.startAt)}, ` +
-      `then one more every ${period}.`,
-    `Nothing after ${formatUtc(end)}. The last payment falls due ${formatUtc(lastPaymentDueAt(sub))} and can be ` +
-      'sent until then.',
-    `Network fees for the payments are paid by your account, at most ${fee} in total.`,
-    'The payment key cannot sign messages, logins or permits for your account.',
+      ? t('sessions.recurring.review.onlyNative', { symbol: context.tokenSymbol, payee: sub.merchant, amount })
+      : t('sessions.recurring.review.onlyToken', { symbol: context.tokenSymbol, token: sub.token, payee: sub.merchant, amount }),
+    count === 1
+      ? t('sessions.recurring.review.countOne', { count, start: formatUtc(sub.startAt), period })
+      : t('sessions.recurring.review.countMany', { count, start: formatUtc(sub.startAt), period }),
+    t('sessions.recurring.review.nothingAfter', { end: formatUtc(end), lastDue: formatUtc(lastPaymentDueAt(sub)) }),
+    t('sessions.recurring.review.fees', { fee }),
+    t('sessions.recurring.review.keyCannotSign'),
   ];
   const caveats = [
-    'ONE PAYMENT OPERATION CAN HOLD SEVERAL TRANSFERS. Your account checks each transfer against the cap but ' +
-      'does not add them up, and it cannot refuse a batch. This wallet sends exactly one transfer per payment, ' +
-      `but anyone who got the payment key off this phone could send several times ${amount} in one operation — ` +
-      `up to everything this account holds in ${context.tokenSymbol} — though only to ${sub.merchant}. Keep ` +
-      'only what you are willing to pay in this account.',
-    'Missed payments are not lost: a payment whose period passed while the wallet was closed can still be sent ' +
-      'later, even right before the next one, until the end date.' +
-      (graced
-        ? // The grant ends at start + (payments + 1) × period and the last
-          // payment falls due at start + (payments − 1) × period: the end is
-          // TWO periods after it (one the terms give every payment, one of
-          // grace). Finding 5 of the development-build pass: this said "one
-          // period", which disagreed with the dates shown.
-          ' The end date is two periods after the last payment falls due (one period more than the terms alone ' +
-          'would allow, as a grace period), so a late last payment can still be sent too; this does not allow any ' +
-          'extra payment.'
-        : ''),
-    'The payment key lives in this phone’s secure storage. Wiping the wallet or restoring it from the recovery ' +
-      'phrase deletes it: payments then stop, while the permission stays on-chain until its end date. Revoke ' +
-      'before wiping.',
-    'Stop at any time with Revoke (one operation signed by your account key). Payments already sent are not ' +
-      'returned.',
+    t('sessions.recurring.review.batching', { amount, symbol: context.tokenSymbol, payee: sub.merchant }),
+    // The grant ends at start + (payments + 1) × period and the last payment
+    // falls due at start + (payments − 1) × period: the end is TWO periods
+    // after it (one the terms give every payment, one of grace). Finding 5 of
+    // the development-build pass: this said "one period", which disagreed
+    // with the dates shown.
+    graced ? t('sessions.recurring.review.missedGraced') : t('sessions.recurring.review.missed'),
+    t('sessions.recurring.review.keyLives'),
+    t('sessions.recurring.review.stop'),
   ];
   return { sentence, enforced, caveats };
 }
@@ -377,22 +366,23 @@ export function recurringShortWindowWarning(sub: Pick<SubscriptionGrant, 'startA
   if (!(total < 600)) return null;
   const count = subscriptionPeriodCount(sub);
   const untilLast = recurringEndOf(sub) - lastPaymentDueAt(sub);
-  return (
-    `These terms last only ${describePeriod(total)} in total: ${count} payment${count === 1 ? '' : 's'}, one ` +
-    `every ${describePeriod(sub.periodSeconds)}, and the last one can still be sent for ` +
-    `${describePeriod(untilLast)} after it falls due. Payments are sent only while the wallet is open and after you ` +
-    'confirm each one, so some may not be sent before the end date. Choose a longer period or more payments ' +
-    'unless this is a quick test.'
-  );
+  // Through the string table (phase 23 item 8, fourth pass); in English
+  // exactly the sentence this function built before.
+  const params = { total: describePeriod(total), count, period: describePeriod(sub.periodSeconds), untilLast: describePeriod(untilLast) };
+  return count === 1 ? t('sessions.recurring.shortOne', params) : t('sessions.recurring.shortMany', params);
 }
 
 /** The success screen's line with the dates the set-up actually carries. */
 export function recurringFinalDatesLine(sub: SubscriptionGrant): string {
   const count = subscriptionPeriodCount(sub);
-  return (
-    `Final terms: the first payment is due from ${formatUtc(sub.startAt)}, then one more every ` +
-    `${describePeriod(sub.periodSeconds)} (${count} in total); nothing after ${formatUtc(recurringEndOf(sub))}.`
-  );
+  // Through the string table (phase 23 item 8, fourth pass); in English
+  // exactly the line this function built before.
+  return t('sessions.recurring.finalTerms', {
+    start: formatUtc(sub.startAt),
+    period: describePeriod(sub.periodSeconds),
+    count,
+    end: formatUtc(recurringEndOf(sub)),
+  });
 }
 
 /** One-line summary for a card: "0.001 test ETH every 1 day to <payee>". */

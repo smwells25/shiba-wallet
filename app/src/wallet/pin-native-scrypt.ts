@@ -61,6 +61,7 @@
  */
 
 import type { HybridObject } from 'react-native-nitro-modules';
+import { t } from '../i18n/index.ts';
 
 /** The library and version this module calls (package.json pins it exactly). */
 export const NATIVE_SCRYPT_PACKAGE = 'react-native-quick-crypto';
@@ -269,17 +270,20 @@ export function pinHashPathLabel(path: PinHashPath): string {
 
 /** Settings → Developer: the read-only line naming the path in use. */
 export function pinHashPathLine(path: PinHashPath | null): string {
-  if (path === null) return 'PIN hashing path: checking…';
-  if (path.kind === 'native') return `PIN hashing path: ${PIN_HASH_NATIVE_LABEL}, self-check passed`;
+  // Through the string table (phase 23 item 8, fourth pass); the paths'
+  // names and the "Technical detail: …" tail stay as they were. In English
+  // exactly the lines this function built before.
+  if (path === null) return t('settings.pinHash.checking');
+  if (path.kind === 'native') return t('settings.pinHash.native', { label: PIN_HASH_NATIVE_LABEL });
   const detail = path.detail ? ` Technical detail: ${path.detail}` : '';
   switch (path.reason) {
     case 'absent':
-      return `PIN hashing path: ${PIN_HASH_JS_LABEL}: the native module is not in this build`;
+      return t('settings.pinHash.absent', { label: PIN_HASH_JS_LABEL });
     case 'load-failed':
-      return `PIN hashing path: ${PIN_HASH_JS_LABEL}: the native module is in this build but could not be loaded.${detail}`;
+      return t('settings.pinHash.loadFailed', { label: PIN_HASH_JS_LABEL }) + detail;
     case 'self-check-failed':
-      return `PIN hashing path: ${PIN_HASH_JS_LABEL}: the native module failed its self-check against the RFC 7914 test vector, so it is not used.${detail}`;
+      return t('settings.pinHash.selfCheckFailed', { label: PIN_HASH_JS_LABEL }) + detail;
     default:
-      return `PIN hashing path: ${PIN_HASH_JS_LABEL}: the native module failed during a hash and is not used for the rest of this session.${detail}`;
+      return t('settings.pinHash.nativeError', { label: PIN_HASH_JS_LABEL }) + detail;
   }
 }

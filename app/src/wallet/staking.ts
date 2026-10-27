@@ -54,6 +54,7 @@ import { prepareAaCalls, type AaClientBundle, type AaSendQuote } from './aa.ts';
 import { formatUnits } from './balances.ts';
 import { assertFeatureAllowed } from '../config/readiness.ts';
 import { evmProfileByCaip2, isBuiltInEvmChain } from '../config/evm-chain.ts';
+import { t, translateIn, type Params, type StringId } from '../i18n/index.ts';
 
 /**
  * Staking glue (features 57 and 58, phase 18 item 2; design in
@@ -828,22 +829,45 @@ export function stakingSummaryLines(plan: StakingPlan): string[] {
   return out;
 }
 
-/** The labels of the actions, for buttons and the device prompt. */
-export function stakingActionTitle(action: StakingAction, nativeSymbol: string): string {
+/** One action's label from the string table, in the language `text` answers in. */
+function stakingActionText(
+  action: StakingAction,
+  nativeSymbol: string,
+  text: (id: StringId, params?: Params) => string,
+): string {
   switch (action.kind) {
     case 'stake':
       return action.protocol === 'lido'
-        ? `Stake ${formatUnits(action.amount, 18, 18)} ${nativeSymbol} with Lido for ${action.receive}`
-        : `Stake ${formatUnits(action.amount, 18, 18)} ${nativeSymbol} with Rocket Pool for rETH`;
+        ? text('staking.action.stakeLido', { amount: formatUnits(action.amount, 18, 18), symbol: nativeSymbol, receive: action.receive })
+        : text('staking.action.stakeRocketPool', { amount: formatUnits(action.amount, 18, 18), symbol: nativeSymbol });
     case 'wrap':
-      return `Wrap ${formatUnits(action.amount, 18, 18)} stETH into wstETH`;
+      return text('staking.action.wrap', { amount: formatUnits(action.amount, 18, 18) });
     case 'unwrap':
-      return `Unwrap ${formatUnits(action.amount, 18, 18)} wstETH into stETH`;
+      return text('staking.action.unwrap', { amount: formatUnits(action.amount, 18, 18) });
     case 'unstake':
-      return `Request to unstake ${formatUnits(action.amount, 18, 18)} stETH with Lido`;
+      return text('staking.action.unstake', { amount: formatUnits(action.amount, 18, 18) });
     case 'claim':
-      return 'Claim finished Lido withdrawals';
+      return text('staking.action.claim');
     case 'burn':
-      return `Redeem ${formatUnits(action.amount, 18, 18)} rETH with Rocket Pool`;
+      return text('staking.action.burn', { amount: formatUnits(action.amount, 18, 18) });
   }
+}
+
+/**
+ * The labels of the actions for the device prompt: always English (a
+ * biometric prompt's title is the system's, read by the device; the
+ * localisation passes keep prompt titles English by rule). The same entries
+ * as stakingActionLabel, read from the English table, so the two cannot
+ * drift; in English exactly the titles this function built before.
+ */
+export function stakingActionTitle(action: StakingAction, nativeSymbol: string): string {
+  return stakingActionText(action, nativeSymbol, (id, params) => translateIn('en', id, params));
+}
+
+/**
+ * The same labels for buttons and the success line, in the chosen language
+ * (phase 23 item 8, fourth pass). English output: stakingActionTitle's.
+ */
+export function stakingActionLabel(action: StakingAction, nativeSymbol: string): string {
+  return stakingActionText(action, nativeSymbol, t);
 }

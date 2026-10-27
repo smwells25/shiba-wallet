@@ -55,6 +55,7 @@ import { evmProfileByCaip2 } from '../config/evm-chain.ts';
 import { isRetryableFeeReadError, suggestFeesRetryingOnce } from './fee-read.ts';
 // readiness.ts imports only config/evm-chain.ts, so no cycle.
 import { isTestNetwork } from '../config/readiness.ts';
+import { t } from '../i18n/index.ts';
 // pending-transactions.ts imports only types from this module, so the graph
 // stays a DAG (send.ts → pending-transactions.ts).
 import {
@@ -595,11 +596,9 @@ export function maxAdjustmentSentence(
   format: (value: bigint) => string,
 ): string | null {
   if (!quote.maxAdjustment) return null;
-  return (
-    `The amount was lowered from ${format(quote.maxAdjustment.requested)} to ` +
-    `${format(quote.amount)} because the network fee rose after you tapped Max. ` +
-    'The amount plus the worst-case fee now equals your balance.'
-  );
+  // Through the string table (phase 23 item 8, fourth pass); in English
+  // exactly the sentence this function built before.
+  return t('send.maxAdjustment', { requested: format(quote.maxAdjustment.requested), amount: format(quote.amount) });
 }
 
 // ---------------------------------------------------------------------------

@@ -37,6 +37,7 @@ import { randomBytes } from '@noble/hashes/utils.js';
 import { isTestNetwork } from '../config/readiness.ts';
 import { PIN_SALT_BYTES, PIN_SCRYPT_LOG2_N, pinScrypt } from './pin.ts';
 import { currentPinHashPath, pinHashPathLabel, resolvePinHashPath, type PinHashPath } from './pin-native-scrypt.ts';
+import { t } from '../i18n/index.ts';
 
 /** The sizes measured, as log2 N, in order. */
 export const PIN_COST_LOG2_SIZES: readonly number[] = Object.freeze([12, 13, 14, 15, 16]);
@@ -59,7 +60,10 @@ export const PIN_COST_NATIVE_STOP_NOTE =
 
 /** The hint for the path in use (PIN_COST_HINT, plus the native note on the native path). */
 export function pinCostHint(path: PinHashPath | null): string {
-  return path?.kind === 'native' ? `${PIN_COST_HINT} ${PIN_COST_NATIVE_STOP_NOTE}` : PIN_COST_HINT;
+  // Through the string table (phase 23 item 8, fourth pass); in English
+  // exactly PIN_COST_HINT (plus PIN_COST_NATIVE_STOP_NOTE on the native path).
+  const hint = t('settings.pinCost.hint', { n: PIN_SCRYPT_LOG2_N });
+  return path?.kind === 'native' ? `${hint} ${t('settings.pinCost.nativeStop')}` : hint;
 }
 
 export type PinCostStop = 'ceiling' | 'cancelled';
@@ -182,31 +186,37 @@ export function formatMs(ms: number): string {
 
 /** One result line per size. */
 export function pinCostRowText(row: PinCostRow): string {
-  const size = `N = 2^${row.log2N}`;
-  if (row.status === 'measured') return `${size}: ${formatMs(row.ms)} ms`;
-  if (row.status === 'ceiling') return `${size}: stopped after ${formatMs(row.ms)} ms, at the 120-second limit for one size (it takes longer than that).`;
-  if (row.status !== 'skipped') return `${size}: stopped by you after ${formatMs(row.ms)} ms (not finished).`;
-  return row.reason === 'ceiling'
-    ? `${size}: skipped (a smaller size reached the 120-second limit).`
-    : `${size}: not measured (stopped by you).`;
+  // Through the string table (phase 23 item 8, fourth pass); in English
+  // exactly the lines these functions built before.
+  const n = row.log2N;
+  if (row.status === 'measured') return t('settings.pinCost.row.measured', { n, ms: formatMs(row.ms) });
+  if (row.status === 'ceiling') return t('settings.pinCost.row.ceiling', { n, ms: formatMs(row.ms) });
+  if (row.status !== 'skipped') return t('settings.pinCost.row.stopped', { n, ms: formatMs(row.ms) });
+  return row.reason === 'ceiling' ? t('settings.pinCost.row.skipped', { n }) : t('settings.pinCost.row.notMeasured', { n });
 }
 
 export function pinCostRunningText(log2N: number): string {
-  return `Measuring N = 2^${log2N}…`;
+  return t('settings.pinCost.running', { n: log2N });
 }
 
 export function pinCostTotalText(ms: number): string {
-  return `Total time: ${formatMs(ms)} ms (wall clock).`;
+  return t('settings.pinCost.total', { ms: formatMs(ms) });
+}
+
+/** The platform facts' words ("yes" / "no") and the hashing paths' labels. */
+function platformParams(p: PinCostPlatform): { os: string; hermes: string; dev: string } {
+  const yesNo = (v: boolean) => (v ? t('settings.pinCost.yes') : t('settings.pinCost.no'));
+  return { os: p.os, hermes: yesNo(p.hermes), dev: yesNo(p.dev) };
 }
 
 export function pinCostPlatformText(p: PinCostPlatform, hashPath?: PinCostHashPath): string {
-  const base = `Platform: ${p.os} · Hermes: ${p.hermes ? 'yes' : 'no'} · development bundle (__DEV__): ${p.dev ? 'yes' : 'no'}`;
-  if (!hashPath) return base;
+  const facts = platformParams(p);
+  if (!hashPath) return t('settings.pinCost.platform', facts);
   const start = pinHashPathLabel(hashPath.start);
   const end = pinHashPathLabel(hashPath.end);
   return start === end
-    ? `${base} · Hashing: ${start}`
-    : `${base} · Hashing: ${start} at the start, then ${end} after the native hash failed during the run`;
+    ? t('settings.pinCost.platformHashing', { ...facts, path: start })
+    : t('settings.pinCost.platformHashingChanged', { ...facts, start, end });
 }
 
 /**
@@ -217,16 +227,23 @@ export function pinCostPlatformText(p: PinCostPlatform, hashPath?: PinCostHashPa
  * scrypt (react-native-quick-crypto)." The visible line is unchanged.
  */
 export function pinCostPlatformSpokenText(p: PinCostPlatform, hashPath?: PinCostHashPath): string {
-  const parts = pinCostPlatformText(p, hashPath)
-    .replace(' development bundle (__DEV__): ', ' Development bundle: ')
-    .split(' · ')
-    .map((part) => part.trim());
-  return `${parts.join('. ')}.`;
+  // Its own entries (phase 23 item 8, fourth pass): the visible line can no
+  // longer be rewritten word for word once it is translated. In English
+  // exactly what the rewrite of the visible line produced before.
+  const facts = platformParams(p);
+  if (!hashPath) return t('settings.pinCost.platformSpoken', facts);
+  const start = pinHashPathLabel(hashPath.start);
+  const end = pinHashPathLabel(hashPath.end);
+  return start === end
+    ? t('settings.pinCost.platformHashingSpoken', { ...facts, path: start })
+    : t('settings.pinCost.platformHashingChangedSpoken', { ...facts, start, end });
 }
 
 export const PIN_COST_RESULT_NOTE =
   'Each figure is one hash. Unlocking with the app PIN computes two hashes at the PIN\'s size. Nothing was stored.';
 
 export function pinCostFailedText(detail: string): string {
-  return `The measurement could not be run. Nothing was stored. Technical detail: ${detail}`;
+  // The sentence through the string table (phase 23 item 8, fourth pass);
+  // the "Technical detail: …" tail stays as it was.
+  return `${t('settings.pinCost.failed')} Technical detail: ${detail}`;
 }
