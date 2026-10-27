@@ -34,7 +34,7 @@ import { dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Interface, Transaction, id as ethersId, zeroPadValue, getAddress } from 'ethers';
 import { evmKeyProvider, mnemonicToSeed } from '@shiba-wallet/core';
-import { CCTP_DEPOSIT_FOR_BURN_SELECTOR, CCTP_V2_TESTNET, CCTP_V2_TESTNET_USDC, LIDO_DEPLOYMENTS, MAX_UINT256, ROCKET_POOL_DEPLOYMENTS, STAKING_SELECTORS, rocketContractAddressKey, toHex } from '@shiba-wallet/chains-evm';
+import { CCTP_DEPOSIT_FOR_BURN_SELECTOR, CCTP_V2_TESTNET, CCTP_V2_TESTNET_USDC, ENS_V2_SEPOLIA, ENS_V2_SEPOLIA_USDC, LIDO_DEPLOYMENTS, MAX_UINT256, ROCKET_POOL_DEPLOYMENTS, STAKING_SELECTORS, ensOwnedResolverSalt, predictVerifiableProxyAddress, rocketContractAddressKey, toHex } from '@shiba-wallet/chains-evm';
 import {
   APPROVAL_WINDOW_BLOCKS,
   USDT_MAINNET,
@@ -92,6 +92,9 @@ import {
   bridgeContractText,
   bridgeApprovalText,
   pinnedSpenderApprovalTarget,
+  pinnedEnsContracts,
+  ensContractAt,
+  ensContractText,
   resolvedRocketDepositPoolAt,
   stakingContractAt,
   stakingContractText,
@@ -1357,6 +1360,120 @@ console.log('pinned bridge contracts on the risk card (pass p23-cctp finding 4):
     'return pinnedBridgeContracts().find((c) => c.address.toLowerCase() === lower) ?? null;',
   );
   check('MUTANT (chain not compared for a bridge contract) is caught', mChain.bridgeContractAt(MAINNET, TM) !== null && bridgeContractAt(MAINNET, TM) === null);
+}
+
+console.log('pinned ENS contracts on the risk card (pass p23-handle finding 5):');
+{
+  const REG = ENS_V2_SEPOLIA.ethRegistrar;
+  const FACTORY = ENS_V2_SEPOLIA.verifiableFactory;
+  const REVERSE = ENS_V2_SEPOLIA.v1ReverseRegistrar;
+  const SEP_USDC = ENS_V2_SEPOLIA_USDC.address;
+  // Independent copies of the addresses (the engine comment, docs/WALLET_HANDLES.md section 3.2).
+  check('the engine table holds ENS’s ETHRegistrar, VerifiableFactory and ENSv1 ReverseRegistrar on Sepolia, and Circle’s Sepolia USDC',
+    REG === '0xf633e7FC17e2bbE0D0965D18ec1821dcB754a3d3' && FACTORY === '0xDa70306C98E97eCe36F997a21368e53298572991' &&
+      REVERSE === '0xA0a1AbcDAe1a2a4A2EF8e9113Ff0e02DD81DC0C6' && SEP_USDC === CCTP_V2_TESTNET_USDC[11155111]);
+  const all = pinnedEnsContracts();
+  check('three pinned ENS contracts, all on Ethereum Sepolia', all.length === 3 && all.every((c) => c.chain === SEPOLIA && c.operator === 'ENS') &&
+    all.map((c) => c.name).join() === 'ETHRegistrar,VerifiableFactory,ReverseRegistrar (ENSv1)');
+  const lookAlike = (a) => (a.slice(0, -1) + (a.slice(-1).toLowerCase() === 'a' ? 'b' : 'a')).toLowerCase();
+  check('ensContractAt: exact pair only (lower case matches; a look-alike, mainnet, Base Sepolia and a malformed address do not)',
+    ensContractAt(SEPOLIA, REG)?.name === 'ETHRegistrar' && ensContractAt(SEPOLIA, REG.toLowerCase()) !== null && ensContractAt(SEPOLIA, lookAlike(REG)) === null &&
+      ensContractAt(MAINNET, REG) === null && ensContractAt('eip155:84532', REG) === null && ensContractAt(SEPOLIA, REG + '00') === null);
+  const OWNER = ME;
+  const RESOLVER = predictVerifiableProxyAddress(OWNER, ensOwnedResolverSalt(OWNER));
+  const other = ensContractAt(SEPOLIA, RESOLVER);
+  check('the owner’s own resolver is named only with its owner, derived from ENS’s pinned factory (no owner, another owner, mainnet: not named)',
+    other === null && ensContractAt(SEPOLIA, RESOLVER, OWNER)?.name === 'resolver' && ensContractAt(SEPOLIA, RESOLVER, OWNER)?.address === RESOLVER &&
+      ensContractAt(SEPOLIA, RESOLVER, DRAINER) === null && ensContractAt(MAINNET, RESOLVER, OWNER) === null);
+  const REG_LINE = `This transaction goes to ENS’s ETHRegistrar on Ethereum Sepolia (${REG}), pinned by this wallet from ENS’s published Sepolia deployments.`;
+  const FACTORY_LINE = `This transaction goes to ENS’s VerifiableFactory on Ethereum Sepolia (${FACTORY}), pinned by this wallet from ENS’s published Sepolia deployments.`;
+  const REVERSE_LINE = `This transaction goes to ENS’s ReverseRegistrar (ENSv1) on Ethereum Sepolia (${REVERSE}), pinned by this wallet from ENS’s published Sepolia deployments.`;
+  const RESOLVER_LINE = `This transaction goes to your own ENS resolver on Ethereum Sepolia (${RESOLVER}): the address ENS’s pinned VerifiableFactory derives for the name’s owner ${OWNER}.`;
+  check('the lines (exact): registrar, factory, reverse registrar, own resolver',
+    ensContractText(ensContractAt(SEPOLIA, REG)) === REG_LINE && ensContractText(ensContractAt(SEPOLIA, FACTORY)) === FACTORY_LINE &&
+      ensContractText(ensContractAt(SEPOLIA, REVERSE)) === REVERSE_LINE && ensContractText(ensContractAt(SEPOLIA, RESOLVER, OWNER)) === RESOLVER_LINE);
+
+  node = defaultNode();
+  node.chainId = '0xaa36a7';
+  for (const a of [REG, FACTORY, REVERSE, RESOLVER, SEP_USDC, lookAlike(REG)]) {
+    node.codes[a.toLowerCase()] = '0x6080604052';
+    node.deployedAt[a.toLowerCase()] = HEAD - 150n;
+  }
+  const sepKnown = approvalTokensForChain([], SEPOLIA).map((t) => ({ address: t.address, symbol: t.symbol }));
+  check('Sepolia USDC is among the known tokens the card is given', sepKnown.some((t) => t.address.toLowerCase() === SEP_USDC.toLowerCase()));
+  const generic = (lines, address) => lines.some((l) => l.text === `This transaction goes to a contract (${address}).`) || lines.some((l) => l.type === 'new-contract' || l.type === 'contract-age-unknown' || /^first-interaction/.test(l.type));
+  const card = async (to, data, extra = {}) => {
+    calls = [];
+    return computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: OWNER, to, data, chainCaip2: SEPOLIA, trackedTokens: sepKnown, loadOwnMultisigs: null, ...extra }));
+  };
+  const someCall = '0xf14fcbc8' + '11'.repeat(32);
+  for (const [label, to, line] of [['the registrar (commit, register)', REG, REG_LINE], ['the factory (the resolver’s creation)', FACTORY, FACTORY_LINE], ['the ENSv1 reverse registrar (setName)', REVERSE, REVERSE_LINE]]) {
+    const lines = await card(to, someCall);
+    check(`${label}: exactly one line naming it, no "goes to a contract", no age line, no first-transfer search`,
+      lines.length === 1 && lines[0].text === line && !generic(lines, to) && !calls.some((c) => c.method === 'eth_getLogs'), lines.map((l) => l.text).join(' | '));
+  }
+  const own = await card(RESOLVER, '0xb4436dde', { ensResolverOwner: OWNER });
+  check('the owner’s own resolver (setAddress), with its owner passed: one line, no "first time sending to it" search',
+    own.length === 1 && own[0].text === RESOLVER_LINE && !calls.some((c) => c.method === 'eth_getLogs'), own.map((l) => l.text).join(' | '));
+  const noOwner = await card(RESOLVER, '0xb4436dde');
+  check('control: the same resolver without its owner keeps the generic lines (it is not guessed)', generic(noOwner, RESOLVER) && !noOwner.some((l) => /ENS/.test(l.text)));
+  const wrongOwner = await card(RESOLVER, '0xb4436dde', { ensResolverOwner: DRAINER });
+  check('control: another owner keeps the generic lines', generic(wrongOwner, RESOLVER) && !wrongOwner.some((l) => /ENS/.test(l.text)));
+  const lookCard = await card(lookAlike(REG), someCall);
+  check('control: a LOOK-ALIKE registrar keeps every generic line and no pinned line', generic(lookCard, lookAlike(REG)) && !lookCard.some((l) => /pinned by this wallet/.test(l.text)));
+  const approveTo = (spender, amount) => erc20Iface.encodeFunctionData('approve', [spender, amount]);
+  const EXACT_LINE = `This approves ENS’s ETHRegistrar on Ethereum Sepolia (${REG}), pinned by this wallet from ENS’s published Sepolia deployments, to take USDC from this account through its token contract ${SEP_USDC}.`;
+  const ZERO_LINE = `This sets to 0 what ENS’s ETHRegistrar on Ethereum Sepolia (${REG}), pinned by this wallet from ENS’s published Sepolia deployments, may take in USDC from this account through its token contract ${SEP_USDC}.`;
+  const exact = await card(SEP_USDC, approveTo(REG, 613_701n));
+  check('the exact approval for the registrar: the card describes the SPENDER (one line), never the USDC contract', exact.length === 1 && exact[0].text === EXACT_LINE, exact.map((l) => l.text).join(' | '));
+  const zero = await card(SEP_USDC, approveTo(REG, 0n));
+  check('the zero approval ("Remove the USDC approval"): one line saying it sets the registrar to 0, no "goes to a contract", no age line, no search',
+    zero.length === 1 && zero[0].text === ZERO_LINE && !generic(zero, SEP_USDC) && !calls.some((c) => c.method === 'eth_getLogs'), zero.map((l) => l.text).join(' | '));
+  check('pinnedSpenderApprovalTarget: the registrar is a spender (amount read from the calldata); the factory and the reverse registrar are not',
+    pinnedSpenderApprovalTarget(SEP_USDC, approveTo(REG, 0n), SEPOLIA, [])?.amount === 0n && pinnedSpenderApprovalTarget(SEP_USDC, approveTo(REG, 7n), SEPOLIA, [])?.amount === 7n &&
+      pinnedSpenderApprovalTarget(SEP_USDC, approveTo(FACTORY, 1n), SEPOLIA, []) === null && pinnedSpenderApprovalTarget(SEP_USDC, approveTo(REVERSE, 1n), SEPOLIA, []) === null &&
+      pinnedSpenderApprovalTarget(SEP_USDC, approveTo(REG, 1n), MAINNET, []) === null);
+  const lookSpender = await card(SEP_USDC, approveTo(lookAlike(REG), 0n));
+  check('control: a zero approval to a LOOK-ALIKE registrar keeps the generic lines', generic(lookSpender, SEP_USDC) && !lookSpender.some((l) => /pinned by this wallet/.test(l.text)));
+  check('the bridge approval line is unchanged for a non-zero amount (Circle wording)',
+    bridgeApprovalText({ contract: SEP_USDC, symbol: 'USDC', spender: bridgeContractAt(SEPOLIA, CCTP_V2_TESTNET.tokenMessengerV2), amount: 5n }) ===
+      `This approves Circle’s TokenMessengerV2 on Ethereum Sepolia (${CCTP_V2_TESTNET.tokenMessengerV2}), pinned by this wallet from Circle’s published test-network addresses, to take USDC from this account through its token contract ${SEP_USDC}.`);
+  delete node.codes[REG.toLowerCase()];
+  const noCode = await card(REG, someCall);
+  check('control: the registrar address WITHOUT code keeps the no-code warning and no pinned line',
+    noCode.some((l) => l.type === 'no-code-recipient-with-calldata' && l.tone === 'warning') && !noCode.some((l) => /pinned by this wallet/.test(l.text)));
+  node.codes[REG.toLowerCase()] = '0x6080604052';
+
+  const HERE = dirname(fileURLToPath(import.meta.url));
+  const MUTANT_DIR = join(HERE, `.mutants-approvals-ens-${process.pid}`);
+  process.on('exit', () => rmSync(MUTANT_DIR, { recursive: true, force: true }));
+  let n = 0;
+  const importRiskMutant = async (from, to) => {
+    const relPath = 'src/wallet/risk.ts';
+    const original = readFileSync(join(HERE, '..', relPath), 'utf8');
+    if (!original.includes(from)) throw new Error(`mutation anchor not found: ${from}`);
+    const originalDir = dirname(join(HERE, '..', relPath));
+    const rewritten = original
+      .replace(from, to)
+      .replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolvePath(originalDir, spec)).href}'`);
+    mkdirSync(MUTANT_DIR, { recursive: true });
+    n += 1;
+    const file = join(MUTANT_DIR, `m${n}-risk.ts`);
+    writeFileSync(file, rewritten);
+    return import(pathToFileURL(file).href);
+  };
+  const mEns = await importRiskMutant("    if (ensRef && toClass.kind === 'contract') {", '    if (false) {');
+  calls = [];
+  const mEnsLines = mEns.computeRiskLines(await mEns.gatherRiskFacts({ transport, url: RPC, wallet: OWNER, to: REG, data: someCall, chainCaip2: SEPOLIA, trackedTokens: sepKnown, loadOwnMultisigs: null }));
+  check('MUTANT (the registrar card generic again) is caught', generic(mEnsLines, REG) && !mEnsLines.some((l) => l.text === REG_LINE));
+  const mChain = await importRiskMutant("  if (!ADDRESS.test(address) || chainCaip2 !== ENS_PINNED_CHAIN) return null;", '  if (!ADDRESS.test(address)) return null;');
+  check('MUTANT (chain not compared for an ENS contract) is caught', mChain.ensContractAt(MAINNET, REG) !== null && ensContractAt(MAINNET, REG) === null);
+  const mGuess = await importRiskMutant('  if (predicted.toLowerCase() !== lower) return null;', '');
+  check('MUTANT (any address taken as the owner’s resolver) is caught', mGuess.ensContractAt(SEPOLIA, DRAINER, OWNER) !== null && ensContractAt(SEPOLIA, DRAINER, OWNER) === null);
+  const mZero = await importRiskMutant('  if (approval.amount === 0n) {', '  if (false) {');
+  calls = [];
+  const mZeroLines = mZero.computeRiskLines(await mZero.gatherRiskFacts({ transport, url: RPC, wallet: OWNER, to: SEP_USDC, data: approveTo(REG, 0n), chainCaip2: SEPOLIA, trackedTokens: sepKnown, loadOwnMultisigs: null }));
+  check('MUTANT (a zero approval described as taking USDC) is caught', mZeroLines.some((l) => l.text === EXACT_LINE) && !mZeroLines.some((l) => l.text === ZERO_LINE));
 }
 
 check('approximate durations', approxDuration(9000n) === 'about 30 hours' && approxDuration(72000n) === 'about 10 days' && approxDuration(1n) === 'about 1 minute' && approxDuration(64n) === 'about 13 minutes' && approxDuration(300n) === 'about 1 hour');

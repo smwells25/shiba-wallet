@@ -24,6 +24,7 @@ import {
   readEnsNameState,
   readEnsOwnedResolver,
   readEnsPrimaryName,
+  resolveEnsAddress,
   revertDataOf,
   toBytes,
   toHex,
@@ -42,6 +43,7 @@ import { STORE_KEYS, readStoreItem, removeStoreItem, writeStoreItem, type KeyVal
 import { isFeatureAllowed, readinessRefusal } from '../config/readiness.ts';
 import { evmProfileByCaip2 } from '../config/evm-chain.ts';
 import { t } from '../i18n/index.ts';
+import { spokenShortAddress, withShortAddresses } from '../a11y.ts';
 
 /**
  * A wallet handle (phase 23 item 6, feature 75; docs/WALLET_HANDLES.md): an
@@ -659,6 +661,54 @@ export async function waitForTx(
   }
 }
 
+/**
+ * How often, and for how long at most, the screen re-reads where a prepared
+ * registration stands after one of its steps was included (pass p23-handle
+ * finding 3). Before, the screen read again at most 4 times, 4 s apart, and
+ * then returned to the card, which re-reads the chain only while it shows
+ * the wait: a step whose inclusion the endpoint had not caught up with left
+ * the card behind until the user tapped Check now. Now it keeps reading
+ * every HANDLE_STEP_POLL_MS for up to HANDLE_STEP_POLL_MAX_MS (both
+ * judgements: one read per third of a Sepolia slot, and two minutes, the
+ * same order as the receipt wait in waitForTx), showing "Waiting for it to
+ * be included…" meanwhile.
+ */
+export const HANDLE_STEP_POLL_MS = 4_000;
+export const HANDLE_STEP_POLL_MAX_MS = 120_000;
+
+/**
+ * Reads `read()` until `stale(progress)` is false or `maxMs` has passed,
+ * sleeping `intervalMs` between reads. A read that throws counts as stale
+ * (a load-balanced endpoint can fail one read); if no read ever succeeded,
+ * the last error is thrown. Returns the last progress read and whether it
+ * is still stale, with the number of reads (for the checks).
+ */
+export async function readProgressUntil(
+  read: () => Promise<HandleProgress>,
+  stale: (p: HandleProgress) => boolean,
+  options: { intervalMs?: number; maxMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+): Promise<{ progress: HandleProgress; stale: boolean; reads: number }> {
+  const intervalMs = options.intervalMs ?? HANDLE_STEP_POLL_MS;
+  const maxMs = options.maxMs ?? HANDLE_STEP_POLL_MAX_MS;
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  let last: HandleProgress | null = null;
+  let lastError: unknown = null;
+  let reads = 0;
+  for (let waited = 0; ; waited += intervalMs) {
+    reads += 1;
+    try {
+      last = await read();
+      if (!stale(last)) return { progress: last, stale: false, reads };
+    } catch (e) {
+      lastError = e;
+    }
+    if (waited + intervalMs > maxMs) break;
+    await sleep(intervalMs);
+  }
+  if (last === null) throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  return { progress: last, stale: true, reads };
+}
+
 // ---------------------------------------------------------------------------
 // The register pre-flight (before the device prompt)
 // ---------------------------------------------------------------------------
@@ -763,6 +813,67 @@ export function handleCallLines(record: PendingHandle, step: 'prepare' | 'regist
   ];
 }
 
+/**
+ * The numbered text of a step's call lines (pass p23-handle finding 4): a
+ * step that sends ONE call (each transaction of a regular account) shows
+ * its line without a number, so transaction 2 of 3 no longer reads "1.";
+ * a step that sends several calls in one operation (a smart account's
+ * batch) numbers them 1, 2, 3 in the order they run.
+ */
+export function callLineTexts(lines: readonly string[]): string[] {
+  return lines.length === 1 ? [...lines] : lines.map((line, i) => `${i + 1}. ${line}`);
+}
+
+/**
+ * The ENS and USDC contracts this wallet pins on Sepolia, which stay in full
+ * when a call line is spoken (the project rule since pass p20d: a confirm
+ * screen's contract addresses are read in full on purpose).
+ */
+export const HANDLE_PINNED_CONTRACT_ADDRESSES: readonly string[] = [
+  ENS_V2_SEPOLIA.ethRegistrar,
+  ENS_V2_SEPOLIA.verifiableFactory,
+  ENS_V2_SEPOLIA.v1ReverseRegistrar,
+  ENS_V2_SEPOLIA_USDC.address,
+];
+
+/**
+ * What a screen reader says for `text` (pass p23-handle finding 12): every
+ * address is said short ("0x772e…F44F", a11y.ts spokenShortAddress) except
+ * the contract addresses in `keepFull` (case-insensitive), which stay in
+ * full. The visible text is unchanged.
+ */
+export function spokenWithShortAddresses(text: string, keepFull: readonly string[] = []): string {
+  if (keepFull.length === 0) return withShortAddresses(text);
+  const keep = new Set(keepFull.map((a) => a.toLowerCase()));
+  return text.replace(/0x[0-9a-fA-F]{40}\b/g, (a) => (keep.has(a.toLowerCase()) ? a : spokenShortAddress(a)));
+}
+
+/** The spoken form of a call line: the pinned contracts and the owner's resolver in full, accounts short. */
+export function spokenCallLine(text: string, resolver: string | null = null): string {
+  return spokenWithShortAddresses(text, resolver ? [...HANDLE_PINNED_CONTRACT_ADDRESSES, resolver] : HANDLE_PINNED_CONTRACT_ADDRESSES);
+}
+
+/** "Transaction id 0x1234…abcd" (pass p23-handle finding 12: the 64 hex digits were read out one by one). */
+export function spokenTxId(hash: string): string {
+  const short = /^0x[0-9a-fA-F]{64}$/.test(hash) ? `${hash.slice(0, 6)}…${hash.slice(-4)}` : hash;
+  return t('handle.spoken.txId', { id: short });
+}
+
+/**
+ * The text of the card's polite live region (pass p23-handle finding 11),
+ * or null when the card has none. While the registration waits it is the
+ * same short sentence for the whole wait — the countdown below it is a
+ * plain Text, so TalkBack no longer re-announces it every 12-second block
+ * step — and it changes once, to "… can be registered now", when the wait
+ * ends; that change is what TalkBack announces (the Bridge screen's
+ * live-status pattern, BridgeScreen bridgeLiveStatusText).
+ */
+export function handleCardLiveText(progress: HandleProgress | null, name: string): string | null {
+  if (progress?.kind === 'wait') return t('handle.card.waitingLive', { name });
+  if (progress?.kind === 'ready') return t('handle.card.ready', { name, until: formatBlockTime(progress.expiresAt) });
+  return null;
+}
+
 /** The device-prompt titles. */
 export function handlePromptTitle(
   kind: 'prepare' | 'register' | 'reverse' | 'subname' | 'targetReverse' | 'revoke',
@@ -816,6 +927,29 @@ export async function planHandleSubname(
     mode: 'record-only',
     targetReverse: true,
   });
+}
+
+/** Whether a sub-name already points somewhere (pass p23-handle finding 10). */
+export type SubnameState = { kind: 'points' } | { kind: 'elsewhere'; address: string } | { kind: 'none' };
+
+/**
+ * Reads where `subName` (for example smart.alice.eth) points now, forward,
+ * through the Universal Resolver (the engine's resolveEnsAddress, the read
+ * the emulator pass checked smart.qzv7hk2wmt.eth with): 'points' when its
+ * Ethereum address is `target`, 'elsewhere' with the address it has, or
+ * 'none' when it has no resolver or no address record. Any other failure
+ * (a transport error, an off-chain or malformed answer) is thrown, and the
+ * screen then keeps offering "Add the sub-name".
+ */
+export async function readSubnameState(node: JsonRpcTransport, subName: string, target: string): Promise<SubnameState> {
+  try {
+    const r = await resolveEnsAddress(node, subName, HANDLE_CHAIN_ID);
+    return sameAddress(r.address, target) ? { kind: 'points' } : { kind: 'elsewhere', address: r.address };
+  } catch (e) {
+    const reason = (e as { name?: unknown; reason?: unknown } | null)?.name === 'EnsResolutionError' ? (e as { reason?: unknown }).reason : null;
+    if (reason === 'no-resolver' || reason === 'no-address') return { kind: 'none' };
+    throw e;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -883,3 +1017,31 @@ export function createPrimaryNameCache(read: (caip2: string, address: string) =>
   };
 }
 export type PrimaryNameCache = ReturnType<typeof createPrimaryNameCache>;
+
+/**
+ * Re-reads the primary name of `address` right after a registration (pass
+ * p23-handle finding 1): the screen used to clear the cache and wait for
+ * the next focus, so the sub-name section, which needs the name, appeared
+ * only after leaving and reopening the screen. Reads up to `attempts`
+ * times, `intervalMs` apart, until the answer is `name` (a load-balanced
+ * endpoint can lag the block that set it); every answer goes into the
+ * cache, whose listeners re-render the screen. Returns the last answer.
+ */
+export async function refreshPrimaryNameUntil(
+  cache: Pick<PrimaryNameCache, 'refresh'>,
+  caip2: string,
+  address: string,
+  name: string,
+  options: { attempts?: number; intervalMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+): Promise<EnsPrimaryName | null> {
+  const attempts = options.attempts ?? 4;
+  const intervalMs = options.intervalMs ?? 4_000;
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  let answer: EnsPrimaryName | null = null;
+  for (let i = 0; i < attempts; i++) {
+    if (i > 0) await sleep(intervalMs);
+    answer = await cache.refresh(caip2, address);
+    if (answer?.status === 'ok' && answer.name === name) return answer;
+  }
+  return answer;
+}

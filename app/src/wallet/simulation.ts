@@ -1,5 +1,6 @@
 import type { FungibleAsset } from '@shiba-wallet/core';
 import {
+  ENS_V2_SEPOLIA,
   SimulationUnsupportedError,
   simulateAssetChanges,
 } from '@shiba-wallet/chains-evm';
@@ -363,6 +364,9 @@ function tokenAmountPhrase(amount: bigint, token: string, meta: TokenMeta | unde
   return `${maskAmount(exactAmount(amount, meta.decimals), hidden)} ${tokenLabel(token, meta)}`;
 }
 
+/** How the preview names one ownership token of ENS's .eth registry on Sepolia (describeAssetChanges). */
+export const ENS_NAME_TOKEN_PHRASE = 'the name’s ownership token (ERC-1155) from ENS’s .eth registry';
+
 /**
  * Turns the engine's wallet-relative changes into plain-language lines.
  * Fungible transfers of the same asset in the same direction are summed
@@ -438,7 +442,17 @@ export function describeAssetChanges(
         break;
       }
       case 'erc1155': {
-        const nft = `${maskAmount(change.amount.toString(), hidden)} × NFT #${change.tokenId.toString()} (${shortAddress(change.token)})`;
+        // One token of ENS's .eth registry on Sepolia is the ownership token
+        // of the name being registered; its id is a 75–78-digit number that
+        // tells a reader nothing (pass p23-handle finding 6), so it is named
+        // instead. Any other amount, contract or chain keeps the generic line.
+        const ensName =
+          chainCaip2 === `eip155:${ENS_V2_SEPOLIA.chainId.toString()}` &&
+          change.token.toLowerCase() === ENS_V2_SEPOLIA.ethRegistry.toLowerCase() &&
+          change.amount === 1n;
+        const nft = ensName
+          ? `${ENS_NAME_TOKEN_PHRASE} (${shortAddress(change.token)})`
+          : `${maskAmount(change.amount.toString(), hidden)} × NFT #${change.tokenId.toString()} (${shortAddress(change.token)})`;
         const text =
           change.direction === 'out'
             ? `You send ${nft}`

@@ -44,7 +44,8 @@ import { es } from '../src/i18n/es.ts';
 import { readinessRefusal, featureReadiness } from '../src/config/readiness.ts';
 import { multisigRouteRefusal, watchOnlyRouteRefusal, MULTISIG_ALLOWED_ROUTES, WATCH_ONLY_ALLOWED_ROUTES } from '../src/wallet/watch-only.ts';
 import { STORE_KEYS, profileBoundStore, scopedStoreKey } from '../src/wallet/store-keys.ts';
-import { simulationTransport } from '../src/wallet/simulation.ts';
+import { simulationTransport, describeAssetChanges, ENS_NAME_TOKEN_PHRASE } from '../src/wallet/simulation.ts';
+import { recordKindOfKey } from '../src/wallet/records-backup.ts';
 
 let passed = 0;
 let failed = 0;
@@ -633,7 +634,7 @@ console.log('check-handle: source pins (screen, Home, Receive, route)');
   check('the wait polls the latest block every half slot while the card shows it', screen.includes("current?.value?.kind !== 'wait'") && screen.includes('setTimeout(() => setPollTick((n) => n + 1), HANDLE_WAIT_POLL_MS)'));
   check('a regular account sends one call per transaction through prepareEvmSend / sendEvm; a smart account one operation through prepareAaCalls / sendAa',
     screen.includes('prepareEvmSend(start.url, address, call.to, call.value, call.data, caip2)') && screen.includes('sendEvm(sendUrl, signer, eoaQuote') &&
-      screen.includes('prepareAaCalls(bundle, address, next.calls') && screen.includes("sendAa(bundle, signer, aaQuote, { kind: 'other' })"));
+      screen.includes('prepareAaCalls(bundle, address, next.calls') && screen.includes("sendAa(bundle, signer, aaQuote, { kind: 'handle' })"));
   check('a setAddress hash is stored with the record at once (the resume path)', screen.includes('{ ...job.record, recordTx: sent.txid }'));
   check('reads keep revert data (simulationTransport), never the bare httpTransport', screen.includes('simulationTransport(url)') && !/httpTransport/.test(screen));
   check('the screen stores through the seam’s AsyncStorage re-export only (no direct storage import)', !/@react-native-async-storage|expo-secure-store/.test(screen + source('src/wallet/handle.ts')));
@@ -665,6 +666,212 @@ console.log('check-handle: more mutants');
   await m6.savePendingHandle(kept, RECORD);
   await m6.forgetPendingHandle(kept, DEV);
   caught('Forget that keeps the record (and its secret)', (kept.map.get('shiba-wallet.handle-pending.v1') ?? '').includes(RECORD.secret.slice(2)));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-handle: the fourteen findings of emulator pass p23-handle');
+// ---------------------------------------------------------------------------
+{
+  const screen = source('src/screens/HandleScreen.tsx');
+  const views = source('src/screens/HandleViews.tsx');
+  const afterStep = screen.slice(screen.indexOf('const afterStep = async'), screen.indexOf('const authorizeJob = async'));
+
+  // (1) The primary name is read again right after a registration.
+  {
+    const answers = [{ status: 'none' }, { status: 'none' }, { status: 'ok', name: 'qzv7hk2wmt.eth', resolver: DEV_RESOLVER }];
+    let reads = 0;
+    const cache = H.createPrimaryNameCache(async () => answers[Math.min(reads++, answers.length - 1)]);
+    let notified = 0;
+    cache.subscribe(() => (notified += 1));
+    const slept = [];
+    const got = await H.refreshPrimaryNameUntil(cache, 'eip155:11155111', DEV, 'qzv7hk2wmt.eth', { sleep: async (ms) => void slept.push(ms) });
+    check('(1) refreshPrimaryNameUntil reads until the new name answers (3 reads, 4 s apart) and the cache then holds it, telling its listeners',
+      got?.name === 'qzv7hk2wmt.eth' && reads === 3 && slept.join() === '4000,4000' && cache.get('eip155:11155111', DEV)?.name === 'qzv7hk2wmt.eth' && notified >= 1);
+    let r2 = 0;
+    const never = H.createPrimaryNameCache(async () => (r2++, { status: 'none' }));
+    const last = await H.refreshPrimaryNameUntil(never, 'eip155:11155111', DEV, 'x.eth', { sleep: async () => undefined });
+    check('(1) …bounded: at most 4 reads when the name never shows, the last answer returned', r2 === 4 && last?.status === 'none');
+    check('(1) the screen re-reads the owner’s name after a registration (and after the card’s Done and the smart account’s own name), never only clearing the cache',
+      afterStep.includes('void refreshPrimaryNameUntil(primaryNames, caip2, rec.owner, rec.name);') && afterStep.includes('void refreshPrimaryNameUntil(primaryNames, caip2, shownSmartAddress, done.name);') &&
+        screen.includes('void refreshPrimaryNameUntil(primaryNames, caip2, record.owner, record.name);') && !screen.includes('primaryNames.forget('));
+    const m = await handleMutant("    if (answer?.status === 'ok' && answer.name === name) return answer;", '    return answer;');
+    let r3 = 0;
+    const lag = H.createPrimaryNameCache(async () => (r3++ === 0 ? { status: 'none' } : { status: 'ok', name: 'a.eth', resolver: DEV }));
+    await m.refreshPrimaryNameUntil(lag, 'eip155:11155111', DEV, 'a.eth', { sleep: async () => undefined });
+    caught('(1) a refresh that stops after the first (lagging) answer', lag.get('eip155:11155111', DEV)?.status !== 'ok');
+  }
+
+  // (2) The main view scrolls to what it was opened for.
+  {
+    check('(2) every phase has its own ScrollView key, so a confirm or the review opens at its top',
+      ['handle-success', 'handle-tx-confirm', 'handle-aa-confirm', 'handle-review', 'handle-main'].every((k) => screen.includes(`key="${k}"`)));
+    check('(2) a refused Check brings the main view back scrolled to the answer (the refusal is wrapped in its anchor)',
+      screen.includes("      pendingAnchor.current = { anchor: 'answer', until: null };\n      setFormError(describeHandleError(e, check.name));") &&
+        /<View onLayout=\{\(e\) => onAnchorLayout\('answer', e\.nativeEvent\.layout\.y\)\}>\s*<WarningBox announce>\{formError\}<\/WarningBox>/.test(screen));
+    check('(2) the main ScrollView scrolls to its pending anchor on layout (notice, card, answer, sub-name card) and a drag ends it',
+      screen.includes('ref={mainScroll}') && /onScrollBeginDrag=\{\(\) => \{\s*pendingAnchor\.current = null;/.test(screen) &&
+        ['notice', 'card', 'answer', 'sub'].every((a) => screen.includes(`onLayout={(e) => onAnchorLayout('${a}', e.nativeEvent.layout.y)}`)) &&
+        screen.includes('    if (!pending || pending.anchor !== anchor) return;') && screen.includes('    mainScroll.current?.scrollTo({ y: Math.max(0, y - 8), animated: true });') &&
+        screen.includes('const ANCHOR_SETTLE_MS = 3_000;') && screen.includes('    else if (now > pending.until) {'));
+    check('(2) returning to the main view sets its anchor (the notice when there is one, else the card); a failed Check anchors the answer; Done after a registration the sub-name card',
+      screen.includes("const backToMain = (message: string | null, anchor: ScrollAnchor = message ? 'notice' : 'card') => {\n    pendingAnchor.current = { anchor, until: null };") &&
+        screen.includes("anchor: 'sub' });"));
+  }
+
+  // (3) After a step, the progress is read until it shows the step (bounded).
+  {
+    const stale = (p) => p.kind === 'prepare' && p.next === 0;
+    const seq = (list) => { let i = 0; return async () => { const v = list[Math.min(i++, list.length - 1)]; if (v instanceof Error) throw v; return v; }; };
+    const behind = { kind: 'prepare', next: 0, done: 0 };
+    const ahead = { kind: 'prepare', next: 1, done: 1 };
+    let slept = [];
+    const sleep = async (ms) => void slept.push(ms);
+    let out = await H.readProgressUntil(seq([behind, behind, behind, behind, behind, ahead]), stale, { sleep });
+    check('(3) the endpoint catches up after 5 stale reads: read 6 times, 4 s apart, then stop at once',
+      out.stale === false && out.progress.next === 1 && out.reads === 6 && slept.join() === '4000,4000,4000,4000,4000');
+    slept = [];
+    out = await H.readProgressUntil(seq([behind]), stale, { sleep });
+    check('(3) never caught up: it keeps reading every 4 s for the whole 2 minutes (31 reads, 120 s of waiting), then says so — it no longer gives up after 16 s',
+      out.stale === true && out.reads === 31 && slept.length === 30 && slept.reduce((a, b) => a + b, 0) === 120_000 && H.HANDLE_STEP_POLL_MS === 4_000 && H.HANDLE_STEP_POLL_MAX_MS === 120_000);
+    slept = [];
+    out = await H.readProgressUntil(seq([new Error('down'), new Error('down'), ahead]), stale, { sleep });
+    check('(3) a failed read counts as not yet (a load-balanced endpoint can fail one read)', out.stale === false && out.reads === 3);
+    const allFail = await rejection(() => H.readProgressUntil(seq([new Error('endpoint down')]), stale, { sleep: async () => undefined, maxMs: 8_000 }));
+    check('(3) …and if no read ever succeeds, the last error is thrown (shown as a sentence)', allFail?.message === 'endpoint down');
+    check('(3) the screen polls with readProgressUntil and says when the endpoint still lags after 2 minutes',
+      afterStep.includes('await readProgressUntil(() => readHandleProgress(node, rec), stale)') && afterStep.includes("backToMain(t('handle.tx.notSeen', { hash: sent.txid }))") && !/attempt < 4/.test(afterStep));
+    const m = await handleMutant('    if (waited + intervalMs > maxMs) break;', '    if (waited + intervalMs > 16_000) break;');
+    const mo = await m.readProgressUntil(seq([behind]), stale, { sleep: async () => undefined });
+    caught('(3) the old 4-read limit (giving up after 16 s)', mo.reads !== 31);
+  }
+
+  // (4) Call lines numbered by position only in a batch.
+  {
+    const prep = H.handleCallLines(RECORD, 'prepare');
+    check('(4) a step with one call shows its line without a number (transaction 2 of 3 no longer reads "1.")',
+      H.callLineTexts([prep[1]]).join() === prep[1] && H.callLineTexts([prep[2]])[0] === prep[2]);
+    check('(4) a batch of several calls is numbered 1, 2, 3 in the order they run', H.callLineTexts(prep).map((l) => l.slice(0, 3)).join() === '1. ,2. ,3. ');
+    check('(4) the confirm screens render the lines through callLineTexts', views.includes('{callLineTexts(lines).map((line, i) => (') && !views.includes('`${i + 1}. ${line}`'));
+    const m = await handleMutant('  return lines.length === 1 ? [...lines] : lines.map((line, i) => `${i + 1}. ${line}`);', '  return lines.map((line, i) => `${i + 1}. ${line}`);');
+    caught('(4) every line numbered "1." again', m.callLineTexts(['only']).join() !== 'only');
+  }
+
+  // (5) The screen gives the risk card the name's owner (risk.ts derives the resolver; check-approvals pins the lines).
+  check('(5) both confirm screens pass the name’s owner to the risk card, so it can name that owner’s own resolver',
+    screen.includes('<RiskWarnings url={quotedUrl} wallet={address} to={eoaQuote.to} data={eoaQuote.data} ensResolverOwner={jobNameOwner(job)} />') &&
+      screen.includes('<RiskWarnings url={url} wallet={aaQuote.sender} to={job.calls[0]!.to} data={job.calls[0]!.data} ensResolverOwner={jobNameOwner(job)} />'));
+
+  // (6) The name's ownership token, not its 75–78-digit id.
+  {
+    const tokenId = BigInt('0x' + 'ab'.repeat(32));
+    const change = (over) => ({ type: 'erc1155', callIndex: 0, direction: 'in', token: ENS_V2_SEPOLIA.ethRegistry, operator: ENS_V2_SEPOLIA.ethRegistrar, from: ethers.ZeroAddress, to: DEV, tokenId, amount: 1n, ...over });
+    const line = (c, chainCaip2 = 'eip155:11155111') => describeAssetChanges([c], {}, { nativeSymbol: 'test ETH', hidden: false, chainCaip2 })[0].text;
+    check('(6) the register preview says "You receive the name’s ownership token (ERC-1155) from ENS’s .eth registry (0xD4eB…A8B4)", with no token id',
+      line(change({})) === `You receive ${ENS_NAME_TOKEN_PHRASE} (0xD4eB…A8B4)` && !line(change({})).includes(tokenId.toString()));
+    check('(6) control: the same contract on mainnet, another contract, or 2 tokens keep the generic NFT line with its id',
+      line(change({}), 'eip155:1').includes(`NFT #${tokenId}`) && line(change({ token: DEV_KERNEL })).includes(`NFT #${tokenId}`) && line(change({ amount: 2n })).includes(`2 × NFT #${tokenId}`));
+  }
+
+  // (7) The smart-account register review shows the pre-flight line; the pre-flight runs from the owner (the smart account).
+  {
+    const smart = H.newHandlePlan({
+      quoted: { ...QUOTED, quote: { ...QUOTED.quote, owner: DEV_KERNEL }, resolver: { address: predictVerifiableProxyAddress(DEV_KERNEL, ensOwnedResolverSalt(DEV_KERNEL)), salt: ensOwnedResolverSalt(DEV_KERNEL), deployed: false } },
+      signer: DEV, ownerKind: 'smart', createdAt: 1, random: fixedRandom,
+    }).record;
+    const seen = [];
+    await H.preflightRegister(async (method, params) => { seen.push({ method, from: params[0]?.from }); return word(1n); }, smart);
+    check('(7) for a smart owner the register pre-flight is an eth_call FROM the smart account’s address', seen.length === 1 && seen[0].method === 'eth_call' && same(seen[0].from, DEV_KERNEL));
+    check('(7) a register job opened after a passing pre-flight is marked, and the smart-account review shows "Pre-flight passed…" (the regular one already did)',
+      screen.includes("if (next) await openJob(next.kind === 'register' ? { ...next, preflightOk: true } : next);") &&
+        /\{job\.kind === 'register' && job\.preflightOk \? \(\s*<Text style=\{\[styles\.simulationOk, \{ color: theme\.success \}\]\}>\{t\('handle\.preflight\.ok'\)\}<\/Text>/.test(screen));
+  }
+
+  // (8) The Forget dialog: remove the approval afterwards.
+  check('(8) the Forget dialog says the approval can be removed AFTERWARDS with the button this screen then offers (not "first")',
+    /remove it afterwards with "Remove the USDC approval", which this screen offers once the registration is forgotten\./.test(en['handle.forget.body']) && !/Remove it first/.test(en['handle.forget.body']) &&
+      en['handle.forget.body'].includes(`"${en['handle.button.revoke']}"`) && es['handle.forget.body'].includes(`«${es['handle.button.revoke']}»`) && !/antes con/.test(es['handle.forget.body']));
+
+  // (9) The zero-approval Sent view states the result.
+  check('(9) the Sent view after "Remove the USDC approval" states what was done, for the account whose approval it was',
+    en['handle.revoke.done'] === 'The USDC approval for the ENS registrar was set to 0: the registrar may no longer take USDC from {who}.' &&
+      afterStep.includes("t('handle.revoke.done', { who: done.revokeOwner ?? address })") && screen.includes('revokeOwner: owner,'));
+
+  // (10) A sub-name that already points to the smart account.
+  {
+    const SUB = 'smart.shibawalletdemo.eth';
+    // The Universal Resolver's resolve() answer: abi.encode(bytes result, address resolver), result = abi.encode(address).
+    const answer = (addr) => coder.encode(['bytes', 'address'], [coder.encode(['address'], [addr]), DEV_RESOLVER]);
+    const node = (addr) => async (method) => (method === 'eth_chainId' ? '0xaa36a7' : answer(addr));
+    check('(10) readSubnameState: the record points to the smart account → points; elsewhere → that address',
+      (await H.readSubnameState(node(DEV_KERNEL), SUB, DEV_KERNEL)).kind === 'points' &&
+        (await H.readSubnameState(node(DEV), SUB, DEV_KERNEL)).address?.toLowerCase() === DEV.toLowerCase());
+    const noResolver = async (method) => {
+      if (method === 'eth_chainId') return '0xaa36a7';
+      const e = new Error('execution reverted');
+      e.data = sel('ResolverNotFound(bytes)') + coder.encode(['bytes'], ['0x1234']).slice(2);
+      throw e;
+    };
+    check('(10) …no resolver (ResolverNotFound) or no address record (the zero address) → none (offered), a transport failure is thrown (the button stays)',
+      (await H.readSubnameState(noResolver, SUB, DEV_KERNEL)).kind === 'none' && (await H.readSubnameState(node(ethers.ZeroAddress), SUB, DEV_KERNEL)).kind === 'none' &&
+        (await rejection(() => H.readSubnameState(async () => { throw new Error('down'); }, SUB, DEV_KERNEL)))?.message === 'down');
+    const mSub = await handleMutant("    if (reason === 'no-resolver' || reason === 'no-address') return { kind: 'none' };\n    throw e;", "    return { kind: 'none' };");
+    caught('(10) a failed read taken as "no record" (it must keep the button and not claim anything)', (await rejection(() => mSub.readSubnameState(async () => { throw new Error('down'); }, SUB, DEV_KERNEL))) === null);
+    check('(10) the screen shows "… already points to your smart account." instead of "Add the sub-name" when it does',
+      /subName && subPoints\?\.kind === 'points' \? \(\s*\/\/ [^\n]*\n\s*<Note text=\{t\('handle\.sub\.already', \{ sub: subName \}\)\} theme=\{theme\} \/>\s*\) : \(/.test(screen) &&
+        en['handle.sub.already'] === '{sub} already points to your smart account.');
+  }
+
+  // (11) One live region, changing only at the end of the wait.
+  {
+    const w = ensRegisterWindow(C);
+    const wait = (now) => ({ kind: 'wait', readiness: H.handleRegisterReadiness(w, now), latest: now });
+    const ready = { kind: 'ready', expiresAt: w.expiresAt, latest: C + 80n };
+    check('(11) the live text is the same for every step of the wait (48 s and 12 s left), and changes once, to "… can be registered now"',
+      H.handleCardLiveText(wait(C + 24n), 'x.eth') === H.handleCardLiveText(wait(C + 60n), 'x.eth') &&
+        H.handleCardLiveText(ready, 'x.eth') === en['handle.card.ready'].replace('{name}', 'x.eth').replace('{until}', H.formatBlockTime(w.expiresAt)) &&
+        H.handleCardLiveText(wait(C + 60n), 'x.eth') !== H.handleCardLiveText(ready, 'x.eth') && H.handleCardLiveText({ kind: 'prepare', next: 0, done: 0 }, 'x.eth') === null);
+    const card = screen.slice(screen.indexOf('{record ? ('), screen.indexOf("{!record || p?.kind === 'expired'"));
+    check('(11) the card has exactly one polite live region, holding that text; the countdown is a plain Text',
+      (card.match(/accessibilityLiveRegion=/g) ?? []).length === 1 && /accessibilityLiveRegion="polite"[^>]*>\s*\{liveText\}/.test(card) &&
+        card.includes('<Text style={[styles.hint, { color: theme.text }]}>{waitingSentence(record.name, p.readiness)}</Text>'));
+    const m = await handleMutant("  if (progress?.kind === 'wait') return t('handle.card.waitingLive', { name });", "  if (progress?.kind === 'wait') return waitingSentence(name, progress.readiness);");
+    caught('(11) the countdown back in the live region (re-announced every step)', m.handleCardLiveText(wait(C + 24n), 'x.eth') !== m.handleCardLiveText(wait(C + 60n), 'x.eth'));
+  }
+
+  // (12) Addresses said short, contracts on the confirm in full, the transaction id short.
+  {
+    const prep = H.handleCallLines({ ...RECORD, deploysResolver: false }, 'prepare');
+    const spokenSet = H.spokenCallLine(prep[0], RECORD.resolver);
+    check('(12) a call line is spoken with the owner short and the resolver (a contract) in full',
+      spokenSet.includes('0x16DA…aC5C') && !spokenSet.includes(DEV) && spokenSet.includes(RECORD.resolver));
+    const reg = H.spokenCallLine(H.handleCallLines(RECORD, 'register')[0], RECORD.resolver);
+    check('(12) …the pinned registrar and reverse registrar stay in full (the confirm-screen rule)',
+      reg.includes(ENS_V2_SEPOLIA.ethRegistrar) && H.spokenCallLine(H.handleCallLines(RECORD, 'register')[1]).includes(ENS_V2_SEPOLIA.v1ReverseRegistrar) && !reg.includes(DEV));
+    check('(12) the revoke line and the Sent view say the account short', !H.spokenWithShortAddresses(en['handle.revoke.done'].replace('{who}', DEV)).includes(DEV));
+    check('(12) the transaction id is spoken "Transaction id 0x1234…abcd"', H.spokenTxId('0x' + '12'.repeat(30) + 'abcd') === 'Transaction id 0x1212…abcd');
+    check('(12) the screen speaks the short forms (call lines, owner rows, card sentences, sub-name notes, Sent body and transaction id) and keeps the visible text',
+      views.includes('accessibilityLabel={spokenCallLine(line, resolver)}') &&
+        screen.includes("<Row label={t('handle.row.owner')} value={record.owner} mono spoken={`${t('handle.row.owner')}: ${spokenShortAddress(record.owner)}`} theme={theme} />") &&
+        screen.includes('spoken={`${t(\'handle.row.owner\')}: ${spokenShortAddress(aaQuote.sender)}`}') &&
+        screen.includes('<Text accessibilityLabel={spokenWithShortAddresses(result.body)}') && screen.includes('<View accessible accessibilityLabel={spokenTxId(result.txid)}>') &&
+        (screen.match(/spoken=\{spokenWithShortAddresses\(t\('handle\.sub\.(intro|reverseNote)'/g) ?? []).length === 2);
+    const m = await handleMutant('  if (keepFull.length === 0) return withShortAddresses(text);', '  if (keepFull.length >= 0) return text;');
+    caught('(12) addresses spoken in full again', m.spokenCallLine(prep[0], RECORD.resolver).includes(DEV));
+  }
+
+  // (13) The sub-name placeholder no longer repeats the value or the caption.
+  check('(13) the sub-name placeholder is not the pre-filled value and repeats no word of the caption',
+    en['handle.sub.placeholder'] === 'One word: letters, digits or hyphens' && !en['handle.sub.placeholder'].toLowerCase().includes(H.HANDLE_SUB_LABEL_DEFAULT) &&
+      !en['handle.sub.placeholder'].toLowerCase().includes('sub-name'));
+
+  // (14) No change: Android's Alert title (see the report).
+
+  // Follow-ups: the operation kind, the backup exclusion, the wipe.
+  check('follow-up: a smart owner’s steps are sent as operation kind "handle" (the pending card: "from Wallet handle (ENS)")', screen.includes("sendAa(bundle, signer, aaQuote, { kind: 'handle' })") && !screen.includes("{ kind: 'other' }"));
+  check('follow-up: the prepared registration (with its secret) is never in a records backup', recordKindOfKey(H.HANDLE_PENDING_KEY) === null && !source('src/wallet/records-backup.ts').includes('handlePending'));
+  const wallet = source('src/wallet/WalletContext.tsx');
+  check('follow-up: both wipe paths delete the prepared registrations',
+    (wallet.match(/await resetPendingHandles\((store|AsyncStorage)\)\.catch\(\(\) => undefined\);/g) ?? []).length === 2 && wallet.includes("import { resetPendingHandles } from './handle';"));
 }
 
 console.log(`\ncheck-handle: ${passed} passed, ${failed} failed (${mutantsCaught} mutants)`);

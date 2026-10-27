@@ -3,6 +3,7 @@ import {
   CCTP_V2_TESTNET,
   CCTP_V2_TESTNET_DOMAINS,
   CCTP_V2_TESTNET_USDC,
+  ENS_V2_SEPOLIA,
   LIDO_DEPLOYMENTS,
   MAX_UINT256,
   ROCKET_POOL_DEPLOYMENTS,
@@ -10,8 +11,10 @@ import {
   classifyRecipient,
   encodeErc20Approve,
   encodeErc20Transfer,
+  ensOwnedResolverSalt,
   findCodeDeploymentBlock,
   isFirstInteraction,
+  predictVerifiableProxyAddress,
   resolveRocketPool,
   riskSignals,
   rocketPoolDeploymentFor,
@@ -658,10 +661,83 @@ export function bridgeContractAt(chainCaip2: string, address: string): PinnedBri
   return pinnedBridgeContracts().find((c) => c.chain === chainCaip2 && c.address.toLowerCase() === lower) ?? null;
 }
 
-/** The token whose approval names a pinned bridge spender (RiskFacts.bridgeApproval). */
+/**
+ * An ENS contract the wallet pins on Ethereum Sepolia (pass p23-handle
+ * finding 5): the ETHRegistrar, the VerifiableFactory and the ENSv1
+ * ReverseRegistrar from the engine's ENS_V2_SEPOLIA table
+ * (packages/chains-evm/src/ens-register.ts, contracts-v2 07e55a05, checked
+ * on-chain on 2026-10-25), and the name owner's own resolver when the
+ * caller passes that owner (GatherRiskOptions.ensResolverOwner).
+ */
+export interface PinnedEnsContract {
+  /** CAIP-2 id of the chain the address is pinned for (Ethereum Sepolia). */
+  chain: string;
+  /** The address as the engine's table lists it, or as the factory derives it (EIP-55). */
+  address: string;
+  /** Who runs it, for the card ("ENS"). */
+  operator: 'ENS';
+  /** What the contract is: "ETHRegistrar", "VerifiableFactory", "ReverseRegistrar (ENSv1)", or "resolver" for the owner's own. */
+  name: 'ETHRegistrar' | 'VerifiableFactory' | 'ReverseRegistrar (ENSv1)' | 'resolver';
+  /** Set only for the owner's own resolver: the owner its address was derived for (EIP-55). */
+  resolverOwner?: string;
+}
+
+/** The CAIP-2 id of the one network the ENS contracts are pinned on. */
+const ENS_PINNED_CHAIN = `eip155:${ENS_V2_SEPOLIA.chainId.toString()}`;
+
+/** Every ENS contract the card names from the engine's pinned table (not the owner's resolver, which is derived per owner). */
+export function pinnedEnsContracts(): PinnedEnsContract[] {
+  return [
+    { chain: ENS_PINNED_CHAIN, address: ENS_V2_SEPOLIA.ethRegistrar, operator: 'ENS', name: 'ETHRegistrar' },
+    { chain: ENS_PINNED_CHAIN, address: ENS_V2_SEPOLIA.verifiableFactory, operator: 'ENS', name: 'VerifiableFactory' },
+    { chain: ENS_PINNED_CHAIN, address: ENS_V2_SEPOLIA.v1ReverseRegistrar, operator: 'ENS', name: 'ReverseRegistrar (ENSv1)' },
+  ];
+}
+
+/**
+ * The pinned ENS contract at exactly `address` on `chainCaip2` (all 40 hex
+ * digits, that chain only), or — when `resolverOwner` is given — the
+ * owner's own ENS resolver: the address ENS's pinned VerifiableFactory
+ * derives for that owner (the engine's predictVerifiableProxyAddress with
+ * ensOwnedResolverSalt, the derivation readEnsOwnedResolver uses). The
+ * resolver address is computed here from the owner, never taken from the
+ * caller. Null otherwise.
+ */
+export function ensContractAt(chainCaip2: string, address: string, resolverOwner: string | null = null): PinnedEnsContract | null {
+  if (!ADDRESS.test(address) || chainCaip2 !== ENS_PINNED_CHAIN) return null;
+  const lower = address.toLowerCase();
+  const pinned = pinnedEnsContracts().find((c) => c.address.toLowerCase() === lower);
+  if (pinned) return pinned;
+  if (resolverOwner === null || !ADDRESS.test(resolverOwner)) return null;
+  const predicted = predictVerifiableProxyAddress(resolverOwner, ensOwnedResolverSalt(resolverOwner));
+  if (predicted.toLowerCase() !== lower) return null;
+  return { chain: ENS_PINNED_CHAIN, address: predicted, operator: 'ENS', name: 'resolver', resolverOwner: checksum(resolverOwner) };
+}
+
+/** The card's one line for an ENS contract (RiskFacts.ensContract). */
+export function ensContractText(contract: PinnedEnsContract): string {
+  const network = evmProfileByCaip2(contract.chain)?.label ?? contract.chain;
+  if (contract.name === 'resolver' && contract.resolverOwner) {
+    return (
+      `This transaction goes to your own ENS resolver on ${network} (${contract.address}): the address ENS’s pinned ` +
+      `VerifiableFactory derives for the name’s owner ${contract.resolverOwner}.`
+    );
+  }
+  return (
+    `This transaction goes to ENS’s ${contract.name} on ${network} (${contract.address}), ` +
+    'pinned by this wallet from ENS’s published Sepolia deployments.'
+  );
+}
+
+/** A spender the card can name: a pinned bridge contract, or ENS's pinned ETHRegistrar (it takes the registration fee). */
+export type PinnedSpender = PinnedBridgeContract | PinnedEnsContract;
+
+/** The token whose approval names a pinned spender (RiskFacts.bridgeApproval). */
 export interface PinnedSpenderApproval {
   token: RiskTokenRef;
-  spender: PinnedBridgeContract;
+  spender: PinnedSpender;
+  /** The approved amount, from the calldata's second word. */
+  amount: bigint;
 }
 
 /**
@@ -686,14 +762,19 @@ export function pinnedSpenderApprovalTarget(
   if (!/^0x[0-9a-f]*$/.test(hex) || hex.length !== 2 + 8 + 128 || hex.slice(0, 10) !== ERC20_APPROVE_SELECTOR_HEX) return null;
   const spenderAddress = wordToAddress(hex.slice(10, 74));
   if (!spenderAddress) return null;
-  const spender = bridgeContractAt(chainCaip2, spenderAddress);
+  // A pinned bridge spender, or ENS's pinned ETHRegistrar (pass p23-handle
+  // finding 5: the handle's exact approval and the zero approval that
+  // removes it); no other ENS contract takes tokens.
+  const ens = ensContractAt(chainCaip2, spenderAddress);
+  const spender: PinnedSpender | null = bridgeContractAt(chainCaip2, spenderAddress) ?? (ens?.name === 'ETHRegistrar' ? ens : null);
   if (!spender) return null;
+  const amount = BigInt('0x' + hex.slice(74));
   const lower = to.toLowerCase();
   const listed = tokens.find((t) => ADDRESS.test(t.address) && t.address.toLowerCase() === lower);
-  if (listed) return { token: listed, spender };
+  if (listed) return { token: listed, spender, amount };
   const chainId = /^eip155:(\d+)$/.exec(chainCaip2)?.[1];
   const usdc = chainId !== undefined ? CCTP_V2_TESTNET_USDC[Number(chainId)] : undefined;
-  if (usdc && usdc.toLowerCase() === lower) return { token: { address: usdc, symbol: 'USDC' }, spender };
+  if (usdc && usdc.toLowerCase() === lower) return { token: { address: usdc, symbol: 'USDC' }, spender, amount };
   return null;
 }
 
@@ -706,13 +787,30 @@ export function bridgeContractText(contract: PinnedBridgeContract): string {
   );
 }
 
-/** The card's one line for an approval whose spender is a pinned bridge contract (RiskFacts.bridgeApproval). */
-export function bridgeApprovalText(approval: { contract: string; symbol: string; spender: PinnedBridgeContract }): string {
+/** Where the wallet took a pinned spender's address from, for the card. */
+function pinnedSource(s: PinnedSpender): string {
+  return s.operator === 'ENS' ? 'ENS’s published Sepolia deployments' : `${s.operator}’s published test-network addresses`;
+}
+
+/**
+ * The card's one line for an approval whose spender is a pinned contract
+ * (RiskFacts.bridgeApproval). An approval of exactly 0 (the handle screen's
+ * "Remove the USDC approval", pass p23-handle finding 5) says that it
+ * removes what the spender may take; any other amount keeps the bridge
+ * wording unchanged.
+ */
+export function bridgeApprovalText(approval: { contract: string; symbol: string; spender: PinnedSpender; amount?: bigint }): string {
   const s = approval.spender;
   const network = evmProfileByCaip2(s.chain)?.label ?? s.chain;
+  if (approval.amount === 0n) {
+    return (
+      `This sets to 0 what ${s.operator}’s ${s.name} on ${network} (${s.address}), pinned by this wallet from ` +
+      `${pinnedSource(s)}, may take in ${approval.symbol} from this account through its token contract ${approval.contract}.`
+    );
+  }
   return (
     `This approves ${s.operator}’s ${s.name} on ${network} (${s.address}), pinned by this wallet from ` +
-    `${s.operator}’s published test-network addresses, to take ${approval.symbol} from this account through its ` +
+    `${pinnedSource(s)}, to take ${approval.symbol} from this account through its ` +
     `token contract ${approval.contract}.`
   );
 }
@@ -762,7 +860,13 @@ export interface RiskFacts {
    * to hold code (pinnedSpenderApprovalTarget): the card describes the
    * spender, with no contract-age or first-interaction check.
    */
-  bridgeApproval?: { contract: string; symbol: string; spender: PinnedBridgeContract };
+  bridgeApproval?: { contract: string; symbol: string; spender: PinnedSpender; amount?: bigint };
+  /**
+   * Set when `to` is an ENS contract the wallet pins on this chain, or the
+   * name owner's own resolver (ensContractAt), and was seen to hold code:
+   * the card names it, with no contract-age or first-interaction check.
+   */
+  ensContract?: PinnedEnsContract;
   /** Set when `to` is one of the wallet's own addresses (no age or first-interaction checks then). */
   ownRecipient?: OwnAddress;
   /** Set when the paid party differs from `to` and is one of the wallet's own addresses. */
@@ -1043,6 +1147,14 @@ export function computeRiskLines(facts: RiskFacts): RiskLine[] {
       text: bridgeContractText(facts.bridgeContract),
       subject: facts.to,
     });
+  } else if (facts.ensContract) {
+    // A pinned ENS contract, or the name owner's own resolver (pass p23-handle finding 5).
+    lines.push({
+      type: 'recipient-class',
+      tone: 'notice',
+      text: ensContractText(facts.ensContract),
+      subject: facts.to,
+    });
   } else if (facts.bridgeApproval) {
     // An approval for a pinned bridge spender: about the spender, not the token contract.
     lines.push({
@@ -1187,6 +1299,14 @@ export interface GatherRiskOptions {
    * none (scripts). A failed load adds none.
    */
   loadOwnMultisigs?: ((chainCaip2: string) => Promise<readonly OwnAddress[]>) | null;
+  /**
+   * The owner of the ENS name a handle step is for (the handle screen,
+   * pass p23-handle finding 5): a `to` equal to the resolver ENS's pinned
+   * VerifiableFactory derives for this owner is named as the owner's own
+   * resolver (ensContractAt computes the address; the caller passes only
+   * the owner). Omitted or null: no resolver is named.
+   */
+  ensResolverOwner?: string | null;
 }
 
 async function attempt<T>(fn: () => Promise<T>): Promise<T | undefined> {
@@ -1348,8 +1468,12 @@ export async function gatherRiskFacts(options: GatherRiskOptions): Promise<RiskF
   // spender is one (the step before the burn); each confirmed below only if
   // `to` holds code.
   const bridgeRef = facts.ownRecipient || tokenRef || stakingRef ? null : bridgeContractAt(options.chainCaip2, options.to);
+  // A pinned ENS contract or the name owner's own resolver (pass p23-handle
+  // finding 5); confirmed below only if `to` holds code.
+  const ensRef =
+    facts.ownRecipient || tokenRef || stakingRef || bridgeRef ? null : ensContractAt(options.chainCaip2, options.to, options.ensResolverOwner ?? null);
   const bridgeApprovalRef =
-    facts.ownRecipient || tokenRef || stakingRef || bridgeRef ? null : pinnedSpenderApprovalTarget(options.to, options.data, options.chainCaip2, tokens);
+    facts.ownRecipient || tokenRef || stakingRef || bridgeRef || ensRef ? null : pinnedSpenderApprovalTarget(options.to, options.data, options.chainCaip2, tokens);
 
   // Class, delegation and age of `address`, recorded as the card's subject.
   const describeSubject = async (address: string, known?: RecipientClass) => {
@@ -1391,12 +1515,18 @@ export async function gatherRiskFacts(options: GatherRiskOptions): Promise<RiskF
       facts.bridgeContract = bridgeRef;
       return;
     }
+    if (ensRef && toClass.kind === 'contract') {
+      facts.recipientClass = toClass;
+      facts.ensContract = ensRef;
+      return;
+    }
     if (bridgeApprovalRef && toClass.kind === 'contract') {
       facts.recipientClass = toClass;
       facts.bridgeApproval = {
         contract: checksum(options.to),
         symbol: sanitizeSymbol(bridgeApprovalRef.token.symbol) ?? 'the token',
         spender: bridgeApprovalRef.spender,
+        amount: bridgeApprovalRef.amount,
       };
       return;
     }
@@ -1448,13 +1578,13 @@ export async function gatherRiskFacts(options: GatherRiskOptions): Promise<RiskF
   // a first interaction worth a warning (finding 13), so no search runs.
   const selfSend = ownParty !== null;
   facts.firstInteractionApplicable = !selfSend;
-  if ((stakingRef || bridgeRef || bridgeApprovalRef) && !selfSend && counterparty.toLowerCase() === options.to.toLowerCase()) {
+  if ((stakingRef || bridgeRef || ensRef || bridgeApprovalRef) && !selfSend && counterparty.toLowerCase() === options.to.toLowerCase()) {
     // The paid party is the pinned staking or bridge contract itself (or the
     // token whose approval names a pinned bridge spender): when its code is
     // confirmed, "have you sent here before" adds nothing, so no search
     // runs; otherwise the searches run as for any other address.
     await classifyTask();
-    if (facts.stakingContract || facts.bridgeContract || facts.bridgeApproval) {
+    if (facts.stakingContract || facts.bridgeContract || facts.ensContract || facts.bridgeApproval) {
       facts.firstInteractionApplicable = false;
       return facts;
     }

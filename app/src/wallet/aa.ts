@@ -4005,6 +4005,9 @@ function notifyAaSent(event: AaSentEvent): void {
  *  - 'bridge': a transfer sent from the Bridge screen (wallet/bridge.ts);
  *  - 'cold-aa': a watched owner's smart-account operation signed by an
  *    off-line signer (phase 23 item 5, wallet/cold-aa.ts);
+ *  - 'handle': a step of a wallet handle (an ENS name) sent from the
+ *    Wallet handle (ENS) screen by a smart account (phase 23 item 6,
+ *    wallet/handle.ts; the kind added after pass p23-handle);
  *  - 'other': every other sendAa caller (guardians, passkeys, owner change,
  *    inheritance), which passes no kind.
  */
@@ -4021,6 +4024,7 @@ export type AaOperationKind =
   | 'multisig'
   | 'bridge'
   | 'cold-aa'
+  | 'handle'
   | 'other';
 
 /** What the Send screen's "Send again" can pre-fill (public data only; see pending-transactions.ts). */

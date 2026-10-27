@@ -187,6 +187,7 @@ export const USEROP_ORIGINS: readonly AaOperationKind[] = [
   'multisig',
   'bridge',
   'cold-aa',
+  'handle',
   'other',
 ];
 
@@ -1677,6 +1678,8 @@ export const USEROP_RETRY_SENTENCES: Readonly<Record<AaOperationKind, string>> =
   bridge: 'To try again, open Bridge and get a new quote; nothing is resent from here.',
   'cold-aa':
     'To try again, open Send with an off-line signer, review the send again and have the new request signed; nothing is resent from here.',
+  handle:
+    'To try again, open Wallet handle (ENS): it reads from the chain which step of the registration is done and offers the next one. Nothing is resent from here.',
   other: 'To try again, go back to the screen you sent it from and review it again; nothing is resent from here.',
 };
 
@@ -1694,6 +1697,7 @@ export const USEROP_ORIGIN_PHRASES: Readonly<Record<AaOperationKind, string>> = 
   multisig: 'submitted for a multisig account',
   bridge: 'from Bridge',
   'cold-aa': 'from an off-line signer',
+  handle: 'from Wallet handle (ENS)',
   other: '',
 };
 

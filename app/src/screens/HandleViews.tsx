@@ -5,7 +5,7 @@ import { readEnsPrimaryName, type EnsPrimaryName } from '@shiba-wallet/chains-ev
 import { getEndpoint } from '../config/networks';
 import { EVM_CHAIN_ID } from '../wallet/send';
 import { simulationTransport } from '../wallet/simulation';
-import { createPrimaryNameCache, primaryNameChainId, primaryNameLine } from '../wallet/handle';
+import { callLineTexts, createPrimaryNameCache, primaryNameChainId, primaryNameLine, spokenCallLine } from '../wallet/handle';
 import { useI18n } from '../i18n/useI18n';
 import type { Theme } from '../theme';
 
@@ -54,22 +54,36 @@ export function usePrimaryName(address: string | null, caip2: string): EnsPrimar
   return answer;
 }
 
-/** The calls a step sends, one numbered line each (full addresses, as on the other confirm screens). */
-export function CallLines({ lines, theme }: { lines: string[]; theme: Theme }) {
+/**
+ * The calls a step sends (full addresses on screen, as on the other confirm
+ * screens). One call is shown without a number and several are numbered
+ * in the order they run (handle.ts callLineTexts; pass p23-handle finding
+ * 4). Spoken, each line keeps the pinned contracts and the owner's resolver
+ * in full and says every other address short (spokenCallLine; finding 12).
+ */
+export function CallLines({ lines, theme, resolver = null }: { lines: string[]; theme: Theme; resolver?: string | null }) {
   return (
     <View style={styles.lines}>
-      {lines.map((line, i) => (
-        <Text key={`${i}-${line.slice(0, 24)}`} selectable style={[styles.line, { color: theme.text }]}>
-          {`${i + 1}. ${line}`}
+      {callLineTexts(lines).map((line, i) => (
+        <Text key={`${i}-${line.slice(0, 24)}`} selectable accessibilityLabel={spokenCallLine(line, resolver)} style={[styles.line, { color: theme.text }]}>
+          {line}
         </Text>
       ))}
     </View>
   );
 }
 
-/** A muted paragraph. */
-export function Note({ text, theme, style }: { text: string; theme: Theme; style?: TextStyle }) {
-  return <Text style={[styles.note, { color: theme.textMuted }, style]}>{text}</Text>;
+/**
+ * A muted paragraph. `spoken`, when given, is what a screen reader says
+ * instead of the visible text (a sentence with its addresses said short,
+ * pass p23-handle finding 12).
+ */
+export function Note({ text, theme, style, spoken }: { text: string; theme: Theme; style?: TextStyle; spoken?: string }) {
+  return (
+    <Text {...(spoken !== undefined ? { accessibilityLabel: spoken } : {})} style={[styles.note, { color: theme.textMuted }, style]}>
+      {text}
+    </Text>
+  );
 }
 
 export const handleStyles = StyleSheet.create({

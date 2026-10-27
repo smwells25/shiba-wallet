@@ -51,6 +51,7 @@ export function RiskWarnings({
   counterparty,
   data,
   assetChanges,
+  ensResolverOwner = null,
 }: {
   /** The active chain's endpoint (the same one the quote used); null = calldata-only checks. */
   url: string | null;
@@ -64,6 +65,12 @@ export function RiskWarnings({
   data?: Uint8Array | string;
   /** The preview's asset changes, when the caller has them. */
   assetChanges?: AssetChange[] | null;
+  /**
+   * The owner of the ENS name a handle step is for (the handle screen only,
+   * pass p23-handle finding 5): the card names that owner's own resolver
+   * (risk.ts ensContractAt derives its address; nothing else is trusted).
+   */
+  ensResolverOwner?: string | null;
 }) {
   const theme = useTheme();
   const { evmChain } = usePrefs();
@@ -80,7 +87,7 @@ export function RiskWarnings({
   const changesKey = assetChanges
     ? assetChanges.map((c) => JSON.stringify(c, (_k, v) => (typeof v === 'bigint' ? v.toString() : v))).join(';')
     : String(assetChanges);
-  const key = `${url ?? ''}|${evmChain.caip2}|${wallet}|${to}|${counterparty ?? ''}|${dataHex}|${changesKey}|${ownKey}`;
+  const key = `${url ?? ''}|${evmChain.caip2}|${wallet}|${to}|${counterparty ?? ''}|${dataHex}|${changesKey}|${ownKey}|${ensResolverOwner ?? ''}`;
 
   // New inputs clear the shown lines while rendering (React's "adjust state
   // when a prop changes" pattern), so the card goes back to its loading
@@ -129,6 +136,7 @@ export function RiskWarnings({
         ownAddresses: [...ownAddresses, ...ownAccounts.map((o) => o.address)],
         ownAccounts,
         indexerUrl,
+        ensResolverOwner,
         // Tracked tokens plus the known test-network tokens (tokens.ts).
         trackedTokens: approvalTokensForChain(tracked, evmChain.caip2).map((t) => ({
           address: t.address,
@@ -147,7 +155,7 @@ export function RiskWarnings({
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `key` serializes every input of the checks (url, chain, wallet, to, counterparty, calldata, the asset changes and the wallet's accounts). ownAddresses and accountList are new arrays on every render and callers may pass assetChanges inline, so listing them would re-run the network checks without any input having changed. The AA configuration is read inside the effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `key` serializes every input of the checks (url, chain, wallet, to, counterparty, calldata, the asset changes, the wallet's accounts and the ENS name's owner). ownAddresses and accountList are new arrays on every render and callers may pass assetChanges inline, so listing them would re-run the network checks without any input having changed. The AA configuration is read inside the effect.
   }, [key]);
 
   if (lines === null) {
