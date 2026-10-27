@@ -14042,3 +14042,96 @@ to the Chairperson at once.
       Multisig screens; the spoken Scan label under TalkBack. The agent
       kept its pre-rebase worktree wt-p23-i18n3 (6a1d2bb) and its rebased
       one wt-p23-i18n3b (e55e5ce) in the scratchpad.
+- [x] EMULATOR PASS p23-cctp-recheck — THE b06c074 BRIDGE FIXES SEEN LIVE,
+      THE IN-APP MINT BLOCKED BY A NEW BUG (2026-10-26 20:25 – 2026-10-27
+      03:27 UTC, the gap the driver's Opus session limit; Expo Go on
+      emulator 37.1.11 with ANGLE, Metro moved to wt-app at 19bf24a (an
+      APFS clone, `git ls-files -d` 0, the engine rebuilt inside it, Metro
+      pid 27707, 1,942 modules); no repo files edited; ONE device prompt
+      ("Unlock Shiba Wallet" at launch); NOTHING SENT — no hashes this pass;
+      every balance re-read on two RPCs per network and equal to the
+      baseline to the wei (Base Sepolia Account 1 7,599,501,972,279,663 wei
+      nonce 2, USDC 1,500,000; Arbitrum Sepolia 197,988,124,906,000 wei
+      nonce 4, USDC 0); the report step by step in the scratchpad
+      p23-cctp-recheck/REPORT.md with redacted dumps and screenshots;
+      screen protection OFF). THE BUG (the pass's main finding, a fix
+      slice dispatched): app/src/wallet/bridge.ts destinationLogReader
+      (lines 922–946 at 19bf24a) refuses with BRIDGE_LOG_TOO_OLD_CCTP when
+      head − destinationFromBlock + 1 exceeds BRIDGE_LOG_WINDOW_BLOCKS
+      9,000 × BRIDGE_LOG_MAX_WINDOWS 12 = 108,000 blocks, and BASE SEPOLIA
+      MAKES A BLOCK EVERY 0.2 s (the driver's measurement over 1,000-block
+      spans on sepolia.base.org at blocks 49,944,656 … 50,627,692, all 0.2
+      s; Arbitrum Sepolia 0.25 s), so the cap is about SIX HOURS there
+      (7.5 h on Arbitrum); the stranded 1 USDC transfer (Arbitrum → Base,
+      burned 12:23 UTC on the 26th) sat about 584,000 Base blocks behind
+      the head at 20:46 UTC, 5.4× the cap, and because the refusal is
+      thrown inside the CCTP adapter's track() the stored attested message
+      never becomes the Mint panel — on EITHER network the record reads
+      "Not checked yet" / "The transfer could not be checked just now: This
+      transfer was sent too long ago for the wallet to search the receiving
+      network for its mint; look up the recipient on that network in an
+      explorer.", no blocker sentence, no "Switch to Base Sepolia" button,
+      no "Mint on Base Sepolia", "Check now" the same; usedNonces of Circle
+      nonce 0xd402ca89…f86b on Base Sepolia's MessageTransmitterV2 still 0
+      on both RPCs — the USDC stays attested and unminted until the fix
+      lands (CTO DECISION: no script mint; the in-app mint is the fix's
+      proof). SECOND BUG (copy): BridgeScreen.tsx line 160 passes the app's
+      own BridgeRefusal through sanitizeEndpointMessage (endpoint-probe.ts
+      ~907, first sentence only), dropping the refusal's second sentence
+      "If the USDC was never minted, anyone can still send the mint with
+      Circle's attested message." STEPS: (1) FAIL (blocked, above); (2)
+      PARTIAL — Base Sepolia reached through Settings; the form PASSES
+      (opens on "✓ USDC", the three destination chips, the placeholder
+      "Amount, for example 1" — the b06c074 fix — and the measured-time
+      sentence "Measured once on 2026-10-25: 996 s on this route…"), the
+      record FAILS the same way with the receiving network active; (3)
+      BLOCKED; (4) PASS — Home on Base Sepolia SHOWS THE BRIDGE LINK (the
+      link fix seen live), Hoodi no link, mainnet no link with the
+      readiness row "Bridging between networks — Test networks only" and
+      its reason now saying two CCTP Standard Transfers were sent by
+      script; (5) PASS, three reviews, none sent — Base → Arbitrum 0.1
+      USDC to the regular account shows "Circle's USDC fee paymaster cannot
+      pay for the first mint on a network where this account holds no
+      USDC: it takes its fee before the mint runs." (Account 1 holds 0 USDC
+      on Arbitrum), the same review to "Your smart account" (the Kernel
+      0xD31c…D8FA holds 745,441 USDC base units on Arbitrum, two RPCs)
+      shows NO paymaster sentence — the recipientDestinationUsdc rule both
+      ways; Arbitrum → Base refused before any review with exactly "You
+      hold 0 USDC on Arbitrum Sepolia, and this transfer needs 0.1 USDC.
+      Nothing was quoted."; (6) PASS — the approval step's risk card is the
+      single line "This approves Circle's TokenMessengerV2 on Base Sepolia
+      (0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA), pinned by this wallet
+      from Circle's published test-network addresses, to take USDC from
+      this account through its token contract
+      0x036CbD53842c5426634e7929541eC2318f3dCF7e." with no generic
+      contract / age / first-transfer lines; the burn line (read on the
+      smart-account batch confirm, since the regular path's burn step needs
+      the approval sent first; the bundler estimate passed; backed out
+      without tapping) "This transaction goes to Circle's TokenMessengerV2
+      on Base Sepolia (0x8FE6…2DAA), pinned by this wallet from Circle's
+      published test-network addresses."; (7) PARTIAL PASS under TalkBack
+      (the level written in place to 2, back to 6 after; TalkBack rewrote
+      its prefs file while on — inode 74385 → 74374, SELinux context
+      kept): the record's "Through Circle CCTP (USDC), to 0x772e…F44F, sent
+      12:23:49 UTC." and the form's recipient sentence speak the short
+      address; 75 s idle on the record with five 15-second poll bursts
+      produced ZERO speech (every event nodeLiveRegion 0) and no separate
+      "(checking…)" stop — but only in the error state, whose heading
+      never changes; the attested state and the switch button's label and
+      hint are unreachable while the bug stands. ACCESSIBILITY MINOR: on
+      the CCTP confirm the recipient sentence and the "Recipient:" bullet
+      carry no short-address description (the form's version does), so
+      TalkBack would read the full address there. DRIVING NOTES: a
+      background Settings walk stopped at step 51 when dumps slowed to
+      ~11 s (foreground chunks of ~30 steps after; no Danger-zone text in
+      any dump); uiautomator skips the CCTP row's measured-time sentence
+      on Arbitrum (the straight-quote quirk); Expo Go offered an update
+      57.0.27 → ~57.0.31 (not taken). END STATE: Home, Ethereum Sepolia,
+      Account 1 (0.001746 test ETH), light mode, protection OFF, TalkBack
+      OFF (level 6), IME ADBKeyboard, no test files on the device, Metro
+      27707 at 19bf24a, qemu 36709 and caffeinate 36943 running with the
+      window in place. RE-CHECK after the fix: the in-app mint of the
+      stranded 1 USDC on Base Sepolia from Account 1 (usedNonces 0 → 1,
+      Base USDC 1,500,000 → 2,500,000, "Delivered on Base Sepolia"), the
+      switch button's label and hint under TalkBack, the attested-state
+      idle test.
