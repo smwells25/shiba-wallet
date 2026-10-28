@@ -130,6 +130,13 @@ import { knownStakingTokensForChain } from './tokens.ts';
  *    a network CCTP does not serve, a token without code or an unknown
  *    token keeps every generic line. Stargate's pools are NOT listed here:
  *    the Bridge confirm names them in its own line beside the card.
+ *    Pass p23-mint finding 2: Circle's MessageTransmitterV2 (engine
+ *    CCTP_V2_TESTNET.messageTransmitterV2, packages/chains-evm/src/bridge/
+ *    cctp-v2.ts line 64; the four networks of CCTP_V2_TESTNET_DOMAINS, lines
+ *    69–74), the target of the mint (receiveMessage) on the receiving
+ *    network, is pinned the same way and named in one line. It never takes
+ *    tokens, so an approval naming it as the spender is NOT described by
+ *    the spender: only TokenMessengerV2 is accepted as a pinned spender.
  *
  * The look-alike-contact warning is NOT produced here; it stays in
  * ./contacts.ts and the send screens' RecipientContactNotice.
@@ -641,17 +648,17 @@ export interface PinnedBridgeContract {
 }
 
 /**
- * Every bridge contract the card names: Circle's TokenMessengerV2 on each
- * test network the engine's CCTP tables serve (the spender of the approval
- * and the target of the burn). Built from the engine's pinned tables.
+ * Every bridge contract the card names, on each test network the engine's
+ * CCTP tables serve: Circle's TokenMessengerV2 (the spender of the approval
+ * and the target of the burn) and Circle's MessageTransmitterV2 (the target
+ * of the mint, pass p23-mint finding 2). Built from the engine's pinned
+ * tables.
  */
 export function pinnedBridgeContracts(): PinnedBridgeContract[] {
-  return Object.keys(CCTP_V2_TESTNET_DOMAINS).map((id) => ({
-    chain: `eip155:${id}`,
-    address: CCTP_V2_TESTNET.tokenMessengerV2,
-    operator: 'Circle' as const,
-    name: 'TokenMessengerV2',
-  }));
+  return Object.keys(CCTP_V2_TESTNET_DOMAINS).flatMap((id) => [
+    { chain: `eip155:${id}`, address: CCTP_V2_TESTNET.tokenMessengerV2, operator: 'Circle' as const, name: 'TokenMessengerV2' },
+    { chain: `eip155:${id}`, address: CCTP_V2_TESTNET.messageTransmitterV2, operator: 'Circle' as const, name: 'MessageTransmitterV2' },
+  ]);
 }
 
 /** The pinned bridge contract at exactly `address` on `chainCaip2`, or null (all 40 hex digits, that chain only). */
@@ -745,8 +752,8 @@ export interface PinnedSpenderApproval {
  * these must hold, otherwise the card keeps describing the contract `to`:
  *  - the calldata is exactly approve(spender, amount) (selector plus two
  *    words, a clean address word);
- *  - the spender is a bridge contract the wallet pins on THIS chain
- *    (bridgeContractAt);
+ *  - the spender is Circle's TokenMessengerV2 as the wallet pins it on THIS
+ *    chain (bridgeContractAt), or ENS's pinned ETHRegistrar;
  *  - `to` is one of `tokens` (tracked plus known on the active chain), or
  *    Circle's USDC that the CCTP table pins on this chain.
  * Whether `to` holds code is checked separately (gatherRiskFacts).
@@ -766,7 +773,10 @@ export function pinnedSpenderApprovalTarget(
   // finding 5: the handle's exact approval and the zero approval that
   // removes it); no other ENS contract takes tokens.
   const ens = ensContractAt(chainCaip2, spenderAddress);
-  const spender: PinnedSpender | null = bridgeContractAt(chainCaip2, spenderAddress) ?? (ens?.name === 'ETHRegistrar' ? ens : null);
+  // Of the bridge contracts only TokenMessengerV2 takes tokens (the burn);
+  // MessageTransmitterV2 only receives the mint call (pass p23-mint).
+  const bridge = bridgeContractAt(chainCaip2, spenderAddress);
+  const spender: PinnedSpender | null = (bridge?.name === 'TokenMessengerV2' ? bridge : null) ?? (ens?.name === 'ETHRegistrar' ? ens : null);
   if (!spender) return null;
   const amount = BigInt('0x' + hex.slice(74));
   const lower = to.toLowerCase();
@@ -1140,7 +1150,7 @@ export function computeRiskLines(facts: RiskFacts): RiskLine[] {
       subject: facts.to,
     });
   } else if (facts.bridgeContract) {
-    // A pinned bridge contract on this chain (Circle's TokenMessengerV2).
+    // A pinned bridge contract on this chain (Circle's TokenMessengerV2 or MessageTransmitterV2).
     lines.push({
       type: 'recipient-class',
       tone: 'notice',

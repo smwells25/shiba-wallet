@@ -70,6 +70,8 @@ import {
   bridgeConfirmModel,
   bridgeMintBlocker,
   bridgeMintCall,
+  bridgeMintCallLine,
+  bridgeMintCallSpoken,
   bridgeMintPromptTitle,
   bridgeNeedsApproval,
   defaultBridgeAsset,
@@ -1361,6 +1363,7 @@ function MintPanel({
     };
   }, [onDestination, fromAddress, balanceUrl]);
   const blocker = bridgeMintBlocker(activeCaip2, record, balance, symbol);
+  const mintCallLine = bridgeMintCallLine(record);
   if (blocker) return <BlockerWithSwitch text={blocker} activeCaip2={activeCaip2} record={record} onSwitchNetwork={onSwitchNetwork} />;
   const prepare = async () => {
     setError(null);
@@ -1401,7 +1404,33 @@ function MintPanel({
     <View style={styles.content}>
       {quote ? (
         <>
+          {/* The mint confirm has the shape of every other bridge step (pass
+              p23-mint finding 2): the call in words, the fee rows (with the
+              layer 1 data fee on an OP-stack network), the balance-change
+              preview and the pinned-contract risk card. */}
+          {mintCallLine ? (
+            <Text
+              accessibilityLabel={bridgeMintCallSpoken(mintCallLine)}
+              style={[styles.hint, { color: theme.text }]}
+            >
+              {mintCallLine}
+            </Text>
+          ) : null}
           <Row label={t('bridge.row.maxFeeMint', { symbol })} value={`${exact18(quote.q.fee)} ${symbol}`} theme={theme} />
+          {(() => {
+            const mintFees = bridgeSourceFeeLines(quote.q, symbol);
+            return (
+              <>
+                <Text style={[styles.hint, { color: theme.textMuted }]}>{mintFees.worstCase}</Text>
+                {mintFees.rows.map((r) => (
+                  <Row key={r.label} label={r.label} value={r.value} theme={theme} />
+                ))}
+                {mintFees.note ? <Text style={[styles.hint, { color: theme.textMuted }]}>{mintFees.note}</Text> : null}
+              </>
+            );
+          })()}
+          <BalanceChangePreview url={quote.url} request={{ from: fromAddress, to: quote.q.to, value: 0n, ...(quote.q.data ? { data: quote.q.data } : {}) }} />
+          <RiskWarnings url={quote.url} wallet={fromAddress} to={quote.q.to} data={quote.q.data} />
           {quote.q.simulation.ok ? (
             <Text style={[styles.simulationOk, { color: theme.success }]}><T>Pre-flight simulation passed (eth_call).</T></Text>
           ) : (
