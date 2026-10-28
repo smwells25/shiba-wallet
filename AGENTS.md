@@ -14918,3 +14918,132 @@ to the Chairperson at once.
       was cloned into the main checkout's app/node_modules and into
       wt-app's, so the next Metro move and every worktree clone carry it
       (CI installs from the committed lockfile).
+- [x] EMULATOR PASS p23-mint — THE STRANDED 1 USDC MINTED THROUGH THE APP,
+      AND THE 954aca4 / b06c074 BRIDGE FIXES SEEN LIVE (2026-10-27 14:15 –
+      2026-10-28 01:00 UTC, the gap the driver's Opus session limit after
+      step G; Expo Go on emulator 37.1.11, Metro restarted from wt-app at
+      f9e0353 with the engine rebuilt inside it (the dist carries
+      bridge/search.js and the usedNonces selector 0xfeb61724; npm pid
+      47432 / node 47469 on 8081, 1,944 modules); no repo files edited; 4
+      prompts — Unlock, "Mint the bridged USDC on Base Sepolia", Unlock
+      after a force-stop, Unlock after the emulator relaunch — each read
+      from the prompt window; the mint receipt, the balance and the fee
+      arithmetic RE-READ BY THE CTO on base-sepolia-rpc.publicnode.com;
+      nothing from the dev EOA, no script signed or minted anything; the
+      report step by step in the scratchpad p23-mint-pass/REPORT.md with
+      redacted dumps and the TalkBack transcripts; screen protection OFF).
+      BASELINE 14:15 UTC on two RPCs: Base Sepolia Account 1
+      7,599,501,972,279,663 wei nonce 2 USDC 1,500,000; Arbitrum Sepolia
+      197,988,124,906,000 wei nonce 4 USDC 0; usedNonces(0xd402ca89…f86b)
+      0. (A) PASS — with no tap, on Arbitrum Sepolia the stored record
+      (burn 0xaeae0e5b…1072 of 2026-10-26, 26 hours old, about 6× the old
+      block cap) reads "Attested: waiting for the mint on Base Sepolia" /
+      "Attested. The USDC can now be minted on Base Sepolia." with the
+      blocker sentence ending in the "Switch to Base Sepolia" button; the
+      old "sent too long ago" refusal is gone; "Check now" leaves it
+      unchanged; TalkBack (the level written in place, SELinux context
+      kept) reads the "Through…" line and the blocker with the short
+      address 0x772e…F44F and the button exactly "Switch to Base Sepolia.
+      Button. Makes Base Sepolia the active test network, as Settings →
+      Developer does; this screen stays open"; 75 s idle in the attested
+      state: 33 content-change events, every one nodeLiveRegion 0 and no
+      speech — the b06c074 live-region fix holds in the state p23-cctp-
+      recheck could not reach. (B) PASS — the button keeps the Bridge
+      screen open on Base Sepolia with "✓ USDC", the three destination
+      chips, "Amount, for example 1" and "Mint on Base Sepolia" in the
+      panel. (C) THE MINT — PASS: the confirm shows "Max network fee for
+      the mint (paid in test ETH) 0.000003492202563335 test ETH",
+      "Pre-flight simulation passed (eth_call)." and the button; ONE
+      prompt "Mint the bridged USDC on Base Sepolia" (14:39:00 UTC);
+      about 40 s later "Delivered on Base Sepolia" with the receiving
+      transaction; tx
+      0x7769768e58e2a6a4461824a94db58da49a5c39153c77ddda23bd7a8ce5fb56d7,
+      Base Sepolia block 50950426 (block hash 0x4efa6e35…8b24 identical on
+      publicnode and sepolia.base.org), status 0x1, receiveMessage
+      0x57ecfd28 to MessageTransmitterV2 0xE737…E275, gasUsed 154,152 at
+      6,000,000 wei, l1Fee 1,401,190,869,572 wei, logs Mint / Transfer 0x0
+      → Account 1 1,000,000 / MintAndWithdraw (Account 1, 1,000,000, fee
+      0) / MessageReceived (source domain 3, nonce 0xd402ca89…f86b);
+      usedNonces 0 → 1; USDC 1,500,000 → 2,500,000; nonce 2 → 3; ETH
+      7,599,501,972,279,663 → 7,597,175,869,410,091 = −(154,152 ×
+      6,000,000 + 1,401,190,869,572) EXACTLY, 66.6% of the displayed worst
+      case. THE FIRST CCTP MINT THROUGH THE APP: with the p23-cctp burn,
+      a whole Arbitrum Sepolia → Base Sepolia USDC transfer has now been
+      sent through the Bridge screen (the burn 2026-10-26, the mint
+      2026-10-27 after the fix), beside the two script legs of BRIDGING
+      §17. (D) PASS — after a force-stop and relaunch the record reads
+      Delivered on Base and on Arbitrum Sepolia; Home on Base shows 2.5
+      USDC. (E) PASS — the Bridge link on Base, Arbitrum and Ethereum
+      Sepolia, none on Hoodi or mainnet, the mainnet readiness row
+      "Bridging between networks — Test networks only" with its reason.
+      (F) PASS — a Base → Arbitrum 0.1 USDC review to the regular account
+      shows "Circle's USDC fee paymaster cannot pay for the first mint…"
+      (Account 1 holds 0 USDC on Arbitrum), the same review to "Your
+      smart account" shows no such sentence (the Kernel 0xD31c…D8FA holds
+      745,441 USDC base units there, two RPCs); nothing signed. (G) PASS
+      — the approval step's risk card is the single pinned line "This
+      approves Circle's TokenMessengerV2 on Base Sepolia (0x8FE6…2DAA),
+      pinned by this wallet from Circle's published test-network
+      addresses, to take USDC from this account through its token contract
+      0x036C…CF7e." (full addresses on screen), no generic lines; Back,
+      nothing signed. (H) PASS for the live region — 75 s idle on the
+      Delivered record, 5 events, no speech; the "Through…" line short.
+      (I) PASS — the end state below. FINDINGS (app; fix slice with the
+      item-9 refresh or the next Bridge slice): (1) ACCESSIBILITY — the
+      Delivered sentence has no short-address version, so TalkBack speaks
+      the full 42-character address plus the 64-hex nonce and the 64-hex
+      transaction hash; (2) DESIGN GAP — the mint confirm (BridgeScreen.tsx
+      1401–1410) is only the fee row, the simulation line and the button:
+      no call description, no balance-change preview, no risk card, no
+      separate layer-1 fee row, while every other bridge step has a
+      preview and the pinned risk card; (3) COPY — the mainnet readiness
+      reason still says the CCTP transfers were sent "by script" although
+      a burn and now its mint went through the app; (4) MINOR — the
+      Delivered record shows the same hash twice ("Receiving transaction"
+      and "Mint transaction sent from this wallet"); (5) "(checking…)" was
+      never observed on screen or as a stop. EMULATOR FINDINGS (for the
+      Chairperson and the standing rules): (6) THE GRACEFUL CLOSE OF THIS
+      AVD IS KILLED DURING THE SNAPSHOT SAVE — the toolbar Close at
+      00:52:43 UTC ended with the emulator's own lines "Wait for emulator
+      (pid 36709) 20 seconds to shutdown gracefully before kill…
+      ANDROID_EMULATOR_WAIT_TIME_BEFORE_KILL" and "zsh: killed emulator
+      -avd shiba …", and the Terminal history shows the earlier close
+      logged "Saving snapshot 'default_boot' using 20030 ms" then
+      "killed"; snapshots/default_boot is now TRUNCATED (ram.bin 8,388,616
+      bytes, was 653,005,971; textures.bin 0 bytes; snapshot.pb still of
+      2026-10-26 00:02) — so the save takes longer than the launcher's
+      20-second grace period; the emulator's own suggestion is the
+      environment variable it names (its exact semantics unverified by the
+      CTO — the build slice reads the emulator's help text before setting
+      it); UNTIL A SAVE COMPLETES EVERY LAUNCH STAYS -no-snapshot-load;
+      (7) the emulator log says "Selected GPU option 'angle_indirect' is
+      not valid, switching to 'auto' mode" for this and earlier sessions
+      (the agent's reading of the emulator's Terminal output, not re-read
+      by the CTO) — the window the Chairperson confirmed visible on
+      2026-10-14 was therefore rendered by 'auto', not ANGLE; the launch
+      command is kept unchanged because the visible window was confirmed
+      with exactly it, and the standing rule's "ANGLE (Metal)" premise is
+      corrected to "the command that was confirmed visible"; (8) qemu
+      36709 sat demoted at PRI 4 at 14:14 UTC although caffeinate 36943
+      was running (brought forward by hand; the new qemu 98133 read PRI 55
+      with caffeinate 98248 at the CTO's check) — caffeinate alone does
+      not prevent the demotion when the window is occluded, so the
+      keep-front rule stands beside it. The relaunch used the last
+      known-good command with the PATH export (` ; export
+      PATH=$HOME/Library/Android/sdk/emulator:$PATH; emulator -avd shiba
+      -gpu angle_indirect -no-snapshot-load` — a bare `emulator` was
+      "command not found" in a fresh tab), cold boot 75 s, the keyguard
+      cleared in one adb command, `adb reverse` re-added, Expo Go unlocked
+      with the fingerprint. DRIVING SLIPS: two Settings walks ran past the
+      tool's limit when dumps slowed to 30–45 s and were stopped at once
+      (no Danger-zone text, nothing tapped). END STATE: Expo Go on Home,
+      Ethereum Sepolia, Account 1, light mode, protection OFF, TalkBack
+      OFF (level 6 in place; TalkBack rewrote the file itself, inode
+      74388, context kept), IME ADBKeyboard; /sdcard/Download empty; Metro
+      47432 / 47469 at f9e0353 with `adb reverse` in place; qemu 98133 and
+      caffeinate 98248 running with the window in place; the quick-boot
+      snapshot truncated. FUNDS: Base Sepolia Account 1
+      7,597,175,869,410,091 wei, nonce 3, 2,500,000 USDC; Arbitrum Sepolia
+      unchanged; the dev EOA untouched. FEATURE 35: USDC through CCTP V2
+      is now proven live in-app end to end (burn, attestation, mint) —
+      the tally at the item-9 refresh.
