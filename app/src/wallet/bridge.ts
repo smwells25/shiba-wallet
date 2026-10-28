@@ -17,6 +17,7 @@ import {
   STARGATE_RETRY_RECEIVE_TOKEN_SELECTOR,
   STARGATE_V2_TESTNET_NATIVE_POOLS,
   addressToBytes32,
+  checksumAddress,
   createBridgeRegistry,
   createCctpV2Provider,
   createLayerZeroOftProvider,
@@ -72,6 +73,7 @@ import { isEndpointFailure, sanitizeEndpointMessage } from '../config/endpoint-p
 // rendered; the engine's own sentences (trust statements, time sources,
 // adapter details, fee descriptions, notes) stay as the engine wrote them.
 import { localize, t } from '../i18n/index.ts';
+import { spokenShortAddress } from '../a11y.ts';
 
 /**
  * Bridge glue (feature 35, phase 21 item 1, the in-app slice). The
@@ -2588,6 +2590,103 @@ export async function prepareBridgeMint(url: string, from: string, record: Bridg
 /** The device prompt for the mint. */
 export function bridgeMintPromptTitle(record: Pick<BridgeTransferRecord, 'destinationLabel'>): string {
   return `Mint the bridged USDC on ${record.destinationLabel}`;
+}
+
+/**
+ * The mint call in plain words, for its confirm (pass p23-mint finding 2),
+ * or null when there is no checked mint call (bridgeMintCall). Read from
+ * the call itself: receiveMessage(message, attestation) on Circle's pinned
+ * MessageTransmitterV2, the message's nonce, its burn body's recipient and
+ * amount (the amount minted is the burned amount less the fee Circle
+ * executed — the engine's delivered rule in bridge/cctp-v2.ts, `want =
+ * transfer.amountIn - a.body.feeExecuted`, and TokenMessengerV2.sol 373–377
+ * at circlefin/evm-cctp-contracts 63ab1f0a as the phase 23 item 4 record
+ * cites it; the adapter accepts only a fee of 0), and the number of 65-byte
+ * signatures in the attestation. The recipient and the amount are inside
+ * the attested message, which the signatures cover, so whoever sends the
+ * mint cannot change them (a changed byte is refused by the contract as
+ * "Invalid signature: not attester", docs/BRIDGING.md section 17).
+ */
+export function bridgeMintCallLine(
+  record: Pick<BridgeTransferRecord, 'status' | 'providerId' | 'attested' | 'destinationLabel'>,
+): string | null {
+  const call = bridgeMintCall(record);
+  const attested = record.status?.attestation ?? record.attested;
+  if (!call || !attested) return null;
+  let decoded: ReturnType<typeof decodeCctpBurnMessage>;
+  try {
+    decoded = decodeCctpBurnMessage(attested.message);
+  } catch {
+    return null;
+  }
+  const signatures = (attested.attestation.length - 2) / 130;
+  if (!Number.isInteger(signatures) || signatures < 1) return null;
+  const params = {
+    destination: record.destinationLabel,
+    contract: CCTP_V2_TESTNET.messageTransmitterV2,
+    nonce: decoded.nonce,
+    count: String(signatures),
+    amount: exactAsset(decoded.body.amount - decoded.body.feeExecuted, 'usdc'),
+    recipient: checksumAddress('0x' + decoded.body.mintRecipient.slice(-40), 'mint recipient'),
+  };
+  return signatures === 1 ? t('bridge.mint.callOne', params) : t('bridge.mint.call', params);
+}
+
+/**
+ * What a screen reader says for a line on a transfer's record or its mint
+ * confirm (pass p23-mint finding 1): every 64-hex value (a CCTP nonce, a
+ * LayerZero GUID, a transaction hash) as its first six and last four
+ * characters ("0x1234…abcd", the form handle.ts spokenTxId uses), and every
+ * address short ("0x772e…F44F", a11y.ts spokenShortAddress), except the
+ * addresses in `keepFull` (case-insensitive), which stay whole — a pinned
+ * contract on a confirm is read in full on purpose (the rule since pass
+ * p20d). Longer hex runs (a message, an attestation) are left as they are.
+ * The visible text is unchanged.
+ */
+export function bridgeSpokenText(text: string, keepFull: readonly string[] = []): string {
+  const keep = new Set(keepFull.map((a) => a.toLowerCase()));
+  return text
+    .replace(/\b0x[0-9a-fA-F]{64}\b/g, (h) => `${h.slice(0, 6)}…${h.slice(-4)}`)
+    .replace(/\b0x[0-9a-fA-F]{40}\b/g, (a) => (keep.has(a.toLowerCase()) ? a : spokenShortAddress(a)));
+}
+
+/**
+ * The mint call line as a screen reader says it: Circle's pinned
+ * MessageTransmitterV2 in full (a pinned contract on a confirm), the
+ * recipient and the nonce short.
+ */
+export function bridgeMintCallSpoken(line: string): string {
+  return bridgeSpokenText(line, [CCTP_V2_TESTNET.messageTransmitterV2]);
+}
+
+/** One transaction line under a transfer's status: its label, the hash shown, and what a screen reader says. */
+export interface BridgeRecordTxLine {
+  label: string;
+  hash: string;
+  spoken: string;
+}
+
+/**
+ * The receiving-side transaction lines of a transfer's record (pass p23-mint
+ * finding 4). When the receiving transaction the chain shows IS the mint (or
+ * the Stargate delivery) this wallet sent, one line says both facts; when
+ * they differ — someone else's mint or delivery was included — both lines
+ * are kept, as before.
+ */
+export function bridgeRecordDestinationLines(
+  record: Pick<BridgeTransferRecord, 'status' | 'retryTxHash' | 'route'>,
+): BridgeRecordTxLine[] {
+  const usdc = routeAsset(record.route) === 'usdc';
+  const received = record.status?.destinationTxHash ?? null;
+  const sent = record.retryTxHash;
+  const line = (label: string, hash: string): BridgeRecordTxLine => ({ label, hash, spoken: bridgeSpokenText(hash) });
+  if (received && sent && received.toLowerCase() === sent.toLowerCase()) {
+    return [line(usdc ? t('bridge.record.receivingMintSent') : t('bridge.record.receivingDeliverySent'), received)];
+  }
+  const lines: BridgeRecordTxLine[] = [];
+  if (received) lines.push(line(t('bridge.record.receivingTx'), received));
+  if (sent) lines.push(line(usdc ? t('bridge.record.mintSent') : t('bridge.record.deliverySent'), sent));
+  return lines;
 }
 
 /**

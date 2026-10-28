@@ -34,7 +34,7 @@ import { dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Interface, Transaction, id as ethersId, zeroPadValue, getAddress } from 'ethers';
 import { evmKeyProvider, mnemonicToSeed } from '@shiba-wallet/core';
-import { CCTP_DEPOSIT_FOR_BURN_SELECTOR, CCTP_V2_TESTNET, CCTP_V2_TESTNET_USDC, ENS_V2_SEPOLIA, ENS_V2_SEPOLIA_USDC, LIDO_DEPLOYMENTS, MAX_UINT256, ROCKET_POOL_DEPLOYMENTS, STAKING_SELECTORS, ensOwnedResolverSalt, predictVerifiableProxyAddress, rocketContractAddressKey, toHex } from '@shiba-wallet/chains-evm';
+import { CCTP_DEPOSIT_FOR_BURN_SELECTOR, CCTP_RECEIVE_MESSAGE_SELECTOR, CCTP_V2_TESTNET, CCTP_V2_TESTNET_USDC, ENS_V2_SEPOLIA, ENS_V2_SEPOLIA_USDC, LIDO_DEPLOYMENTS, MAX_UINT256, ROCKET_POOL_DEPLOYMENTS, STAKING_SELECTORS, ensOwnedResolverSalt, predictVerifiableProxyAddress, rocketContractAddressKey, toHex } from '@shiba-wallet/chains-evm';
 import {
   APPROVAL_WINDOW_BLOCKS,
   USDT_MAINNET,
@@ -1271,10 +1271,16 @@ console.log('pinned bridge contracts on the risk card (pass p23-cctp finding 4):
   // The address as docs/BRIDGING.md section 17 and Circle's testnet table list it, pinned here independently.
   check('the engine table holds Circle’s documented TokenMessengerV2 and Arbitrum Sepolia USDC',
     TM === '0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA' && ARB_USDC === '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d');
+  const MT = CCTP_V2_TESTNET.messageTransmitterV2;
+  check('the engine table holds Circle’s documented MessageTransmitterV2 (pass p23-mint: the mint’s target)', MT === '0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275');
   const all = pinnedBridgeContracts();
-  check('four pinned bridge contracts: TokenMessengerV2 on Ethereum, OP, Arbitrum and Base Sepolia, none on mainnet',
-    all.length === 4 && all.every((c) => c.address === TM && c.name === 'TokenMessengerV2') &&
-      all.map((c) => c.chain).sort().join() === ['eip155:11155111', 'eip155:11155420', 'eip155:421614', 'eip155:84532'].sort().join() && !all.some((c) => c.chain === MAINNET));
+  const FOUR = ['eip155:11155111', 'eip155:11155420', 'eip155:421614', 'eip155:84532'].sort().join();
+  check('eight pinned bridge contracts: TokenMessengerV2 and MessageTransmitterV2 (pass p23-mint) on Ethereum, OP, Arbitrum and Base Sepolia, none on mainnet',
+    all.length === 8 &&
+      all.filter((c) => c.name === 'TokenMessengerV2').every((c) => c.address === TM) &&
+      all.filter((c) => c.name === 'MessageTransmitterV2').every((c) => c.address === MT) &&
+      all.filter((c) => c.name === 'TokenMessengerV2').map((c) => c.chain).sort().join() === FOUR &&
+      all.filter((c) => c.name === 'MessageTransmitterV2').map((c) => c.chain).sort().join() === FOUR && !all.some((c) => c.chain === MAINNET));
   // A look-alike: the same first 39 hex digits, the last one changed (lower case, so ethers takes it unchecksummed).
   const tmLookAlike = (TM.slice(0, -1) + (TM.slice(-1).toLowerCase() === 'a' ? 'b' : 'a')).toLowerCase();
   check('bridgeContractAt: exact pair only (lower case matches; a look-alike, mainnet and a malformed address do not)',
@@ -1284,13 +1290,20 @@ console.log('pinned bridge contracts on the risk card (pass p23-cctp finding 4):
   check('the burn line (exact)', bridgeContractText(bridgeContractAt(ARB, TM)) === BURN_LINE);
   const APPROVE_LINE = `This approves Circle’s TokenMessengerV2 on Arbitrum Sepolia (${TM}), pinned by this wallet from Circle’s published test-network addresses, to take USDC from this account through its token contract ${ARB_USDC}.`;
   check('the approval line (exact)', bridgeApprovalText({ contract: ARB_USDC, symbol: 'USDC', spender: bridgeContractAt(ARB, TM) }) === APPROVE_LINE);
+  const MINT_LINE = `This transaction goes to Circle’s MessageTransmitterV2 on Arbitrum Sepolia (${MT}), pinned by this wallet from Circle’s published test-network addresses.`;
+  check('the mint line (exact, pass p23-mint)', bridgeContractAt(ARB, MT) !== null && bridgeContractText(bridgeContractAt(ARB, MT)) === MINT_LINE);
+  check('…and on Base Sepolia (the receiving network of the live mint), exact',
+    bridgeContractAt('eip155:84532', MT) !== null && bridgeContractText(bridgeContractAt('eip155:84532', MT)) === `This transaction goes to Circle’s MessageTransmitterV2 on Base Sepolia (${MT}), pinned by this wallet from Circle’s published test-network addresses.`);
+  const mtLookAlike = (MT.slice(0, -1) + (MT.slice(-1).toLowerCase() === 'a' ? 'b' : 'a')).toLowerCase();
+  check('bridgeContractAt for MessageTransmitterV2: exact pair only (a look-alike one digit off and mainnet do not)',
+    bridgeContractAt(ARB, MT)?.name === 'MessageTransmitterV2' && bridgeContractAt(ARB, mtLookAlike) === null && bridgeContractAt(MAINNET, MT) === null);
 
   // The card over the fake node: every address holds code deployed 150 blocks
   // ago (a "new contract" by the threshold), so the generic path WOULD warn.
   node = defaultNode();
   node.chainId = '0x66eee';
   const OTHER_TOKEN = '0x' + '6b'.repeat(20);
-  for (const a of [TM, tmLookAlike, ARB_USDC, OTHER_TOKEN]) {
+  for (const a of [TM, tmLookAlike, MT, mtLookAlike, ARB_USDC, OTHER_TOKEN]) {
     node.codes[a.toLowerCase()] = '0x6080604052';
     node.deployedAt[a.toLowerCase()] = HEAD - 150n;
   }
@@ -1303,6 +1316,19 @@ console.log('pinned bridge contracts on the risk card (pass p23-cctp finding 4):
   const burn = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: TM, data: burnData, chainCaip2: ARB, trackedTokens: arbKnown, loadOwnMultisigs: null }));
   check('the burn: exactly one line naming Circle’s pinned TokenMessengerV2', burn.length === 1 && burn[0].text === BURN_LINE && burn[0].tone === 'notice', burn.map((l) => l.text).join(' | '));
   check('…no "goes to a contract", no age line, no first-interaction line, no search', !generic(burn, TM) && !calls.some((c) => c.method === 'eth_getLogs'));
+  // The mint (pass p23-mint finding 2): receiveMessage(message, attestation) to MessageTransmitterV2.
+  const mintData = CCTP_RECEIVE_MESSAGE_SELECTOR + '00'.repeat(32 * 4);
+  calls = [];
+  const mintCard = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: MT, data: mintData, chainCaip2: ARB, trackedTokens: arbKnown, loadOwnMultisigs: null }));
+  check('the mint: exactly one line naming Circle’s pinned MessageTransmitterV2 (pass p23-mint)', mintCard.length === 1 && mintCard[0].text === MINT_LINE && mintCard[0].tone === 'notice', mintCard.map((l) => l.text).join(' | '));
+  check('…no "goes to a contract", no age line, no first-interaction line, no search', !generic(mintCard, MT) && !calls.some((c) => c.method === 'eth_getLogs'));
+  const mintLookAlike = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: mtLookAlike, data: mintData, chainCaip2: ARB, trackedTokens: arbKnown, loadOwnMultisigs: null }));
+  check('control: the mint call to a MessageTransmitterV2 LOOK-ALIKE (one digit off) keeps the generic lines and no pinned line',
+    generic(mintLookAlike, mtLookAlike) && !mintLookAlike.some((l) => /pinned by this wallet/.test(l.text)), mintLookAlike.map((l) => l.text).join(' | '));
+  const approveMt = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: ARB_USDC, data: approveTo(MT), chainCaip2: ARB, trackedTokens: arbKnown, loadOwnMultisigs: null }));
+  check('control: approve(MessageTransmitterV2) on USDC is NOT described by the spender (it takes no tokens): the generic lines, no pinned line',
+    generic(approveMt, ARB_USDC) && !approveMt.some((l) => /pinned by this wallet/.test(l.text)) && pinnedSpenderApprovalTarget(ARB_USDC, approveTo(MT), ARB, []) === null,
+    approveMt.map((l) => l.text).join(' | '));
   calls = [];
   const approve = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: ARB_USDC, data: approveTo(TM), chainCaip2: ARB, trackedTokens: arbKnown, loadOwnMultisigs: null }));
   check('the approval: the card describes the SPENDER (one line), never the USDC contract', approve.length === 1 && approve[0].text === APPROVE_LINE, approve.map((l) => l.text).join(' | '));
@@ -1360,6 +1386,18 @@ console.log('pinned bridge contracts on the risk card (pass p23-cctp finding 4):
     'return pinnedBridgeContracts().find((c) => c.address.toLowerCase() === lower) ?? null;',
   );
   check('MUTANT (chain not compared for a bridge contract) is caught', mChain.bridgeContractAt(MAINNET, TM) !== null && bridgeContractAt(MAINNET, TM) === null);
+  const mNoMt = await importRiskMutant(
+    "    { chain: `eip155:${id}`, address: CCTP_V2_TESTNET.messageTransmitterV2, operator: 'Circle' as const, name: 'MessageTransmitterV2' },\n",
+    '',
+  );
+  const mNoMtLines = mNoMt.computeRiskLines(await mNoMt.gatherRiskFacts({ transport, url: RPC, wallet: ME, to: MT, data: mintData, chainCaip2: ARB, trackedTokens: arbKnown, loadOwnMultisigs: null }));
+  check('MUTANT (MessageTransmitterV2 not pinned) is caught: the mint card is generic again', generic(mNoMtLines, MT) && !mNoMtLines.some((l) => l.text === MINT_LINE));
+  const mAnySpender = await importRiskMutant(
+    "  const spender: PinnedSpender | null = (bridge?.name === 'TokenMessengerV2' ? bridge : null) ?? (ens?.name === 'ETHRegistrar' ? ens : null);",
+    "  const spender: PinnedSpender | null = bridge ?? (ens?.name === 'ETHRegistrar' ? ens : null);",
+  );
+  check('MUTANT (any pinned bridge contract accepted as a spender) is caught: approve(MessageTransmitterV2) would get a spender line',
+    mAnySpender.pinnedSpenderApprovalTarget(ARB_USDC, approveTo(MT), ARB, []) !== null);
 }
 
 console.log('pinned ENS contracts on the risk card (pass p23-handle finding 5):');

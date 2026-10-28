@@ -10,6 +10,8 @@ import { useI18n } from '../i18n/useI18n';
 import {
   BRIDGE_FEE_BEFORE_QUOTE,
   bridgeLiveStatusText,
+  bridgeRecordDestinationLines,
+  bridgeSpokenText,
   bridgeStatusSentence,
   exactAsset,
   routeAsset,
@@ -234,6 +236,9 @@ export function TransferStatusCard({
       : t('bridge.record.through', { provider: record.providerLabel, recipient: record.recipient, time: sentTime });
   const assetName = asset === 'usdc' ? 'USDC' : symbol;
   const failed = record.status?.state === 'failed';
+  const statusSentence = bridgeStatusSentence(record);
+  const lastCheckFailed = record.status && record.checkError ? t('bridge.record.lastCheckFailed', { error: localize(record.checkError) }) : null;
+  const sendingText = record.sourceTxHash ?? (record.userOpHash ? t('bridge.record.notKnownUserOp', { hash: record.userOpHash }) : tx('not known yet'));
   return (
     <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
       <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>
@@ -248,33 +253,26 @@ export function TransferStatusCard({
         </Text>
         {checking ? <Text style={[styles.body, { color: theme.textMuted }]}><T>(checking…)</T></Text> : null}
       </View>
-      <Text style={[styles.body, { color: theme.text }]}>{bridgeStatusSentence(record)}</Text>
-      {record.status && record.checkError ? (
-        <Text style={[styles.body, { color: theme.textMuted }]}>{t('bridge.record.lastCheckFailed', { error: localize(record.checkError) })}</Text>
+      {/* Visible text unchanged; the spoken form shortens every address and
+          every 64-hex nonce, GUID or hash (pass p23-mint finding 1). */}
+      <Text accessibilityLabel={bridgeSpokenText(statusSentence)} style={[styles.body, { color: theme.text }]}>{statusSentence}</Text>
+      {lastCheckFailed ? (
+        <Text accessibilityLabel={bridgeSpokenText(lastCheckFailed)} style={[styles.body, { color: theme.textMuted }]}>{lastCheckFailed}</Text>
       ) : null}
       <Text style={[styles.label, { color: theme.textMuted }]}><T>Sending transaction</T></Text>
-      <Text selectable style={[styles.monoText, { color: theme.text }]}>
-        {record.sourceTxHash ?? (record.userOpHash ? t('bridge.record.notKnownUserOp', { hash: record.userOpHash }) : tx('not known yet'))}
+      <Text selectable accessibilityLabel={bridgeSpokenText(sendingText)} style={[styles.monoText, { color: theme.text }]}>
+        {sendingText}
       </Text>
-      {record.status?.destinationTxHash ? (
-        <>
-          <Text style={[styles.label, { color: theme.textMuted }]}><T>Receiving transaction</T></Text>
-          <Text selectable style={[styles.monoText, { color: theme.text }]}>
-            {record.status.destinationTxHash}
+      {/* One line when the receiving transaction is the mint or delivery this
+          wallet sent, two when they differ (pass p23-mint finding 4). */}
+      {bridgeRecordDestinationLines(record).map((line) => (
+        <React.Fragment key={line.label}>
+          <Text style={[styles.label, { color: theme.textMuted }]}>{line.label}</Text>
+          <Text selectable accessibilityLabel={line.spoken} style={[styles.monoText, { color: theme.text }]}>
+            {line.hash}
           </Text>
-        </>
-      ) : null}
-      {record.retryTxHash ? (
-        <>
-          <Text style={[styles.label, { color: theme.textMuted }]}>
-            {asset === 'usdc' ? tx('Mint transaction sent from this wallet') : tx('Delivery transaction sent from this wallet')}
-
-          </Text>
-          <Text selectable style={[styles.monoText, { color: theme.text }]}>
-            {record.retryTxHash}
-          </Text>
-        </>
-      ) : null}
+        </React.Fragment>
+      ))}
       {children}
     </View>
   );

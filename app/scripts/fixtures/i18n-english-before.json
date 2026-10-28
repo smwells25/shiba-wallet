@@ -12932,7 +12932,11 @@
   "period.hour",
   "period.hours",
   "period.day",
-  "period.days"
+  "period.days",
+  "bridge.record.receivingMintSent",
+  "bridge.record.receivingDeliverySent",
+  "bridge.mint.call",
+  "bridge.mint.callOne"
  ],
  "changed": {
   "activity.note.privacy": {
@@ -12947,8 +12951,8 @@
   },
   "readiness.bridge.reason": {
    "before": "A bridge provider’s contracts and verifiers hold your coins while they move: on the test networks each LayerZero route through Stargate is checked by a single verifier operated by LayerZero Labs, and Stargate’s test pools can be paused by a key whose private part is public. Circle’s USDC transfers would rest on Circle’s own two attesters, and this wallet has not yet sent one. This wallet offers bridging only on test networks, and its bridge path has not been tested as a real build on real phones.",
-   "en": "A bridge provider’s contracts and verifiers hold your coins while they move: on the test networks each LayerZero route through Stargate is checked by a single verifier operated by LayerZero Labs, and Stargate’s test pools can be paused by a key whose private part is public. Circle’s USDC transfers rest on Circle’s own two attesters and on Circle’s power to pause them, refuse addresses and replace the contracts; this wallet has sent two Circle CCTP Standard Transfers on the test networks, by script (Base Sepolia to Arbitrum Sepolia, and Ethereum Sepolia to Base Sepolia). This wallet offers bridging only on test networks, and its bridge path has not been tested as a real build on real phones.",
-   "why": "Phase 23 item 4: Circle CCTP V2 Standard Transfers were sent live on the test networks by script on 2026-10-25 (docs/BRIDGING.md section 17), and the Bridge screen now offers USDC through CCTP, so \"this wallet has not yet sent one\" was no longer true; the reason also names Circle’s power to pause, refuse addresses and replace the contracts."
+   "en": "A bridge provider’s contracts and verifiers hold your coins while they move: on the test networks each LayerZero route through Stargate is checked by a single verifier operated by LayerZero Labs, and Stargate’s test pools can be paused by a key whose private part is public. Circle’s USDC transfers rest on Circle’s own two attesters and on Circle’s power to pause them, refuse addresses and replace the contracts; this wallet has sent Circle CCTP Standard Transfers on the test networks both by script (Base Sepolia to Arbitrum Sepolia, and Ethereum Sepolia to Base Sepolia) and through its own Bridge screen (Arbitrum Sepolia to Base Sepolia: the burn on 2026-10-26 and its mint on 2026-10-27, each sent from the regular account). This wallet offers bridging only on test networks, and its bridge path has not been tested as a real build on real phones.",
+   "why": "Phase 23 item 4: Circle CCTP V2 Standard Transfers were sent live on the test networks by script on 2026-10-25 (docs/BRIDGING.md section 17), and the Bridge screen now offers USDC through CCTP, so \"this wallet has not yet sent one\" was no longer true; the reason also names Circle’s power to pause, refuse addresses and replace the contracts. Pass p23-mint: a CCTP burn (Arbitrum Sepolia, 2026-10-26) and its mint (Base Sepolia, 2026-10-27) were then sent through the Bridge screen from the regular account, so the reason no longer says the transfers were sent only by script."
   }
  }
 }

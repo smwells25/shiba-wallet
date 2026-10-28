@@ -470,7 +470,10 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
   // provider (the design document proposed one per provider; the brief for
   // the in-app slice asked for one). Phase 23 item 4: Circle CCTP is offered
   // for USDC since its Standard Transfers were proven live by script on
-  // 2026-10-25 (docs/BRIDGING.md section 17); the reason says so.
+  // 2026-10-25 (docs/BRIDGING.md section 17); the reason says so. Pass
+  // p23-mint: a burn (2026-10-26) and its mint (2026-10-27), Arbitrum
+  // Sepolia to Base Sepolia, were then sent through the Bridge screen from
+  // the regular account; the reason says that too.
   {
     id: 'bridge',
     title: 'Bridging between networks',
@@ -480,9 +483,10 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
       'LayerZero route through Stargate is checked by a single verifier operated by LayerZero Labs, and Stargate’s ' +
       'test pools can be paused by a key whose private part is public. Circle’s USDC transfers rest on Circle’s own ' +
       'two attesters and on Circle’s power to pause them, refuse addresses and replace the contracts; this wallet has ' +
-      'sent two Circle CCTP Standard Transfers on the test networks, by script (Base Sepolia to Arbitrum Sepolia, and ' +
-      'Ethereum Sepolia to Base Sepolia). This wallet offers bridging only on test networks, and its bridge path has ' +
-      'not been tested as a real build on real phones.',
+      'sent Circle CCTP Standard Transfers on the test networks both by script (Base Sepolia to Arbitrum Sepolia, and ' +
+      'Ethereum Sepolia to Base Sepolia) and through its own Bridge screen (Arbitrum Sepolia to Base Sepolia: the burn ' +
+      'on 2026-10-26 and its mint on 2026-10-27, each sent from the regular account). This wallet offers bridging only ' +
+      'on test networks, and its bridge path has not been tested as a real build on real phones.',
     // C1: the Kernel account the smart-account path sends from has no
     // published audit; W1 / W2: the device conditions every send shares (the
     // bridge calls go through the regular send and smart-account paths); W9:

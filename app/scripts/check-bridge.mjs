@@ -60,6 +60,7 @@ import {
   STARGATE_RETRY_RECEIVE_TOKEN_SELECTOR,
   STARGATE_V2_TESTNET_NATIVE_POOLS,
   createLayerZeroOftProvider,
+  encodeReceiveMessage,
   httpTransport,
   oftTimeEstimate,
   toHex,
@@ -120,7 +121,11 @@ import {
   bridgeAssetSendableFrom,
   bridgeMintBlocker,
   bridgeMintCall,
+  bridgeMintCallLine,
+  bridgeMintCallSpoken,
   bridgeMintPromptTitle,
+  bridgeRecordDestinationLines,
+  bridgeSpokenText,
   bridgeNeedsApproval,
   cctpAttestedSentence,
   cctpBurnedSentence,
@@ -1339,8 +1344,8 @@ console.log('check-bridge: the screen, the route gates, Home and the navigator (
     /sendEvm\(sendUrl, signer, eoaQuote, evmChain\.explorerTxBase\)/.test(screen) && /sendAa\(bundle, signer, aaQuote, \{ kind: 'bridge' \}\)/.test(screen) &&
       screen.includes('prepareBridgeSend(ep.url, account.address, p)') && screen.includes('prepareBridgeAa(bundle, account.address, p)'));
   check('the smart account is checked against the bundler’s fee floor before the device prompt', screen.indexOf('checkAaQuoteBeforeApproval(bundle.bundler, aaQuote)') < screen.indexOf("sendAa(bundle, signer, aaQuote, { kind: 'bridge' })"));
-  check('the confirms (regular, the USDC approval step, smart account): the preview (eth_simulateV1; the smart account’s batch), the risk card, the spending notice and the pre-flight result',
-    (screen.match(/<BalanceChangePreview\b/g) ?? []).length === 3 && (screen.match(/<RiskWarnings /g) ?? []).length === 3 && screen.includes('Pre-flight simulation passed (eth_call).') &&
+  check('the confirms (regular, the USDC approval step, smart account, and the mint since pass p23-mint): the preview (eth_simulateV1; the smart account’s batch), the risk card, the spending notice and the pre-flight result',
+    (screen.match(/<BalanceChangePreview\b/g) ?? []).length === 4 && (screen.match(/<RiskWarnings /g) ?? []).length === 4 && screen.includes('Pre-flight simulation passed (eth_call).') &&
       screen.includes('batch={aaQuote.calls.length > 1 ? aaQuote.calls.map((c) => ({ from: aaQuote.sender, to: c.to, value: c.value, data: c.data })) : undefined}'));
   check('the recipient: the regular account, or the smart account only when chosen for USDC on a verified network (both paths pass it with its kind)',
     screen.includes("const recipient = recipientKind === 'smart-account' && smartAddress !== null ? smartAddress : account.address;") &&
@@ -2679,6 +2684,160 @@ console.log('check-bridge: pass p23-cctp-recheck — usedNonces decides the mint
   check('MUTANT (the refusal passed through sanitizeEndpointMessage again) is caught: its second sentence is dropped',
     mc.bridgeCheckErrorText(new mc.BridgeRefusal(BRIDGE_LOG_TOO_OLD_CCTP)) !== BRIDGE_LOG_TOO_OLD_CCTP &&
       !/If the USDC was never minted/.test(mc.bridgeCheckErrorText(new mc.BridgeRefusal(BRIDGE_LOG_TOO_OLD_CCTP))));
+
+  // -------------------------------------------------------------------------
+  // Pass p23-mint (the first CCTP mint through the app): the record's lines
+  // spoken short, the mint confirm shaped like every other bridge step, one
+  // receiving line when it is this wallet's own mint, and the "(checking…)"
+  // mark's lifetime.
+  // -------------------------------------------------------------------------
+  console.log('check-bridge: pass p23-mint — spoken record lines, the mint confirm, one receiving line, the checking mark');
+  const short64 = (h) => `${h.slice(0, 6)}…${h.slice(-4)}`;
+  // (1) Delivered on Base Sepolia by this wallet's mint (the live case: the mint sent from this screen IS the receiving transaction).
+  setLive();
+  chains.get(BASE).usedNonces.add(LIVE_NONCE);
+  chains.get(BASE).logs.push(
+    cctpLog(MT, 'MessageReceived', [A1, 3, LIVE_NONCE, pad(TM), 2000, '0x'], { transactionHash: LIVE_MINT_TX, blockNumber: ethers.toQuantity(lateMint) }),
+    cctpLog(TM, 'MintAndWithdraw', [A1, USDC_AMOUNT, CCTP_V2_TESTNET_USDC[BASE], 0n], { transactionHash: LIVE_MINT_TX, blockNumber: ethers.toQuantity(lateMint) }),
+  );
+  const deliveredRec = await (async () => {
+    const { rec: r } = await loadLive({ retryTxHash: LIVE_MINT_TX });
+    const st = await trackBridgeTransfer(r, readersFor(BASE));
+    updateBridgeTransfer(r.id, trackedPatch(r, st, 1_793_200_000_000));
+    return listBridgeTransfers()[0];
+  })();
+  const deliveredVisible = bridgeStatusSentence(deliveredRec);
+  check('finding 1: the delivered sentence’s VISIBLE text is the engine’s, byte for byte (full nonce, recipient and hash)',
+    deliveredVisible === `Delivered: the receiving network shows MessageReceived for this transfer's message (nonce ${LIVE_NONCE}) and MintAndWithdraw of ${USDC_AMOUNT} base units of USDC to ${A1} in transaction ${LIVE_MINT_TX}.`,
+    deliveredVisible);
+  const deliveredSpoken = bridgeSpokenText(deliveredVisible);
+  check('…its SPOKEN form says the nonce and the hash as their first six and last four characters and the address short (0x772e…F44F)',
+    deliveredSpoken === `Delivered: the receiving network shows MessageReceived for this transfer's message (nonce ${short64(LIVE_NONCE)}) and MintAndWithdraw of ${USDC_AMOUNT} base units of USDC to ${spokenShortAddress(A1)} in transaction ${short64(LIVE_MINT_TX)}.` &&
+      spokenShortAddress(A1) === '0x772e…F44F' && !/0x[0-9a-fA-F]{40}/.test(deliveredSpoken),
+    deliveredSpoken);
+  check('…the 64-hex form is handle.ts spokenTxId’s (the first six characters, "…", the last four), not a third form',
+    source('src/wallet/handle.ts').includes('`${hash.slice(0, 6)}…${hash.slice(-4)}`') && source('src/wallet/bridge.ts').includes('`${h.slice(0, 6)}…${h.slice(-4)}`'));
+  const usedNonceDetail = `Delivered: Circle's MessageTransmitterV2 on the receiving network records this transfer's message (nonce ${LIVE_NONCE}) as used, which happens only when a receiveMessage carrying it succeeds, so the USDC was minted to ${A1}.`;
+  check('…the other tracking sentences that carry a nonce, a GUID or a hash: the usedNonces delivered sentence, the engine’s attested detail, the LayerZero GUID sentence and a UserOperation line, each spoken short',
+    bridgeSpokenText(usedNonceDetail).includes(`(nonce ${short64(LIVE_NONCE)})`) && !bridgeSpokenText(usedNonceDetail).includes(LIVE_NONCE) &&
+      bridgeSpokenText(`Circle attested the burn (nonce ${LIVE_NONCE}). The USDC is minted on the receiving network.`) === `Circle attested the burn (nonce ${short64(LIVE_NONCE)}). The USDC is minted on the receiving network.` &&
+      bridgeSpokenText(lzSt.detail).includes(`(GUID ${short64(GUID)})`) && !bridgeSpokenText(lzSt.detail).includes(GUID) &&
+      bridgeSpokenText(LIVE_BURN_TX) === short64(LIVE_BURN_TX) && bridgeSpokenText(`not known yet (UserOperation ${LIVE_MINT_TX})`) === `not known yet (UserOperation ${short64(LIVE_MINT_TX)})`);
+  check('…longer hex (the 376-byte attested message) and text without hex are left as they are; a kept address stays whole',
+    bridgeSpokenText(LIVE_ATTESTED) === LIVE_ATTESTED && bridgeSpokenText('Attested. The USDC can now be minted on Base Sepolia.') === 'Attested. The USDC can now be minted on Base Sepolia.' &&
+      bridgeSpokenText(`to ${MT} and ${A1}`, [MT.toLowerCase()]) === `to ${MT} and ${spokenShortAddress(A1)}`);
+  const viewsSrc = source('src/screens/BridgeViews.tsx');
+  check('…the record speaks the status sentence, the last-check line and every transaction line through bridgeSpokenText, visible text unchanged',
+    viewsSrc.includes('<Text accessibilityLabel={bridgeSpokenText(statusSentence)} style={[styles.body, { color: theme.text }]}>{statusSentence}</Text>') &&
+      viewsSrc.includes('const statusSentence = bridgeStatusSentence(record);') &&
+      viewsSrc.includes('<Text accessibilityLabel={bridgeSpokenText(lastCheckFailed)} style={[styles.body, { color: theme.textMuted }]}>{lastCheckFailed}</Text>') &&
+      viewsSrc.includes('<Text selectable accessibilityLabel={bridgeSpokenText(sendingText)} style={[styles.monoText, { color: theme.text }]}>') &&
+      viewsSrc.includes('<Text selectable accessibilityLabel={line.spoken} style={[styles.monoText, { color: theme.text }]}>'));
+  const m1 = await bridgeMutant('    .replace(/\\b0x[0-9a-fA-F]{64}\\b/g, (h) => `${h.slice(0, 6)}…${h.slice(-4)}`)\n', '');
+  check('MUTANT (the 64-hex shortening dropped) is caught: the spoken delivered sentence carries the full nonce and hash again',
+    m1.bridgeSpokenText(deliveredVisible).includes(LIVE_NONCE) && m1.bridgeSpokenText(deliveredVisible).includes(LIVE_MINT_TX));
+  const m1b = await bridgeMutant('    .replace(/\\b0x[0-9a-fA-F]{40}\\b/g, (a) => (keep.has(a.toLowerCase()) ? a : spokenShortAddress(a)));', '    ;');
+  check('MUTANT (the address shortening dropped) is caught: the full recipient is spoken again', m1b.bridgeSpokenText(deliveredVisible).includes(A1));
+
+  // (4) One receiving line when it is this wallet's own mint; both lines when they differ.
+  const own = bridgeRecordDestinationLines(deliveredRec);
+  check('finding 4: the receiving transaction IS the mint this wallet sent → ONE line "Receiving transaction (the mint sent from this wallet)" with the hash, spoken short',
+    deliveredRec.status?.destinationTxHash === LIVE_MINT_TX && deliveredRec.retryTxHash === LIVE_MINT_TX && own.length === 1 &&
+      own[0].label === 'Receiving transaction (the mint sent from this wallet)' && own[0].hash === LIVE_MINT_TX && own[0].spoken === short64(LIVE_MINT_TX),
+    JSON.stringify(own));
+  check('…the same when the two hashes differ only in letter case', bridgeRecordDestinationLines({ ...deliveredRec, retryTxHash: LIVE_MINT_TX.toUpperCase().replace('0X', '0x') }).length === 1);
+  const OTHER_MINT = '0x' + '7e'.repeat(32);
+  const two = bridgeRecordDestinationLines({ ...deliveredRec, retryTxHash: OTHER_MINT });
+  check('…someone else’s mint was included (the hashes differ) → both lines as before: "Receiving transaction" and "Mint transaction sent from this wallet"',
+    two.length === 2 && two[0].label === 'Receiving transaction' && two[0].hash === LIVE_MINT_TX && two[1].label === 'Mint transaction sent from this wallet' && two[1].hash === OTHER_MINT,
+    JSON.stringify(two));
+  const nativeRoute = { ...deliveredRec.route, sourceAsset: { kind: 'native', symbol: 'ETH', decimals: 18 } };
+  check('…a Stargate delivery: "Receiving transaction (the delivery sent from this wallet)" when equal, "Delivery transaction sent from this wallet" when not',
+    bridgeRecordDestinationLines({ ...deliveredRec, route: nativeRoute })[0]?.label === 'Receiving transaction (the delivery sent from this wallet)' &&
+      bridgeRecordDestinationLines({ ...deliveredRec, route: nativeRoute, retryTxHash: OTHER_MINT })[1]?.label === 'Delivery transaction sent from this wallet');
+  check('…only a receiving transaction, only the mint sent, or neither: one, one and no line',
+    bridgeRecordDestinationLines({ ...deliveredRec, retryTxHash: null }).map((l) => l.label).join() === 'Receiving transaction' &&
+      bridgeRecordDestinationLines({ ...deliveredRec, status: { ...deliveredRec.status, destinationTxHash: undefined } }).map((l) => l.label).join() === 'Mint transaction sent from this wallet' &&
+      bridgeRecordDestinationLines({ ...deliveredRec, status: null, retryTxHash: null }).length === 0);
+  check('…the record renders these lines (and no longer the two fixed blocks)',
+    viewsSrc.includes('{bridgeRecordDestinationLines(record).map((line) => (') && !viewsSrc.includes('<T>Receiving transaction</T>') && !viewsSrc.includes("tx('Mint transaction sent from this wallet')"));
+  const m4 = await bridgeMutant('  if (received && sent && received.toLowerCase() === sent.toLowerCase()) {', '  if (false) {');
+  check('MUTANT (the duplicate-hash collapse removed) is caught: the same hash is listed twice again', m4.bridgeRecordDestinationLines(deliveredRec).length === 2);
+
+  // (2) The mint confirm: the call in words, the fee rows, the preview and the risk card.
+  setLive();
+  const attestedRec = await (async () => {
+    const { rec: r } = await loadLive();
+    const st = await trackBridgeTransfer(r, readersFor(BASE));
+    updateBridgeTransfer(r.id, trackedPatch(r, st, 1_793_200_000_000));
+    return listBridgeTransfers()[0];
+  })();
+  const MINT_CALL_LINE = `Calls receiveMessage on Circle’s MessageTransmitterV2 on Base Sepolia (${MT}) with the message Circle attested for nonce ${LIVE_NONCE} and Circle’s attestation of it, which holds 2 signatures from Circle’s attesters. It mints 1 USDC to ${A1}: the recipient and the amount are written into the attested message, which those signatures cover, so whoever sends this transaction cannot change them.`;
+  const mintLine = bridgeMintCallLine(attestedRec);
+  check('finding 2: the mint call in words (exact), read from the call: MessageTransmitterV2 in full, the attested nonce, 2 signatures (130 bytes), 1 USDC to the recipient written in the message',
+    bridgeMintCall(attestedRec) !== null && mintLine === MINT_CALL_LINE && EN_TABLE['bridge.mint.call'].includes('{count} signatures'), mintLine);
+  const mintSpoken = bridgeMintCallSpoken(mintLine);
+  check('…spoken: MessageTransmitterV2 in full (a pinned contract on a confirm), the recipient and the nonce short',
+    mintSpoken.includes(`(${MT})`) && mintSpoken.includes(`nonce ${short64(LIVE_NONCE)} `) && mintSpoken.includes(`USDC to ${spokenShortAddress(A1)}:`) && !mintSpoken.includes(A1) && !mintSpoken.includes(LIVE_NONCE), mintSpoken);
+  const oneSig = '0x' + '5a'.repeat(65);
+  const att1 = { ...attestedRec.attested, attestation: oneSig };
+  const rec1 = { ...attestedRec, attested: att1, status: { ...attestedRec.status, attestation: att1, destinationCalls: [{ to: MT, value: 0n, data: encodeReceiveMessage(LIVE_ATTESTED, oneSig) }] } };
+  check('…one 65-byte signature: the singular form (exact)',
+    bridgeMintCall(rec1) !== null && bridgeMintCallLine(rec1) === MINT_CALL_LINE.replace('which holds 2 signatures', 'which holds 1 signature').replace('which those signatures cover', 'which that signature covers'),
+    bridgeMintCallLine(rec1));
+  check('…no line when there is no checked mint call (no status; a LayerZero record)',
+    bridgeMintCallLine({ ...attestedRec, status: null }) === null && bridgeMintCallLine({ ...attestedRec, providerId: LAYERZERO_OFT_PROVIDER_ID }) === null);
+  check('…the prompt title is unchanged (exact)', bridgeMintPromptTitle(attestedRec) === 'Mint the bridged USDC on Base Sepolia');
+  const mintQuote = await prepareBridgeMint(ACTIVE_URL(BASE), A1, attestedRec);
+  const mintFees = bridgeSourceFeeLines(mintQuote, 'test ETH');
+  check('…on Base Sepolia (an OP-stack network, l1DataFee) the mint quote carries the layer 1 data fee and the confirm gets the separate "Layer 1 data fee (estimate)" row',
+    evmProfileByCaip2(caip(BASE))?.l1DataFee === true && mintQuote.opStack !== undefined && mintFees.rows[0]?.label === 'Layer 1 data fee (estimate)' && mintFees.note !== null,
+    JSON.stringify(mintFees.rows));
+  check('…and on a network without a layer 1 data fee (Arbitrum Sepolia’s profile; a quote with no opStack) no such row',
+    evmProfileByCaip2(caip(ARB))?.l1DataFee === false && bridgeSourceFeeLines({ ...mintQuote, opStack: undefined }, 'test ETH').rows.length === 0);
+  const screenAll = source('src/screens/BridgeScreen.tsx');
+  const mintPanelSrc = (src) => src.slice(src.indexOf('function MintPanel('), src.indexOf('function BlockerWithSwitch('));
+  const MINT_PIECES = [
+    'accessibilityLabel={bridgeMintCallSpoken(mintCallLine)}',
+    "<Row label={t('bridge.row.maxFeeMint', { symbol })} value={`${exact18(quote.q.fee)} ${symbol}`} theme={theme} />",
+    'const mintFees = bridgeSourceFeeLines(quote.q, symbol);',
+    '<BalanceChangePreview url={quote.url} request={{ from: fromAddress, to: quote.q.to, value: 0n, ...(quote.q.data ? { data: quote.q.data } : {}) }} />',
+    '<RiskWarnings url={quote.url} wallet={fromAddress} to={quote.q.to} data={quote.q.data} />',
+    '<Text style={[styles.simulationOk, { color: theme.success }]}><T>Pre-flight simulation passed (eth_call).</T></Text>',
+    '<Button title={bridgeMintPromptTitle(record)} onPress={() => void send()} disabled={busy || !quote.q.simulation.ok} />',
+  ];
+  const mintPanelOk = (src) => {
+    const panel = mintPanelSrc(src);
+    const at = MINT_PIECES.map((p) => panel.indexOf(p));
+    return panel.includes('const mintCallLine = bridgeMintCallLine(record);') && at.every((i, k) => i >= 0 && (k === 0 || i > at[k - 1]));
+  };
+  check('…the mint confirm (MintPanel), in this order: the call line spoken short, the fee row (text unchanged), the fee lines with the L1 row, the balance-change preview from the recipient’s regular account, the risk card, the pre-flight line, the button (title unchanged)',
+    mintPanelOk(screenAll));
+  check('MUTANT (the preview not mounted on the mint view) is caught by the source pin',
+    !mintPanelOk(screenAll.replace(MINT_PIECES[3], '')));
+  check('MUTANT (the risk card not mounted on the mint view) is caught by the source pin', !mintPanelOk(screenAll.replace(MINT_PIECES[4], '')));
+  check('MUTANT (the call line moved below the button) is caught by the source pin',
+    !mintPanelOk(screenAll.replace(`              accessibilityLabel={bridgeMintCallSpoken(mintCallLine)}`, '              accessibilityLabel={undefined}').replace(MINT_PIECES[6], `${MINT_PIECES[6]}{/* accessibilityLabel={bridgeMintCallSpoken(mintCallLine)} */}`)));
+
+  // (5) The "(checking…)" mark: shown from before the first await until the finally, and every poll reads the network.
+  const checkFnSrc = screenAll.slice(screenAll.indexOf('async function checkBridgeRecord('), screenAll.indexOf('function useBridgeAaBundle('));
+  check('finding 5: checkBridgeRecord sets the mark before awaiting the tracking and clears it in finally',
+    checkFnSrc.indexOf('busy(record.id, true);') > 0 && checkFnSrc.indexOf('busy(record.id, true);') < checkFnSrc.indexOf('await trackBridgeTransfer(record, readers)') &&
+      /finally \{\s*inFlight\.delete\(record\.id\);\s*busy\(record\.id, false\);/.test(checkFnSrc));
+  setLive();
+  {
+    const { rec: r } = await loadLive();
+    const receiptReads = () => chains.get(ARB).calls.filter((c) => c.method === 'eth_getTransactionReceipt').length;
+    const before = receiptReads();
+    await trackBridgeTransfer(r, readersFor(BASE));
+    const afterFirst = receiptReads();
+    const used1 = chains.get(BASE).calls.filter((c) => c.method === 'eth_call').length;
+    await trackBridgeTransfer(listBridgeTransfers()[0], readersFor(BASE));
+    const afterSecond = receiptReads();
+    const used2 = chains.get(BASE).calls.filter((c) => c.method === 'eth_call').length;
+    check('…an attested transfer’s poll is never answered from a cache: each of two polls reads the burn receipt and usedNonces from the network again (so the mark stays up for at least those round trips)',
+      afterFirst - before >= 1 && afterSecond - afterFirst >= 1 && used1 >= 1 && used2 - used1 >= 1, `${before} ${afterFirst} ${afterSecond} ${used1} ${used2}`);
+  }
   await resetBridgeTransfers();
   resetChains();
 }
