@@ -15522,3 +15522,113 @@ to the Chairperson at once.
       UNVERIFIED (device): the wipe's result, the dialog's length in
       English and Spanish, the Developer line after a runtime dark-mode
       switch, the 'unavailable' log line in a development bundle, iOS.
+- [x] EMULATOR PASS p23-bridge-recheck — THE 881b81e BRIDGE FIXES SEEN
+      LIVE, AND A SECOND WHOLE CCTP TRANSFER THROUGH THE APP (Base Sepolia
+      → Arbitrum Sepolia) (2026-10-28 16:22–17:13 UTC; Expo Go on emulator
+      37.1.11, Metro moved to wt-app at 9fa55da with the engine rebuilt
+      inside it (node 78294 on 8081, 1,943 modules); no repo file edited;
+      4 prompts, each read from the prompt window — Unlock, "Approve
+      exactly 1 USDC for Circle's TokenMessengerV2", "Bridge 1 USDC to
+      Arbitrum Sepolia through Circle CCTP (USDC)", "Mint the bridged
+      USDC on Arbitrum Sepolia"; nothing from the dev EOA; THE CTO
+      RE-READ all three receipts, both balances, usedNonces and Circle's
+      sandbox record read-only on two RPCs per network — every figure
+      below matches; the report step by step in the scratchpad
+      p23-bridge-recheck/REPORT.md with redacted dumps and the chain
+      reads; screen protection OFF). THE RE-CHECK LIST, ALL PASS: (1) the
+      stranded transfer's Delivered record shows ONE receiving line,
+      "Receiving transaction (the mint sent from this wallet)"
+      0x7769…56d7, and TalkBack (level 2 written in place, SELinux context
+      kept) speaks only short forms — 0x772e…F44F, nonce 0xd402…f86b, the
+      hashes 0x7769…56d7 and 0xaeae…1072 — no full address or 64-hex value;
+      (2) the Base Sepolia form opens on "✓ USDC" with three destination
+      chips and "Amount, for example 1", CCTP not checked until tapped;
+      the approval view's risk card is the single pinned TokenMessengerV2
+      spender line, the paymaster sentence shown (Account 1 holds 0 USDC on
+      Arbitrum — correct); approval tx
+      0xf8f3df6dc2df7f63a7722f739d9396941be0ff3f0c23de86d38f9f14a321cdc5,
+      Base block 51419141 (block hash 0xb04954a7…), status 0x1, 55,437 gas
+      at 6,000,000 wei + l1Fee 32,623, one Approval of exactly 1,000,000;
+      the burn confirm's single pinned TokenMessengerV2 line; burn tx
+      0xbf228c57a7113300e3d373fd03b74873c387de1d798cbff44410adf6e583ac69,
+      block 51419841 (16:43:57 UTC; block hash 0xe7f00877…), status 0x1,
+      109,091 gas at 6,000,000 wei + l1Fee 47,736, five logs (Transfer to
+      TokenMinterV2, Burn, Transfer to 0x0, MessageSent, DepositForBurn),
+      the message domain 6 → 3, minFinality 2000, mintRecipient Account 1,
+      1,000,000, maxFee 0, expirationBlock 0; (3) the record read "Burned
+      on Base Sepolia (block 51419841). Waiting for Circle's attestation…"
+      with no tap; Circle's sandbox API "complete" at 17:06:29 UTC (pending
+      at 17:06:09) — 1,332–1,352 s AFTER THE BURN BLOCK, THE SECOND
+      MEASUREMENT ON THIS ROUTE (the first was 996 s); event nonce
+      0x1429fa9075abb41a9a40712ad271d548db610f9bcfd6f7dbba211428ff2df6a6,
+      executed finality 2000, fee 0; then "Attested: waiting for the mint
+      on Arbitrum Sepolia" with the blocker and "Switch to Arbitrum
+      Sepolia"; (4) THE NEW MINT CONFIRM: the switch button kept the
+      screen open and offered "Mint on Arbitrum Sepolia"; the confirm in
+      order — the call line "Calls receiveMessage on Circle's
+      MessageTransmitterV2 on Arbitrum Sepolia (0xE737…E275) with the
+      message Circle attested for nonce 0x1429…f6a6 and Circle's
+      attestation of it, which holds 2 signatures from Circle's
+      attesters. It mints 1 USDC to 0x772e…F44F: …" (spoken in short
+      forms), "MAX NETWORK FEE FOR THE MINT (PAID IN TEST ETH)
+      0.00000695112 test ETH", "Worst case at 0.04 gwei max fee × 173778
+      gas; the actual fee is usually lower." with NO layer-1 row, the
+      preview "You receive 1 USDC", the single risk line "This transaction
+      goes to Circle's MessageTransmitterV2 on Arbitrum Sepolia
+      (0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275), pinned by this wallet
+      from Circle's published test-network addresses.", "Pre-flight
+      simulation passed (eth_call)."; mint tx
+      0x4c71566c2e239e7afe4faf80f681e1e6465514893107bd8f1b84702c3e767993,
+      Arbitrum block 323743324 (17:10:52 UTC; block hash 0x4f579517… on
+      both RPCs), status 0x1, 171,252 of 173,778 gas at 20,000,000 wei,
+      logs Mint / Transfer 0x0 → Account 1 1,000,000 / MintAndWithdraw fee
+      0 / MessageReceived (source domain 6, the nonce); usedNonces 0 → 1
+      on both RPCs; "Delivered on Arbitrum Sepolia" by 17:12:21 with one
+      line "Receiving transaction (the mint sent from this wallet)"
+      0x4c71…7993; (5) mainnet: no Bridge link; the readiness row verbatim
+      as 881b81e wrote it (the "both by script … and through its own
+      Bridge screen" clause); (6) the Settings → Developer navigation-bar
+      line (read from screenshots and the raw dump — uiautomator skips
+      it for its straight quotes): "Navigation bar style: setStyle("dark")
+      succeeded (attempt 1 in this session; "dark" asks for dark buttons,
+      "light" for light ones)." in light mode, setStyle("light") attempt
+      2 after `cmd uimode night yes`, setStyle("dark") attempt 3 after
+      `night no` — the count rises as designed. FUNDS to the wei on both
+      RPCs: Base Sepolia Account 1 7,597,175,869,410,091 →
+      7,596,188,701,329,732 wei (−987,168,080,359 = both gas amounts plus
+      both L1 fees), nonce 3 → 5, USDC 2,500,000 → 1,500,000; Arbitrum
+      Sepolia 197,988,124,906,000 → 194,563,084,906,000 wei (= 171,252 ×
+      20,000,000), nonce 4 → 5, USDC 0 → 1,000,000. FEATURE 35: a whole
+      USDC transfer through CCTP V2 has now been sent through the Bridge
+      screen on each direction of the Base ↔ Arbitrum Sepolia pair.
+      FINDINGS (fix slice dispatched for 2–4; 1 recorded): (1) IN EXPO GO
+      THE NAVIGATION-BAR BUTTON STYLE DOES NOT TAKE EFFECT IN DARK MODE —
+      setStyle("light") reports success but the activity window keeps
+      apr=LIGHT_NAVIGATION_BARS 9 s later and the gesture handle stays
+      dark, while the status-bar flag follows the theme; the same symptom
+      the development build showed in pass p23-build; the cause is still
+      not established (the diagnostic line proves the call is made and
+      resolves; what overrides it afterwards is unknown — neither the
+      development build nor three-button navigation were tried this
+      pass); (2) THE ATTESTATION TOOK ABOUT 22 MINUTES against the
+      screen's "about 17 minutes in the measured runs" and the quote's
+      one measurement of 996 s on this route — the sentences are
+      literally true and now understate the wait; the fix adds the second
+      measurement and words the time as a range; (3) the mint confirm's
+      button reads the prompt title "Mint the bridged USDC on Arbitrum
+      Sepolia" while the panel button reads "Mint on Arbitrum Sepolia",
+      and the confirm has no Back button of its own; (4) the approval view
+      has no "Total (worst case)" row while the burn view has one. NOT
+      VERIFIED: "(checking…)" on screen (25 back-to-back dumps over ~75 s
+      found none; a dump takes ~3 s); TalkBack on the new transfer's
+      records or the mint confirm; iOS; a smart-account sender or
+      recipient for CCTP. DRIVING NOTE: one downward step of the first
+      Settings walk showed the Danger zone on screen — stopped and
+      scrolled back, nothing tapped. END STATE: Home, Ethereum Sepolia,
+      Account 1 (0.001746 test ETH, "ENS name: qzv7hk2wmt.eth"), light
+      mode, TalkBack OFF (level 6 in place; TalkBack rewrote its prefs
+      file while on, inode 74388 → 74375, context kept), protection OFF
+      (screencap 251,394 bytes, no SECURE window), IME ADBKeyboard,
+      /data/local/tmp and /sdcard/Download clean, Metro (node 78294) at
+      9fa55da with `adb reverse` in place, qemu 60303 and caffeinate 60307
+      running with the window in place.
