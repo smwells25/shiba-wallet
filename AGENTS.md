@@ -15047,3 +15047,80 @@ to the Chairperson at once.
       unchanged; the dev EOA untouched. FEATURE 35: USDC through CCTP V2
       is now proven live in-app end to end (burn, attestation, mint) —
       the tally at the item-9 refresh.
+- [x] Pass p23-mint findings FIXED (commit 881b81e; 12 files, +425 /
+      −62; check-bridge 424 (was 396; in-suite mutants 34 → 37),
+      check-approvals 280 (270), check-i18n 170 (169), check-readiness 222
+      with its pin changed in place; offline runner ALL GREEN in the CTO's
+      isolated worktree on HEAD 4e34507 with --skip-bundle: engine 1,296,
+      app 10,796 across 65 suites, lint 0/0, tsc clean; checkout 0 / apply
+      0 / 12 files; the staged patch id equals the verified tree's and the
+      agent's stated 3b460100…048c0; the scan clean; ten hand mutants on
+      the real files caught; the agent was cut once by the session limit
+      and resumed from its worktree; the CTO read the risk.ts and
+      readiness.ts hunks; not seen on a device, nothing live). (1) SPOKEN
+      RECORD LINES: bridge.ts bridgeSpokenText shortens every address to
+      the 0x772e…F44F form and every 64-hex nonce, GUID or hash to the
+      exact spokenTxId slice (the first six and last four characters —
+      the brief's "6 and 4 hex digits" and "mirror spokenTxId" disagreed;
+      the existing form was followed so no third form exists), longer hex
+      untouched, applied to the status sentence, the last-check line, the
+      sending line and each receiving line; visible text unchanged. (2)
+      THE MINT CONFIRM now has the other steps' shape, pinned in order:
+      the call line ("Calls receiveMessage on Circle's MessageTransmitterV2
+      on Base Sepolia (0xE737…E275) with the message Circle attested for
+      nonce 0x… and Circle's attestation of it, which holds 2 signatures
+      from Circle's attesters. It mints 1 USDC to 0x772e…: the recipient
+      and the amount are written into the attested message, which those
+      signatures cover, so whoever sends this transaction cannot change
+      them." — every field read from the checked mint call; a
+      one-signature form exists), the fee row unchanged, the fee lines
+      from bridgeSourceFeeLines incl. the separate "Layer 1 data fee
+      (estimate)" row on an OP-stack network (the mint quote carries it
+      because prepareEvmSend prices the OP-stack fee whenever
+      chainHasL1DataFee, send.ts 938–939; proven on a fake Base Sepolia
+      node), BalanceChangePreview from the recipient's regular account,
+      RiskWarnings, the pre-flight line and the unchanged button; risk.ts
+      pinnedBridgeContracts now also pins MessageTransmitterV2 on the four
+      CCTP test networks from the engine's table (cctp-v2.ts 64, 69–74) —
+      the card reads "This transaction goes to Circle's MessageTransmitterV2
+      on <network> (<address>), pinned by this wallet from Circle's
+      published test-network addresses." with no generic lines, a
+      look-alike one digit off keeps them; BEYOND THE BRIEF (accepted):
+      only TokenMessengerV2 is accepted as a pinned SPENDER —
+      MessageTransmitterV2 never takes tokens, so an approval naming it is
+      not described by the spender. (3) READINESS: the CCTP clause reads
+      "…sent Circle CCTP Standard Transfers on the test networks both by
+      script (Base Sepolia to Arbitrum Sepolia, and Ethereum Sepolia to
+      Base Sepolia) and through its own Bridge screen (Arbitrum Sepolia to
+      Base Sepolia: the burn on 2026-10-26 and its mint on 2026-10-27, each
+      sent from the regular account)."; every other clause byte-identical;
+      DEVIATION: the fixture's "changed" record keeps `before` as the
+      base-commit text (check-i18n's fixtureProblems refuses any other),
+      so `en` and `why` were updated and the 0a5bc7f text is pinned as a
+      caught mutant. (4) ONE RECEIVING LINE — "Receiving transaction (the
+      mint sent from this wallet)" / "…(the delivery sent from this
+      wallet)" when the chain's receiving transaction equals the one this
+      wallet sent (case-insensitive), two lines as before when they
+      differ. (5) "(checking…)" KEPT UNCHANGED — the agent's call,
+      accepted: checkBridgeRecord sets the mark before awaiting the
+      tracking and clears it in finally; every poll of an undelivered
+      record reads the network (the burn receipt is not cached; CCTP also
+      reads usedNonces), so the mark is live for those round trips; a
+      delivered or failed record is never polled, which is why p23-mint
+      never saw it; two consecutive polls of an attested record making ≥ 1
+      eth_getTransactionReceipt and ≥ 1 eth_call are pinned; no minimum
+      display time added. New ids bridge.record.receivingMintSent /
+      receivingDeliverySent, bridge.mint.call / callOne with Spanish
+      drafts in the fixture's "new" list. UNVERIFIED (device): the new
+      rows' layout, dark mode and TalkBack order; the preview's "You
+      receive 1 USDC" against a live node; the risk line against the live
+      MessageTransmitterV2; how long "(checking…)" shows. EMULATOR
+      RE-CHECK: the stranded transfer's Delivered record spoken short with
+      one "Receiving transaction (the mint sent from this wallet)" line
+      (its receiving tx 0x7769…56d7 is the mint this wallet sent); the new
+      mint confirm needs a new burn — 1 USDC Base Sepolia → Arbitrum
+      Sepolia from Account 1 (2.5 USDC on Base), the attestation (~17 min),
+      then "Mint on Arbitrum Sepolia" (Account 1 holds ~0.000198 ETH
+      there): the call line, the fee row, the worst-case sentence with no
+      L1 row on Arbitrum, the preview, the single MessageTransmitterV2 risk
+      line and the unchanged button; the mainnet readiness row's new text.
