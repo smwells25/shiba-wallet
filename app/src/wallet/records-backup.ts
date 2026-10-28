@@ -9,7 +9,7 @@
 // WHAT IS IN IT. The stored documents of nine record kinds, each exactly as
 // its own store wrote it (the same JSON text, byte for byte):
 //   contacts, transaction notes, networks the user added, tracked tokens (one
-//   document per network), guardian recovery records, multi-signature
+//   document per network), smart-account recovery records, multi-signature
 //   account records, bridge transfers, price alerts and followed prices, and
 //   spending limits.
 // Every key is declared in the storage seam (store-keys.ts) with scope
@@ -177,7 +177,7 @@ export const RECORDS_BACKUP_SECTION_TITLE = 'Records backup';
 
 export const RECORDS_BACKUP_WHAT_NOTE =
   'A records backup is one file with the records this wallet keeps on this phone: contacts, transaction notes, ' +
-  'networks you added, tracked tokens, guardian recovery records, multi-signature account records, bridge ' +
+  'networks you added, tracked tokens, smart-account recovery records, multi-signature account records, bridge ' +
   'transfers, price alerts and spending limits. It contains no private key, no recovery phrase and no PIN.';
 
 export const RECORDS_BACKUP_KEY_NOTE =
@@ -383,7 +383,13 @@ export const RECORD_KIND_LABELS: Readonly<Record<RecordKind, string>> = Object.f
   contacts: 'Contacts',
   tokens: 'Tracked tokens',
   notes: 'Transaction notes',
-  'recovery-records': 'Guardian recovery records',
+  // Pass p23-build finding 2: these are the per-account records recovery.ts
+  // keeps for every factory Kernel v3.3 smart account (written at its first
+  // accepted operation by recoveryRecordListener, or by the Guardians and
+  // Inheritance screens): the address, how it was deployed and every owner,
+  // plus its guardian or heir set only when one exists. "Guardian recovery
+  // records" read as if guardians had been set up when none were.
+  'recovery-records': 'Smart-account recovery records',
   multisig: 'Multi-signature accounts',
   'bridge-transfers': 'Bridge transfers',
   'price-alerts': 'Price alerts and followed prices',

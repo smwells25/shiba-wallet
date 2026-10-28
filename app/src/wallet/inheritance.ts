@@ -470,6 +470,17 @@ export async function clearTakeoverScanState(chain: string, account: string, sto
   await writeScanState(chain, account, null, store);
 }
 
+/**
+ * Wipe support (pass p23-build finding 1): forgets the takeover-scan
+ * bookkeeping of every account on every network (the scanned ranges and the
+ * approvals found), so nothing of a wiped wallet's checks is left on the
+ * phone. Nothing on-chain changes. The record format is kept (an empty
+ * entries map), as the per-account clear above writes it.
+ */
+export async function resetTakeoverScanStates(store: KeyValueStore = AsyncStorage): Promise<void> {
+  await writeStoreItem(store, INHERITANCE_STORE_KEY, JSON.stringify({ version: STORE_VERSION, entries: {} }));
+}
+
 /** The block of the heir set's install transaction, when the record names one and the node returns its receipt. */
 async function installBlockOf(node: JsonRpcTransport, entry: RecoveryRecordEntry | null): Promise<bigint | null> {
   const tx = entry?.metadata.guardians?.installTxHash ?? null;

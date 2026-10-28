@@ -226,7 +226,10 @@ export interface WipeBothArgs {
    * The per-wallet resets the ordinary wipe runs, given the profile's bound
    * store and vault: sessions (with their keys), recovery data, passkeys,
    * spending limits, browser connections, notes, multisig records, the
-   * pending list, price alerts, the account list.
+   * pending list, price alerts, bridge transfers, the inbox, prepared name
+   * registrations, contacts, tracked-token lists, the takeover-scan
+   * bookkeeping, the EIP-7702 upgrade marks and the account list (scripts/check-storage-seam.mjs checks
+   * this list against every wallet-scoped key).
    */
   resetRecords(store: RemovableKeyValueStore, vault: ProfileVault): Promise<void>;
   /** Indices of the public account cache (MAX_ACCOUNTS of them). */
@@ -391,12 +394,23 @@ export const REMOVE_DURESS_CONFIRM_BODY =
 
 export const PIN_PAD_TITLE = 'Enter your PIN';
 
-/** Appended to the "Wipe wallet?" dialog while an app PIN is on: the same words in both wallets. */
+/**
+ * Appended to the "Wipe wallet?" dialog while an app PIN is on: the same words
+ * in both wallets (it never mentions a second wallet). Pass p23-build: it said
+ * "removes everything the wallet keeps on this phone", which the dialog's own
+ * sentence about kept phone settings (device-scoped keys, which
+ * walletRecordsToRemove skips) and WalletConnect connections (the SDK's own
+ * wc@2 keys, outside the "shiba-wallet." names it lists) contradicted. The
+ * smart-account bundler, factory and paymaster settings live in the
+ * wallet-scoped aa-config record (store-keys.ts aaConfig), which the sweep
+ * removes whole, while the wipe without an app lock keeps those fields
+ * (WalletContext clears only the per-wallet fields), so the note says so.
+ */
 export const WIPE_WITH_PIN_NOTE =
-  'With the app PIN on, this removes everything the wallet keeps on this phone, and the app PIN itself.';
+  'With the app PIN on, this also removes every other record the wallet keeps on this phone, including the smart-account bundler, factory and paymaster settings; only the other phone settings and the WalletConnect connections named above are kept. The app PIN itself is removed too.';
 /** The same note while the app lock is a passphrase. */
 export const WIPE_WITH_PASSPHRASE_NOTE =
-  'With the app passphrase on, this removes everything the wallet keeps on this phone, and the app passphrase itself.';
+  'With the app passphrase on, this also removes every other record the wallet keeps on this phone, including the smart-account bundler, factory and paymaster settings; only the other phone settings and the WalletConnect connections named above are kept. The app passphrase itself is removed too.';
 
 /** The wipe dialog's note for a lock of `kind`. */
 export function wipeWithLockNote(kind: LockKind): string {

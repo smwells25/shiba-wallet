@@ -176,6 +176,11 @@ import { AUTO_LOCK_HINT_WITH_PASSPHRASE, AUTO_LOCK_HINT_WITH_PIN } from '../wall
 import { PinCostMeasurement } from '../components/PinCostMeasurement';
 import { TechnicalDetail } from '../wallet/connectivity';
 import { pinCostMeasurementOffered } from '../wallet/pin-cost';
+import {
+  navigationBarOutcomeLine,
+  navigationBarStyleOutcome,
+  subscribeNavigationBarStyleOutcome,
+} from '../wallet/navigation-bar';
 import { NOTIFICATIONS_SECTION_TITLE, appNotifications } from '../wallet/notifications';
 import { LOCK_KINDS, mismatchMessage, newLockSecretRefusal, sameLockSecret, type LockKind } from '../wallet/pin';
 import {
@@ -1942,6 +1947,8 @@ export function SettingsScreen({ navigation, route }: Props) {
   // The app lock's kind (a device fact read at launch): the notes below that
   // name the lock say "PIN" or "passphrase" accordingly (phase 22 polish).
   const settingsLockKind = React.useSyncExternalStore(appLockKind.subscribe, appLockKind.get);
+  const navigationBarOutcome = React.useSyncExternalStore(subscribeNavigationBarStyleOutcome, navigationBarStyleOutcome);
+  const navigationBarLine = navigationBarOutcomeLine(navigationBarOutcome);
   // Settings → Privacy (phase 17 item 0): the app-wide screen protection.
   const { screenProtection, setScreenProtection } = usePrefs();
   const screenProtectionStatus = React.useSyncExternalStore(
@@ -2154,6 +2161,9 @@ export function SettingsScreen({ navigation, route }: Props) {
       tx('Wipe wallet?'),
       (importedAccounts.length > 0 ? `${t('settings.wipe.imported', { names: importedNames })} ` : '') +
         t('settings.wipe.body') +
+        // Pass p23-build finding 1: name the other records the wipe deletes
+        // (contacts were kept before the fix) and what it keeps.
+        ` ${t('settings.wipe.records')}` +
         (appPinOn ? ` ${localize(wipeWithLockNote(settingsLockKind))}` : ''),
       [
         { text: tx('Cancel'), style: 'cancel' },
@@ -2898,6 +2908,12 @@ export function SettingsScreen({ navigation, route }: Props) {
         {/* The PIN hashing cost (pass p21f): test networks only, like the
             rehearsal above; it never touches a PIN or the PIN record. */}
         {pinCostMeasurementOffered(evmChain.caip2) ? <PinCostMeasurement /> : null}
+        {/* The navigation bar's last style attempt (pass p23-build finding 3):
+            the outcome is read here instead of inferred from a silent log.
+            Nothing is shown off Android. */}
+        {navigationBarLine !== null ? (
+          <Text style={[styles.hint, { color: theme.text }]}>{navigationBarLine}</Text>
+        ) : null}
         <CustomNetworksSection customNetworks={customNetworks} choice={testNetwork} onChoose={setTestNetwork} />
       </View>
 

@@ -1028,16 +1028,18 @@ function prefsRule(dm) {
     notifications: 'Notifications are off while the app passphrase is on: a notification can be read on the lock screen without your passphrase.',
     screen: 'Screen protection stays on while the app passphrase is on, so the app switcher and screenshots never show the wallet.',
     autoLock: 'While the app passphrase is on, auto-lock cannot be turned off: the wallet asks for the passphrase when it is opened and after this time in the background.',
-    wipe: 'With the app passphrase on, this removes everything the wallet keeps on this phone, and the app passphrase itself.',
+    // Pass p23-build: no longer "everything" (the dialog names the phone settings and WalletConnect connections it keeps,
+    // and the app-lock sweep also removes the smart-account endpoint settings, which the wipe without a lock keeps).
+    wipe: 'With the app passphrase on, this also removes every other record the wallet keeps on this phone, including the smart-account bundler, factory and paymaster settings; only the other phone settings and the WalletConnect connections named above are kept. The app passphrase itself is removed too.',
   };
   check('the passphrase forms of the four app-lock notes, exactly (and none says PIN)',
     duressMod.NOTIFICATIONS_OFF_WITH_PASSPHRASE === PHR.notifications && duressMod.SCREEN_PROTECTION_WITH_PASSPHRASE_NOTE === PHR.screen &&
       duressMod.AUTO_LOCK_WITH_PASSPHRASE_NOTE === PHR.autoLock && duressMod.WIPE_WITH_PASSPHRASE_NOTE === PHR.wipe &&
       Object.values(PHR).every((x) => !/\bPIN\b/.test(x)));
-  check('…the PIN forms unchanged, byte for byte',
+  check('…the PIN forms (the wipe note reworded in pass p23-build, the others unchanged), byte for byte',
     duressMod.SCREEN_PROTECTION_WITH_PIN_NOTE === 'Screen protection stays on while the app PIN is on, so the app switcher and screenshots never show the wallet.' &&
       duressMod.AUTO_LOCK_WITH_PIN_NOTE === 'While the app PIN is on, auto-lock cannot be turned off: the wallet asks for the PIN when it is opened and after this time in the background.' &&
-      duressMod.WIPE_WITH_PIN_NOTE === 'With the app PIN on, this removes everything the wallet keeps on this phone, and the app PIN itself.');
+      duressMod.WIPE_WITH_PIN_NOTE === 'With the app PIN on, this also removes every other record the wallet keeps on this phone, including the smart-account bundler, factory and paymaster settings; only the other phone settings and the WalletConnect connections named above are kept. The app PIN itself is removed too.');
   check('…picked by kind: notificationsOffWithLock and wipeWithLockNote give the PIN form for "pin", the passphrase form for "phr"',
     duressMod.notificationsOffWithLock('pin') === duressMod.NOTIFICATIONS_OFF_WITH_PIN && duressMod.notificationsOffWithLock('phr') === PHR.notifications &&
       duressMod.wipeWithLockNote('pin') === duressMod.WIPE_WITH_PIN_NOTE && duressMod.wipeWithLockNote('phr') === PHR.wipe);
