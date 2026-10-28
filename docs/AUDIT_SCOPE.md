@@ -22,7 +22,7 @@
 
 **Where to start.** Section 6 lists the open findings and honest limits we already know of; section 7 lists the ten questions we most want answered, in priority order. The single most important property to challenge is that no code path can sign without the user's approval of exactly what is shown, and that nothing a network service returns can change what is signed.
 
-**Constraints you should know.** Nothing has run on a physical phone; all device validation is on the Android emulator (Expo Go and a locally built development build). iOS has never run. The repository is public.
+**Constraints you should know.** Nothing has run on a physical phone; all device validation is on the Android emulator (Expo Go and locally built development and release builds). iOS has run only in the Simulator, once, in a debug development build on a throwaway wallet (phase 23 item 3). The repository is public.
 
 ---
 
@@ -209,7 +209,7 @@ The wallet calls, installs or relies on contracts it did not write. Reviewing th
 | Uniswap v3 (SwapRouter02, factory, QuoterV2, pools) on Sepolia | Recurring swaps (DCA) | Not recorded; the router, factory and quoter are Sourcify matches, the pools are not source-verified and are re-checked against the factory on every read (`docs/MAINNET_READINESS.md` section 2) |
 | Lido (stETH, wstETH, withdrawal queue) and Rocket Pool (RocketStorage, rETH, deposit pool) | Staking on Sepolia and Hoodi | Not recorded beyond the readiness reason's statement that the protocols have their own audits; which audit covers the deployed test-network code was not checked (`app/src/config/readiness.ts` row `staking`, `docs/STAKING.md`) |
 | LayerZero V2 EndpointV2, message libraries, executor and DVN; Stargate V2 pools | Bridging native test ETH | Reports are listed in LayerZero's and Stargate's audit repositories; which commit each covers was not checked (`docs/BRIDGING.md` section 15.10) |
-| Circle CCTP V2 | Bridging USDC (Standard Transfers only). Proven live by script on two test-network routes on 2026-10-25 (`docs/BRIDGING.md` section 17); offered in the app's Bridge screen since commit `0a5bc7f`, but no transfer has yet been sent through the app | Three reports linked by Circle; commit coverage not checked (`docs/BRIDGING.md` section 4.8) |
+| Circle CCTP V2 | Bridging USDC (Standard Transfers only). Proven live by script on two test-network routes on 2026-10-25 (`docs/BRIDGING.md` section 17); offered in the app's Bridge screen since commit `0a5bc7f`; one transfer sent through the app, from the regular account, Arbitrum Sepolia → Base Sepolia (the burn on 2026-10-26 UTC, the mint on 2026-10-27 UTC; `AGENTS.md` phase 23, passes p23-cctp and p23-mint) | Three reports linked by Circle; commit coverage not checked (`docs/BRIDGING.md` section 4.8) |
 | ENSv2 on Ethereum Sepolia (ETHRegistrar, the .eth and root registries, StandardRentPriceOracle, VerifiableFactory and the PermissionedResolver / UserRegistry implementations, the Universal Resolver's proxy chain) and the ENSv1 ReverseRegistrar | Wallet handles: registering a `.eth` name, its records and the primary name (Ethereum Sepolia only) | The `ensdomains/contracts-v2` repository has branches named for audit results; their contents and the commits any audit covered were not read (`docs/WALLET_HANDLES.md` section 3.4) |
 
 ### 4.2 Bundlers, paymaster services and RPC providers
@@ -344,7 +344,7 @@ From `packages/chains-evm/src/bridge/layerzero-oft.ts` (`LAYERZERO_V2_TESTNET`, 
 | Arbitrum Sepolia (40231) | same endpoint | `0x4f7cd4DA19ABB31b0eC98b9066B9e857B1bf9C0E` | `0x75Db67CDab2824970131D5aa9CECfC9F69c69636` | `0x5Df3a1cEbBD9c8BA7F8dF51Fd632A9aef8308897` | `0x53f488E93b4f1b60E8E83aa374dBe1780A1EE8a8` | `0x6fddB6270F6c71f31B62AE0260cfa8E2e2d186E0` |
 | OP Sepolia (40232) | same endpoint | `0xB31D2cb502E25B30C651842C7C3293c51Fe6d16f` | `0x9284fd59B95b9143AF0b9795CAC16eb3C723C9Ca` | `0xDc0D68899405673b932F0DB7f8A49191491A5bcB` | `0xd680ec569f269aa7015F7979b4f1239b5aa4582C` | `0xa31dCc5C71E25146b598bADA33E303627D7fC97e` |
 
-Circle CCTP V2 (same addresses on all four networks; Standard Transfers proven live by script on 2026-10-25, Base Sepolia → Arbitrum Sepolia and Ethereum Sepolia → Base Sepolia, `docs/BRIDGING.md` section 17; offered in the app's Bridge screen since commit `0a5bc7f`, not yet sent through it): TokenMessengerV2 `0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA`, MessageTransmitterV2 `0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275`, TokenMinterV2 `0xb43db544E2c27092c107639Ad201b3dEfAbcF192`.
+Circle CCTP V2 (same addresses on all four networks; Standard Transfers proven live by script on 2026-10-25, Base Sepolia → Arbitrum Sepolia and Ethereum Sepolia → Base Sepolia, `docs/BRIDGING.md` section 17; offered in the app's Bridge screen since commit `0a5bc7f`, and sent through it once, Arbitrum Sepolia → Base Sepolia, burned on 2026-10-26 and minted on 2026-10-27 UTC): TokenMessengerV2 `0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA`, MessageTransmitterV2 `0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275`, TokenMinterV2 `0xb43db544E2c27092c107639Ad201b3dEfAbcF192`.
 
 ### 5.7 The tables are machine-checked: `scripts/audit/verify-pins.mjs`
 
@@ -420,7 +420,7 @@ Row identifiers refer to `docs/THREAT_MODEL.md`: **T-nn** is a threat (section 4
 
 ### 6.4 Never observed on a real device
 
-Nothing has run on a physical phone, and iOS has never run (W2). Specifically unverified: whether `expo-secure-store` items are StrongBox-, TEE- or Secure-Enclave-backed (W3, section 3.2.5 of the threat model); the protected storage class's invalidation on a biometric change; release-build absence of developer tooling on a phone (W4; a release APK has run on the emulator); screenshot blocking on iOS and over native alerts (W19); Android backup on a real vendor transport (W18); passkeys (no relying-party domain exists); the app PIN's cost on real hardware (F-81); TalkBack beyond the emulator and VoiceOver entirely; whether WalletConnect's Verify service returns its verdicts over the live relay inside React Native (N-06, W12).
+Nothing has run on a physical phone, and iOS has run only in the Simulator (W2; the Simulator does not enforce the Keychain's biometric-protected class and has no VoiceOver). Specifically unverified: whether `expo-secure-store` items are StrongBox-, TEE- or Secure-Enclave-backed (W3, section 3.2.5 of the threat model); the protected storage class's invalidation on a biometric change; release-build absence of developer tooling on a phone (W4; a release APK has run on the emulator); screenshot blocking on iOS and over native alerts (W19); Android backup on a real vendor transport (W18); passkeys (no relying-party domain exists); the app PIN's cost on real hardware (F-81); TalkBack beyond the emulator and VoiceOver entirely; whether WalletConnect's Verify service returns its verdicts over the live relay inside React Native (N-06, W12).
 
 ---
 
