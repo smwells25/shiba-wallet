@@ -109,12 +109,17 @@ function ScreenProtection() {
  * background cannot be set (that package removed its background-colour
  * function in 56.0.0); it stays transparent. Mounted beside the status
  * bar's own component; it needs no wallet or preference state. Renders
- * nothing.
+ * nothing. Pass p23-build: on the emulator's development build the button
+ * flag did not follow a runtime scheme change; the cause is not established
+ * from source (see navigation-bar.ts), so each attempt's outcome is shown in
+ * Settings → Developer for the next pass to read.
  */
 function NavigationBarStyle() {
   const theme = useTheme();
   React.useEffect(() => {
-    void applyNavigationBarStyle(loadNavigationBarNative, theme.dark);
+    // __DEV__: a development bundle also logs a missing module (pass
+    // p23-build finding 3); every outcome is recorded for Settings → Developer.
+    void applyNavigationBarStyle(loadNavigationBarNative, theme.dark, undefined, { dev: __DEV__ });
   }, [theme.dark]);
   return null;
 }

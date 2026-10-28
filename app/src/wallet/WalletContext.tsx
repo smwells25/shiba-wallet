@@ -97,7 +97,7 @@ import {
   type SweepableStore,
 } from './duress';
 import { forgetAllSessions } from './sessions';
-import { addAaBroadcastRecorder, addAaOperationSentListener, addAaSentListener } from './aa';
+import { addAaBroadcastRecorder, addAaOperationSentListener, addAaSentListener, clearAllEip7702Owners } from './aa';
 import { recoveryRecordListener, wipeRecoveryData } from './recovery';
 import { forgetBrowserConnections } from './browser-sites';
 import { wipeTransactionNotes } from './notes';
@@ -107,6 +107,9 @@ import { resetBridgeTransfers } from './bridge';
 import { wipeInbox } from './inbox';
 import { resetPriceAlerts } from './price-alerts';
 import { resetPendingHandles } from './handle';
+import { resetContacts } from './contacts';
+import { resetTrackedTokens } from './tokens';
+import { resetTakeoverScanStates } from './inheritance';
 import {
   addMultisigStoreListener,
   multisigListEntries,
@@ -1442,6 +1445,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         await resetBridgeTransfers(store).catch(() => undefined);
         await wipeInbox(store).catch(() => undefined);
         await resetPendingHandles(store).catch(() => undefined);
+        await resetContacts(store).catch(() => undefined);
+        await resetTrackedTokens(store).catch(() => undefined);
+        await resetTakeoverScanStates(store).catch(() => undefined);
+        await clearAllEip7702Owners(store).catch(() => undefined);
         await resetAccounts(store).catch(() => undefined);
       };
       await wipeBothWallets({
@@ -1498,6 +1505,19 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     await resetBridgeTransfers(AsyncStorage).catch(() => undefined);
     await wipeInbox(AsyncStorage).catch(() => undefined);
     await resetPendingHandles(AsyncStorage).catch(() => undefined);
+    // Contacts, tracked-token lists, the takeover-scan bookkeeping and the
+    // EIP-7702 upgrade marks are this wallet's records too (declared
+    // 'wallet' in store-keys.ts); a wipe forgets them with the rest (pass
+    // p23-build finding 1: a contact survived the wipe).
+    // scripts/check-storage-seam.mjs fails when a wallet-scoped key is
+    // neither reset here and in resetRecords above nor listed there with the
+    // reason it is cleared another way or kept.
+    await resetContacts(AsyncStorage).catch(() => undefined);
+    await resetTrackedTokens(AsyncStorage).catch(() => undefined);
+    await resetTakeoverScanStates(AsyncStorage).catch(() => undefined);
+    // The EIP-7702 upgrade marks name this wallet's addresses (aa-config);
+    // the endpoint fields of that record stay as device settings.
+    await clearAllEip7702Owners(AsyncStorage).catch(() => undefined);
     await deleteMnemonic();
     // The public account cache (addresses only) goes with the wallet.
     await deletePublicAccounts(ALL_CACHE_INDICES);

@@ -33,6 +33,8 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import ts from 'typescript';
+
 import * as seam from '../src/wallet/store-keys.ts';
 
 let passed = 0;
@@ -513,6 +515,318 @@ console.log('check-storage-seam: the last migrated modules, per profile (phase 2
   keys.length = 0;
   await resetRecoveryRecords(raw);
   check('…and the primary wallet keeps the original names (no migration)', mem.has('shiba-wallet.recovery-records.v1') && keys.includes('shiba-wallet.recovery-records.v1'));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-storage-seam: the wipe clears every wallet-scoped key (pass p23-build finding 1)');
+// ---------------------------------------------------------------------------
+// Pass p23-build: "Wipe wallet" without an app PIN left the contacts on the
+// phone, because neither wipe list in WalletContext.tsx reset them although
+// store-keys.ts declares them per wallet. This section maps EVERY key
+// declared with scope 'wallet' to the way the wipe clears it, so a key added
+// later without a wipe entry fails here.
+//
+// WIPE_RESETS: the chain of functions that clears a key. The first is called
+// by BOTH wipe paths (the plain wipe, and the app-PIN wipe's resetRecords,
+// which ./duress.ts wipeBothWallets runs for each wallet before its sweep);
+// each calls the next; the last, in the named module, calls writeStoreItem or
+// removeStoreItem and names the module's own constant for the key
+// (`const X = STORE_KEYS.<id>.name`).
+export const WIPE_RESETS = {
+  accounts: { module: 'src/wallet/accounts.ts', chain: ['resetAccounts', 'saveAccounts'] },
+  contacts: { module: 'src/wallet/contacts.ts', chain: ['resetContacts'] },
+  tokens: { module: 'src/wallet/tokens.ts', chain: ['resetTrackedTokens'] },
+  tokensPerChain: { module: 'src/wallet/tokens.ts', chain: ['resetTrackedTokens'] },
+  txNotes: { module: 'src/wallet/notes.ts', chain: ['wipeTransactionNotes'] },
+  sessions: { module: 'src/wallet/sessions.ts', chain: ['forgetAllSessions', 'resetSessions'] },
+  multisig: { module: 'src/wallet/multisig.ts', chain: ['resetMultisigRecords'] },
+  recoveryRecords: { module: 'src/wallet/recovery.ts', chain: ['wipeRecoveryData', 'resetRecoveryRecords'] },
+  recoveryProgress: { module: 'src/wallet/recovery.ts', chain: ['wipeRecoveryData'] },
+  inheritance: { module: 'src/wallet/inheritance.ts', chain: ['resetTakeoverScanStates'] },
+  passkeys: { module: 'src/wallet/passkeys.ts', chain: ['resetPasskeys'] },
+  spendingPolicies: { module: 'src/wallet/spending-policy.ts', chain: ['resetSpendingLimits'] },
+  spendingHistory: { module: 'src/wallet/spending-policy.ts', chain: ['resetSpendingLimits'] },
+  pendingTx: { module: 'src/wallet/pending-transactions.ts', chain: ['resetPendingRegistry'] },
+  browserConnections: { module: 'src/wallet/browser-sites.ts', chain: ['forgetBrowserConnections'] },
+  priceAlerts: { module: 'src/wallet/price-alerts.ts', chain: ['resetPriceAlerts'] },
+  bridgeTransfers: { module: 'src/wallet/bridge.ts', chain: ['resetBridgeTransfers'] },
+  inbox: { module: 'src/wallet/inbox.ts', chain: ['wipeInbox'] },
+  handlePending: { module: 'src/wallet/handle.ts', chain: ['resetPendingHandles'] },
+};
+// WIPE_NOT_RESET: the exact list of wallet-scoped keys the wipe lists do NOT
+// reset by name, each with the reason and a source fact checked below. With
+// an app PIN, wipeBothWallets' sweep (walletRecordsToRemove) removes every
+// one of these too, since it keeps only device-scoped keys.
+export const WIPE_NOT_RESET = {
+  aaConfig: {
+    how: 'partly cleared',
+    reason: 'Mixed record (store-keys.ts): its per-wallet fields are cleared on both paths, the recovered-account links by wipeRecoveryData (clearAllRecoveredAccounts) and the EIP-7702 upgrade marks by clearAllEip7702Owners; its bundler, factory and paymaster fields are device settings shared by every wallet (aa.ts AA_ENDPOINT_FIELDS) and are kept by the wipe without an app PIN (the app-PIN sweep removes the whole record, as WIPE_WITH_PIN_NOTE says).',
+  },
+  notifications: {
+    how: 'cleared indirectly',
+    reason: 'Reminder bookkeeping: NotificationScheduler.tsx, on the status "no-wallet" the wipe sets, turns reminders off and runs cleanupIfOff, which cancels what was scheduled and writes the empty state (notifications.ts) when anything was recorded.',
+  },
+  wcSmartBindings: {
+    how: 'kept',
+    reason: 'Mirrors WalletConnect SDK sessions, which live in the SDK\'s own storage (wc@2 keys) that the wipe does not reach (THREAT_MODEL F-28, open); removing the binding alone would leave a surviving smart-account session without it.',
+  },
+  wcCalls: {
+    how: 'kept',
+    reason: 'ERC-5792 call records of those same WalletConnect sessions (7-day TTL), kept with them for the reason above (F-28).',
+  },
+  wcUsed: {
+    how: 'kept',
+    reason: 'The launch marker of the WalletConnect SDK (a boolean, no wallet data); it must agree with the SDK\'s own session storage, which the wipe does not reach (F-28).',
+  },
+};
+
+function parseTs(rel, text) {
+  return ts.createSourceFile(rel, text, ts.ScriptTarget.Latest, true, rel.endsWith('x') ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+}
+function walk(node, visit) {
+  visit(node);
+  ts.forEachChild(node, (child) => walk(child, visit));
+}
+/** Names of every function called by a plain identifier inside `node`. */
+function calledNames(node) {
+  const names = new Set();
+  walk(node, (n) => {
+    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression)) names.add(n.expression.text);
+  });
+  return names;
+}
+/** Every identifier used inside `node`. */
+function identifiersIn(node) {
+  const names = new Set();
+  walk(node, (n) => {
+    if (ts.isIdentifier(n)) names.add(n.text);
+  });
+  return names;
+}
+/** The two wipe lists of WalletContext.tsx: the calls of resetRecords and of the plain path. */
+export function wipeLists(walletContextText) {
+  const sf = parseTs('src/wallet/WalletContext.tsx', walletContextText);
+  let wipeBody = null;
+  walk(sf, (n) => {
+    if (wipeBody || !ts.isVariableDeclaration(n) || !ts.isIdentifier(n.name) || n.name.text !== 'wipe') return;
+    const init = n.initializer;
+    if (init && ts.isCallExpression(init) && ts.isIdentifier(init.expression) && init.expression.text === 'useCallback') {
+      const fn = init.arguments[0];
+      if (fn && ts.isArrowFunction(fn) && ts.isBlock(fn.body)) wipeBody = fn.body;
+    }
+  });
+  if (!wipeBody) return null;
+  const pinIf = wipeBody.statements.find((st) => ts.isIfStatement(st) && st.expression.getText(sf) === 'appPinPresence.get()');
+  if (!pinIf) return null;
+  let resetRecords = null;
+  walk(pinIf, (n) => {
+    if (!resetRecords && ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === 'resetRecords' && n.initializer && ts.isArrowFunction(n.initializer)) {
+      resetRecords = n.initializer;
+    }
+  });
+  const pinCalls = resetRecords ? calledNames(resetRecords) : new Set();
+  const plainCalls = new Set();
+  for (const st of wipeBody.statements) if (st !== pinIf) for (const name of calledNames(st)) plainCalls.add(name);
+  const sweepRunsResetRecords = /wipeBothWallets\(\{[\s\S]*?\bresetRecords,[\s\S]*?\}\);/.test(pinIf.getText(sf));
+  return { pinCalls, plainCalls, sweepRunsResetRecords };
+}
+function functionNamed(sf, name) {
+  let found = null;
+  walk(sf, (n) => {
+    if (!found && ts.isFunctionDeclaration(n) && n.name?.text === name && n.body) found = n;
+  });
+  return found;
+}
+/** The module's own constant for a declared key: `const X = STORE_KEYS.<id>.name`. */
+function keyConstantOf(sf, id) {
+  let found = null;
+  walk(sf, (n) => {
+    if (found || !ts.isVariableDeclaration(n) || !ts.isIdentifier(n.name) || !n.initializer) return;
+    const init = n.initializer;
+    if (ts.isPropertyAccessExpression(init) && init.name.text === 'name' && ts.isPropertyAccessExpression(init.expression) &&
+      init.expression.name.text === id && ts.isIdentifier(init.expression.expression) && init.expression.expression.text === 'STORE_KEYS') {
+      found = n.name.text;
+    }
+  });
+  return found;
+}
+/**
+ * Every problem of the wipe's coverage: `walletIds` are the STORE_KEYS ids of
+ * scope 'wallet', `files` the sources by path (relative to app/).
+ */
+export function wipeCoverageProblems(walletIds, files, resets = WIPE_RESETS, notReset = WIPE_NOT_RESET) {
+  const problems = [];
+  const lists = wipeLists(files['src/wallet/WalletContext.tsx']);
+  if (!lists) return ['WalletContext.tsx: the wipe callback, its app-PIN branch or resetRecords was not found'];
+  if (!lists.sweepRunsResetRecords) problems.push('WalletContext.tsx: the app-PIN wipe does not pass resetRecords to wipeBothWallets');
+  for (const id of walletIds) {
+    const inResets = Object.prototype.hasOwnProperty.call(resets, id);
+    const inNot = Object.prototype.hasOwnProperty.call(notReset, id);
+    if (!inResets && !inNot) problems.push(`${id}: a wallet-scoped key the wipe does not clear (no reset in WalletContext.tsx, no reasoned entry)`);
+    if (inResets && inNot) problems.push(`${id}: listed both as reset and as not reset`);
+  }
+  for (const id of [...Object.keys(resets), ...Object.keys(notReset)]) {
+    if (!walletIds.includes(id)) problems.push(`${id}: listed here but not a wallet-scoped key in store-keys.ts (stale entry)`);
+  }
+  for (const [id, entry] of Object.entries(notReset)) {
+    if (typeof entry.reason !== 'string' || entry.reason.length < 40) problems.push(`${id}: not reset by name, without a reason`);
+  }
+  const parsed = {};
+  const sfOf = (rel) => (parsed[rel] ??= files[rel] === undefined ? null : parseTs(rel, files[rel]));
+  for (const [id, { module, chain }] of Object.entries(resets)) {
+    const first = chain[0];
+    if (!lists.plainCalls.has(first)) problems.push(`${id}: ${first} is not called by the wipe without an app PIN`);
+    if (!lists.pinCalls.has(first)) problems.push(`${id}: ${first} is not called by resetRecords (the wipe with an app PIN)`);
+    const sf = sfOf(module);
+    if (!sf) {
+      problems.push(`${id}: ${module} not found`);
+      continue;
+    }
+    const constant = keyConstantOf(sf, id);
+    if (!constant) problems.push(`${id}: ${module} has no constant equal to STORE_KEYS.${id}.name`);
+    for (let i = 0; i < chain.length; i += 1) {
+      const fn = functionNamed(sf, chain[i]);
+      if (!fn) {
+        problems.push(`${id}: ${module} has no function ${chain[i]}`);
+        break;
+      }
+      if (i < chain.length - 1) {
+        if (!calledNames(fn.body).has(chain[i + 1])) problems.push(`${id}: ${chain[i]} does not call ${chain[i + 1]}`);
+      } else {
+        const calls = calledNames(fn.body);
+        if (!calls.has('writeStoreItem') && !calls.has('removeStoreItem')) problems.push(`${id}: ${chain[i]} neither writes nor removes a key through the seam`);
+        if (constant && !identifiersIn(fn.body).has(constant)) problems.push(`${id}: ${chain[i]} does not name ${constant}`);
+      }
+    }
+  }
+  return problems;
+}
+
+{
+  const walletIds = Object.entries(seam.STORE_KEYS).filter(([, d]) => d.scope === 'wallet').map(([id]) => id);
+  const problems = wipeCoverageProblems(walletIds, tree);
+  check(`every wallet-scoped key (${walletIds.length}) is reset by both wipe paths, or listed with its reason (${Object.keys(WIPE_RESETS).length} reset, ${Object.keys(WIPE_NOT_RESET).length} not reset by name)`,
+    problems.length === 0, problems.join('; '));
+  check('…the lists cover exactly the declared wallet-scoped keys',
+    JSON.stringify([...Object.keys(WIPE_RESETS), ...Object.keys(WIPE_NOT_RESET)].sort()) === JSON.stringify([...walletIds].sort()));
+  const lists = wipeLists(tree['src/wallet/WalletContext.tsx']);
+  check('…contacts, tracked tokens and the takeover-scan bookkeeping are reset on both paths (pass p23-build finding 1)',
+    ['resetContacts', 'resetTrackedTokens', 'resetTakeoverScanStates'].every((f) => lists.plainCalls.has(f) && lists.pinCalls.has(f)));
+  // The source facts behind the entries that are not reset by name.
+  const rec = parseTs('src/wallet/recovery.ts', tree['src/wallet/recovery.ts']);
+  check('aaConfig: wipeRecoveryData (called on both paths) clears the recovered-account links through clearAllRecoveredAccounts',
+    calledNames(functionNamed(rec, 'wipeRecoveryData').body).has('clearAllRecoveredAccounts') && lists.plainCalls.has('wipeRecoveryData') && lists.pinCalls.has('wipeRecoveryData'));
+  const aaSf = parseTs('src/wallet/aa.ts', tree['src/wallet/aa.ts']);
+  const eip7702Cleared = (walletContextText, aaSource) => {
+    const l = wipeLists(walletContextText);
+    const fn = functionNamed(aaSource, 'clearAllEip7702Owners');
+    return !!l && !!fn && l.plainCalls.has('clearAllEip7702Owners') && l.pinCalls.has('clearAllEip7702Owners') &&
+      calledNames(fn.body).has('saveConfigMap') && /delete map\[key\]!\.eip7702Owners;/.test(fn.body.getText(aaSource));
+  };
+  check('aaConfig: clearAllEip7702Owners (called on both paths) deletes every chain\'s EIP-7702 upgrade marks and saves the record (pass p23-build finding 1)',
+    eip7702Cleared(tree['src/wallet/WalletContext.tsx'], aaSf));
+  const eipPlainLine = '    await clearAllEip7702Owners(AsyncStorage).catch(() => undefined);\n';
+  check('mutant anchor present (the plain wipe clears the EIP-7702 marks)', tree['src/wallet/WalletContext.tsx'].includes(eipPlainLine));
+  check('mutant caught: the EIP-7702 marks no longer cleared by the plain wipe',
+    !eip7702Cleared(tree['src/wallet/WalletContext.tsx'].replace(eipPlainLine, ''), aaSf));
+  const sched = tree['src/components/NotificationScheduler.tsx'];
+  const notif = tree['src/wallet/notifications.ts'];
+  check('notifications: the scheduler runs cleanupIfOff on "no-wallet", which writes the empty state through writeState (NOTIFICATIONS_STORE_KEY)',
+    /status === 'no-wallet'\)\) void appNotifications\(\)\.cleanupIfOff\(\)/.test(sched) &&
+      /cleanupIfOff: \(\) =>[\s\S]{0,400}await writeState\(deps\.store, emptyState\(\)\)/.test(notif) &&
+      /async function writeState\(store: KeyValueStore, state: StoreState\): Promise<void> \{[\s\S]{0,200}NOTIFICATIONS_STORE_KEY/.test(notif));
+  check('the WalletConnect keys kept by the plain wipe are the three that mirror the SDK\'s sessions',
+    JSON.stringify(Object.entries(WIPE_NOT_RESET).filter(([, e]) => e.how === 'kept').map(([id]) => id).sort()) === JSON.stringify(['wcCalls', 'wcSmartBindings', 'wcUsed']));
+  check('with an app PIN, the sweep removes every non-device key of every profile (walletRecordsToRemove skips only device scope)',
+    /if \(storeKeyScope\(parsed\.key\) === 'device'\) continue;/.test(tree['src/wallet/duress.ts']));
+
+  // Mutants, each must be caught.
+  const wc = tree['src/wallet/WalletContext.tsx'];
+  const plainLine = '    await resetContacts(AsyncStorage).catch(() => undefined);\n';
+  const pinLine = '        await resetContacts(store).catch(() => undefined);\n';
+  check('mutant anchors present (both contacts resets)', wc.includes(plainLine) && wc.includes(pinLine));
+  const mPlain = wipeCoverageProblems(walletIds, { ...tree, 'src/wallet/WalletContext.tsx': wc.replace(plainLine, '') });
+  check('mutant caught: the contacts reset removed from the plain wipe (the p23-build bug)', mPlain.some((p) => p.startsWith('contacts: resetContacts is not called by the wipe without')), mPlain.join('; '));
+  const mPin = wipeCoverageProblems(walletIds, { ...tree, 'src/wallet/WalletContext.tsx': wc.replace(pinLine, '') });
+  check('mutant caught: the contacts reset removed from resetRecords (the app-PIN wipe)', mPin.some((p) => p.startsWith('contacts: resetContacts is not called by resetRecords')), mPin.join('; '));
+  const mNew = wipeCoverageProblems([...walletIds, 'futureRecord'], tree);
+  check('mutant caught: a new wallet-scoped key with no wipe entry', mNew.some((p) => p.startsWith('futureRecord: a wallet-scoped key the wipe does not clear')), mNew.join('; '));
+  const mStale = wipeCoverageProblems(walletIds.filter((id) => id !== 'inbox'), tree);
+  check('mutant caught: a stale entry (a key no longer declared per wallet)', mStale.some((p) => p.startsWith('inbox: listed here but not')), mStale.join('; '));
+  const contactsSrc = tree['src/wallet/contacts.ts'];
+  const writeAnchor = 'await writeStoreItem(store, CONTACTS_KEY, JSON.stringify({ version: STORE_VERSION, networks: {} }));';
+  check('mutant anchor present (resetContacts writes the empty store)', contactsSrc.includes(writeAnchor));
+  const mBody = wipeCoverageProblems(walletIds, { ...tree, 'src/wallet/contacts.ts': contactsSrc.replace(writeAnchor, 'void store;') });
+  check('mutant caught: resetContacts no longer writes its key', mBody.some((p) => p.startsWith('contacts: resetContacts neither writes nor removes')), mBody.join('; '));
+  const mChain = wipeCoverageProblems(walletIds, tree, { ...WIPE_RESETS, sessions: { module: 'src/wallet/sessions.ts', chain: ['forgetAllSessions', 'resetPasskeys'] } });
+  check('mutant caught: a chain link that is not called', mChain.some((p) => p.startsWith('sessions: forgetAllSessions does not call resetPasskeys')), mChain.join('; '));
+  const mReason = wipeCoverageProblems(walletIds, tree, WIPE_RESETS, { ...WIPE_NOT_RESET, wcUsed: { how: 'kept', reason: '' } });
+  check('mutant caught: an entry not reset by name without its reason', mReason.some((p) => p.startsWith('wcUsed: not reset by name, without a reason')), mReason.join('; '));
+}
+
+// The three resets added for finding 1, behaviour through the seam.
+{
+  const { resetTrackedTokens, MAINNET_TOKENS_KEY } = await import('../src/wallet/tokens.ts');
+  const { resetContacts } = await import('../src/wallet/contacts.ts');
+  const { resetTakeoverScanStates, INHERITANCE_STORE_KEY } = await import('../src/wallet/inheritance.ts');
+  const mem = new Map([
+    [MAINNET_TOKENS_KEY, '[]'],
+    [`${MAINNET_TOKENS_KEY}.eip155:11155111`, '[]'],
+    [`${MAINNET_TOKENS_KEY}.eip155:99999`, '[]'],
+    ['shiba-wallet.profile-w2.tokens.v1', '[]'],
+    ['shiba-wallet.profile-w2.tokens.v1.eip155:11155111', '[]'],
+    ['shiba-wallet.contacts.v1', '{"version":1,"networks":{"eip155:1":[]}}'],
+    [INHERITANCE_STORE_KEY, '{"version":1,"entries":{"x":{}}}'],
+  ]);
+  const store = {
+    getItem: async (k) => (mem.has(k) ? mem.get(k) : null),
+    setItem: async (k, v) => { mem.set(k, v); },
+    removeItem: async (k) => { mem.delete(k); },
+    getAllKeys: async () => [...mem.keys()],
+  };
+  const removed = await resetTrackedTokens(store);
+  check('resetTrackedTokens: removes the primary wallet\'s mainnet list, a built-in network\'s and one of a network no longer registered; the second wallet\'s lists stay',
+    removed === 3 && !mem.has(MAINNET_TOKENS_KEY) && !mem.has(`${MAINNET_TOKENS_KEY}.eip155:11155111`) && !mem.has(`${MAINNET_TOKENS_KEY}.eip155:99999`) &&
+      mem.has('shiba-wallet.profile-w2.tokens.v1') && mem.has('shiba-wallet.profile-w2.tokens.v1.eip155:11155111'), String(removed));
+  const decoy = seam.profileBoundStore(store, { id: 'second', keyPrefix: 'w2' });
+  const removedDecoy = await resetTrackedTokens(decoy);
+  check('…through a store bound to the second wallet (no listing): that wallet\'s lists of the known networks go',
+    removedDecoy === 2 && !mem.has('shiba-wallet.profile-w2.tokens.v1') && !mem.has('shiba-wallet.profile-w2.tokens.v1.eip155:11155111'), String(removedDecoy));
+  let refused = false;
+  try {
+    await resetTrackedTokens({ getItem: store.getItem, setItem: store.setItem });
+  } catch {
+    refused = true;
+  }
+  check('…refuses a store that cannot delete keys (an empty list would hide the defaults)', refused);
+  await resetContacts(store);
+  await resetTakeoverScanStates(store);
+  check('resetContacts and resetTakeoverScanStates leave empty documents',
+    mem.get('shiba-wallet.contacts.v1') === '{"version":1,"networks":{}}' && mem.get(INHERITANCE_STORE_KEY) === '{"version":1,"entries":{}}');
+  // clearAllEip7702Owners: the marks go, the endpoint fields of the same record stay.
+  const { clearAllEip7702Owners } = await import('../src/wallet/aa.ts');
+  const AA_KEY = seam.STORE_KEYS.aaConfig.name;
+  mem.set(AA_KEY, JSON.stringify({
+    'eip155:11155111': { bundlerUrl: 'https://bundler.example/rpc', eip7702Owners: ['0x772eAA1d3BEf14C0BD5cee980b90dB3FC680F44F'] },
+    'eip155:84532': { bundlerUrl: 'https://bundler.example/base' },
+  }));
+  await clearAllEip7702Owners(store);
+  const aaAfter = JSON.parse(mem.get(AA_KEY));
+  check('clearAllEip7702Owners: every chain\'s EIP-7702 marks are deleted, the bundler fields stay byte for byte',
+    aaAfter['eip155:11155111'].eip7702Owners === undefined && aaAfter['eip155:11155111'].bundlerUrl === 'https://bundler.example/rpc' &&
+      aaAfter['eip155:84532'].bundlerUrl === 'https://bundler.example/base', mem.get(AA_KEY));
+}
+
+// The wipe dialog names what it deletes and keeps (finding 1), exactly.
+{
+  const { en } = await import('../src/i18n/en.ts');
+  const { es } = await import('../src/i18n/es.ts');
+  check('the wipe dialog\'s records sentence, exactly',
+    en['settings.wipe.records'] ===
+      "Your contacts, tracked tokens (each network's list returns to its defaults), transaction notes, account names, watched addresses, multi-signature account records, spending limits, price alerts, in-app browser connections, the pending-transaction and bridge-transfer lists, the inbox, any unfinished name registration and the record of which accounts were upgraded with EIP-7702 are deleted from this device too (an upgrade stays on-chain, and after a restore the Upgrade screen offers to use it again). A records backup made first (Settings → Records backup) can bring back the contacts, tracked tokens, notes, smart-account recovery records, multi-signature account records, spending limits, price alerts and bridge transfers. Settings that belong to this phone are kept: preferences, the language, network endpoints and indexers, the smart-account bundler, factory and paymaster settings, networks you added and API keys. WalletConnect connections are kept too — disconnect them first (Settings → WalletConnect → Connected apps) if you no longer want them." &&
+      typeof es['settings.wipe.records'] === 'string' && es['settings.wipe.records'].length > 100);
+  check('…shown in the dialog after the body and before the app-lock note',
+    tree['src/screens/SettingsScreen.tsx'].includes("t('settings.wipe.body') +\n        // Pass p23-build finding 1: name the other records the wipe deletes\n        // (contacts were kept before the fix) and what it keeps.\n        ` ${t('settings.wipe.records')}` +\n        (appPinOn ? ` ${localize(wipeWithLockNote(settingsLockKind))}` : ''),"));
 }
 
 console.log(`\ncheck-storage-seam: ${passed} passed, ${failed} failed`);

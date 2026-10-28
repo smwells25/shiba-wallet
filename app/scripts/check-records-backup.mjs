@@ -479,7 +479,7 @@ let exported;
   // cancelled; shareAsync resolves either way, so the line says only that
   // the file was prepared and handed to the sheet.
   check('the export summary sentence (p22b: prepared and handed to the share sheet; whether it was saved is not known)', rb.describeRecordsExport(exported) ===
-    'A backup of 18 records was prepared and handed to the share sheet (Networks you added: 1; Contacts: 3; Tracked tokens: 4; Transaction notes: 2; Guardian recovery records: 1; ' +
+    'A backup of 18 records was prepared and handed to the share sheet (Networks you added: 1; Contacts: 3; Tracked tokens: 4; Transaction notes: 2; Smart-account recovery records: 1; ' +
       'Multi-signature accounts: 1; Bridge transfers: 1; Price alerts and followed prices: 4; Spending limits: 1). Whether it was saved depends on what you chose there; this wallet cannot tell.', rb.describeRecordsExport(exported));
   check('…never "Backed up" (the wallet cannot tell whether the file was saved)', !/Backed up/.test(rb.describeRecordsExport(exported)) &&
     rb.describeRecordsExport({ summary: [], total: 1 }) === 'A backup of 1 record was prepared and handed to the share sheet. Whether it was saved depends on what you chose there; this wallet cannot tell.');
@@ -711,7 +711,7 @@ console.log('Exact strings');
   const exact = {
     RECORDS_BACKUP_SECTION_TITLE: 'Records backup',
     RECORDS_BACKUP_WHAT_NOTE:
-      'A records backup is one file with the records this wallet keeps on this phone: contacts, transaction notes, networks you added, tracked tokens, guardian recovery records, multi-signature account records, bridge transfers, price alerts and spending limits. It contains no private key, no recovery phrase and no PIN.',
+      'A records backup is one file with the records this wallet keeps on this phone: contacts, transaction notes, networks you added, tracked tokens, smart-account recovery records, multi-signature account records, bridge transfers, price alerts and spending limits. It contains no private key, no recovery phrase and no PIN.',
     RECORDS_BACKUP_KEY_NOTE:
       'The file is encrypted with a key made from this wallet’s recovery phrase, so only this recovery phrase can open it — on this phone, or on another phone after you restore the phrase there. If you lose the recovery phrase, this backup is lost with it.',
     RECORDS_BACKUP_NOT_INCLUDED_NOTE:
@@ -744,7 +744,7 @@ console.log('Exact strings');
   check('the phrase-account refusal', storage.RECORDS_BACKUP_PHRASE_ACCOUNT_ONLY ===
     'Records backups are made with your recovery phrase. Switch to an account that comes from your recovery phrase on Home first. Nothing was read.');
   check('the kind labels', JSON.stringify(rb.RECORD_KIND_ORDER.map((k) => rb.RECORD_KIND_LABELS[k])) === JSON.stringify([
-    'Networks you added', 'Contacts', 'Tracked tokens', 'Transaction notes', 'Guardian recovery records', 'Multi-signature accounts', 'Bridge transfers',
+    'Networks you added', 'Contacts', 'Tracked tokens', 'Transaction notes', 'Smart-account recovery records', 'Multi-signature accounts', 'Bridge transfers',
     'Price alerts and followed prices', 'Spending limits']));
 }
 

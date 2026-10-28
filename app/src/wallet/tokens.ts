@@ -1,4 +1,15 @@
-import { AsyncStorage, readStoreItem, writeStoreItem, removeStoreItem, STORE_KEYS, type KeyValueStore } from './store-keys.ts';
+import {
+  AsyncStorage,
+  listStoreKeys,
+  parseStoredKeyName,
+  readStoreItem,
+  removeStoreItem,
+  storeProfileOf,
+  writeStoreItem,
+  STORE_KEYS,
+  type KeyValueStore,
+  type RemovableKeyValueStore,
+} from './store-keys.ts';
 import { AssetRegistry, formatAssetId, parseAssetId } from '@shiba-wallet/core';
 import type { Asset, FungibleAsset } from '@shiba-wallet/core';
 // Explicit .ts extensions: this module is imported by scripts/check-tokens.mjs
@@ -507,6 +518,46 @@ export async function forgetTokensForChain(
   if (store.removeItem) await removeStoreItem(store, key);
   else await writeStoreItem(store, key, '[]');
   return true;
+}
+
+/** The fixed start of every other chain's list key, shiba-wallet.tokens.v1.<CAIP-2> (store-keys.ts tokensPerChain). */
+const PER_CHAIN_TOKENS_PREFIX = STORE_KEYS.tokensPerChain.name;
+
+/**
+ * Wipe support (pass p23-build finding 1): deletes every tracked-token list
+ * of the wallet the store is scoped to, so each network shows its defaults
+ * again (a missing key means "never customized", see the persistence notes
+ * at the top of this file). Removed: the mainnet key, the key of every EVM
+ * profile the app knows now (built-in and registered custom networks), and,
+ * when the store can list its keys (AsyncStorage can; a profile-bound view
+ * cannot), every other stored list key of the same profile, such as one left
+ * by a network that is no longer registered. Another profile's lists (the
+ * second wallet of a duress PIN) are never touched. Throws when the store
+ * cannot delete keys, because writing an empty list instead would hide the
+ * defaults. Returns how many stored lists were deleted.
+ */
+export async function resetTrackedTokens(
+  store: RemovableKeyValueStore & { getAllKeys?: () => Promise<readonly string[]> } = AsyncStorage,
+): Promise<number> {
+  if (!store.removeItem) throw new Error('This store cannot delete keys, so the tracked-token lists were not reset.');
+  const keys = new Set<string>([MAINNET_TOKENS_KEY]);
+  for (const profile of allEvmProfiles()) keys.add(tokenStoreKey(profile.caip2));
+  if (store.getAllKeys) {
+    const ownPrefix = storeProfileOf(store).keyPrefix;
+    const lister = store as { getAllKeys: () => Promise<readonly string[]> };
+    for (const raw of await listStoreKeys(lister)) {
+      const parsed = parseStoredKeyName(raw);
+      if (!parsed || parsed.keyPrefix !== ownPrefix) continue;
+      if (parsed.key === MAINNET_TOKENS_KEY || parsed.key.startsWith(PER_CHAIN_TOKENS_PREFIX)) keys.add(parsed.key);
+    }
+  }
+  let removed = 0;
+  for (const key of keys) {
+    if ((await readStoreItem(store, key)) === null) continue;
+    await removeStoreItem(store, key);
+    removed += 1;
+  }
+  return removed;
 }
 
 /**

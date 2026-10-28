@@ -2358,7 +2358,16 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
   check('navigation bar: each scheme is applied once through the native setStyle, nothing logged',
     r1 === 'applied' && r2 === 'applied' && JSON.stringify(calls) === JSON.stringify(['light', 'dark']) && logs.length === 0);
   const r3 = await NB.applyNavigationBarStyle(async () => null, true, (l) => logs.push(l));
-  check('navigation bar: a build without the module (or iOS) is "unavailable", silently', r3 === 'unavailable' && logs.length === 0);
+  check('navigation bar: a release build without the module is "unavailable", silently', r3 === 'unavailable' && logs.length === 0);
+  // Pass p23-build finding 3: in a development bundle 'unavailable' writes one
+  // line too (it was silent, so the pass could not tell it from 'applied');
+  // off Android nothing is attempted and nothing is logged.
+  const devLogs = [];
+  const r3d = await NB.applyNavigationBarStyle(async () => null, true, (l) => devLogs.push(l), { dev: true });
+  const r3i = await NB.applyNavigationBarStyle(async () => NB.NAVIGATION_BAR_NOT_ANDROID, true, (l) => devLogs.push(l), { dev: true });
+  check('navigation bar: in a development bundle "unavailable" is ONE log line; off Android it is "not-android" with nothing logged',
+    r3d === 'unavailable' && r3i === 'not-android' && devLogs.length === 1 &&
+      devLogs[0] === 'Navigation bar style not applied: the native module ExpoNavigationBar was not found in this build.', JSON.stringify(devLogs));
   let threw = false;
   let r4;
   let r5;
@@ -2371,18 +2380,46 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
   check('navigation bar: a rejected setStyle or a failed load is "failed" with exactly one one-line log each, never a throw',
     !threw && r4 === 'failed' && r5 === 'failed' && logs.length === 2 && logs.every((l) => !l.includes('\n')) &&
       logs[0] === 'Navigation bar style not applied: setStyle rejected' && logs[1] === 'Navigation bar style not applied: module load failed', JSON.stringify(logs));
+  // Every attempt's outcome is recorded for Settings → Developer, with a count
+  // (a scheme change must add one), and the line says which it was.
+  NB.resetNavigationBarStyleOutcome();
+  const seen = [];
+  const unsubscribe = NB.subscribeNavigationBarStyleOutcome(() => seen.push(NB.navigationBarStyleOutcome()));
+  const before = NB.navigationBarOutcomeLine(NB.navigationBarStyleOutcome());
+  await NB.applyNavigationBarStyle(async () => fake, false, () => undefined);
+  const afterLight = NB.navigationBarOutcomeLine(NB.navigationBarStyleOutcome());
+  await NB.applyNavigationBarStyle(async () => fake, true, () => undefined);
+  const afterDark = NB.navigationBarOutcomeLine(NB.navigationBarStyleOutcome());
+  await NB.applyNavigationBarStyle(async () => null, true, () => undefined);
+  const afterMissing = NB.navigationBarOutcomeLine(NB.navigationBarStyleOutcome());
+  await NB.applyNavigationBarStyle(async () => ({ setStyle: async () => { throw new Error('no current activity\nstack'); } }), false, () => undefined);
+  const failedOutcome = NB.navigationBarStyleOutcome();
+  const afterFailed = NB.navigationBarOutcomeLine(failedOutcome);
+  await NB.applyNavigationBarStyle(async () => NB.NAVIGATION_BAR_NOT_ANDROID, false, () => undefined);
+  const afterIos = NB.navigationBarOutcomeLine(NB.navigationBarStyleOutcome());
+  unsubscribe();
+  check('navigation bar: each attempt is recorded and announced to subscribers, with its attempt number and the style asked for',
+    seen.length === 5 && seen.map((o) => o.attempts).join(',') === '1,2,3,4,5' && seen.map((o) => o.result).join(',') === 'applied,applied,unavailable,failed,not-android' &&
+      seen.map((o) => o.style).join(',') === 'dark,light,light,dark,dark' && failedOutcome.detail === 'no current activity', JSON.stringify(seen));
+  check('navigation bar: the Settings → Developer line, exactly, for each outcome (none off Android)',
+    before === 'Navigation bar style: not applied yet in this session.' &&
+      afterLight === 'Navigation bar style: setStyle("dark") succeeded (attempt 1 in this session; "dark" asks for dark buttons, "light" for light ones).' &&
+      afterDark === 'Navigation bar style: setStyle("light") succeeded (attempt 2 in this session; "dark" asks for dark buttons, "light" for light ones).' &&
+      afterMissing === 'Navigation bar style: unavailable, the ExpoNavigationBar native module was not found in this build (attempt 3 in this session).' &&
+      afterFailed === 'Navigation bar style: failed: no current activity (attempt 4 in this session).' && afterIos === null,
+    JSON.stringify([before, afterLight, afterDark, afterMissing, afterFailed, afterIos]));
   const nbSrc = readApp('src/wallet/navigation-bar.ts');
   const loader = nbSrc.slice(nbSrc.indexOf('export async function loadNavigationBarNative'));
   const androidOnly = (src) => {
     const l = src.slice(src.indexOf('export async function loadNavigationBarNative'));
-    const guard = l.indexOf("if (Platform.OS !== 'android') return null;");
+    const guard = l.indexOf("if (Platform.OS !== 'android') return NAVIGATION_BAR_NOT_ANDROID;");
     const lookup = l.indexOf("requireOptionalNativeModule<{ setStyle?: (style: string) => Promise<void> }>('ExpoNavigationBar')");
     return guard > 0 && lookup > guard && l.indexOf("await import('expo')") > guard && l.includes("if (!nav || typeof nav.setStyle !== 'function') return null;");
   };
-  check('navigation bar: the loader returns null off Android before touching expo, and looks the module up with requireOptionalNativeModule (no throw when absent)',
+  check('navigation bar: the loader returns NAVIGATION_BAR_NOT_ANDROID off Android before touching expo, and looks the module up with requireOptionalNativeModule (null, no throw, when absent)',
     androidOnly(nbSrc) && loader.length > 0);
   check('navigation bar: the failure path catches everything in applyNavigationBarStyle (one try / catch around load and setStyle)',
-    /try \{\n\s+const native = await load\(\);[\s\S]*?await native\.setStyle\(navigationBarStyleFor\(dark\)\);[\s\S]*?\} catch \(e\) \{/.test(nbSrc));
+    /const style = navigationBarStyleFor\(dark\);[\s\S]{0,120}try \{\n\s+const native = await load\(\);[\s\S]*?await native\.setStyle\(style\);[\s\S]*?\} catch \(e\) \{/.test(nbSrc));
   // expo-navigation-bar's own entry throws at import when its native module
   // is missing (src/ExpoNavigationBar.android.ts, requireNativeModule), so no
   // app file may import the package itself.
@@ -2402,7 +2439,7 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
   const app = readApp('App.tsx');
   const mounted = (src) =>
     src.includes('          <StatusBar style="auto" />\n          <NavigationBarStyle />\n') &&
-    /function NavigationBarStyle\(\) \{\n\s+const theme = useTheme\(\);\n\s+React\.useEffect\(\(\) => \{\n\s+void applyNavigationBarStyle\(loadNavigationBarNative, theme\.dark\);\n\s+\}, \[theme\.dark\]\);\n\s+return null;\n\}/.test(src);
+    /function NavigationBarStyle\(\) \{\n\s+const theme = useTheme\(\);\n\s+React\.useEffect\(\(\) => \{\n(?:\s+\/\/[^\n]*\n)*\s+void applyNavigationBarStyle\(loadNavigationBarNative, theme\.dark, undefined, \{ dev: __DEV__ \}\);\n\s+\}, \[theme\.dark\]\);\n\s+return null;\n\}/.test(src);
   check('navigation bar: App.tsx mounts NavigationBarStyle beside the StatusBar component, applying the style at launch and on every scheme change (effect keyed on theme.dark)',
     mounted(app));
   const pkg = JSON.parse(readApp('package.json'));
@@ -2412,7 +2449,17 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
   // In-suite mutants, each must fail the check it targets.
   check('mutant caught: the component no longer mounted', !mounted(app.replace('          <NavigationBarStyle />\n', '')));
   check('mutant caught: the style applied only at launch (effect not keyed on the scheme)', !mounted(app.replace('}, [theme.dark]);\n  return null;\n}\n\n/**\n * Persistent orange', '}, []);\n  return null;\n}\n\n/**\n * Persistent orange')));
-  check('mutant caught: the Android guard removed from the loader', !androidOnly(nbSrc.replace("if (Platform.OS !== 'android') return null;", '')));
+  check('mutant caught: the Android guard removed from the loader', !androidOnly(nbSrc.replace("if (Platform.OS !== 'android') return NAVIGATION_BAR_NOT_ANDROID;", '')));
+  check('mutant caught (p23-build): the component no longer passes __DEV__ (a missing module would be silent again)',
+    !mounted(app.replace('theme.dark, undefined, { dev: __DEV__ });', 'theme.dark);')));
+  // Settings → Developer shows the line from the recorded outcome (pass p23-build finding 3).
+  const settingsSrc = readApp('src/screens/SettingsScreen.tsx');
+  const shown = (src) =>
+    src.includes('const navigationBarOutcome = React.useSyncExternalStore(subscribeNavigationBarStyleOutcome, navigationBarStyleOutcome);') &&
+    src.includes('const navigationBarLine = navigationBarOutcomeLine(navigationBarOutcome);') &&
+    /\{pinCostMeasurementOffered\(evmChain\.caip2\) \? <PinCostMeasurement \/> : null\}\n(?:\s+\{\/\*[\s\S]*?\*\/\}\n)?\s+\{navigationBarLine !== null \? \(\n\s+<Text style=\{\[styles\.hint, \{ color: theme\.text \}\]\}>\{navigationBarLine\}<\/Text>\n\s+\) : null\}/.test(src);
+  check('navigation bar: Settings → Developer shows the last attempt\'s line under the PIN hashing measurement, re-rendered after every attempt', shown(settingsSrc));
+  check('mutant caught (p23-build): the Developer line not rendered', !shown(settingsSrc.replace('{navigationBarLine !== null ? (', '{false ? (')));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

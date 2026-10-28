@@ -1609,6 +1609,27 @@ export async function clearAllRecoveredAccounts(store: KeyValueStore = AsyncStor
   if (changed) await saveConfigMap(map, store);
 }
 
+/**
+ * Wipe support (pass p23-build finding 1): forgets, on every chain, which of
+ * this wallet's accounts were recorded as upgraded with EIP-7702. Those marks
+ * name the wallet's own addresses, so they go with the wallet; the bundler,
+ * factory and paymaster fields of the same record are device settings and
+ * stay. Nothing on-chain changes: a delegation stays in place, and after a
+ * restore the Upgrade screen offers "Use this upgraded account" for an
+ * account it finds delegated (UpgradeAccountScreen onUseUpgraded).
+ */
+export async function clearAllEip7702Owners(store: KeyValueStore = AsyncStorage): Promise<void> {
+  const map = await loadConfigMap(store);
+  let changed = false;
+  for (const key of Object.keys(map)) {
+    if (map[key]?.eip7702Owners !== undefined) {
+      delete map[key]!.eip7702Owners;
+      changed = true;
+    }
+  }
+  if (changed) await saveConfigMap(map, store);
+}
+
 // ---------------------------------------------------------------------------
 // Client construction and the AA send path
 // ---------------------------------------------------------------------------
