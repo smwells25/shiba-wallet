@@ -151,7 +151,9 @@ examples/demo.mjs          Offline end-to-end engine demo
   development build only. The emulator package: 37.2.12 was installed
   on 2026-10-14 and ROLLED BACK to 37.1.11 on 2026-10-15 — the
   Chairperson saw a black window on 37.2.12 while adb was normal; 37.1.11
-  + ANGLE is the configuration confirmed visible (37.2.12 kept at
+  with the launch command above is the configuration confirmed visible
+  (CORRECTED 2026-10-28: the GPU option in force was 'auto', not ANGLE —
+  see the NOTE above; 37.2.12 kept at
   ~/Library/Android/emulator-dl/emulator-37.2.12-set-aside; it was installed BY HAND: sdkmanager 21.0 fails to unzip the archive — "Error reading Zip
   content from a SeekableByteChannel" — so the official archive
   emulator-darwin_x64-16428233.zip was downloaded from
@@ -222,7 +224,11 @@ examples/demo.mjs          Offline end-to-end engine demo
   printed counts equalled HEAD's), print the checkout and apply exit
   codes and the changed-file count, and compare the touched suites'
   counts with the agent's report before trusting ALL GREEN.
-  RUN THE WORKTREE RUNNER WITH --skip-bundle: the expo-export bundle
+  RUN THE WORKTREE RUNNER WITH --skip-bundle IN A SYMLINK-FARM WORKTREE
+  (SUPERSEDED IN PART 2026-10-28: in an APFS-clone worktree made by
+  .local/helpers/mkwt.sh the bundle step PASSES — pass p23-build ran the
+  runner with it, 2,318 modules — so --skip-bundle there is a time saver,
+  not a necessity): the expo-export bundle
   smoke test passes only in the main checkout (Metro follows the
   worktree's node_modules symlinks only into folders it watches, and
   the worktree's workspace root is itself — 2026-10-18: "Unable to
@@ -355,7 +361,10 @@ then 2's app half, 3 and 5; 6 last. Subagents on Opus.
         listed for "Arbitrum and Base" only (Ethereum only for v0.8).
         Testnet 0x31BE08D380A21fc740883c0BC434FcFc88740b58 (Arbitrum
         Sepolia, Base Sepolia); mainnet 0x6C973eBe80dCD8660841D4356bf15c32460271C9
-        (Arbitrum, Base — NOT verified on-chain). Base Sepolia, read live:
+        (Arbitrum, Base — NOT verified on-chain at the time; READ ON-CHAIN
+        2026-10-25 by scripts/audit/verify-pins.mjs: EntryPoint v0.7, not
+        paused, staked, Sourcify exact_match — the phase 23 item 1 record).
+        Base Sepolia, read live:
         entryPoint() = v0.7, token() = USDC 0x036CbD53…CF7e, EntryPoint
         deposit ~1.0077 ETH, staked 0.25 ETH / 86,400 s; an ERC-1967 UUPS
         proxy whose implementation 0x1E42055dECF050828AfE8bA0A374bC5F44CbFC8d
@@ -9097,7 +9106,10 @@ Opus.
       env.sh sets JAVA_HOME and GRADLE_USER_HOME to those paths (the
       scratchpad copies had been deleted by the cleaner and were
       re-downloaded during this build). MANIFEST FINDING (the merged debug
-      manifest at wt-build, 35 uses-permission entries): TWENTY launcher
+      manifest at wt-build, 35 uses-permission entries): TWENTY (CORRECTED
+      2026-10-28: SIXTEEN — the four com.android.launcher.permission.*
+      lines are commented out in ShortcutBadger's manifest; see the phase
+      23 item 2 configuration record) launcher
       badge and shortcut permissions not in RELEASE.md's list —
       android.permission.READ_APP_BADGE, the four
       com.android.launcher.permission.* shortcut/settings entries, and the
@@ -11386,7 +11398,8 @@ error's root cause is not established), so WalletConnect could not be
 checked there; on a fresh install the WalletConnect row reads "Saved"
 because the app falls back to its built-in project id, and clearing it
 does not disable WalletConnect as a code comment claimed (both fixed in 906c9d9: the status reads "Built-in project id" and the control says it returns to it); the
-notifications library adds twenty launcher-badge permissions
+notifications library adds sixteen launcher-badge permissions (the record
+first said twenty; corrected 2026-10-28)
 (ShortcutBadger) to the Android manifest although the wallet never sets
 a badge; every LayerZero test pathway relies on ONE required verifier
 operated by LayerZero Labs (the documented presets have two verifiers or a dead one), Stargate's
@@ -14428,8 +14441,9 @@ to the Chairperson at once.
       change.
 - [x] EMULATOR PASS p23-handle — THE WALLET HANDLE PROVEN LIVE THROUGH THE
       APP: TWO ENS NAMES REGISTERED ON SEPOLIA, ONE FROM THE REGULAR ACCOUNT
-      AND ONE FROM THE SMART ACCOUNT, PLUS THE SUB-NAME (2026-10-26 ~03:30 –
-      2026-10-27 12:20 UTC; the driver was cut once by the Opus session limit
+      AND ONE FROM THE SMART ACCOUNT, PLUS THE SUB-NAME (2026-10-27 ~03:30 –
+      12:20 UTC — the record first said 2026-10-26, but block 12002511 is
+      2026-10-27 UTC, corrected 2026-10-28; the driver was cut once by the Opus session limit
       after step 10's countdown read and resumed at 11:52 UTC with the state
       re-established — adb reverse in place, the app in front and unlocked,
       TalkBack still on, both balances re-read equal on two RPCs; Expo Go on
@@ -15351,3 +15365,59 @@ to the Chairperson at once.
       8081 (npm 47432 / node 47469, wt-app at f9e0353) untouched; the
       snapshot saved under gles host, to be overwritten by the next graceful
       close; wt-build3 at 4e34507 kept with android/ and the build outputs.
+- [x] Item 9 — LEADERSHIP REFRESH (docs commit 2a266e8; 11 documents,
+      +363 / −99; verified in the CTO's isolated worktree on HEAD 20f421b
+      with --skip-bundle: checkout 0 / apply 0 / 11 files, the staged patch
+      id f952628d… equal to the verified one, the offline runner ALL GREEN
+      (engine 1,296; app 10,796 across 65 suites; check-screen-protection
+      87, check-devmode 459, check-readiness 222, check-multisig 435), the
+      status column recounted independently (99 rows: 59 / 18 / 2 / 20), the
+      secret scan clean; the built page scanned clean — no 32- or 64-hex
+      runs, no project id, one Google-Fonts stylesheet, one inline script).
+      FEATURE_UNIVERSE section 15: feature 75 (wallet handles) → Proven
+      live (partial — an ENS name on Sepolia's ENSv2 test contracts, paid
+      in test USDC); features 11 (the smart-account half of cold signing
+      in-app), 35 (USDC through CCTP V2 burned and minted through the
+      app), 47 (the records backup restored after a wipe in the
+      development build), 53, 80, 91 (five localisation passes), 92, 93
+      (sixteen badge permissions, not twenty), 97 (token P&L), 56, 52 and 5
+      extended; row 77 stays Not started by recommendation; TALLY 59
+      proven live (T1 29, T2 30), 18 built (9 / 9), 2 designed, 20 not
+      started (1 / 4 / 15), every count sentence agreeing. THREAT_MODEL:
+      T-91 (the wallet handle: the secret in ordinary storage for this
+      test-network slice, the single keys behind the Sepolia ENSv2
+      contracts), T-92 (a broadcast with no usable answer), F-85 (the wipe
+      keeps contacts — found in pass p23-build; Open, fix in progress);
+      T-80, T-82, T-83, T-84, T-86, T-89, T-90, F-75, F-80, F-81 updated;
+      §3.4 (the inbox and handle-pending keys), §3.6 (the Android local
+      builds and the first iOS Simulator build), §7.4. MAINNET_READINESS
+      (the audit-pack figures, the open decisions), BRIDGE_PROVIDERS §4.4 /
+      §6 / §10, CROSS_CHAIN_OPTIONS §5.2, BRIDGING's header, AUDIT_SCOPE's
+      CCTP and iOS sentences, DURESS_WALLET, RELEASE §3 / §10 / §11,
+      DEVICE_BUILDS, DEMO (steps 45–48 and the warnings). THE SHAREABLE
+      PAGE rebuilt with .local/fu/build-fu.py (59 / 18 / 2 / 20 asserted in
+      the tiles, the table and the header) and PUBLISHED as VERSION 25 of
+      https://claude.ai/artifact/JEfyMuPcMJ8YW5x3ZKitsw; the built file is
+      the new base at .local/fu/feature-universe.html. CTO ANSWERS to the
+      refresh agent's six open questions: (1) F-80 is the bridging finding
+      (the brief had it wrong) — the open-outcome spending change belongs
+      under T-92 and F-75, as written; (2) row 77 (attestations) stays Not
+      started; (3) "Not rated in this refresh" on T-91, T-92 and F-85 is
+      accepted for now — rating them by the file's conventions is a
+      follow-up; (4) row 47 as Proven live (partial) is right; (5) row 92
+      stays Built; (6) F-85 stays Open until the fix slice lands (it was
+      cut by the session limit mid-work and resumes after the reset). FIVE
+      CORRECTIONS TO THIS FILE, applied in this record commit, each marked
+      in place with "corrected 2026-10-28": the phase-21 build record's
+      "TWENTY" badge permissions and the phase-21 status's "twenty" → sixteen
+      (ShortcutBadger's four com.android.launcher.permission.* lines are
+      commented out in its manifest); pass p23-handle's start date 2026-10-26
+      → 2026-10-27 UTC (block 12002511 is 2026-10-27); the standing rule's
+      "37.1.11 + ANGLE is the configuration confirmed visible" → the launch
+      command is what was confirmed, the GPU option in force was 'auto' (the
+      NOTE above it); the --skip-bundle rule marked superseded in part (the
+      bundle step passes in an APFS-clone worktree — pass p23-build); the
+      phase-13 "Circle's mainnet paymaster NOT verified on-chain" marked as
+      read on 2026-10-25 by verify-pins.mjs. Not changed: the refresh
+      itself re-rated nothing and added no new live claim — every status
+      line cites a pass record above.
