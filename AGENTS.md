@@ -134,7 +134,15 @@ examples/demo.mjs          Offline end-to-end engine demo
   37.1.11: the SwiftShader default and `-gpu host` were both black for
   the Chairperson (their clicks were logged by Qt as "no target
   window"), the ANGLE (Metal) renderer is VISIBLE (confirmed by the
-  Chairperson). A renderer change discards the quick-boot snapshot
+  Chairperson). NOTE (2026-10-28, pass p23-build): emulator 37.1.11 logs
+  "Selected GPU option 'angle_indirect' is not valid, switching to
+  'auto' mode" on every launch, so ANGLE was never applied — 'auto'
+  resolved to gles host on one launch and swangle on the next, and the
+  quick-boot snapshot loads only under the renderer it was saved with;
+  which renderer to pin is the Chairperson's decision; until then keep
+  the command and expect a cold boot; set
+  ANDROID_EMULATOR_WAIT_TIME_BEFORE_KILL=120 in the launching shell so a
+  graceful close finishes its save. A renderer change discards the quick-boot snapshot
   (cold boot, the PIN keyguard, `adb reverse` lost). CLOSING THE WINDOW
   IS A GRACEFUL SHUTDOWN (snapshot saved) and is fine; a pass relaunches
   it. NEVER SET AN APP PIN ON THE AVD'S REAL WALLET: with the PIN on,
@@ -15124,3 +15132,222 @@ to the Chairperson at once.
       there): the call line, the fee row, the worst-case sentence with no
       L1 row on Arbitrum, the preview, the single MessageTransmitterV2 risk
       line and the unchanged button; the mainnet readiness row's new text.
+- [x] Item 2, the build half — EMULATOR PASS p23-build: THE RELEASE-CANDIDATE
+      BUILDS, THEIR MANIFESTS CHECKED, AND THE DEVELOPMENT-BUILD PASS ON A
+      THROWAWAY WALLET (2026-10-27 21:04 – 2026-10-28 02:27 local; built from
+      4e34507 (code a71ef32) in the scratchpad worktree wt-build3 — an APFS
+      clone, `git ls-files -d` 0; Gradle ran ONLY with the emulator closed
+      and `--stop` left no java process; no repository file edited, staged
+      or committed; the agent was cut once by the Opus session limit and
+      resumed from its report's last line; the report step by step in the
+      scratchpad p23-build/REPORT.md with the logs, the manifest dumps and
+      their diffs; THE CTO RE-CHECKED the two APK sizes and sha256 digests,
+      the snapshot files' sizes, both permission diffs against the plugin's
+      16 names, the normalised release xmltree diff, the quoted emulator log
+      lines, and the three Base Sepolia receipts plus the dev EOA's balance
+      and nonce on base-sepolia-rpc.publicnode.com and sepolia.base.org —
+      every figure below matches). THE BUILDS (.local/builds): the debug
+      development client shiba-devclient-a71ef32-rc-debug.apk — assembleDebug
+      13 min 51 s, 771 tasks, 97,894,296 B, sha256
+      7e82efdb016c12cea0bf0c454150bb3d363ea6960662ef940c4792890548a31d; the
+      release shiba-release-a71ef32-rc.apk — assembleRelease 19 min 59 s,
+      1,024 tasks (949 executed), 66,173,082 B, sha256
+      8221b800a5a15dd7f361fa3d1ca4974273e10b39d78d12eba63e58bb31cfa8c9;
+      both lib/x86_64 only with libQuickCrypto.so (10,263,400 B debug /
+      10,066,720 B release) and libNitroModules.so; the release signed with
+      the template debug key (apksigner: v2 only, one signer "CN=Android
+      Debug", certificate SHA-256 fac61745…3b9c identical to
+      shiba-release-7244fd5.apk's — no release key exists). THE MERGED
+      MANIFESTS (aapt2 36.0.0, each APK against its 7244fd5 version):
+      exactly the plugin's 16 ShortcutBadger permissions removed (the
+      removed set byte-equal to app/plugins/withoutShortcutBadger.js's list,
+      debug 32 → 16 uses-permission entries, release 31 → 15; nothing else
+      removed, nothing added, none of the 16 left); the normalised xmltree
+      diff holds only those 16 elements and one added
+      `<data android:scheme="shibawallet"/>` on MainActivity's VIEW filter
+      (DEFAULT + BROWSABLE) beside the kept exp+shiba-wallet — the release
+      build keeps the dev-client scheme too, as 7244fd5's did; version,
+      application attributes and every other component identical. THE
+      EMULATOR (steps 0, 3 and 6): ANDROID_EMULATOR_WAIT_TIME_BEFORE_KILL
+      is named by NO documentation — not `-help-environment` (24 lines, five
+      variables), not `-help-all` (2,041 lines), no Google page in a web
+      search — only by the emulator's own message, found with `strings` in
+      the launcher binary and two of its libraries: "Wait for emulator (pid
+      %d) %d seconds to shutdown gracefully before kill;you can set
+      environment variable ANDROID_EMULATOR_WAIT_TIME_BEFORE_KILL(in
+      seconds) to change the default value (%d seconds)"; which process
+      reads it is an inference (the launcher, the parent of qemu). Set to
+      120 in the launching shell: the toolbar Close logged "Wait for
+      emulator (pid 65889) 120 seconds…" (honoured) then "Saving snapshot
+      'default_boot' using 7969 ms" with NO "killed" line, leaving ram.bin
+      3,036,190,358 B, textures.bin 19,566,706 B, screenshot.png 1,843,037
+      B, snapshot.pb 1,052 B — a complete save (the step-1 `adb emu kill`
+      had also saved a full snapshot within about 12 s). BUT THE QUICK BOOT
+      STILL FAILED: the relaunch WITHOUT -no-snapshot-load logged "Change of
+      GLES renderer detected… Failed to load snapshot 'default_boot'… The
+      emulator is starting from scratch. Reason: different renderer
+      configured" and cold-booted. CAUSE, from the two logs of the SAME
+      command: emulator 37.1.11 says "Selected GPU option 'angle_indirect'
+      is not valid, switching to 'auto' mode." on BOTH launches — THE ANGLE
+      FLAG IN THE STANDING RULE HAS NEVER BEEN APPLIED on this version —
+      and 'auto' resolved to "gles_mode_selected:host" on the first launch
+      and "…:swangle" on the second; the snapshot saved under host is
+      refused under swangle; why 'auto' flips is not established. So the
+      visible window the Chairperson confirmed on 2026-10-14 was rendered by
+      whatever 'auto' chose that day, not by ANGLE; pinning a renderer
+      explicitly (`-gpu host` or `-gpu swangle_indirect`) would make save
+      and load agree, but SwiftShader and `-gpu host` were both black for
+      the Chairperson on 2026-10-14, so the renderer is THE CHAIRPERSON'S
+      DECISION; the window's visibility under the current swangle session
+      is unverified (`screencapture` has no screen-recording permission).
+      THE DEVELOPMENT-BUILD PASS (a throwaway wallet, deleted with the app;
+      Metro on 8082 from wt-build3 with EXPO_NO_METRO_LAZY=1, one bundle of
+      2,446 modules; the real Expo Go wallet never opened until the end;
+      screen protection off on the throwaway; every dump redacted; the
+      throwaway's phrase kept only in a 0600 file and deleted with rm -P):
+      (a) DEEP LINKS — PASS: `pm query-activities` resolves shibawallet://
+      to com.anonymous.shibawallet.MainActivity alone (Expo Go does not
+      claim it); inbox, home, activity?chain=bitcoin ("Bitcoin activity"),
+      receive?chain=solana ("Receive SOL"), price-alerts and sessions each
+      opened their screen; send?uri=<EIP-681> opened "Send ETH" with "This
+      payment request was opened from a link outside the wallet. Anyone can
+      make such a link; nothing is sent until you review and approve it."
+      FIRST, then the filled fields (nothing sent); shibawallet://nowhere
+      and inbox?x=1 → "This link does not open anything in Shiba Wallet.";
+      a link sent after 75 s in the background showed ONLY the lock and
+      opened once after Unlock; a LAUNCH LINK after a force-stop is caught
+      by the dev launcher's "DEVELOPMENT SERVERS" screen first (dev-build
+      only; logcat "ClassNotFoundException: expo.modules.splashscreen.
+      SplashScreenManager" from DevLauncherController, dev-launcher noise)
+      and, once the server is chosen, opens "Receive BTC" behind the
+      cold-start lock, once. (b) THE NAVIGATION BAR — the WHITE STRIP IS
+      GONE: pixel reads (rows 2240–2399 at x 10 / 540 / 1070) show the
+      TESTNET banner's orange running to the bottom edge in light and dark
+      mode and in gesture and three-button navigation, the bar transparent
+      over it; BUT the BUTTON APPEARANCE DOES NOT FOLLOW A RUNTIME THEME
+      CHANGE — MainActivity keeps `apr=LIGHT_NAVIGATION_BARS` (dark
+      buttons) in dark mode when the app started in light, and no flag
+      (light buttons) in light mode when it started in dark, while the
+      status-bar flag follows; expo-navigation-bar's module is compiled in
+      and registered and no "Navigation bar style not applied" line was
+      logged ('unavailable' logs nothing by design), so whether
+      NavigationBarStyle's setStyle call runs or is overridden afterwards is
+      NOT established (fix slice: a diagnostic line on every outcome, then
+      the cause); once, right after switching the overlay at runtime, the
+      three-button home button overlapped the banner's last line (insets
+      not yet re-laid out; no overlap after a cold start). (c) REMINDERS
+      WITHOUT THE BADGE PERMISSIONS — PASS on Base Sepolia: the system
+      prompt "Allow Shiba Wallet to send you notifications?", channels
+      payments-due (importance 3) and security-alerts (4) in `dumpsys
+      notification` (`cmd notification list_channels` does not exist on
+      this image); the throwaway's Kernel 0x4507Fd5e…266C2C0A funded 0.004
+      ETH from the dev EOA by fund.mjs (tx 0x68badd89…873151, block
+      51196214, 21,000 gas at 6,000,000 wei + l1Fee 16,454), deployed by a
+      0.000001 ETH send (userOp 0x6541cb86…62d6a6, tx 0x6d6d3f5f…656815,
+      block 51197149, status 0x1, 321,863 gas), a recurring payment of
+      0.000001 ETH every 2 minutes × 2 installed (userOp 0xaa11fdf0…e6eb48,
+      permission 0x1b0fb705; "Approve this recurring payment" then a second
+      biometric window whose title the driver's helper did not capture —
+      UNVERIFIED); the reminder alarm (RTC_WAKEUP, window +1 m 8 s) POSTED
+      within 69 s on channel payments-due with icon id 0x7f08010d =
+      drawable/notification_icon — THE SHADE SHOWS THE WALLET'S SHIBA-HEAD
+      ICON on the #a65d13 circle, not a placeholder ring (the phase-18
+      icon seen live for the first time); a tap opened Sessions after the
+      unlock ("2 payments due now… 1 was missed"); no payment sent; revoked
+      (userOp 0xb5de4b5c…1260d8, "Status: Revoked.") and forgotten, the
+      notification gone and no alarm left; the Kernel swept with Max
+      (lowered by the fee-rose rule; userOp 0x0a9f4167…6f2239, tx
+      0x08b937ca…3e9e5f, block 51201661, 124,758 gas); FUNDS to the wei on
+      both RPCs: the dev EOA 14,944,253,349,025,065 → 14,926,676,536,008,611
+      wei (−17,576,813,016,454), nonce 10 → 11; the throwaway Kernel keeps
+      2,313,559,500,000 wei + a 4,869,418,100,000 wei EntryPoint deposit,
+      stranded. (d) RECORDS BACKUP — PASS: this AVD's share sheet has no
+      "Files" or "Save to device" target (Nearby Share, Read aloud,
+      Bluetooth, Chrome, Drive and Gmail with no account), so the file was
+      pulled from the app's cache with `run-as` while the chooser was open
+      (2,264 B; the first five decoded bytes "SWRB" 01) and was gone about
+      60 s after the chooser closed; the section read "A backup of 3 records
+      was prepared and handed to the share sheet (Contacts: 1; Transaction
+      notes: 1; Guardian recovery records: 1). Whether it was saved depends
+      on what you chose there; this wallet cannot tell."; after "Wipe
+      wallet" and an import of the same phrase, the file pushed to Downloads
+      and picked through the system picker (the content:// read in the dev
+      build) restored with "Contacts: 0 added, 1 already on this phone. /
+      Transaction notes: 1 added, 0 already on this phone. / Guardian
+      recovery records: 1 added, 0 already on this phone." (e) THE DECOY'S
+      EXPORT — PASS: the app PIN (the backup-word check, "Choose a 6-digit
+      PIN", "The app PIN is on…") then a duress PIN; a cold restart's pad
+      answered with the duress PIN opened the decoy "Account 1 /
+      0x50e9…480f" with "No contacts." on every network; one contact added
+      there; the decoy's export "A backup of 1 record was prepared … (Contacts:
+      1)…" (504 B against the real wallet's 2,264 B) — only the decoy's own
+      record; the decoy's Developer line also "PIN hashing path: native
+      scrypt (react-native-quick-crypto), self-check passed"; the real PIN
+      reopened the real throwaway. (f) WALLETCONNECT in both wallets with
+      lazy bundling off — PASS as far as tested: "Connected apps" opened in
+      the decoy and in the real throwaway, the row "Built-in project id —
+      used to reach the WalletConnect relay. You can replace it with your
+      own." in both; no "Requiring unknown module", "importedAll" or
+      "Unable to determine the production URL" line in logcat or the Metro
+      log; a pairing and the per-profile wc@2 keys NOT tested. (g) THE
+      OFFLINE RUNNER WITH THE BUNDLE STEP, in the APFS-clone worktree (the
+      .dev-wallet link removed and app.json / package.json restored to the
+      commit first): ALL GREEN in 497 s — engine 1,296, app 10,757 across 65
+      suites, expo lint 0/0, tsc clean, "expo export --platform android
+      (bundle smoke test) PASS 1 bundle file(s), 10.9 MB, 2318 modules" — THE
+      BUNDLE STEP PASSES IN AN APFS-CLONE WORKTREE (the 2026-10-18 failure
+      was the retired symlink-farm worktree; the --skip-bundle rule can be
+      dropped for clone worktrees). CLEAN-UP: "Remove wallet" with the PIN
+      on ("…and the app PIN itself.") left SecureStore.xml at 65 bytes with
+      no key names; the app uninstalled; Downloads emptied; Metro 8082
+      stopped and its reverse removed; night mode off; gesture navigation
+      only (enabling the gestural overlay had left threebutton listed too,
+      disabled again); every capture holding a throwaway address deleted
+      with rm -P (shade-crop.png kept, no address). FINDINGS (fix slice
+      dispatched): (1) WIPE KEEPS CONTACTS — "Wipe wallet" without an app
+      PIN left the contact on the phone (the restore said "already on this
+      phone"): contacts are declared wallet-scoped (store-keys.ts 128) but
+      neither wipe list in WalletContext.tsx (1433–1445, 1471–1504; the CTO
+      re-read both) resets them, and the wipe dialog does not name them;
+      the other wallet-scoped keys were not checked (the fix audits every
+      wallet-scoped key against both wipe lists); (2) the "Guardian recovery
+      records: 1" on a fresh wallet with no guardian is the account record
+      ensureFactoryKernelRecord writes when a factory Kernel is deployed
+      (recovery.ts ~755 — the CTO's reading; the driver did not trace it),
+      so the records-backup section's label "Guardian recovery records" is
+      the misleading part — reword it; (3) the navigation-bar button style
+      above; (4) dev-build only: the dev launcher's server screen in front
+      of a launch link; (5) emulator: the ANGLE flag rejected, the renderer
+      flip and the quick boot (the Chairperson's decision); (6) a
+      `.dev-wallet` SYMLINK is NOT matched by the `.dev-wallet/` ignore
+      pattern (`git check-ignore` printed nothing) — the driver used one for
+      about 20 minutes to run fund.mjs from the committed worktree (the main
+      checkout's stale working tree carries a modified app/src/wallet/send.ts
+      that fund.mjs imports) and removed it before anything else ran there;
+      RULE: never link .dev-wallet into a worktree — copy the needed values
+      into a 0600 file instead; (7) driving: `while read … adb shell`
+      swallows stdin (use `< /dev/null`); the first tap after a keyboard
+      dismiss is often lost; a six-swipe Settings loop overshoots a section.
+      HYGIENE SLIP, recorded: the driver's tap helper hit the header
+      "Confirm" instead of the button on the FIRST, never-saved throwaway
+      phrase and the next dump printed its quiz screen (two "Word #N" labels
+      and six choice words, two of them that phrase's) into the agent's
+      working output; that mnemonic was discarded (each "Create a new
+      wallet" draws a fresh one, WalletContext.tsx 934–937) and the wallet
+      used came from a second, never-printed phrase; the helper now taps
+      only clickable nodes and never dumps a quiz screen. UNVERIFIED: the
+      window's visibility under swangle; that the 02:18 snapshot loads under
+      the same renderer; the second biometric prompt's title at Start; the
+      cause of the button-style flag; a WalletConnect pairing; a recurring
+      payment actually sent in this build; the release APK on the device
+      (manifest, signature and libraries only). END STATE: qemu 60303 (`-avd
+      shiba -gpu angle_indirect`, launched without -no-snapshot-load, cold-
+      booted after the failed load, gles swangle, the wait variable 120 in
+      its Terminal tab; PRI 97 at the CTO's read), caffeinate 60307 (`-i -w
+      60303`), the unrelated `caffeinate -i -d` 21201 untouched; Expo Go in
+      front on the REAL wallet's cold-start lock (not unlocked);
+      com.anonymous.shibawallet uninstalled; night mode off; gesture
+      navigation; IME ADBKeyboard; only `adb reverse tcp:8081` mapped; Metro
+      8081 (npm 47432 / node 47469, wt-app at f9e0353) untouched; the
+      snapshot saved under gles host, to be overwritten by the next graceful
+      close; wt-build3 at 4e34507 kept with android/ and the build outputs.
