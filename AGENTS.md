@@ -15421,3 +15421,104 @@ to the Chairperson at once.
       read on 2026-10-25 by verify-pins.mjs. Not changed: the refresh
       itself re-rated nothing and added no new live claim — every status
       line cites a pass record above.
+- [x] Pass p23-build findings FIXED — THE WIPE AUDIT (F-85), THE BACKUP
+      LABEL, THE NAVIGATION-BAR DIAGNOSTIC (commit 5ad1085; 20 files, +685 /
+      −52; check-storage-seam 85 (was 59), check-devmode 465 (459),
+      check-duress 214, check-records-backup 143 and check-i18n 170 with
+      pins changed in place, none loosened; offline runner ALL GREEN in the
+      CTO's isolated worktree on HEAD 75330b1 with --skip-bundle: engine
+      1,296, app 10,828 across 65 suites, lint 0/0, tsc clean; checkout 0 /
+      apply 0 / 19 files for the agent's patch (id 2c0b0807…f53c = its
+      stated id), then the CTO's two doc edits on the same tree with the
+      seven touched suites re-run green and the final 20-file patch (id
+      7ebac372…d304) staged from the patch into the main checkout's index
+      with the same id; the pre-commit scan clean on 20 files; seven hand
+      mutants on the real files caught; built by a FRESH agent from the cut
+      agent's partial diff (base 20f421b; its docs hunks re-applied by hand
+      on the refreshed FEATURE_UNIVERSE row 47 and DEMO.md); not seen on a
+      device). (1) THE WIPE: both wipe paths in WalletContext.tsx (the
+      app-lock resetRecords list and the plain path) now also call
+      resetContacts, the new tokens.ts resetTrackedTokens (deletes the
+      mainnet list, every known EVM profile's list and, where the store can
+      list its keys, every other stored list of the same profile — never
+      another profile's; it throws on a store that cannot delete keys, since
+      an empty list would hide the defaults), the new inheritance.ts
+      resetTakeoverScanStates (the pre-existing gap noted in phase 17) and
+      the new aa.ts clearAllEip7702Owners (BEYOND THE BRIEF, accepted: the
+      marks name this wallet's own addresses and the app-PIN sweep already
+      removed them; the bundler, factory and paymaster fields of the same
+      record stay as device settings; a delegation stays on-chain and
+      UpgradeAccountScreen's onUseUpgraded re-records one it finds after a
+      restore). THE STRUCTURAL CHECK (check-storage-seam, parsed with the
+      TypeScript compiler API): every one of the 24 wallet-scoped STORE_KEYS
+      ids is either mapped to a reset chain that BOTH wipe paths call and
+      that ends in a seam write or removal of the module's own key constant
+      (19 keys), or listed by name in WIPE_NOT_RESET with a reason and a
+      source-fact check (5: aaConfig partly cleared — the recovered-account
+      links and the EIP-7702 marks go, the endpoint fields stay; the
+      notifications key cleared by the scheduler on "no-wallet"; the three
+      WalletConnect binding keys wcSmartBindings / wcCalls / wcUsed kept
+      with the SDK's own sessions, the documented F-28 design); any other
+      wallet-scoped key, and a stale entry, fails the check. THE DIALOG: the
+      new settings.wipe.records sentence after the body and before the
+      app-lock note names what is deleted (contacts, tracked tokens "each
+      network's list returns to its defaults", notes, account names, watched
+      addresses, multisig records, spending limits, price alerts, browser
+      connections, the pending and bridge lists, the inbox, an unfinished
+      name registration, the EIP-7702 upgrade marks — "an upgrade stays
+      on-chain, and after a restore the Upgrade screen offers to use it
+      again"), what a records backup can bring back, what is kept
+      (preferences, the language, endpoints and indexers, the smart-account
+      bundler, factory and paymaster settings, networks you added, API
+      keys) and that WalletConnect connections are kept — "disconnect them
+      first"; THE APP-LOCK WIPE NOTES REWORDED (duress.ts WIPE_WITH_PIN_NOTE
+      / _PASSPHRASE_NOTE): the old "removes everything the wallet keeps on
+      this phone" contradicted the dialog's own kept-settings sentence, and
+      with a lock on the sweep walletRecordsToRemove (duress.ts 186–195,
+      re-read by the CTO: it skips only device-scoped keys) removes the
+      WHOLE wallet-scoped aa-config record, endpoints included — so the note
+      now reads "…also removes every other record the wallet keeps on this
+      phone, including the smart-account bundler, factory and paymaster
+      settings; only the other phone settings and the WalletConnect
+      connections named above are kept. The app PIN itself is removed too."
+      (DEMO step 39's clean-up line updated to match). (2) THE LABEL:
+      recovery.ts ensureFactoryKernelRecord (~755–781) and
+      recoveryRecordListener (796) write a per-account record for every
+      factory Kernel at its first accepted operation — the address, the
+      deployment lineage and the owners, a guardian or heir set only when
+      one exists — so records-backup.ts's kind reads "Smart-account recovery
+      records" and recordsBackup.what says the same (a "changed" fixture
+      entry with before / en / why; check-i18n's changed list extended);
+      the Settings note and DEMO step 46 follow. (3) THE NAVIGATION BAR:
+      navigation-bar.ts records every attempt (result applied / unavailable
+      / failed / the new not-android — iOS and web no longer read as "module
+      not found" — the style asked for, the failure's first line, the
+      attempt count; useSyncExternalStore subscribers) and
+      navigationBarOutcomeLine renders it under Settings → Developer below
+      the PIN hashing line ("Navigation bar style: setStyle("dark")
+      succeeded (attempt N in this session; "dark" asks for dark buttons,
+      "light" for light ones)." / "…unavailable, the ExpoNavigationBar
+      native module was not found in this build…" / "…failed: <detail>…" /
+      "not applied yet in this session"); 'unavailable' writes one log line
+      in a development bundle (App.tsx passes __DEV__); THE CAUSE IS NOT
+      ASSERTED — the header comment records what the source shows
+      (theme.dark comes from the same useColorScheme hook expo-status-bar
+      uses, so the effect re-runs on a scheme change; nothing found in RN
+      0.86.3 or expo-navigation-bar that resets the flag after a
+      configuration change; a null module lookup, which logged nothing, is
+      not excluded), and the next dev-build pass reads the line after a
+      runtime dark-mode switch. DOCS: THREAT_MODEL F-85 → Fixed (the row and
+      the header line), FEATURE_UNIVERSE row 47's "a fix is in progress"
+      clause → the fix with its device re-check pending. MUTANTS (each
+      restored cmp-equal): the contacts reset dropped from the plain wipe
+      (3 seam checks fail), the EIP-7702 clear dropped from the PIN wipe
+      (1), resetTrackedTokens writing nothing (3), the old backup label (2
+      records-backup checks), 'unavailable' unrecorded (3 devmode checks),
+      the Developer line not rendered (1), the wipe sentence removed (1).
+      LEFT AS IS (documented): with an app lock the sweep removes the
+      WalletConnect smart-account bindings while the SDK's sessions survive
+      (pre-existing); FEATURE_UNIVERSE row 47 still quotes "a guardian
+      recovery record added" as the pass observed it under the old label.
+      UNVERIFIED (device): the wipe's result, the dialog's length in
+      English and Spanish, the Developer line after a runtime dark-mode
+      switch, the 'unavailable' log line in a development bundle, iOS.
