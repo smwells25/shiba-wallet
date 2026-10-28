@@ -20,9 +20,10 @@ decided by the Chairperson (commit `8b4ed84`, `react-native-quick-crypto`,
 N kept at 2^16; pass p22a), where one unlock took about 2.5 seconds in both
 the debug and the release build (section 5.2). The lock passphrase (stage
 P1, section 8.2) is built and checked offline (commit `9e3dfea`), not yet
-run on the emulator. The BIP-39 passphrase decoy (stage P2, section 8.3) is
+run on the Android emulator; it was set and used once in the iOS Simulator
+(phase 23 item 3). The BIP-39 passphrase decoy (stage P2, section 8.3) is
 not built and waits on the Chairperson's answers to section 8.5. No real
-phone and no iOS build have run any of it.
+phone has run any of it; iOS only in the Simulator.
 
 Every fact below names its source: the installed package sources under
 `app/node_modules` (with the version), this repository's own code (file and
@@ -582,13 +583,34 @@ Option (b). No slice is built in phase 20. The reasons, in order of weight:
   the first, changing the PIN inside the second wallet, the WalletConnect
   separation, a send's device prompt from the second wallet, a real phone
   and iOS; the builds used predate the lock passphrase.
+  **Phase 23** (`AGENTS.md` phase 23): in the release-candidate debug
+  development build made from commit `a71ef32` (pass p23-build,
+  2026-10-27 to 2026-10-28 local dates, a throwaway wallet), the app PIN
+  and a duress PIN were set again; the duress PIN opened the decoy with no
+  contacts on any network; a contact added there was the only record in
+  the decoy's records-backup export (504 bytes against the real wallet's
+  2,264); the decoy's Settings also read "PIN hashing path: native scrypt
+  (react-native-quick-crypto), self-check passed"; and "Connected apps"
+  opened in both wallets with Metro's lazy bundling off, both showing the
+  built-in project id (a WalletConnect pairing and the per-wallet stored
+  sessions were not tested). "Remove wallet" with the PIN on left the
+  secure store holding no key names. In the iOS Simulator (phase 23 item
+  3, 2026-10-25, a debug build from `f4b9339`, a throwaway wallet) the
+  passphrase was chosen as the lock kind and used: the backup-word fields
+  were secure entry, a wrong passphrase gave "Wrong passphrase. Try
+  again.", the right one opened Home, and the native scrypt self-checked
+  and measured 0.47 to 0.70 seconds per hash at N = 2^16; iOS still showed
+  its Passwords AutoFill bar over the secure fields and the keyboard
+  overlapped the top edge of the Unlock button; the 6-digit PIN pad was
+  not seen on iOS.
 - **Stage P1 — a lock passphrase instead of the PIN. BUILT OFFLINE**
   (phase 22, 2026-10-19; section 8.2): the record's version 2 with its
   `kind` field (371 bytes for either kind; a version 1 record still opens
   and is converted on the next write), the passphrase rules, the
   passphrase field on the lock screen and in Settings, switching kinds in
   one record write, pinned in `app/scripts/check-duress.mjs` (commit
-  `9e3dfea`). Not yet run on the emulator; the BIP-39 passphrase decoy
+  `9e3dfea`). Not yet run on the Android emulator; set and used once in
+  the iOS Simulator (phase 23 item 3, above); the BIP-39 passphrase decoy
   (Stage P2) is not built and waits on the Chairperson's answers to section
   8.5.
 
@@ -1894,7 +1916,8 @@ comes back with nothing typed.
   mutant that stores the passphrase.
 - The stored seed equals `mnemonicToSeed(phrase, passphrase)`, and
   `packages/core` tests BIP-39's official vectors with the passphrase
-  "TREZOR" (absent today, section 8.1), pinned by entropy and seed rather
+  "TREZOR" (tested since phase 23 item 7, commit `0c665b3`, section 8.1),
+  pinned by entropy and seed rather
   than by the phrase because the pre-commit secret scan refuses
   checksum-valid phrases, as `bip85.test.ts` already does — a mutant that
   passes an empty passphrase.

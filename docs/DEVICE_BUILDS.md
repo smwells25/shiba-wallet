@@ -125,8 +125,13 @@ What the emulator passes established (phase 21, passes p21f and p21g):
 
 - A release APK embeds one bundle that is not lazy, so it is not affected.
 
-Not yet tested: a real WalletConnect pairing in the development client
-with lazy bundling switched off. Expo Go also loads a lazily bundled app
+In pass p23-build (the phase 23 release-candidate development client,
+Metro started with `EXPO_NO_METRO_LAZY=1`, one bundle of 2,446 modules)
+Connected apps opened in both wallets of a duress set-up, and no
+"Requiring unknown module", "importedAll" or "Unable to determine the
+production URL" line appeared in logcat or Metro's log. Not yet tested: a
+real WalletConnect pairing in the development client with lazy bundling
+switched off. Expo Go also loads a lazily bundled app
 from Metro, and Connected apps opened in it in earlier passes (phase 16);
 why only the development client failed was not established.
 
@@ -189,6 +194,109 @@ What the next build must verify (none of it can be seen without one):
    buttons share the bar area): a decision, not taken here.
 4. Reminders still work after the badge permissions are gone (a reminder
    posts and a tap opens Sessions).
+
+**What the build showed (pass p23-build, 2026-10-27 to 2026-10-28 local
+dates; `AGENTS.md` phase 23, item 2 build half).** The debug development
+client and the release APK were built from commit `4e34507` (whose code
+is `a71ef32`) in an APFS-clone worktree, with Gradle run only while the
+emulator was closed; their files, sizes and digests are in
+`docs/RELEASE.md` section 11.1.
+
+1. Manifests: exactly the sixteen badge permissions are gone from both
+   merged manifests (debug 32 → 16 `uses-permission` entries, release
+   31 → 15), nothing else changed, and the main activity's VIEW intent
+   filter carries `shibawallet` beside `exp+shiba-wallet`.
+2. Deep links, in the debug development build on a throwaway wallet:
+   `pm query-activities` resolved `shibawallet://` to the wallet's main
+   activity alone (Expo Go does not claim it); the inbox, home, Activity
+   for Bitcoin, Receive for Solana, price-alerts and sessions routes each
+   opened their screen; a Send link carrying an EIP-681 request opened
+   Send with the outside-link sentence first and nothing sent; an unknown
+   route and a route with an extra parameter were refused; a link sent
+   after 75 seconds in the background showed only the lock and acted once
+   after Unlock. A launch link after a force-stop was first caught by the
+   development launcher's "DEVELOPMENT SERVERS" screen (development builds
+   only) and, once the server was chosen, opened its screen once behind
+   the cold-start lock. Whether Android shows a chooser when another app
+   claims the scheme was not tested (no other app claims it on this
+   emulator).
+3. The navigation bar: the white strip is gone in light and dark mode
+   and in gesture and three-button navigation (pixel reads at the bottom
+   rows); but the buttons' appearance did not follow a theme change made
+   while the app was running (it kept the appearance of the theme the app
+   started in, while the status bar followed), with no "Navigation bar
+   style not applied" line in logcat; the cause is not established and a
+   fix slice adds a log line for every outcome first. Once, right after
+   switching to three-button navigation while the app ran, the home button
+   overlapped the banner's last line until the insets were laid out again
+   (not seen after a cold start).
+4. Reminders, on Base Sepolia: the system permission prompt, the
+   `payments-due` (importance 3) and `security-alerts` (importance 4)
+   channels, and a recurring-payment reminder posted within 69 seconds on
+   `payments-due` with icon `drawable/notification_icon` — the wallet's
+   Shiba head on the `#a65d13` circle, the phase 18 icon seen in the shade
+   for the first time — whose tap opened Sessions after the unlock.
+
+The same pass restored a records backup after a wipe, exported the duress
+decoy's own records only, and opened Connected apps in both wallets with
+lazy bundling off (`docs/FEATURE_UNIVERSE.md` rows 47 and 53); it found
+that "Wipe wallet" keeps the contacts (`docs/THREAT_MODEL.md` F-85, fix in
+progress).
+
+### The emulator and the build environment: facts from pass p23-build
+
+These concern the Android emulator on the development Mac (emulator
+37.1.11) and the local build route, not the app; they are recorded here
+because every emulator result in this document depends on them
+(`AGENTS.md` phase 23, item 2 build half).
+
+- **The renderer flag is rejected.** The project's launch command passes
+  `-gpu angle_indirect`. Emulator 37.1.11 logs "Selected GPU option
+  'angle_indirect' is not valid, switching to 'auto' mode." on every
+  launch, so the ANGLE renderer the command names has never been
+  applied; 'auto' resolved to the host renderer on one launch and to
+  SwiftShader-on-ANGLE ("swangle") on the next. The emulator window the
+  Chairperson confirmed visible on 2026-10-14 was therefore drawn by
+  whatever 'auto' chose that day.
+- **The quick-boot snapshot loads only under the renderer it was saved
+  with.** A relaunch logged "Change of GLES renderer detected… Failed to
+  load snapshot 'default_boot'… Reason: different renderer configured"
+  and cold-booted. Naming a renderer explicitly would make the save and
+  the load agree, but the host renderer and SwiftShader both gave a black
+  window on the developer's Mac on 2026-10-14, so which one to pin is the
+  Chairperson's decision.
+- **The shutdown wait.** Closing the emulator window is a graceful
+  shutdown, but the launcher kills the emulator after 20 seconds by
+  default; one snapshot save took longer ("Saving snapshot 'default_boot'
+  using 20030 ms", then killed) and left a truncated snapshot. The
+  variable that changes the wait, `ANDROID_EMULATOR_WAIT_TIME_BEFORE_KILL`,
+  is named in no documentation found — not `emulator -help-environment`,
+  not `emulator -help-all`, no Google page in a web search — only in the
+  emulator's own message, found with `strings` in the launcher binary:
+  "Wait for emulator (pid %d) %d seconds to shutdown gracefully before
+  kill;you can set environment variable
+  ANDROID_EMULATOR_WAIT_TIME_BEFORE_KILL(in seconds) to change the default
+  value (%d seconds)". Which process reads it is inferred (the launcher,
+  the parent of the emulator process). Set to 120 in the launching shell,
+  the close logged the 120-second wait and then "Saving snapshot
+  'default_boot' using 7969 ms" with no kill, and the snapshot files were
+  complete.
+- **The bundle step passes in a cloned worktree.** The offline runner
+  with the `expo export` bundle step (`node scripts/ci/run.mjs --mode
+  offline`, without `--skip-bundle`) passed in an APFS-clone worktree in
+  497 seconds (one bundle of 10.9 MB, 2,318 modules). The 2026-10-18
+  failure ("Unable to resolve module expo") belonged to the older
+  worktrees made of symlinks into the main checkout, which are no longer
+  used.
+- **Gradle and the emulator.** Gradle ran only while the emulator was
+  closed, and `./gradlew --stop` left no Java process before the
+  emulator was driven again (a Gradle build beside a driven emulator
+  once got the emulator's system server killed by its watchdog, phase
+  16).
+- **The git-ignored secrets folder.** A symbolic link named `.dev-wallet`
+  inside a worktree is NOT matched by the `.dev-wallet/` ignore pattern
+  (`git check-ignore` prints nothing for it); never link that folder into
+  a worktree.
 
 ### The native scrypt for the app PIN (phase 22 item 2)
 

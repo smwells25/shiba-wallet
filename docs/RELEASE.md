@@ -495,10 +495,13 @@ element" (developer.android.com/build/manage-manifests, fetched
 entries and the `xmlns:tools` declaration into
 `android/app/src/main/AndroidManifest.xml`.
 `app/scripts/check-notifications.mjs` pins the plugin entry, the sixteen
-names and the plugin's manifest change. **Not verified without a Gradle
-build:** that the MERGED manifest of a debug and a release build carries
-none of the sixteen (`aapt2 dump permissions` on the new APK), and that
-reminders still work.
+names and the plugin's manifest change. **Verified in pass p23-build
+(2026-10-27 to 2026-10-28, local dates):** the MERGED manifests of the
+release-candidate debug and release APKs carry none of the sixteen and
+lost nothing else (section 11.1), and in the debug development build on
+the emulator a recurring-payment reminder still posted, on the
+`payments-due` channel with the wallet's Shiba-head icon, and its tap
+opened Sessions.
 
 **The navigation bar (phase 23 item 2; pass p20c finding 15).**
 `expo-navigation-bar` 57.0.3 is a dependency (the version
@@ -519,11 +522,20 @@ empty (no permission), it depends only on `androidx.core` and
 `androidx.appcompat`, and its sources make no network request. Its config
 plugin is applied automatically by prebuild (`withDefaultPlugins.js` line
 171) and changes nothing without options; the wallet sets none, so
-`enforceNavigationBarContrast` keeps its default (on). **Not verified
-without a device:** that the system's contrast scrim turns dark with the
-dark appearance (the white strip of finding 15), and the button colour
-(the library documents a visible effect only on a button navigation bar
-with `enforceContrast: false`, `src/NavigationBar.types.ts` lines 34-42).
+`enforceNavigationBarContrast` keeps its default (on). **Seen in pass p23-build** (the debug development build on the
+emulator): the white strip of finding 15 is gone — pixel reads show the
+TESTNET banner's colour running to the bottom edge, the bar transparent
+over it, in light and dark mode and in gesture and three-button
+navigation. But the buttons' appearance did not follow a theme change
+made while the app was running: the main activity kept dark buttons in
+dark mode when the app had started in light mode, and light buttons in
+light mode when it had started in dark, while the status bar followed;
+no "Navigation bar style not applied" line was logged, and whether the
+wallet's `setStyle` call runs or is overridden afterwards is not
+established (a fix slice adds a log line for every outcome first). The
+library documents a visible effect only on a button navigation bar with
+`enforceContrast: false` (`src/NavigationBar.types.ts` lines 34-42); that
+option was not taken.
 
 ---
 
@@ -814,7 +826,8 @@ Every item must be checked for the exact commit being built.
   lines are commented out) and `aapt2 dump permissions` on that APK lists
   sixteen. Since phase 23 item 2 the wallet's own config plugin removes
   them (section 3, "Launcher-badge permissions removed"); the merged
-  manifest of a rebuilt APK has not been read yet. The debug manifest also
+  manifests of the release-candidate debug and release APKs were read in
+  pass p23-build and carry none of them (section 11.1). The debug manifest also
   carries the dev-launcher's `CHANGE_WIFI_MULTICAST_STATE`.
 - App Store Connect's phased-release controls.
 - The export-compliance answer (legal input).
@@ -825,10 +838,14 @@ Written 2026-10-25 for phase 23 item 1 (the audit pack), so that an
 auditor can tell which source each kept build came from, how it was made
 and how it is signed. Every fact below is either read from the files on
 that date or quoted from the project's running record (`AGENTS.md`,
-phases 16, 21 and 22), which is named where it is the only source.
+phases 16, 21 and 22), which is named where it is the only source. The
+two phase 23 release-candidate builds were added on 2026-10-28 from the
+record of pass p23-build (`AGENTS.md` phase 23, item 2 build half), whose
+sizes and digests the CTO re-checked.
 
-**Two points first.** All five builds are signed with the **template
-debug keystore**, the one whose private key and password ship inside
+**Two points first.** All seven builds are signed with the **template
+debug keystore** (for the phase 23 debug build this is inferred from the
+template, not read; see section 11.4), the one whose private key and password ship inside
 Expo's public project template; anyone can sign an APK with that key.
 **No release signing key exists yet**: creating one locally, or using
 EAS-managed credentials, waits on the package name and the other inputs
@@ -849,9 +866,27 @@ Sizes from `ls -l`; hashes from `shasum -a 256`, both run 2026-10-25.
 | `shiba-release-7244fd5.apk` | 53,359,829 | `f73133e089a3ceafcd6cd5a820fad943a5a7426183a7aa25577891333f65a64e` | release | commit `7244fd5` (same tree as above) | phase 21, pass p21g, "assembleRelease 8 min 56 s" |
 | `shiba-devclient-b414989-qc-debug.apk` | 97,878,200 | `c06d4245f69e4eb333005c16e6f9d764e366ae424e248565b818bc233321f949` | debug development client | commit `b414989` plus the native-scrypt patch that became commit `8b4ed84` | phase 22 item 2, "assembleDebug 6 min 59 s" |
 | `shiba-release-8b4ed84-qc.apk` | 65,086,370 | `acbd14be97ceb70dbebc94fa80222c94d28db44f0c9cf2fd8385c93fb69b233a` | release | the same tree as the line above | phase 22, pass p22a, "BUILD SUCCESSFUL in 6 min 24 s" |
+| `shiba-devclient-a71ef32-rc-debug.apk` | 97,894,296 | `7e82efdb016c12cea0bf0c454150bb3d363ea6960662ef940c4792890548a31d` | debug development client (release candidate) | commit `4e34507`, whose code is `a71ef32` (the later commits are records only), in the APFS-clone worktree `wt-build3` | phase 23 item 2, pass p23-build, "assembleDebug 13 min 51 s, 771 tasks" |
+| `shiba-release-a71ef32-rc.apk` | 66,173,082 | `8221b800a5a15dd7f361fa3d1ca4974273e10b39d78d12eba63e58bb31cfa8c9` | release (release candidate) | the same tree as the line above | phase 23 item 2, pass p23-build, "assembleRelease 19 min 59 s, 1,024 tasks (949 executed)" |
 
 The two debug builds of `45506f2` and `7244fd5` have the same size and
-different hashes.
+different hashes. Both release-candidate builds carry native code for
+`lib/x86_64` only, with `libQuickCrypto.so` (10,263,400 bytes in the debug
+build, 10,066,720 in the release build) and `libNitroModules.so`.
+
+**The release candidates' merged manifests** (pass p23-build, `aapt2`
+36.0.0, each APK compared with its `7244fd5` counterpart): exactly the
+sixteen ShortcutBadger permissions named in
+`app/plugins/withoutShortcutBadger.js` are gone (the debug build's
+`uses-permission` entries 32 → 16, the release build's 31 → 15), nothing
+else was removed or added, and the normalised `xmltree` difference holds
+only those sixteen elements and one added `<data
+android:scheme="shibawallet"/>` on the main activity's VIEW intent filter
+(DEFAULT and BROWSABLE) beside the development client's
+`exp+shiba-wallet`, which the release build keeps too, as `7244fd5`'s did.
+Version, application attributes and every other component are identical.
+The release-candidate release APK has not been installed or run; only its
+manifest, signature and libraries were read.
 
 **A correction to the record's naming.** The last two builds were made
 from `b414989` with the native-scrypt change applied as a patch, which
@@ -864,10 +899,13 @@ those commits change `app/src/components/AccountsSection.tsx`,
 read 2026-10-25). The `-qc` builds therefore contain the native scrypt
 but not those caption changes. The file names are kept as they are.
 
-The worktrees the builds were made in (`wt-build`, `wt-build2` in the
-session scratchpad) no longer exist (the scratchpad is cleaned by
+The worktrees the first five builds were made in (`wt-build`, `wt-build2`
+in the session scratchpad) no longer exist (the scratchpad is cleaned by
 macOS), so the exact generated `android/` folders cannot be re-read; a
-rebuild starts again from the commit.
+rebuild starts again from the commit. The release candidates' worktree
+`wt-build3` was kept at `4e34507` with its `android/` folder and build
+outputs at the end of pass p23-build, but it lives in the same cleaned
+scratchpad.
 
 ### 11.2 Toolchain
 
@@ -919,7 +957,9 @@ JavaScript served by Metro, start Metro with `EXPO_NO_METRO_LAZY=1`
 ### 11.4 Signing, as read from the files
 
 `apksigner verify --print-certs -v` (Android build-tools 36.0.0, run
-2026-10-25) on each of the five files: verified with APK Signature
+2026-10-25) on each of the first five files, and in pass p23-build on the
+release-candidate release APK (the record does not give the result for
+the release-candidate debug APK): verified with APK Signature
 Scheme v2 only (not v1, v3, v3.1 or v4), one signer, certificate
 `CN=Android Debug, OU=Android, O=Unknown, L=Unknown, ST=Unknown, C=US`,
 certificate SHA-256
