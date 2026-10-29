@@ -12941,7 +12941,10 @@
   "settings.navBar.notYet",
   "settings.navBar.applied",
   "settings.navBar.unavailable",
-  "settings.navBar.failed"
+  "settings.navBar.failed",
+  "bridge.measuredAttestation.one",
+  "bridge.measuredAttestation.many",
+  "bridge.approve.totalNote"
  ],
  "changed": {
   "activity.note.privacy": {
@@ -12963,6 +12966,21 @@
    "before": "A records backup is one file with the records this wallet keeps on this phone: contacts, transaction notes, networks you added, tracked tokens, guardian recovery records, multi-signature account records, bridge transfers, price alerts and spending limits. It contains no private key, no recovery phrase and no PIN.",
    "en": "A records backup is one file with the records this wallet keeps on this phone: contacts, transaction notes, networks you added, tracked tokens, smart-account recovery records, multi-signature account records, bridge transfers, price alerts and spending limits. It contains no private key, no recovery phrase and no PIN.",
    "why": "Pass p23-build finding 2: the records called \"guardian recovery records\" are the per-account records the wallet keeps for every factory Kernel v3.3 smart account (written at its first accepted operation, with its address, deployment and owners, and a guardian or heir set only when one exists), so a wallet with no guardians reported \"Guardian recovery records: 1\"; the kind is now named \"smart-account recovery records\"."
+  },
+  "bridge.cctp.mintStep": {
+   "before": "After Circle’s attestation (about 17 minutes in the measured runs) the USDC is minted on {destination} by a transaction there. This wallet can send it from your regular account when {destination} is the active network and that account holds test ETH there for gas; anyone else with gas there may send it too, and the USDC still goes only to the recipient written into the burn.",
+   "en": "After Circle’s attestation (about {fromMinutes} to {toMinutes} minutes after the burn in the measured runs, not a promise) the USDC is minted on {destination} by a transaction there. This wallet can send it from your regular account when {destination} is the active network and that account holds test ETH there for gas; anyone else with gas there may send it too, and the USDC still goes only to the recipient written into the burn.",
+   "why": "Pass p23-bridge-recheck (2026-10-28): a second measurement on Base Sepolia to Arbitrum Sepolia took 1,332 to 1,352 s from the burn block to Circle's attestation, so \"about 17 minutes in the measured runs\" understated the wait; the sentence now gives the spread of every recorded attestation time (the engine's cctpAttestationRange, about 17 to 23 minutes so far) as measured, not promised."
+  },
+  "bridge.cctp.burned": {
+   "before": "Burned on {source}. Waiting for Circle’s attestation: it comes after the source chain’s hard finality, about 17 minutes in the measured runs.",
+   "en": "Burned on {source}. Waiting for Circle’s attestation: it comes after the source chain’s hard finality, about {fromMinutes} to {toMinutes} minutes after the burn in the measured runs (not a promise).",
+   "why": "Pass p23-bridge-recheck (2026-10-28): a second measurement on Base Sepolia to Arbitrum Sepolia took 1,332 to 1,352 s from the burn block to Circle's attestation, so \"about 17 minutes in the measured runs\" understated the wait; the sentence now gives the spread of every recorded attestation time (the engine's cctpAttestationRange, about 17 to 23 minutes so far) as measured, not promised."
+  },
+  "bridge.cctp.burnedBlock": {
+   "before": "Burned on {source} (block {block}). Waiting for Circle’s attestation: it comes after the source chain’s hard finality, about 17 minutes in the measured runs.",
+   "en": "Burned on {source} (block {block}). Waiting for Circle’s attestation: it comes after the source chain’s hard finality, about {fromMinutes} to {toMinutes} minutes after the burn in the measured runs (not a promise).",
+   "why": "Pass p23-bridge-recheck (2026-10-28): a second measurement on Base Sepolia to Arbitrum Sepolia took 1,332 to 1,352 s from the burn block to Circle's attestation, so \"about 17 minutes in the measured runs\" understated the wait; the sentence now gives the spread of every recorded attestation time (the engine's cctpAttestationRange, about 17 to 23 minutes so far) as measured, not promised."
   }
  }
 }

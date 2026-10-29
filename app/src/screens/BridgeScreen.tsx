@@ -935,6 +935,10 @@ export function BridgeScreen({ navigation }: Props) {
             </>
           );
         })()}
+        {/* The same total row as the burn step (pass p23-bridge-recheck
+            finding 4). prepareBridgeApprove refuses any amount but 0, so the
+            total is the worst-case network fee; the note says so. */}
+        <Row label="Total (worst case)" value={`${exact18(eoaQuote.total)} ${symbol}`} sub={t('bridge.approve.totalNote', { symbol })} theme={theme} />
         <BalanceChangePreview url={quotedUrl} request={{ from: account.address, to: eoaQuote.to, value: 0n, ...(eoaQuote.data ? { data: eoaQuote.data } : {}) }} />
         <RiskWarnings url={quotedUrl} wallet={account.address} to={eoaQuote.to} data={eoaQuote.data} />
         {eoaQuote.simulation.ok ? (
@@ -1436,7 +1440,21 @@ function MintPanel({
           ) : (
             <WarningBox>{t('staking.simulation.failed', { reason: quote.q.simulation.reason })}</WarningBox>
           )}
-          <Button title={bridgeMintPromptTitle(record)} onPress={() => void send()} disabled={busy || !quote.q.simulation.ok} />
+          {/* The button keeps the panel's wording ("Mint on <network>", pass
+              p23-bridge-recheck finding 3); the device prompt it opens is
+              still titled bridgeMintPromptTitle ("Mint the bridged USDC on
+              <network>"). Back drops this quote and returns to the panel, as
+              Back does on every other bridge confirm. */}
+          <Button title={t('bridge.mint.button', { destination: record.destinationLabel })} onPress={() => void send()} disabled={busy || !quote.q.simulation.ok} />
+          <Button
+            title="Back"
+            variant="secondary"
+            onPress={() => {
+              setQuote(null);
+              setError(null);
+            }}
+            disabled={busy}
+          />
         </>
       ) : (
         <Button title={t('bridge.mint.button', { destination: record.destinationLabel })} variant="secondary" onPress={() => void prepare()} disabled={busy} />

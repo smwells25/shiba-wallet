@@ -213,41 +213,180 @@ export function encodeReceiveMessage(message: string, attestation: string): Uint
 }
 
 // ---------------------------------------------------------------------------
-// Measured delivery (phase 23 item 4, the live leg of 2026-10-25)
+// Measured attestation times (phase 23 item 4 and the emulator passes)
 // ---------------------------------------------------------------------------
 
+/** One CCTP Standard Transfer whose attestation time was measured on the test networks. */
+export interface CctpAttestationMeasurement {
+  /** UTC date of the burn, YYYY-MM-DD. */
+  date: string;
+  /** The burn transaction on the sending network. */
+  burnTx: string;
+  /**
+   * Seconds from the burn block to the last poll of Circle's sandbox API that
+   * still answered "pending", where that poll was timed; absent when it was
+   * not (pass p23-cctp noted only that it was about a minute earlier).
+   */
+  pendingAtSeconds?: number;
+  /** Seconds from the burn block to the first poll that answered "complete": the attestation appeared between the two. */
+  completeBySeconds: number;
+  /** Who sent it and where the record is. */
+  record: string;
+}
+
 /**
- * Burn block to mint block, measured once per route in the live run of
- * 2026-10-25 (docs/BRIDGING.md section 17; scripts/testnet/cctp-smoke.mjs):
- * 996 s Base Sepolia -> Arbitrum Sepolia and 1,058 s Ethereum Sepolia ->
- * Base Sepolia, one 1 USDC Standard Transfer each, the mint sent as soon as
- * the attestation appeared. One measurement is not a range, so the quote's
- * minSeconds / maxSeconds stay Circle's documented "~15-19 minutes".
+ * Circle's attestation, measured from the burn block to the first poll of
+ * Circle's sandbox API (GET /v2/messages) that answered "complete", per route
+ * keyed "source chain id->destination chain id". These are attestation times,
+ * not delivery times: the mint on the receiving network is a separate
+ * transaction sent afterwards (in the 2026-10-25 script legs at once, in the
+ * app passes by hand, minutes or a day later), so a burn-block-to-mint-block
+ * figure says how quickly someone minted, not how quickly Circle attested.
+ *
+ *  - 2026-10-25, Base Sepolia -> Arbitrum Sepolia, by script: pending at
+ *    986 s, complete at 996 s (docs/BRIDGING.md section 17, leg 1; the mint
+ *    followed at 996 s).
+ *  - 2026-10-25, Ethereum Sepolia -> Base Sepolia, by script: pending at
+ *    1,047 s, complete at 1,057 s (section 17, leg 2; the mint at 1,058 s).
+ *  - 2026-10-26, Arbitrum Sepolia -> Base Sepolia, through the app (pass
+ *    p23-cctp, AGENTS.md): complete at most 1,178 s after the burn block;
+ *    the poll before it, still pending, was about a minute earlier and not
+ *    timed exactly, so no pending figure is recorded; the mint came a day
+ *    later (pass p23-mint).
+ *  - 2026-10-28, Base Sepolia -> Arbitrum Sepolia, through the app (pass
+ *    p23-bridge-recheck, AGENTS.md): pending at 1,332 s, complete at
+ *    1,352 s; the mint was sent by hand about four minutes later.
+ *
+ * Several measurements are a record, not a range anyone promises, so the
+ * quote's minSeconds / maxSeconds stay Circle's documented "~15-19 minutes".
  */
-export const CCTP_V2_TESTNET_MEASURED = Object.freeze({
-  date: '2026-10-25',
-  summary:
-    'Measured once on the test networks on 2026-10-25: 996 s Base Sepolia → Arbitrum Sepolia and 1,058 s Ethereum Sepolia → Base Sepolia (from the burn block to the mint block, one 1 USDC Standard Transfer each, the mint sent as soon as the attestation appeared).',
-  /** Seconds keyed "source chain id->destination chain id". */
-  seconds: Object.freeze({ '84532->421614': 996, '11155111->84532': 1058 } as Record<string, number>),
+export const CCTP_V2_TESTNET_ATTESTATIONS: Readonly<Record<string, readonly CctpAttestationMeasurement[]>> = Object.freeze({
+  '84532->421614': Object.freeze([
+    Object.freeze({
+      date: '2026-10-25',
+      burnTx: '0x847e641f6f038bf78f22881ff2186e0b453f18f24eb543556e8fda1db84e67a7',
+      pendingAtSeconds: 986,
+      completeBySeconds: 996,
+      record: 'by script (docs/BRIDGING.md section 17, leg 1)',
+    }),
+    Object.freeze({
+      date: '2026-10-28',
+      burnTx: '0xbf228c57a7113300e3d373fd03b74873c387de1d798cbff44410adf6e583ac69',
+      pendingAtSeconds: 1332,
+      completeBySeconds: 1352,
+      record: 'through the app (pass p23-bridge-recheck)',
+    }),
+  ]),
+  '11155111->84532': Object.freeze([
+    Object.freeze({
+      date: '2026-10-25',
+      burnTx: '0xd412d22a2a9e09e958b52b855e73cba5011ad373829c316ca6f8af4e97a8556f',
+      pendingAtSeconds: 1047,
+      completeBySeconds: 1057,
+      record: 'by script (docs/BRIDGING.md section 17, leg 2)',
+    }),
+  ]),
+  '421614->84532': Object.freeze([
+    Object.freeze({
+      date: '2026-10-26',
+      burnTx: '0xaeae0e5be19309066eec433417a1d7201bb24ab968b7efda47dc838f58c81072',
+      completeBySeconds: 1178,
+      record: 'through the app (pass p23-cctp)',
+    }),
+  ]),
 });
+
+/** The spread of every recorded attestation time, by the poll that first found it complete. */
+export interface CctpAttestationRange {
+  /** How many transfers were measured, on every route together. */
+  count: number;
+  fromSeconds: number;
+  toSeconds: number;
+  /** The same in whole minutes, rounded to the nearest minute (996 s → 17, 1,352 s → 23). */
+  fromMinutes: number;
+  toMinutes: number;
+  firstDate: string;
+  lastDate: string;
+}
+
+/** The spread across every route's measurements (CCTP_V2_TESTNET_ATTESTATIONS). Pure. */
+export function cctpAttestationRange(
+  table: Readonly<Record<string, readonly CctpAttestationMeasurement[]>> = CCTP_V2_TESTNET_ATTESTATIONS,
+): CctpAttestationRange {
+  const all = Object.values(table).flat();
+  if (all.length === 0) throw new Error('No CCTP attestation time is recorded.');
+  const seconds = all.map((m) => m.completeBySeconds);
+  const dates = all.map((m) => m.date).sort();
+  const fromSeconds = Math.min(...seconds);
+  const toSeconds = Math.max(...seconds);
+  return {
+    count: all.length,
+    fromSeconds,
+    toSeconds,
+    fromMinutes: Math.round(fromSeconds / 60),
+    toMinutes: Math.round(toSeconds / 60),
+    firstDate: dates[0]!,
+    lastDate: dates[dates.length - 1]!,
+  };
+}
+
+/** "1,352" — the engine's own English, with thousands separators. */
+function groupDigits(n: number): string {
+  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
 
 const CCTP_DOCUMENTED_TIME =
   'Circle documents "~15-19 minutes" for a Standard Transfer from Ethereum, Arbitrum, Base and OP mainnets: it attests a burn only after the sending network\'s hard finality.';
 
-/** The quote's time estimate for a route: Circle's documented range, and the live measurement where one exists. Never a promise. */
+/** The sentence summarising every measurement (the same on every route's quote). */
+export function cctpMeasuredSummary(range: CctpAttestationRange = cctpAttestationRange()): string {
+  return (
+    `Measured on the test networks: Circle's attestation was first seen complete ${groupDigits(range.fromSeconds)} s to ` +
+    `${groupDigits(range.toSeconds)} s after the burn block (about ${range.fromMinutes} to ${range.toMinutes} minutes) in ` +
+    `${range.count} Standard Transfers of 1 USDC between ${range.firstDate} and ${range.lastDate}, polling Circle's sandbox API. ` +
+    'The mint on the receiving network is a separate transaction sent after that, so these figures are not delivery times.'
+  );
+}
+
+/** "about 17 to 23 minutes after the burn in the measured runs" — the phrase the trust statement and the app's sentences use. */
+export function cctpMeasuredMinutesPhrase(range: CctpAttestationRange = cctpAttestationRange()): string {
+  return `about ${range.fromMinutes} to ${range.toMinutes} minutes after the burn in the measured runs`;
+}
+
+function routeSentence(list: readonly CctpAttestationMeasurement[] | undefined): string {
+  if (list === undefined || list.length === 0) return 'This route was not measured.';
+  const parts = list.map((m) => `${groupDigits(m.completeBySeconds)} s on ${m.date}`);
+  const joined = parts.length === 1 ? parts[0]! : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]!}`;
+  return `On this route the attestation was first seen complete after ${joined}.`;
+}
+
+/**
+ * The quote's time estimate for a route: Circle's documented range as
+ * minSeconds / maxSeconds, the attestation times measured on this route as
+ * `measurements` (never `measured`, which means a delivery time), and the
+ * spread across every measured route in the sentence. Never a promise.
+ */
 export function cctpTimeEstimate(sourceChainId: number, destinationChainId: number): BridgeTimeEstimate {
-  const m = CCTP_V2_TESTNET_MEASURED;
-  const seconds = m.seconds[`${sourceChainId}->${destinationChainId}`];
+  const list = CCTP_V2_TESTNET_ATTESTATIONS[`${sourceChainId}->${destinationChainId}`];
   const estimate: BridgeTimeEstimate = {
     minSeconds: 15 * 60,
     maxSeconds: 19 * 60,
     source:
-      `${CCTP_DOCUMENTED_TIME} ${m.summary} ${seconds === undefined ? 'This route was not measured.' : `This route took ${seconds} s that once.`} ` +
+      `${CCTP_DOCUMENTED_TIME} ${cctpMeasuredSummary()} ${routeSentence(list)} ` +
       'Not a promise: the attestation waits for the sending network\'s hard finality, and the mint on the receiving network is a transaction of its own that someone has to send.',
   };
-  if (seconds !== undefined) {
-    estimate.measured = { seconds, date: m.date, description: `Measured once on ${m.date}, from the burn block to the mint block.` };
+  if (list !== undefined && list.length > 0) {
+    estimate.measurements = list.map((m) => ({
+      what: 'attestation' as const,
+      date: m.date,
+      seconds: m.completeBySeconds,
+      ...(m.pendingAtSeconds === undefined ? {} : { notBeforeSeconds: m.pendingAtSeconds }),
+      description:
+        m.pendingAtSeconds === undefined
+          ? `On ${m.date} Circle's attestation was first seen complete ${groupDigits(m.completeBySeconds)} s after the burn block, ${m.record}.`
+          : `On ${m.date} Circle's attestation was still pending ${groupDigits(m.pendingAtSeconds)} s after the burn block and first seen complete ` +
+            `${groupDigits(m.completeBySeconds)} s after it, ${m.record}.`,
+    }));
   }
   return estimate;
 }
@@ -625,7 +764,8 @@ export const CCTP_V2_TRUST: BridgeTrustStatement = {
   control:
     'Circle can pause transfers, refuse listed addresses (it checks the sending account and the transaction originator, which for a smart account is the bundler), and replace the contracts. On the test networks the roles that do this (the proxy admins, the owner, the denylister, the pauser and the attester manager) are held by addresses with no contract code.',
   refundRule:
-    'There is no refund: the USDC is burned on the sending network. Circle attests the burn only after the sending network\'s hard finality (about 17 minutes in the measured runs); after that, anyone with gas on the receiving network can submit the mint to your address.',
+    'There is no refund: the USDC is burned on the sending network. Circle attests the burn only after the sending network\'s hard finality ' +
+    `(${cctpMeasuredMinutesPhrase()}, not a promise); after that, anyone with gas on the receiving network can submit the mint to your address.`,
 };
 
 function usdcAsset(chainId: number): BridgeAsset {

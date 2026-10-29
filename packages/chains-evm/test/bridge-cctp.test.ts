@@ -10,7 +10,11 @@ import {
   CCTP_MINT_AND_WITHDRAW_EVENT_SIGNATURE,
   CCTP_MINT_AND_WITHDRAW_TOPIC,
   CCTP_V2_TESTNET,
-  CCTP_V2_TESTNET_MEASURED,
+  CCTP_V2_TESTNET_ATTESTATIONS,
+  CCTP_V2_TRUST,
+  cctpAttestationRange,
+  cctpMeasuredMinutesPhrase,
+  cctpMeasuredSummary,
   CCTP_V2_TESTNET_USDC,
   CCTP_USED_NONCES_SELECTOR,
   CCTP_USED_NONCES_SIGNATURE,
@@ -139,18 +143,85 @@ describe('CCTP V2: the encoder builds Standard Transfers only', () => {
   });
 });
 
-describe('CCTP V2: the measured time on the quote', () => {
-  it('carries the 2026-10-25 measurements on the two measured routes and none elsewhere, never as a range', async () => {
-    expect(CCTP_V2_TESTNET_MEASURED.seconds).toEqual({ '84532->421614': 996, '11155111->84532': 1058 });
+describe('CCTP V2: the measured attestation times on the quote', () => {
+  // Pass p23-bridge-recheck (2026-10-28): the figures are Circle's attestation
+  // first seen complete after the burn block, per route, as a list; the
+  // burn-block-to-mint-block figures (996 s, 1,058 s) are no longer the record,
+  // because a mint sent by hand later says how fast someone minted.
+  it('records every measured attestation per route with its date and burn transaction', () => {
+    const brief = Object.fromEntries(
+      Object.entries(CCTP_V2_TESTNET_ATTESTATIONS).map(([route, list]) => [
+        route,
+        list.map((m) => [m.date, m.pendingAtSeconds ?? null, m.completeBySeconds, m.burnTx.slice(0, 10)]),
+      ]),
+    );
+    expect(brief).toEqual({
+      '84532->421614': [
+        ['2026-10-25', 986, 996, '0x847e641f'],
+        ['2026-10-28', 1332, 1352, '0xbf228c57'],
+      ],
+      '11155111->84532': [['2026-10-25', 1047, 1057, '0xd412d22a']],
+      '421614->84532': [['2026-10-26', null, 1178, '0xaeae0e5b']],
+    });
+    expect(cctpAttestationRange()).toEqual({
+      count: 4,
+      fromSeconds: 996,
+      toSeconds: 1352,
+      fromMinutes: 17,
+      toMinutes: 23,
+      firstDate: '2026-10-25',
+      lastDate: '2026-10-28',
+    });
+  });
+
+  it('says what was measured (the attestation, not the mint), the spread, and "Not a promise"; Circle\'s 15-19 minutes stay the range', async () => {
+    const summary =
+      "Measured on the test networks: Circle's attestation was first seen complete 996 s to 1,352 s after the burn block (about 17 to 23 minutes) in 4 Standard Transfers of 1 USDC between 2026-10-25 and 2026-10-28, polling Circle's sandbox API. The mint on the receiving network is a separate transaction sent after that, so these figures are not delivery times.";
+    expect(cctpMeasuredSummary()).toBe(summary);
+    expect(cctpMeasuredMinutesPhrase()).toBe('about 17 to 23 minutes after the burn in the measured runs');
+    const documented =
+      'Circle documents "~15-19 minutes" for a Standard Transfer from Ethereum, Arbitrum, Base and OP mainnets: it attests a burn only after the sending network\'s hard finality.';
+    const notPromise =
+      "Not a promise: the attestation waits for the sending network's hard finality, and the mint on the receiving network is a transaction of its own that someone has to send.";
     const baseArb = cctpTimeEstimate(BASE, ARB);
-    expect(baseArb.measured).toEqual({ seconds: 996, date: '2026-10-25', description: 'Measured once on 2026-10-25, from the burn block to the mint block.' });
-    expect(cctpTimeEstimate(SEPOLIA, BASE).measured?.seconds).toBe(1058);
+    expect(baseArb.source).toBe(
+      `${documented} ${summary} On this route the attestation was first seen complete after 996 s on 2026-10-25 and 1,352 s on 2026-10-28. ${notPromise}`,
+    );
+    expect(baseArb.measured).toBeUndefined();
+    expect(baseArb.measurements).toEqual([
+      {
+        what: 'attestation',
+        date: '2026-10-25',
+        seconds: 996,
+        notBeforeSeconds: 986,
+        description:
+          "On 2026-10-25 Circle's attestation was still pending 986 s after the burn block and first seen complete 996 s after it, by script (docs/BRIDGING.md section 17, leg 1).",
+      },
+      {
+        what: 'attestation',
+        date: '2026-10-28',
+        seconds: 1352,
+        notBeforeSeconds: 1332,
+        description:
+          "On 2026-10-28 Circle's attestation was still pending 1,332 s after the burn block and first seen complete 1,352 s after it, through the app (pass p23-bridge-recheck).",
+      },
+    ]);
+    const arbBase = cctpTimeEstimate(ARB, BASE);
+    expect(arbBase.measurements).toEqual([
+      {
+        what: 'attestation',
+        date: '2026-10-26',
+        seconds: 1178,
+        description: "On 2026-10-26 Circle's attestation was first seen complete 1,178 s after the burn block, through the app (pass p23-cctp).",
+      },
+    ]);
+    expect(arbBase.source).toContain('On this route the attestation was first seen complete after 1,178 s on 2026-10-26.');
+    expect(cctpTimeEstimate(SEPOLIA, BASE).measurements?.map((m) => m.seconds)).toEqual([1057]);
     const arbSep = cctpTimeEstimate(ARB, SEPOLIA);
     expect(arbSep.measured).toBeUndefined();
-    expect(arbSep.source).toContain('This route was not measured.');
-    expect(baseArb.source).toContain('This route took 996 s that once.');
-    expect(baseArb.source).toContain('Not a promise');
-    for (const t of [baseArb, arbSep, cctpTimeEstimate(OP, ARB)]) {
+    expect(arbSep.measurements).toBeUndefined();
+    expect(arbSep.source).toBe(`${documented} ${summary} This route was not measured. ${notPromise}`);
+    for (const t of [baseArb, arbSep, arbBase, cctpTimeEstimate(OP, ARB)]) {
       expect(t.minSeconds).toBe(15 * 60);
       expect(t.maxSeconds).toBe(19 * 60);
     }
@@ -158,6 +229,13 @@ describe('CCTP V2: the measured time on the quote', () => {
     const route = provider.supportedRoutes().find((r) => r.sourceChainId === BASE && r.destinationChainId === ARB)!;
     const q = await provider.quote({ route, amount: AMOUNT, sender: ME, recipient: ME });
     expect(q.time).toEqual(baseArb);
+  });
+
+  it('the trust statement\'s refund rule states the measured range as measured, not promised', () => {
+    expect(CCTP_V2_TRUST.refundRule).toBe(
+      "There is no refund: the USDC is burned on the sending network. Circle attests the burn only after the sending network's hard finality (about 17 to 23 minutes after the burn in the measured runs, not a promise); after that, anyone with gas on the receiving network can submit the mint to your address.",
+    );
+    expect(CCTP_V2_TRUST.refundRule).not.toContain('about 17 minutes');
   });
 });
 
