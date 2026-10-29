@@ -15632,3 +15632,104 @@ to the Chairperson at once.
       /data/local/tmp and /sdcard/Download clean, Metro (node 78294) at
       9fa55da with `adb reverse` in place, qemu 60303 and caffeinate 60307
       running with the window in place.
+- [x] Pass p23-bridge-recheck findings FIXED — THE CCTP TIME AS A MEASURED
+      RANGE, THE MINT CONFIRM'S BUTTONS, THE APPROVAL TOTAL (commit 50ff9bf;
+      14 files, +496 / −68, no new file; engine 1,296 → 1,298 (the CCTP time
+      describe 1 → 3 tests), check-bridge 430 (was 424), check-i18n 172
+      (170); offline runner ALL GREEN in the CTO's isolated worktree on HEAD
+      0b6918e with --skip-bundle: app 10,836 across 65 suites, lint 0/0,
+      tsc clean; checkout 0 / apply 0 / 14 files; the staged patch id equals
+      the verified tree's and the agent's stated fb8252cb…6324f; the scan
+      clean; seven hand mutants on the real files caught; not seen on a
+      device, nothing live). (2) THE ATTESTATION TIME IS A RECORD, NOT ONE
+      FIGURE: cctp-v2.ts replaces CCTP_V2_TESTNET_MEASURED (burn block to
+      mint block, one figure per route) with CCTP_V2_TESTNET_ATTESTATIONS —
+      per route a list of {date, burnTx, pendingAtSeconds?,
+      completeBySeconds, record}: 84532→421614 2026-10-25 986 / 996 (the
+      script leg) and 2026-10-28 1,332 / 1,352 (pass p23-bridge-recheck);
+      11155111→84532 2026-10-25 1,047 / 1,057; 421614→84532 2026-10-26
+      complete by 1,178 with NO pending figure (that pass timed only the
+      complete poll); what is measured is Circle's attestation after the
+      burn block, NOT a delivery time — the mint is a separate transaction
+      sent afterwards; cctpAttestationRange() → {count 4, 996–1,352 s, 17–23
+      minutes rounded, 2026-10-25 … 2026-10-28}, cctpMeasuredSummary() and
+      cctpMeasuredMinutesPhrase(); minSeconds / maxSeconds stay Circle's
+      documented 15–19 minutes. types.ts: BridgeTimeEstimate gains an
+      optional measurements[] ({what delivery | attestation, date, seconds,
+      notBeforeSeconds?, description}); CCTP sets measurements and no longer
+      `measured` (LayerZero's delivery `measured` unchanged). App:
+      measuredTimeLine prefers an attestation list (new ids
+      bridge.measuredAttestation.one / .many — "Measured 2 times on this
+      route (2026-10-25, 2026-10-28): Circle's attestation was first seen
+      complete 996 s to 1352 s after the burn block. The mint on the
+      receiving network is a separate transaction after that.") else the
+      old delivery line; the three CCTP sentences take {fromMinutes} /
+      {toMinutes} from the engine's range, so a new measurement updates
+      them: mintStep "After Circle's attestation (about 17 to 23 minutes
+      after the burn in the measured runs, not a promise) the USDC is minted
+      on …", burned / burnedBlock "…it comes after the source chain's hard
+      finality, about 17 to 23 minutes after the burn in the measured runs
+      (not a promise)."; the engine's refund rule and the per-route time
+      sentence reworded the same way ("…This route was not measured." kept
+      for an unmeasured route); BRIDGE_PROVIDERS.md line 133 and DEMO.md
+      line 823 quote the new card sentence. The three reworded ids carry
+      "changed" fixture records (before = the 6a1d2bb text) and TWO
+      check-i18n MECHANICS CHANGED, read by the CTO: a changed TEMPLATE's
+      static parts are now compared through its recorded `before` text
+      (the new English adds placeholders; an unchanged template is checked
+      exactly as before — that `before` must still match the base record,
+      so nothing is loosened), and the composite old-assembly map compares
+      the two burned sentences with their `before` text filled with the
+      same values. (3) The mint confirm's button reads "Mint on
+      {destination}" (bridge.mint.button, the panel's own wording) while
+      the device prompt stays bridgeMintPromptTitle ("Mint the bridged USDC
+      on …"), and a secondary Back (setQuote(null), setError(null); disabled
+      while busy) returns to the panel like every other bridge confirm. (4)
+      The approval view shows "Total (worst case)" after the fee rows and
+      before the preview with the note bridge.approve.totalNote "The
+      approval moves no {symbol}, so its total is the network fee alone."
+      (prepareBridgeApprove refuses any amount other than 0, pinned). (1)
+      THE NAVIGATION-BAR FLAG — RESEARCH ONLY, THE CAUSE NOT ESTABLISHED, no
+      behaviour changed, recorded as an OPEN QUESTION paragraph in
+      navigation-bar.ts: setStyle writes the flag on the activity's window
+      through WindowInsetsControllerCompat (expo-navigation-bar 57.0.3
+      NavigationBarModule.kt 50–52, 126–130), the same controller React
+      Native used at window creation (WindowUtil.kt 167, 189); the only
+      other writers of the navigation-bar appearance in the installed
+      JavaScript / Kotlin / Java sources are RN's enableEdgeToEdge (called
+      only from ReactActivityDelegate.onCreate; WindowUtil.kt 67,
+      ReactActivityDelegate.java 141), ReactModalHostView.kt 395 (Modal
+      dialog windows only) and expo-dev-launcher's own activities
+      (DevLauncherEdgeToEdgeHelper.kt 14–17); NOTHING re-applies the flag on
+      a configuration change (ReactDelegate.kt 237–247, ReactHostImpl.kt
+      736, AppearanceModule.kt 106–112 emit the JS event only;
+      ReactActivityDelegateWrapper.kt 358–363 forwards it;
+      NavigationBarReactActivityLifecycleListener.kt acts in onCreate only;
+      react-native-screens only hides or shows the bar, ScreenWindowTraits.kt
+      123–146; safe-area-context and expo-status-bar write no
+      navigation-bar flag; expo-system-ui is not installed); the remaining
+      candidates are compiled code with no source on this machine —
+      androidx.core's WindowInsetsControllerCompat, AppCompat's DayNight
+      handling of the uiMode change (MainActivity declares configChanges
+      with uiMode and the theme's parent is Theme.AppCompat.DayNight.
+      NoActionBar) and the framework's appearance computation; the
+      library's own note that setStyle "may have no effect" on the Android
+      15 emulator (NavigationBar.types.ts 42) does not apply as written —
+      this AVD is android-34; the tests that would settle it are listed
+      (read apr= at once after setStyle and over several seconds; a second
+      setStyle a few seconds after the scheme change; a temporary native
+      probe reading isAppearanceLightNavigationBars and the legacy
+      SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR bit; a non-AppCompat activity or
+      another image). MUTANTS: the 2026-10-28 measurement dropped
+      (bridge-cctp.test 3 of 23 fail, check-bridge 7), the refund rule
+      restored to "about 17 minutes" (1), en burnedBlock restored
+      (check-i18n 19, check-bridge 1), measuredTimeLine ignoring
+      measurements (check-bridge 4), the Back button removed (2), the
+      confirm button titled with the prompt again (2), the approval total
+      removed (1). LEFT: the dated "996 s / 1,058 s, measured once per
+      route" statements in BRIDGE_PROVIDERS.md (80, 100),
+      CROSS_CHAIN_OPTIONS.md (181, 218), BRIDGING.md §17 and FEATURE_UNIVERSE
+      row 35 are dated records (the refresh); "17 to 23" would read oddly
+      if the range ever collapsed to one figure (it cannot with today's
+      data); the Spanish drafts need a native reviewer. UNVERIFIED
+      (device): the new rows, the Back button, the Spanish length.
