@@ -140,7 +140,11 @@ examples/demo.mjs          Offline end-to-end engine demo
   resolved to gles host on one launch and swangle on the next, and the
   quick-boot snapshot loads only under the renderer it was saved with;
   which renderer to pin is the Chairperson's decision; until then keep
-  the command and expect a cold boot; set
+  the command and expect a cold boot unless 'auto' picks the renderer the
+  snapshot was saved under (it did on 2026-10-29, pass p23-devbuild-recheck:
+  the first quick boot that loaded; in three logs 'auto' chose swangle
+  exactly when the emulator printed its memory-pressure warning, host
+  otherwise), so `-no-snapshot-load` is no longer needed by default; set
   ANDROID_EMULATOR_WAIT_TIME_BEFORE_KILL=120 in the launching shell so a
   graceful close finishes its save. A renderer change discards the quick-boot snapshot
   (cold boot, the PIN keyguard, `adb reverse` lost). CLOSING THE WINDOW
