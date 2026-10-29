@@ -15936,3 +15936,37 @@ to the Chairperson at once.
       caffeinate 3479 running with the window in front; wt-build3 at 0b6918e
       with android/ and the build outputs kept, app.json / package.json at
       the commit.
+- [x] Housekeeping after pass p23-devbuild-recheck (2026-10-29; docs commit
+      c42b76f, CI green; the standing-rule commit a4b309d). (1) THE STALE
+      WORKING TREE IS STASHED: the main checkout had carried the agents'
+      superseded in-progress hunks since phase 23 wave 2 (158 paths older
+      than HEAD, several files deleted there — e.g. navigation-bar.ts,
+      search.ts, the golden fixtures); a `git reset` had been refused by the
+      session's permission classifier, so the CTO used the reversible form
+      `git stash push -m "stale working tree after phase-23 wave 2 …"` →
+      stash@{0} (the same hunks are also in the scratchpad's
+      stale-worktree-after-p23-wave2.patch); the main checkout is CLEAN for
+      the first time since wave 2 and its engine dist was rebuilt from HEAD
+      (it had been stale — three check scripts failed at import on the old
+      dist, not on the docs). The stash is kept only so nothing is lost; it
+      holds no change that is not already in HEAD in its verified form, and
+      dropping it is the Chairperson's call. (2) THE DATED CCTP TIMING
+      STATEMENTS updated (the follow-up 50ff9bf left for the refresh):
+      BRIDGE_PROVIDERS.md §4.1's Time cell, §4.4's time row and §10's next
+      list (the 881b81e mint confirm is now seen live), CROSS_CHAIN_OPTIONS.md
+      §4's "Time as measured" row and §5.2 item 3, BRIDGING.md §17's note and
+      FEATURE_UNIVERSE row 35 now give the four measured attestations
+      (986–1,352 s after the burn block, 2026-10-25 to 2026-10-28; the mint a
+      separate transaction) instead of "996 s / 1,058 s / about 17 minutes",
+      and row 35 records the second whole in-app transfer of pass
+      p23-bridge-recheck (Base Sepolia → Arbitrum Sepolia, the burn in block
+      51419841, the mint in Arbitrum block 323743324 from the 881b81e
+      confirm); check-readiness 222, check-screen-protection 87,
+      check-devmode 465 and check-bridge 430 green on the edited tree (the
+      docs-pinning rule of 9aa1ffe). The dated per-run tables (BRIDGING §17,
+      CROSS_CHAIN_OPTIONS §4.1) are records of their day and stay as they
+      are. (3) DISPATCHED: the navigation-bar cause investigation on the
+      emulator (the test list in navigation-bar.ts's open-question
+      paragraph; the 0b6918e debug development client on a throwaway wallet;
+      worktree-only temporary edits), its report to the scratchpad
+      p23-navbar/REPORT.md.
