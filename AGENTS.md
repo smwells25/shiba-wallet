@@ -15970,3 +15970,80 @@ to the Chairperson at once.
       paragraph; the 0b6918e debug development client on a throwaway wallet;
       worktree-only temporary edits), its report to the scratchpad
       p23-navbar/REPORT.md.
+- [x] EMULATOR PASS p23-navbar — THE NAVIGATION-BAR CAUSE ESTABLISHED, FROM
+      BYTECODE AND THE DEVICE, NO NATIVE PROBE NEEDED (2026-10-29 23:35–23:45
+      UTC; the 0b6918e debug development client on its Welcome screen — no
+      wallet created, since the NavigationBarStyle component is mounted in
+      App.tsx outside any wallet gate; Expo Go and the real wallet untouched
+      on the cold-start lock; nothing on any chain; the report in the
+      scratchpad p23-navbar/REPORT.md with the three sample logs, the
+      extracted androidx.core classes and the framework source copies; THE
+      CTO RE-READ every citation below with javap and sed — all match). THE
+      CAUSE: expo-navigation-bar 57.0.3's setStyle writes only the
+      DEPRECATED view flag SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR, and Android
+      14 ignores that flag for a window whose appearance has already been
+      set through the modern WindowInsetsController API — which React
+      Native's StatusBar does. Chain of evidence: (1) the build resolves
+      only androidx.core:core:1.18.0 (no sources jar in the Gradle cache;
+      read with javap from .local/jdk): WindowInsetsControllerCompat(Window,
+      View) builds Impl35 on API ≥ 35 and Impl30 on API 30–34 (bipush 35 /
+      bipush 30 in the constructor); Impl30.setAppearanceLightNavigationBars
+      → setAppearanceLight(light, 16, 16), whose bytecode (offsets 0–24)
+      calls setSystemUiFlag(16) / unsetSystemUiFlag(16) WHENEVER mWindow IS
+      NON-NULL and reaches WindowInsetsController.setSystemBarsAppearance
+      (offsets 27–56) only when the window field is null; (2)
+      NavigationBarModule.kt 50–52 builds the controller with
+      `WindowInsetsControllerCompat(this, decorView)` — a Window always
+      given — and setStyle (126–133) goes through it, so only the old flag
+      is ever written; (3) React Native 0.86.3 WindowUtil.kt: enableEdgeToEdge
+      (167, 189) sets the navigation-bar look through the same compat path
+      at window creation, while setStatusBarStyle (100–113) calls the
+      platform insetsController.setSystemBarsAppearance directly on API 31+;
+      (4) the Android 14 framework (android14-release branch head, fetched
+      read-only — not the exact UE1A.230829.050 build of this image):
+      ViewRootInsetsControllerHost.java 176 sets
+      PRIVATE_FLAG_APPEARANCE_CONTROLLED on the window when
+      setSystemBarsAppearance is called, and ViewRootImpl.java 2609–2619
+      derives the appearance from the old view flags ONLY while that
+      private flag is unset (1789–1790 keep it across layout-param
+      changes). ON THE DEVICE (dumpsys window windows, the MainActivity
+      block's pfl / vsysui / apr lines, samples every ~3 s): TEST 1, started
+      light then `cmd uimode night yes` at 23:39:24 UTC — before the switch
+      vsysui held LIGHT_NAVIGATION_BAR and apr LIGHT_STATUS_BARS
+      LIGHT_NAVIGATION_BARS; at +5 s setStyle("light") had CLEARED the old
+      flag from vsysui and the status-bar bit had followed the theme through
+      the real API, yet apr kept LIGHT_NAVIGATION_BARS through 13 more
+      samples to +45 s, with APPEARANCE_CONTROLLED in pfl in every sample —
+      the flag is not flipped back by anyone, it is ignored; TEST 2, a cold
+      start in dark mode — no APPEARANCE_CONTROLLED and no light bits until
+      +37 s, when the StatusBar call set the private flag (apr empty, light
+      buttons, as the record said), then `night no`: vsysui gained
+      LIGHT_NAVIGATION_BAR (setStyle("dark") ran) and apr became
+      LIGHT_STATUS_BARS only, never LIGHT_NAVIGATION_BARS — test 1 in
+      reverse. EXCLUDED: AppCompat's day/night handling or any code resetting
+      the flag (it is never overwritten); a second setStyle later would write
+      the same ignored flag (an inference). EXPO GO: its lock-screen window
+      also shows APPEARANCE_CONTROLLED beside the old LIGHT_NAVIGATION_BAR
+      flag, so the same cause most likely explains pass p23-bridge-recheck's
+      finding (its androidx.core version not read — an inference). THE FIX:
+      no JavaScript-only fix exists (JavaScript cannot clear the controlled
+      flag; dropping expo-status-bar would stop the status bar following
+      the theme too); a NATIVE change with NO new dependency does it — on
+      API 30+ set the bit through the platform API
+      (`window.insetsController?.setSystemBarsAppearance(light ?
+      APPEARANCE_LIGHT_NAVIGATION_BARS : 0, APPEARANCE_LIGHT_NAVIGATION_BARS)`,
+      or WindowInsetsControllerCompat.toWindowInsetsControllerCompat(
+      window.insetsController), whose Impl30 path leaves the window field
+      null and so calls setSystemBarsAppearance) from a small local Expo
+      module in the app or a patch to NavigationBarModule.kt; either needs a
+      rebuilt development build and cannot reach Expo Go; androidx.core's
+      Impl35 already calls setSystemBarsAppearance on API 35+, so Android 15
+      may behave differently (untested; this AVD is API 34). A fix slice is
+      dispatched (a local Expo module; the dev client rebuilt and the flag
+      re-read on the emulator). SLIPS: `adb logcat -c` cleared the device
+      log before test 1 (nothing from it was needed); samples ~3 s apart
+      instead of 2 s (a dumpsys read takes ~2.8 s). END STATE: night mode
+      off; the dev client uninstalled (only Expo Go left, untouched on its
+      lock); Metro 8082 stopped and its reverse removed, 8081 untouched;
+      qemu 3457 (PRI 97) and caffeinate 3479 running with the window in
+      front; wt-build3 unchanged; the main checkout untouched.
