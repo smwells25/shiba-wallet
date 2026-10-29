@@ -25,6 +25,7 @@ import {
   encodeReceiveMessage,
   httpTransport as evmHttpTransport,
   layerZeroEidFor,
+  cctpAttestationRange,
   cctpTimeEstimate,
   oftTimeEstimate,
   toHex,
@@ -719,10 +720,40 @@ export function bridgeLinkShown(caip2: string): boolean {
   return BRIDGE_ASSETS.some((asset) => bridgeOfferFor(caip2, asset).destinations.length > 0);
 }
 
-/** The measured-time line for a route, or null when it was never measured. */
+/**
+ * The measured-time line for a route, or null when it was never measured.
+ * A delivery time (LayerZero's `measured`) reads as before; CCTP's list of
+ * attestation times (pass p23-bridge-recheck) says that what was measured is
+ * Circle's attestation after the burn block, with the spread across this
+ * route's runs, and that the mint is a separate transaction afterwards.
+ */
 export function measuredTimeLine(time: BridgeTimeEstimate): string | null {
+  const list = (time.measurements ?? []).filter((m) => m.what === 'attestation');
+  if (list.length === 1) {
+    return t('bridge.measuredAttestation.one', { date: list[0]!.date, seconds: list[0]!.seconds });
+  }
+  if (list.length > 1) {
+    const seconds = list.map((m) => m.seconds);
+    return t('bridge.measuredAttestation.many', {
+      count: list.length,
+      dates: list.map((m) => m.date).join(', '),
+      fromSeconds: Math.min(...seconds),
+      toSeconds: Math.max(...seconds),
+    });
+  }
   if (!time.measured) return null;
   return t('bridge.measured', { date: time.measured.date, seconds: time.measured.seconds });
+}
+
+/**
+ * The whole minutes from the burn block to Circle's attestation across every
+ * measured CCTP run (the engine's record, cctpAttestationRange): about 17 to
+ * 23 minutes so far. The sentences that state it say "in the measured runs"
+ * and "not a promise".
+ */
+function cctpMeasuredMinutes(): { fromMinutes: number; toMinutes: number } {
+  const r = cctpAttestationRange();
+  return { fromMinutes: r.fromMinutes, toMinutes: r.toMinutes };
 }
 
 /**
@@ -1745,7 +1776,7 @@ export function cctpSmartAccountFeeNote(symbol: string): string {
  * adapter's own description is shown first).
  */
 export function cctpMintStepLine(destinationLabel: string): string {
-  return t('bridge.cctp.mintStep', { destination: destinationLabel });
+  return t('bridge.cctp.mintStep', { destination: destinationLabel, ...cctpMeasuredMinutes() });
 }
 
 /**
@@ -2467,8 +2498,8 @@ export function bridgeLiveStatusText(record: Pick<BridgeTransferRecord, 'status'
 /** CCTP, burned and waiting for the attestation. */
 export function cctpBurnedSentence(sourceLabel: string, block: bigint | null): string {
   return block === null
-    ? t('bridge.cctp.burned', { source: sourceLabel })
-    : t('bridge.cctp.burnedBlock', { source: sourceLabel, block: block.toString() });
+    ? t('bridge.cctp.burned', { source: sourceLabel, ...cctpMeasuredMinutes() })
+    : t('bridge.cctp.burnedBlock', { source: sourceLabel, block: block.toString(), ...cctpMeasuredMinutes() });
 }
 
 /** CCTP, attested and not minted yet. */

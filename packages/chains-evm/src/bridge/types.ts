@@ -110,6 +110,39 @@ export interface BridgeTimeEstimate {
    * provider can state them; this field is informational only.
    */
   measured?: { seconds: number; date: string; description: string };
+  /**
+   * Every timing measured on this exact route, each saying what it measured
+   * (added in pass p23-bridge-recheck, 2026-10-28; additive: an adapter that
+   * sets only `measured` is unchanged). CCTP sets this list and not
+   * `measured`, because what it has measured is Circle's attestation, not
+   * the delivery: the mint on the receiving network is a separate
+   * transaction that someone sends afterwards. Several measurements are a
+   * record of what happened, not a promise, so minSeconds / maxSeconds still
+   * stay as the provider can state them.
+   */
+  measurements?: BridgeTimeMeasurement[];
+}
+
+/** One timing measured on a route (see BridgeTimeEstimate.measurements). */
+export interface BridgeTimeMeasurement {
+  /**
+   * What the figure measures: 'delivery' is the sending block to the
+   * delivery block; 'attestation' is the burn block to the first reading
+   * that found Circle's attestation complete.
+   */
+  what: 'delivery' | 'attestation';
+  /** UTC date of the sending transaction, YYYY-MM-DD. */
+  date: string;
+  /** Seconds from the sending block to the first reading that saw the event. */
+  seconds: number;
+  /**
+   * Seconds from the sending block to the last reading before that one, at
+   * which the event had not happened yet, where it was recorded; the event
+   * lies between the two figures.
+   */
+  notBeforeSeconds?: number;
+  /** The measurement in one plain sentence. */
+  description: string;
 }
 
 /** What has to happen on the destination chain after the source transaction. */

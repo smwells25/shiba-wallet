@@ -57,6 +57,49 @@
  * library's own documentation says setStyle has a visible effect only on a
  * button navigation bar and with its `enforceContrast` plugin option set to
  * false, src/NavigationBar.types.ts lines 34-42).
+ *
+ * OPEN QUESTION (pass p23-bridge-recheck, 2026-10-28; cause NOT established).
+ * The same symptom was seen in Expo Go: setStyle("light") resolved, the
+ * Settings line counted the attempt, and 9 s later the activity window still
+ * reported apr=LIGHT_NAVIGATION_BARS while the status-bar flag had followed
+ * the theme. Read from the installed sources only:
+ *  - setStyle writes the flag on appContext.throwingActivity's window through
+ *    WindowInsetsControllerCompat(window, decorView) (NavigationBarModule.kt
+ *    lines 50-52 and 126-130), the same kind of controller React Native used
+ *    to set it at window creation (WindowUtil.kt lines 167 and 189).
+ *  - Nothing found in the installed JavaScript or Kotlin/Java sources writes
+ *    the navigation-bar appearance again after that: React Native sets it
+ *    only in enableEdgeToEdge, called from updateEdgeToEdgeFeatureFlag in
+ *    ReactActivityDelegate.onCreate (WindowUtil.kt line 67,
+ *    ReactActivityDelegate.java line 141) and, for Modal dialog windows
+ *    only, ReactModalHostView.kt line 395; its configuration-change path
+ *    (ReactDelegate.kt lines 237-247, ReactHostImpl.kt line 736,
+ *    AppearanceModule.kt lines 106-112) does not touch the window;
+ *    react-native-screens only hides or shows the bar
+ *    (ScreenWindowTraits.kt lines 123-146); expo's
+ *    ReactActivityDelegateWrapper.kt lines 358-363 only forwards the change;
+ *    expo-dev-launcher sets it only for its own launcher and error
+ *    activities (DevLauncherEdgeToEdgeHelper.kt lines 14-17).
+ *  - What remains is compiled code that is not on this machine as source:
+ *    androidx.core's WindowInsetsControllerCompat, AppCompat's DayNight
+ *    handling of the uiMode change (MainActivity declares
+ *    configChanges="…uiMode…" and its theme's parent is
+ *    Theme.AppCompat.DayNight.NoActionBar in the development build's
+ *    prebuild), and the framework's own computation of the window's
+ *    appearance. The library's documentation also says setStyle "may have
+ *    no effect" on the Android 15 emulator (NavigationBar.types.ts line 42);
+ *    this AVD runs an android-34 image (~/.android/avd/shiba.avd/config.ini),
+ *    so that note does not apply as written.
+ * Tests that would establish it: read `adb shell dumpsys window` for the
+ * activity's apr= at once after setStyle resolves and again over several
+ * seconds (does the flag flip and flip back, or never change?); call
+ * setStyle a second time a few seconds after the scheme change; in a
+ * development build, read WindowCompat.getInsetsController(window,
+ * decorView).isAppearanceLightNavigationBars and the legacy
+ * decorView.systemUiVisibility SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR bit right
+ * after the call (a temporary native probe), to see whether the two
+ * disagree; and repeat on a non-AppCompat test activity or another system
+ * image. No change is made here until one of these shows the cause.
  */
 
 import { t } from '../i18n/index.ts';

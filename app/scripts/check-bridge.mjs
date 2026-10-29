@@ -548,13 +548,15 @@ console.log('check-bridge: readiness, and what is offered on which network');
   check('the form starts on test ETH where it can be sent, on USDC on Base Sepolia (the provider is still never chosen for the user)',
     defaultBridgeAsset(caip(SEPOLIA)) === 'native' && defaultBridgeAsset(caip(BASE)) === 'usdc' && defaultBridgeAsset(caip(HOODI)) === 'native' &&
       bridgeAssetSendableFrom(caip(BASE), 'usdc') && !bridgeAssetSendableFrom(caip(BASE), 'native') && !bridgeAssetSendableFrom(caip(HOODI), 'usdc'));
-  check('CCTP’s trust statement (exact): 2 of 2 attesters, the roles held by addresses with no code, no refund, about 17 minutes',
+  check('CCTP’s trust statement (exact): 2 of 2 attesters, the roles held by addresses with no code, no refund, about 17 to 23 minutes after the burn in the measured runs, not a promise (pass p23-bridge-recheck)',
     CCTP_V2_TRUST.verification === 'Circle verifies every transfer: both of Circle\'s two attesters must sign the burn (2 of 2, read on-chain) before USDC can be minted on the other network. Circle also issues USDC itself.' &&
       CCTP_V2_TRUST.control === 'Circle can pause transfers, refuse listed addresses (it checks the sending account and the transaction originator, which for a smart account is the bundler), and replace the contracts. On the test networks the roles that do this (the proxy admins, the owner, the denylister, the pauser and the attester manager) are held by addresses with no contract code.' &&
-      CCTP_V2_TRUST.refundRule === 'There is no refund: the USDC is burned on the sending network. Circle attests the burn only after the sending network\'s hard finality (about 17 minutes in the measured runs); after that, anyone with gas on the receiving network can submit the mint to your address.');
+      CCTP_V2_TRUST.refundRule === 'There is no refund: the USDC is burned on the sending network. Circle attests the burn only after the sending network\'s hard finality (about 17 to 23 minutes after the burn in the measured runs, not a promise); after that, anyone with gas on the receiving network can submit the mint to your address.');
   check('the offer makes no request (pure)', true);
 }
 
+// Pass p23-bridge-recheck: the CCTP Base Sepolia → Arbitrum Sepolia row's measured attestation line (two runs).
+const CCTP_BASE_ARB_LINE = 'Measured 2 times on this route (2026-10-25, 2026-10-28): Circle’s attestation was first seen complete 996 s to 1352 s after the burn block. The mint on the receiving network is a separate transaction after that.';
 // ---------------------------------------------------------------------------
 console.log('check-bridge: the provider rows (the choice)');
 // ---------------------------------------------------------------------------
@@ -572,12 +574,18 @@ console.log('check-bridge: the provider rows (the choice)');
   const toArbUsdc = bridgeProviderRows(usdcOffer, ARB);
   const cctp = toArbUsdc[0];
   check('USDC: only Circle CCTP is a row, selectable, moves USDC, no note', toArbUsdc.length === 1 && cctp.id === CCTP_V2_PROVIDER_ID && cctp.selectable && cctp.asset === 'USDC' && cctp.note === null);
-  check('CCTP row Base Sepolia → Arbitrum Sepolia: the measured line (exact, 996 s) and the engine’s sentence',
-    cctp.measured === 'Measured once on 2026-10-25: 996 s on this route, from the sending block to the delivery block.' && cctp.timeSource === cctpTimeEstimate(BASE, ARB).source &&
-      /Not a promise/.test(cctp.timeSource), cctp.measured);
-  check('CCTP row Ethereum Sepolia → Base Sepolia: 1,058 s; Arbitrum Sepolia → OP Sepolia: never measured',
-    bridgeProviderRows(bridgeOfferFor(caip(SEPOLIA), 'usdc'), BASE)[0].measured === 'Measured once on 2026-10-25: 1058 s on this route, from the sending block to the delivery block.' &&
+  // Pass p23-bridge-recheck: CCTP's figures are Circle's attestation first
+  // seen complete after the burn block (not the mint), a list per route.
+  check('CCTP row Base Sepolia → Arbitrum Sepolia: the measured attestation line (exact, 996 s and 1,352 s) and the engine’s sentence',
+    cctp.measured === CCTP_BASE_ARB_LINE && cctp.timeSource === cctpTimeEstimate(BASE, ARB).source &&
+      /Not a promise/.test(cctp.timeSource) && /996 s to 1,352 s after the burn block \(about 17 to 23 minutes\)/.test(cctp.timeSource) && !/delivery block/.test(cctp.measured), cctp.measured);
+  check('CCTP rows Ethereum Sepolia → Base Sepolia (1,057 s) and Arbitrum Sepolia → Base Sepolia (1,178 s): one measurement each (exact); Arbitrum Sepolia → OP Sepolia: never measured',
+    bridgeProviderRows(bridgeOfferFor(caip(SEPOLIA), 'usdc'), BASE)[0].measured === 'Measured once on this route (2026-10-25): Circle’s attestation was first seen complete 1057 s after the burn block. The mint on the receiving network is a separate transaction after that.' &&
+      bridgeProviderRows(bridgeOfferFor(caip(ARB), 'usdc'), BASE)[0].measured === 'Measured once on this route (2026-10-26): Circle’s attestation was first seen complete 1178 s after the burn block. The mint on the receiving network is a separate transaction after that.' &&
       bridgeProviderRows(bridgeOfferFor(caip(ARB), 'usdc'), OP)[0].measured === null && /This route was not measured\./.test(bridgeProviderRows(bridgeOfferFor(caip(ARB), 'usdc'), OP)[0].timeSource));
+  check('measuredTimeLine: an attestation list wins over a delivery figure, and a delivery figure alone reads as before (LayerZero)',
+    measuredTimeLine({ minSeconds: null, maxSeconds: null, source: 'x', measured: { seconds: 90, date: '2026-10-15', description: '' } }) === 'Measured once on 2026-10-15: 90 s on this route, from the sending block to the delivery block.' &&
+      measuredTimeLine({ ...cctpTimeEstimate(BASE, ARB), measured: { seconds: 1, date: 'x', description: '' } }) === CCTP_BASE_ARB_LINE);
   const toArb = bridgeProviderRows(offer, ARB);
   check('Sepolia → Arbitrum Sepolia: never measured — no measured line; the engine says this route was not measured',
     toArb[0].measured === null && /This route was not measured\./.test(toArb[0].timeSource ?? ''), toArb[0].timeSource);
@@ -1512,7 +1520,7 @@ console.log('check-bridge: the emulator pass p21b findings (provider choice, spo
   const spoken = (r) => [r.note, `Who verifies: ${r.trust.verification}`, `Who controls: ${r.trust.control}`, `If it does not arrive: ${r.trust.refundRule}`, r.measured, r.timeSource].filter(Boolean);
   check('p21e finding B2b: the CCTP refund sentence is read exactly as written, ending in one period',
     `If it does not arrive: ${cctpRow.trust.refundRule}` ===
-      'If it does not arrive: There is no refund: the USDC is burned on the sending network. Circle attests the burn only after the sending network\'s hard finality (about 17 minutes in the measured runs); after that, anyone with gas on the receiving network can submit the mint to your address.');
+      'If it does not arrive: There is no refund: the USDC is burned on the sending network. Circle attests the burn only after the sending network\'s hard finality (about 17 to 23 minutes after the burn in the measured runs, not a promise); after that, anyone with gas on the receiving network can submit the mint to your address.');
   check('p21e finding B2b: no provider-row sentence has a doubled period or ends without one',
     [...spoken(cctpRow), ...spoken(lzRow)].every((t) => !/\.\./.test(t) && /[.)]$/.test(t.trim())), [...spoken(cctpRow), ...spoken(lzRow)].filter((t) => /\.\./.test(t) || !/[.)]$/.test(t.trim())).join(' | '));
 
@@ -1731,10 +1739,10 @@ let planU;
   check('decoded with ethers: depositForBurn(1,000,000, domain 3, the regular account, USDC, caller 0, maxFee 0, finality 2000) to TokenMessengerV2, value 0',
     same(planU.call.to, TM) && planU.call.value === 0n && burnArgs[0] === USDC_AMOUNT && Number(burnArgs[1]) === 3 && same(ethers.dataSlice(burnArgs[2], 12), EOA) &&
       same(burnArgs[3], CCTP_V2_TESTNET_USDC[BASE]) && burnArgs[4] === ethers.ZeroHash && burnArgs[5] === 0n && Number(burnArgs[6]) === 2000);
-  check('the plan: asset USDC, the regular recipient, the exact approval, no messaging fee, the receiving head, the measured time (996 s)',
+  check('the plan: asset USDC, the regular recipient, the exact approval, no messaging fee, the receiving head, the measured attestation times (996 s and 1,352 s)',
     planU.asset === 'usdc' && planU.recipientKind === 'regular' && planU.messagingFee === 0n && planU.destinationFromBlock === 322_726_000n &&
       planU.approval && same(planU.approval.token, CCTP_V2_TESTNET_USDC[BASE]) && same(planU.approval.spender, TM) && planU.approval.amount === USDC_AMOUNT &&
-      planU.quote.time.measured?.seconds === 996);
+      planU.quote.time.measured === undefined && (planU.quote.time.measurements ?? []).map((x) => `${x.what}:${x.seconds}`).join() === 'attestation:996,attestation:1352');
   check('the sender’s USDC balance was read on the sending network before quoting (balanceOf on Base Sepolia USDC)',
     chains.get(BASE).calls.some((c) => c.method === 'eth_call' && same(c.params[0].to, CCTP_V2_TESTNET_USDC[BASE]) && c.params[0].data.startsWith('0x70a08231')));
 
@@ -1855,8 +1863,8 @@ let planU;
     m.recipientLines.join() === usdcRecipientNote('regular', EOA, 'Arbitrum Sepolia') &&
       usdcRecipientNote('regular', EOA, 'Arbitrum Sepolia') === `The USDC is minted to your regular account ${EOA} on Arbitrum Sepolia, the same address as on this network.` &&
       m.destinationStep === `${planU.quote.destination.description} ${cctpMintStepLine('Arbitrum Sepolia')}` &&
-      cctpMintStepLine('Arbitrum Sepolia') === 'After Circle’s attestation (about 17 minutes in the measured runs) the USDC is minted on Arbitrum Sepolia by a transaction there. This wallet can send it from your regular account when Arbitrum Sepolia is the active network and that account holds test ETH there for gas; anyone else with gas there may send it too, and the USDC still goes only to the recipient written into the burn.' &&
-      m.timeLines.length === 2 && m.timeLines[0] === 'Measured once on 2026-10-25: 996 s on this route, from the sending block to the delivery block.' && m.timeLines[1] === cctpTimeEstimate(BASE, ARB).source,
+      cctpMintStepLine('Arbitrum Sepolia') === 'After Circle’s attestation (about 17 to 23 minutes after the burn in the measured runs, not a promise) the USDC is minted on Arbitrum Sepolia by a transaction there. This wallet can send it from your regular account when Arbitrum Sepolia is the active network and that account holds test ETH there for gas; anyone else with gas there may send it too, and the USDC still goes only to the recipient written into the burn.' &&
+      m.timeLines.length === 2 && m.timeLines[0] === CCTP_BASE_ARB_LINE && m.timeLines[1] === cctpTimeEstimate(BASE, ARB).source,
     `${m.destinationStep} | ${m.timeLines.join(' | ')}`);
   check('the smart-account recipient sentences (exact): the address, the form’s variant, the 2,300-gas difference from LayerZero, the unverified network',
     usdcRecipientNote('smart-account', KERNEL_ACCOUNT_0, 'Arbitrum Sepolia') === `The USDC is minted to your smart account ${KERNEL_ACCOUNT_0} on Arbitrum Sepolia, the same address as on this network. It does not need to be deployed there: CCTP mints USDC with an ordinary token mint, which needs no code at the recipient, unlike Stargate’s 2,300-gas ETH transfer.` &&
@@ -1957,7 +1965,7 @@ console.log('check-bridge: CCTP tracking — burned, attested, the Mint button, 
   st = await step();
   check('burned, Iris 404 → "Waiting for Circle’s attestation" and the burned sentence with the block (exact)',
     st.state === 'in-flight' && st.onChain?.sourceBlock === BURN_BLOCK && bridgeStatusHeading(st, 'Arbitrum Sepolia', CCTP_V2_PROVIDER_ID) === 'Waiting for Circle’s attestation' &&
-      bridgeStatusSentence(findRec()) === 'Burned on Base Sepolia (block 50079573). Waiting for Circle’s attestation: it comes after the source chain’s hard finality, about 17 minutes in the measured runs.' &&
+      bridgeStatusSentence(findRec()) === 'Burned on Base Sepolia (block 50079573). Waiting for Circle’s attestation: it comes after the source chain’s hard finality, about 17 to 23 minutes after the burn in the measured runs (not a promise).' &&
       bridgeStatusSentence(findRec()) === cctpBurnedSentence('Base Sepolia', BURN_BLOCK), bridgeStatusSentence(findRec()));
   check('Circle was asked at the sandbox host, by source domain 6 and the burn hash', fetchLog.includes(`${CIRCLE_IRIS_SANDBOX_API}/v2/messages/6?transactionHash=${BURN_TX}`) && CIRCLE_IRIS_SANDBOX_API === 'https://iris-api-sandbox.circle.com');
   check('nothing is searched on the receiving network before the attestation', chains.get(ARB).calls.filter((c) => c.method === 'eth_getLogs').length === 0);
@@ -2804,15 +2812,50 @@ console.log('check-bridge: pass p23-cctp-recheck — usedNonces decides the mint
     '<BalanceChangePreview url={quote.url} request={{ from: fromAddress, to: quote.q.to, value: 0n, ...(quote.q.data ? { data: quote.q.data } : {}) }} />',
     '<RiskWarnings url={quote.url} wallet={fromAddress} to={quote.q.to} data={quote.q.data} />',
     '<Text style={[styles.simulationOk, { color: theme.success }]}><T>Pre-flight simulation passed (eth_call).</T></Text>',
-    '<Button title={bridgeMintPromptTitle(record)} onPress={() => void send()} disabled={busy || !quote.q.simulation.ok} />',
+    // Pass p23-bridge-recheck finding 3: the button keeps the panel's wording; the device prompt keeps its title.
+    "<Button title={t('bridge.mint.button', { destination: record.destinationLabel })} onPress={() => void send()} disabled={busy || !quote.q.simulation.ok} />",
+    'title="Back"',
   ];
   const mintPanelOk = (src) => {
     const panel = mintPanelSrc(src);
     const at = MINT_PIECES.map((p) => panel.indexOf(p));
     return panel.includes('const mintCallLine = bridgeMintCallLine(record);') && at.every((i, k) => i >= 0 && (k === 0 || i > at[k - 1]));
   };
-  check('…the mint confirm (MintPanel), in this order: the call line spoken short, the fee row (text unchanged), the fee lines with the L1 row, the balance-change preview from the recipient’s regular account, the risk card, the pre-flight line, the button (title unchanged)',
+  check('…the mint confirm (MintPanel), in this order: the call line spoken short, the fee row (text unchanged), the fee lines with the L1 row, the balance-change preview from the recipient’s regular account, the risk card, the pre-flight line, the button ("Mint on <network>", as the panel), then Back',
     mintPanelOk(screenAll));
+  {
+    // Pass p23-bridge-recheck finding 3: the confirm's button reads like the panel's ("Mint on <network>"), the
+    // device prompt stays "Mint the bridged USDC on <network>", and Back drops the quote (and any error) while not busy.
+    const panel = mintPanelSrc(screenAll);
+    const backAt = panel.indexOf('title="Back"');
+    const backBlock = panel.slice(backAt, panel.indexOf('/>', backAt));
+    check('p23-bridge-recheck finding 3: the mint confirm has its own Back button: it drops the quote and the error, disabled while busy; the confirm button says "Mint on <network>" and the prompt title is unchanged',
+      backAt > 0 && /variant="secondary"/.test(backBlock) && /setQuote\(null\);/.test(backBlock) && /setError\(null\);/.test(backBlock) && /disabled=\{busy\}/.test(backBlock) &&
+        panel.includes('requireLocalAuth(bridgeMintPromptTitle(record))') && !panel.includes('<Button title={bridgeMintPromptTitle(record)}') &&
+        EN_TABLE['bridge.mint.button'] === 'Mint on {destination}');
+    check('MUTANT (p23-bridge-recheck finding 3: the confirm button titled with the prompt title again) is caught by the source pin',
+      !mintPanelOk(screenAll.replace("<Button title={t('bridge.mint.button', { destination: record.destinationLabel })} onPress={() => void send()}", '<Button title={bridgeMintPromptTitle(record)} onPress={() => void send()}')));
+    check('MUTANT (p23-bridge-recheck finding 3: the Back button removed) is caught by the source pin',
+      !mintPanelOk(screenAll.replace(/\n\s*<Button\n\s*title="Back"[\s\S]*?disabled=\{busy\}\n\s*\/>/, '')));
+  }
+  {
+    // Pass p23-bridge-recheck finding 4: the approval step shows "Total (worst case)" like the burn step. The
+    // approval moves no coin (prepareBridgeApprove refuses any amount but 0), so its total is the fee; the note says so.
+    const APPROVE_TOTAL = "<Row label=\"Total (worst case)\" value={`${exact18(eoaQuote.total)} ${symbol}`} sub={t('bridge.approve.totalNote', { symbol })} theme={theme} />";
+    const approveView = (src) => src.slice(src.indexOf('// ------------------------------------------- approve (USDC'), src.indexOf("if ((phase === 'confirm' || phase === 'sending') && plan && eoaQuote)"));
+    const approveTotalOk = (src) => {
+      const v = approveView(src);
+      const fee = v.indexOf("<Row label={t('bridge.row.maxFeeApproval', { symbol })}");
+      const total = v.indexOf(APPROVE_TOTAL);
+      const preview = v.indexOf('<BalanceChangePreview');
+      return fee > 0 && total > fee && preview > total;
+    };
+    check('p23-bridge-recheck finding 4: the approval view has a "Total (worst case)" row after the fee rows and before the preview, exact18 like the burn view, with the note (exact)',
+      approveTotalOk(screenAll) && EN_TABLE['bridge.approve.totalNote'] === 'The approval moves no {symbol}, so its total is the network fee alone.' &&
+        source('src/wallet/bridge.ts').includes("const quote = await prepareEvmSend(url, from, approve.to, 0n, approve.data, plan.sourceCaip2);") &&
+        source('src/wallet/bridge.ts').includes('if (quote.amount !== 0n ||'));
+    check('MUTANT (p23-bridge-recheck finding 4: the approval view without its total row) is caught by the source pin', !approveTotalOk(screenAll.replace(APPROVE_TOTAL, '')));
+  }
   check('MUTANT (the preview not mounted on the mint view) is caught by the source pin',
     !mintPanelOk(screenAll.replace(MINT_PIECES[3], '')));
   check('MUTANT (the risk card not mounted on the mint view) is caught by the source pin', !mintPanelOk(screenAll.replace(MINT_PIECES[4], '')));

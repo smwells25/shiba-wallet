@@ -247,7 +247,8 @@ function fixtureProblems(table, fixture) {
     for (const [id, f] of Object.entries(fixture[s])) {
       const want = changed[id] ? changed[id].en : f.en;
       if (table[id] !== undefined && table[id] !== want) p.push(`${id}: ${JSON.stringify(table[id])} is not the English ${changed[id] ? 'recorded as changed' : 'before'}, ${JSON.stringify(want)}`);
-      if (s === 'template' && table[id] !== undefined && !partsMatch(partsOf(table[id]), f.old)) p.push(`${id}: its static parts are not the old ones`);
+      // A changed template's static parts are those of its recorded "before" text (the new English may add placeholders).
+      if (s === 'template' && table[id] !== undefined && !partsMatch(partsOf(changed[id] ? changed[id].before : table[id]), f.old)) p.push(`${id}: its static parts are not the old ones`);
     }
   }
   return p;
@@ -261,6 +262,10 @@ const BRIDGE_MINT_NEW = ['bridge.record.receivingMintSent', 'bridge.record.recei
 // Pass p23-build: the wipe dialog's sentence naming the other records it deletes and what it keeps (finding 1),
 // and the navigation bar's last style attempt in Settings → Developer (finding 3).
 const BUILD_FIX_NEW = ['settings.wipe.records', 'settings.navBar.notYet', 'settings.navBar.applied', 'settings.navBar.unavailable', 'settings.navBar.failed'];
+// Pass p23-bridge-recheck: the CCTP route's measured attestation times (one and several) and the approval step's total note.
+const BRIDGE_RECHECK_NEW = ['bridge.measuredAttestation.one', 'bridge.measuredAttestation.many', 'bridge.approve.totalNote'];
+// Pass p23-bridge-recheck: the three CCTP sentences that said "about 17 minutes in the measured runs" now give the measured spread.
+const CCTP_TIME_CHANGED = ['bridge.cctp.mintStep', 'bridge.cctp.burned', 'bridge.cctp.burnedBlock'];
 {
   const p = fixtureProblems(en, FIXTURE);
   check(`every English entry is the text the app showed at ${FIXTURE.base} (${Object.keys(FIXTURE.literal).length} literals, ${Object.keys(FIXTURE.template).length} templates by their static parts, ${Object.keys(FIXTURE.composite).length} composites) or listed as new (${FIXTURE.new.length})`,
@@ -276,14 +281,14 @@ const BUILD_FIX_NEW = ['settings.wipe.records', 'settings.navBar.notYet', 'setti
   // broadcast sentences (an HTTP 5xx or a dropped connection, not a timeout).
   const BROADCAST_OPEN_NEW = ['broadcast.open.title', 'broadcast.tx.open', 'broadcast.tx.openUnlisted', 'broadcast.userop.open',
     'broadcast.userop.openUnlisted', 'broadcast.open'];
-  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the wallet handle\'s, the six open-outcome broadcast sentences, the co-signer card\'s numbered Scan label, the eight period words of the hygiene slice, the four Bridge lines of pass p23-mint and the five lines of the p23-build fixes',
-    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id)) &&
-      BUILD_FIX_NEW.every((id) => FIXTURE.new.includes(id)) &&
+  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the wallet handle\'s, the six open-outcome broadcast sentences, the co-signer card\'s numbered Scan label, the eight period words of the hygiene slice, the four Bridge lines of pass p23-mint, the five lines of the p23-build fixes and the three Bridge lines of pass p23-bridge-recheck',
+    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id)) &&
+      BUILD_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && BRIDGE_RECHECK_NEW.every((id) => FIXTURE.new.includes(id)) &&
       LOCK_KIND_NEW.every((id) => FIXTURE.new.includes(id)) && COLD_AA_NEW.every((id) => FIXTURE.new.includes(id)) &&
       BROADCAST_OPEN_NEW.every((id) => FIXTURE.new.includes(id)) && THIRD_PASS_NEW.every((id) => FIXTURE.new.includes(id)) && PERIOD_NEW.every((id) => FIXTURE.new.includes(id)) &&
       BRIDGE_MINT_NEW.every((id) => FIXTURE.new.includes(id)));
-  check('the changed entries are exactly the transaction-notes line (reworded for the records backup), the watch-only notice (reworded for the off-line signer), the bridge readiness reason (CCTP sent, phase 23) and the records-backup note (smart-account recovery records, pass p23-build), each with its reason',
-    JSON.stringify(Object.keys(FIXTURE.changed ?? {})) === JSON.stringify(['activity.note.privacy', 'notice.watchOnly', 'readiness.bridge.reason', 'recordsBackup.what']) &&
+  check('the changed entries are exactly the transaction-notes line (reworded for the records backup), the watch-only notice (reworded for the off-line signer), the bridge readiness reason (CCTP sent, phase 23), the records-backup note (smart-account recovery records, pass p23-build) and the three CCTP time sentences (the measured spread, pass p23-bridge-recheck), each with its reason',
+    JSON.stringify(Object.keys(FIXTURE.changed ?? {})) === JSON.stringify(['activity.note.privacy', 'notice.watchOnly', 'readiness.bridge.reason', 'recordsBackup.what', ...CCTP_TIME_CHANGED]) &&
       en['activity.note.privacy'] === 'Notes are kept on this phone and are not sent anywhere. They are deleted when the wallet is wiped. A records backup (Settings → Records backup) includes them, and your recovery phrase restores them from it. Hide amounts does not hide them.');
   // Pass p22a: the shared watch-only notice no longer says the wallet cannot
   // send for the address (the off-line signer screen prepares sends for it,
@@ -311,6 +316,17 @@ const BUILD_FIX_NEW = ['settings.wipe.records', 'settings.navBar.notYet', 'setti
     fixtureProblems({ ...en, 'readiness.bridge.reason': FIXTURE.changed['readiness.bridge.reason'].before }, FIXTURE).length === 1);
   check('…mutant caught (pass p23-mint): the 0a5bc7f reason ("two … by script") restored',
     fixtureProblems({ ...en, 'readiness.bridge.reason': BRIDGE_REASON_0A5BC7F }, FIXTURE).length === 1);
+  // Pass p23-bridge-recheck: the CCTP time sentences give the spread of the
+  // recorded attestation times (about 17 to 23 minutes so far) as measured,
+  // not promised; the minutes are placeholders filled from the engine's record.
+  check('…the three CCTP time sentences (pass p23-bridge-recheck): "about {fromMinutes} to {toMinutes} minutes after the burn in the measured runs" with "not a promise", never "about 17 minutes", in both languages, filled as 17 and 23',
+    en['bridge.cctp.mintStep'].startsWith('After Circle’s attestation (about {fromMinutes} to {toMinutes} minutes after the burn in the measured runs, not a promise) the USDC is minted on {destination}') &&
+      CCTP_TIME_CHANGED.every((id) => en[id] === FIXTURE.changed[id].en && /\{fromMinutes\} to \{toMinutes\} minutes after the burn in the measured runs/.test(en[id]) && /not a promise/.test(en[id]) && !/about 17 minutes/.test(en[id]) &&
+        /unos \{fromMinutes\} a \{toMinutes\} minutos después de la quema/.test(es[id]) && /sin garantía/.test(es[id])) &&
+      I.t('bridge.cctp.burnedBlock', { source: 'Base Sepolia', block: '51419841', fromMinutes: 17, toMinutes: 23 }) ===
+        'Burned on Base Sepolia (block 51419841). Waiting for Circle’s attestation: it comes after the source chain’s hard finality, about 17 to 23 minutes after the burn in the measured runs (not a promise).');
+  check('…mutant caught (pass p23-bridge-recheck): each old "about 17 minutes" sentence restored',
+    CCTP_TIME_CHANGED.every((id) => fixtureProblems({ ...en, [id]: FIXTURE.changed[id].before }, FIXTURE).length === 1));
 }
 
 // Phase 23 item 8 (the fourth pass): two pieces of the old code the
@@ -412,10 +428,11 @@ function oldSpoken(visible) {
       I.t('bridge.worstCase.l1', { gwei: '0.001000013', gas: '341035' })],
     'bridge.cctp.pin.recipientSmart': [`Recipient: ${'0xS'} (your ${'smart-account' === 'smart-account' ? 'smart account' : 'regular account'}).`, I.t('bridge.cctp.pin.recipientSmart', { recipient: '0xS' })],
     'bridge.cctp.pin.recipientRegular': [`Recipient: ${'0xR'} (your ${'regular' === 'smart-account' ? 'smart account' : 'regular account'}).`, I.t('bridge.cctp.pin.recipientRegular', { recipient: '0xR' })],
+    // Pass p23-bridge-recheck: these two were reworded (the "changed" records), so the old pieces are compared with the recorded "before" text.
     'bridge.cctp.burned': [`Burned on ${'Arbitrum Sepolia'}${null === null ? '' : ` (block ${null})`}. Waiting for Circle’s attestation: it comes after the ` + 'source chain’s hard finality, about 17 minutes in the measured runs.',
-      I.t('bridge.cctp.burned', { source: 'Arbitrum Sepolia' })],
+      FIXTURE.changed['bridge.cctp.burned'].before.replace('{source}', 'Arbitrum Sepolia')],
     'bridge.cctp.burnedBlock': [`Burned on ${'Arbitrum Sepolia'}${323018391n === null ? '' : ` (block ${323018391n})`}. Waiting for Circle’s attestation: it comes after the ` + 'source chain’s hard finality, about 17 minutes in the measured runs.',
-      I.t('bridge.cctp.burnedBlock', { source: 'Arbitrum Sepolia', block: '323018391' })],
+      FIXTURE.changed['bridge.cctp.burnedBlock'].before.replace('{source}', 'Arbitrum Sepolia').replace('{block}', '323018391')],
     // Multisig — the exposure line's pieces, the two refusals ending in the engine's sentence, the funding figure's clause, the QR progress line.
     'multisig.exposure.allBoth': [`Every operation needs ${2 === 2 ? 'both signers' : `all ${2} signers`}`, en['multisig.exposure.allBoth']],
     'multisig.exposure.all': [`Every operation needs ${3 === 2 ? 'both signers' : `all ${3} signers`}`, I.t('multisig.exposure.all', { n: 3 })],

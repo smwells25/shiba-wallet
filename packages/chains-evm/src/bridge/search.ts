@@ -38,7 +38,8 @@ export const BRIDGE_SEARCH_WINDOW_BLOCKS = 9_000n;
 /**
  * How long after the sending transaction the receiving chain is searched:
  * 7 days (a judgement). A CCTP mint can be sent any time after Circle's
- * attestation (about 17 minutes in the measured runs) and LayerZero
+ * attestation (about 17 to 23 minutes after the burn in the measured runs,
+ * cctpAttestationRange in cctp-v2.ts) and LayerZero
  * delivered in 30-90 s in the measured runs, so a week covers a mint sent
  * days late; past it the wallet says how far it searched instead of
  * guessing.
