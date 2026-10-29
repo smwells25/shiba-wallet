@@ -15733,3 +15733,202 @@ to the Chairperson at once.
       if the range ever collapsed to one figure (it cannot with today's
       data); the Spanish drafts need a native reviewer. UNVERIFIED
       (device): the new rows, the Back button, the Spanish length.
+- [x] EMULATOR PASS p23-devbuild-recheck — THE 5ad1085 FIXES IN THE DEBUG
+      DEVELOPMENT BUILD: F-85 FIXED ON THE DEVICE, THE NAVIGATION-BAR FINDING
+      CONFIRMED, THE FIRST QUICK-BOOT SNAPSHOT LOAD (2026-10-28 17:29 –
+      2026-10-29 05:16 UTC, the gap the driver's Opus session limit right
+      after the build; the debug development client rebuilt from 0b6918e in
+      the scratchpad worktree wt-build3 (an APFS clone, `git ls-files -d` 0,
+      no .dev-wallet in it) with Gradle running ONLY after the emulator was
+      closed gracefully and `--stop` left no java process; a THROWAWAY wallet,
+      wiped in-app and deleted with the app; the real Expo Go wallet never
+      opened until the end; no repository file edited, staged or committed;
+      nothing sent on any chain, the dev EOA not used; ONE device prompt in
+      the whole pass ("Approve making an encrypted backup of your records",
+      read from the prompt window); the report step by step in the scratchpad
+      p23-devbuild-recheck/REPORT.md with keys.log, apr.log, emulator.log, the
+      Gradle and prebuild logs, the permission and xmltree dumps and redacted
+      screenshots; THE CTO RE-CHECKED the two APK digests with shasum, the
+      key-name listings, the window-flag samples and the quoted emulator log
+      lines against those files — every figure below matches). THE CLOSE AND
+      THE BUILD: the toolbar Close of qemu 60303 (p23-build's session, the
+      wait variable 120 in its tab) logged "Wait for emulator (pid 60303) 120
+      seconds to shutdown gracefully before kill" and "Saving snapshot
+      'default_boot' using 10040 ms" with NO "killed" line — a complete save
+      (ram.bin 3,002,122,360 B, textures.bin 7,189,816 B) made under
+      "gles_mode_selected:swangle"; wt-build3 moved 4e34507 → 0b6918e (the
+      37-file diff touches no app.json, package.json, lockfile or plugin),
+      `npm run build` 18.8 s, prebuild's AndroidManifest.xml byte-identical to
+      p23-build's (20 tools:node="remove" lines: the 16 badge names plus the 4
+      blockedPermissions; schemes shibawallet and exp+shiba-wallet on the
+      main activity); assembleDebug "BUILD SUCCESSFUL in 12m 9s", 771 tasks
+      (739 executed, 32 up-to-date) → .local/builds/shiba-devclient-0b6918e-
+      rc-debug.apk, 97,894,296 B, sha256 7e82efdb016c12cea0bf0c454150bb3d
+      363ea6960662ef940c4792890548a31d — BYTE-IDENTICAL to p23-build's
+      shiba-devclient-a71ef32-rc-debug.apk (a debug development client
+      embeds no JS bundle and the native configuration did not change: an
+      inference from the equal hash and the empty native-config diff);
+      aapt2: 16 uses-permission entries, none of the 16 ShortcutBadger names,
+      the VIEW filter carrying shibawallet and exp+shiba-wallet,
+      libQuickCrypto.so 10,263,400 B and libNitroModules.so 1,125,392 B. THE
+      RELAUNCH, WITHOUT -no-snapshot-load (the recorded command with the PATH
+      export and the wait variable; qemu 3457, `caffeinate -i -w 3457` 3479):
+      emulator.log line 5 "Selected GPU option 'angle_indirect' is not valid,
+      switching to 'auto' mode.", line 6 "Software GL rendering will be used
+      due to system memory pressure, performance will be affected! (Available
+      Memory: 5053 MB, Required: 5120 MB)", line 7 "gles_mode_selected:swangle",
+      lines 104 / 113 "Loading snapshot 'default_boot'..." → "Successfully
+      loaded snapshot 'default_boot' using 11296 ms" — THE FIRST SUCCESSFUL
+      QUICK-BOOT LOAD RECORDED (the save and the load both under swangle);
+      boot_completed by 02:28:45 UTC, the guest's uptime continuing, no
+      keyguard, Expo Go restored in front; `adb reverse` empty after the boot
+      as the rule says, re-added. THE RENDERER CORRELATION (three launches,
+      the emulator's own wording, NOT a verified mechanism): 'auto' chose
+      swangle exactly in the two launches that printed the memory-pressure
+      warning (available 3,903 MB and 5,053 MB against the required 5,120 MB)
+      and gles host in the one that did not — so the quick boot survives a
+      graceful close as long as the host's free memory puts 'auto' on the
+      same side of that line both times; the renderer decision stays the
+      Chairperson's. PART A — THE WIPE (F-85): on the throwaway (Ethereum
+      Sepolia, protection off) one contact "Recheck contact" = 0x0000…dEaD
+      saved (the ADB_INPUT_TEXT broadcast typed nothing, ADB_INPUT_B64 did),
+      stETH added through "Look up token" beside the default USDC and EURC
+      (three tracked rows), the Sepolia KernelFactory verified and saved
+      (read-only chain reads, "Verified ✓ — factory, implementation 0x…5b28,
+      meta factory and ECDSA validator have code…", no bundler) so an
+      aa-config record existed; key names before (names, field names and sizes
+      only, never a value): AsyncStorage aa-config.v1 {eip155:11155111:
+      accountType, factory, factoryImplementation, factoryVerifiedAt,
+      kernelAccountId, kernelMetaFactory, kernelValidator — NO eip7702Owners
+      or recoveredAccounts field is stored until an upgrade or a recovery
+      writes one}, accounts.v1, browser-connections.v1, contacts.v1, prefs.v1,
+      tokens.v1.eip155:11155111 [3]; SecureStore vault-meta.v1, mnemonic.v1,
+      public-account.v1.0; INCIDENT — an app ANR at 02:59 UTC while scrolling
+      Settings ("Shiba Wallet isn't responding"; logcat "Input dispatching
+      timed out … Waited 5004ms for MotionEvent"; Wait twice did not clear it
+      in ~3 min; the process at ~18% CPU, 533 MB PSS, the guest with 276 MB
+      free and 830 MB in swap; the Java stacks could not be dumped), cause
+      NOT established (guest memory pressure a candidate; Metro had logged
+      "Detected a change in metro.config.js" after the day's scratchpad touch
+      — the known harmless case), cleared by Close app and a relaunch
+      through the dev-client link; THE ENGLISH DIALOG ("Wipe wallet?",
+      CANCEL / CONTINUE; no "Export your recovery records first?" step
+      because the throwaway holds no recovery record) ends, exactly, with the
+      5ad1085 sentence: "…Your contacts, tracked tokens (each network's list
+      returns to its defaults), transaction notes, account names, watched
+      addresses, multi-signature account records, spending limits, price
+      alerts, in-app browser connections, the pending-transaction and
+      bridge-transfer lists, the inbox, any unfinished name registration and
+      the record of which accounts were upgraded with EIP-7702 are deleted
+      from this device too (an upgrade stays on-chain, and after a restore
+      the Upgrade screen offers to use it again). A records backup made first
+      (Settings → Records backup) can bring back the contacts, tracked
+      tokens, notes, smart-account recovery records, multi-signature account
+      records, spending limits, price alerts and bridge transfers. Settings
+      that belong to this phone are kept: preferences, the language, network
+      endpoints and indexers, the smart-account bundler, factory and
+      paymaster settings, networks you added and API keys. WalletConnect
+      connections are kept too — disconnect them first (Settings →
+      WalletConnect → Connected apps) if you no longer want them." (the body
+      scrolls inside the dialog at 1080×2400 with the title and both buttons
+      always visible), then "Are you absolutely sure?" / KEEP MY WALLET /
+      WIPE WALLET → Welcome, no device prompt; AFTER THE WIPE (03:47:34 UTC):
+      contacts.v1 present but REWRITTEN EMPTY (27 B, the size of an empty
+      contact book — inferred from the size and the two field names),
+      tokens.v1.eip155:11155111 GONE, inheritance.v1 CREATED empty (26 B — it
+      did not exist before; resetTakeoverScanStates writes an empty state
+      rather than removing the key), aa-config.v1 KEPT with exactly its
+      factory fields, the other reset keys written empty (multisig,
+      passkeys, recovery-progress, recovery-records, sessions,
+      spending-history, spending-policies, browser-connections), prefs.v1
+      kept, SecureStore 0 names / 65 B; THE SAME PHRASE IMPORTED AGAIN (typed
+      from the 0600 file through one ADB_INPUT_B64 broadcast, never printed)
+      → the same address, "Tokens · Ethereum Sepolia" showing only the
+      default USDC and EURC (stETH gone), "Manage contacts" → "No contacts."
+      on all four networks — F-85 IS FIXED ON THE DEVICE; THE SPANISH DIALOG
+      (Settings → Language → Español saved with no failure line; "Zona de
+      peligro", "Borrar la billetera de este dispositivo"; title "¿Borrar la
+      billetera?", the body in full Spanish ending "…También se conservan las
+      conexiones de WalletConnect: desconéctalas antes (Ajustes →
+      WalletConnect → Apps conectadas) si ya no las quieres.", CANCELAR /
+      CONTINUAR; longer than the English — four slow swipes inside the dialog
+      reach its end, nothing clipped sideways; "¿Estás completamente seguro?"
+      / BORRAR LA BILLETERA / CONSERVAR MI BILLETERA stacked with the
+      destructive one on top) served as the clean-up wipe; afterwards the
+      same 13 AsyncStorage keys plus the device-scoped language.v1 KEPT, as
+      the dialog says; the Welcome screen's texts stayed English (its strings
+      are not in the string table — inferred). PART B — THE RECORDS BACKUP
+      SECTION: the four notes exactly as 5ad1085 wrote them, the first naming
+      "smart-account recovery records" ("A records backup is one file with the
+      records this wallet keeps on this phone: contacts, transaction notes,
+      networks you added, tracked tokens, smart-account recovery records,
+      multi-signature account records, bridge transfers, price alerts and
+      spending limits. It contains no private key, no recovery phrase and no
+      PIN."); "Export records backup" → the ONE prompt → "Preparing the
+      backup…" → the chooser "Sharing 1 file / shiba-records-backup_
+      2026-10-29.txt" (the cache copy 1,432 B, not pulled, nothing saved off
+      the device; gone a minute after the chooser closed) → cancelled → the
+      result line exactly "A backup of 4 records was prepared and handed to
+      the share sheet (Contacts: 1; Tracked tokens: 3). Whether it was saved
+      depends on what you chose there; this wallet cannot tell."; the old
+      "Guardian recovery records" wording appears nowhere; the result-line
+      form of the new label was NOT seen (it needs a deployed factory Kernel,
+      which this pass did not create). PART C — THE NAVIGATION BAR: the
+      Developer line (read from screenshots — uiautomator drops it for its
+      straight quotes) "Navigation bar style: setStyle("dark") succeeded
+      (attempt 1 in this session; "dark" asks for dark buttons, "light" for
+      light ones)." in light mode, then setStyle("light") attempt 2 after
+      `cmd uimode night yes`, setStyle("dark") attempt 3 after `night no`,
+      setStyle("light") attempt 4 after `night yes` again — the count rises
+      once per theme change, the style follows the theme, every outcome
+      "succeeded", nothing "unavailable" or "failed", and `adb logcat -d`
+      holds no "Navigation bar style" line (by design only 'unavailable'
+      logs); THE FINDING IS CONFIRMED IN THE DEVELOPMENT BUILD, in gesture AND
+      three-button navigation: after setStyle("light") succeeded in dark mode
+      the MainActivity window KEPT apr=LIGHT_NAVIGATION_BARS (dark buttons) at
+      +14 s, ~+30 s, after HOME and a return, +18 s after the return, and in
+      three-button mode at +13 s and after HOME and a return (apr.log,
+      02:47:50–02:51:33 UTC), the three-button buttons dark grey (102,102,102)
+      and the gesture handle dark (90,48,0) on the dark banner (224,120,0),
+      while the STATUS-BAR flag followed the theme each time (dropped in dark
+      some seconds after the switch, back in light); NO WHITE STRIP — rows
+      2240–2399 are the banner's orange in every screenshot in both modes;
+      the cause stays NOT ESTABLISHED (the diagnostic proves the call is made
+      and resolves; the open-question paragraph in navigation-bar.ts lists
+      the next tests); not tried: a cold start in dark mode in this build.
+      SLIPS, recorded (no wallet data affected): a BACK meant to close the
+      keyboard left Settings (the ADB keyboard bar does not count as an open
+      keyboard); two Settings scroll loops overran the driver's 10-minute
+      tool limit at ~10 minutes per full scroll (nothing tapped at the
+      Danger zone); DEVIATION — the language was not switched back to
+      English before the clean-up wipe (the English dialog had already been
+      read before the first wipe; each full Settings scroll took ~10 minutes
+      and one had ended in the ANR); the uninstall removed the language record
+      with the app's data. FOLLOW-UPS (no slice dispatched; a hygiene
+      judgement — the remove-versus-empty-write question spans about ten
+      modules' reset functions and the structural check accepts both forms):
+      (1) the wipe rewrites contacts.v1 empty and creates an empty
+      inheritance.v1 instead of removing the keys — harmless (both parse as
+      empty), but "deleted from this device" is literally true only for the
+      contents, not the keys; (2) the navigation-bar cause (the tests in
+      navigation-bar.ts); (3) the app ANR's cause; (4) the result-line form
+      of "Smart-account recovery records" on a device (needs a deployed
+      Kernel). STANDING RULE AMENDED: `-no-snapshot-load` is no longer needed
+      by default — a quick boot loads whenever the saved snapshot's renderer
+      matches the one 'auto' picks at launch; a mismatch still cold-boots
+      harmlessly ("Failed to load snapshot… different renderer configured"),
+      and the 120-second wait variable stays in every launching shell so the
+      save completes. UNVERIFIED: the window's visibility under swangle to
+      the Chairperson; a cold start in dark mode in this build; a WalletConnect
+      pairing in the dev build; the result-line label form. END STATE: the
+      dev build UNINSTALLED (only host.exp.exponent left); Expo Go on the
+      REAL wallet's cold-start lock ("Shiba Wallet is locked / Auto-lock is
+      on, so the wallet starts locked…"), NOT unlocked, no SECURE window,
+      light mode, gesture navigation only, IME ADBKeyboard, /sdcard/Download
+      empty, the phrase file deleted with rm -P; Metro 8081 restarted from
+      wt-app at 9fa55da (node 90062) with `adb reverse tcp:8081` the only
+      mapping, 8082 stopped; qemu 3457 (`-avd shiba -gpu angle_indirect`,
+      swangle, the quick boot loaded, the wait variable in its tab) and
+      caffeinate 3479 running with the window in front; wt-build3 at 0b6918e
+      with android/ and the build outputs kept, app.json / package.json at
+      the commit.
