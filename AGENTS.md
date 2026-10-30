@@ -16047,3 +16047,117 @@ to the Chairperson at once.
       lock); Metro 8082 stopped and its reverse removed, 8081 untouched;
       qemu 3457 (PRI 97) and caffeinate 3479 running with the window in
       front; wt-build3 unchanged; the main checkout untouched.
+- [x] THE NAVIGATION-BAR FIX — A LOCAL EXPO MODULE SETS THE BUTTON APPEARANCE
+      THROUGH THE PLATFORM API, PROVEN IN A REBUILT DEVELOPMENT BUILD (commit
+      057f2a9; 14 files, +431 / −137, incl. the new app/modules/
+      shiba-navigation-bar/ (expo-module.config.json, android/build.gradle,
+      an empty AndroidManifest.xml, ShibaNavigationBarModule.kt — no new
+      dependency); check-devmode 476 (was 465; 4 new in-suite mutants),
+      check-i18n 172 with three new ids; offline runner ALL GREEN in the
+      CTO's isolated worktree on HEAD 036bb08 with --skip-bundle: engine
+      1,298, app 10,847 across 65 suites, lint 0/0, tsc clean; checkout 0 /
+      apply 0 / 14 files; the staged patch id c416f99c…9505 equals the
+      verified tree's and the agent's stated id; the scan clean; five hand
+      mutants on navigation-bar.ts caught; the agent worked in its own clone
+      worktree and verified on the emulator; the CTO re-read the loader,
+      gitignore and string hunks and the report's apr table). THE MODULE:
+      AsyncFunction setNavigationBarAppearance(light) on the main queue —
+      API 31+ `window.insetsController.setSystemBarsAppearance(light ?
+      APPEARANCE_LIGHT_NAVIGATION_BARS : 0, APPEARANCE_LIGHT_NAVIGATION_BARS)`
+      answering "platform-api"; API 26–30 the deprecated view flag answering
+      "compat-flag"; API 24–25 "unsupported" (minSdk 24, react-native's
+      libs.versions.toml line 3); DEVIATION from the brief, accepted: the
+      platform API from API 31 rather than 30, because React Native's own
+      setStatusBarStyle switches at `SDK_INT > R` (WindowUtil.kt 101) and a
+      setSystemBarsAppearance call on API 30 would mark the window
+      APPEARANCE_CONTROLLED while React Native still writes the status bar
+      through the old flag there. Local-module facts from the installed
+      sources: expo-modules-autolinking 57.0.14 autolinkingOptions.js
+      166–172 (the default nativeModulesDir ./modules), findModules.js 40
+      (local modules searched first), scanning.js (no package.json needed;
+      the folder name is the name), platforms/android/android.js 23 (a
+      build.gradle required); expo-modules-core 57.0.21 ProjectConfiguration.kt
+      22 / 59 / 87 (the gradle plugin adds expo-modules-core),
+      MavenPublicationExtension.kt 41–45 (a namespace and versionName
+      required); `npx expo-modules-autolinking resolve -p android --json`
+      lists shiba-navigation-bar and prebuild exits 0 (its worktree-only
+      edits reverted before the patch was cut); ExpoModulesPackageList.kt
+      line 60 of the build lists the class, which sits in classes2.dex.
+      navigation-bar.ts: pickNavigationBarNative looks up ShibaNavigationBar
+      first, then ExpoNavigationBar, through requireOptionalNativeModule;
+      applyNavigationBarStyle prefers setNavigationBarAppearance(lightBarFor
+      (style)) and falls back to setStyle; each outcome carries path
+      ('platform-api' | 'compat-flag' | 'expo-navigation-bar' | null), a new
+      result 'unsupported', an unknown answer counts as failed; the header's
+      open-question paragraph replaced by the established cause with its
+      citations; DECISION (CTO accepted): expo-navigation-bar STAYS as the
+      Expo Go fallback (removing it is a separate decision), so Expo Go keeps
+      the old behaviour. Settings lines: settings.navBar.appliedPlatform
+      ("Navigation bar style: "dark" set through the platform API,
+      WindowInsetsController.setSystemBarsAppearance (attempt N in this
+      session; …)"), .appliedCompat, .unsupported new; .applied now names
+      expo-navigation-bar and says the call was seen to have no effect on
+      Android 14, .unavailable names both modules (both were on the fixture's
+      "new" list, so no "changed" record); Spanish drafts. app/.gitignore
+      gains /modules/*/android/build/, .cxx/ and .gradle/ (Gradle writes the
+      module's output beside its build.gradle; the first patch cut had
+      included it). Docs: DEVICE_BUILDS.md (a bullet on the module, the
+      "cause not established" clause corrected), RELEASE.md (the cause and
+      the fix). THE BUILD (the emulator closed gracefully first — "Saving
+      snapshot 'default_boot' using 35412 ms", no "killed" line; no adb
+      during Gradle; --stop, no java left; env.sh deliberately not sourced
+      because its redact helper reads .dev-wallet — JAVA_HOME and
+      GRADLE_USER_HOME exported by hand): assembleDebug "BUILD SUCCESSFUL in
+      11m 55s", 801 tasks → .local/builds/shiba-devclient-036bb08-navbar-
+      debug.apk, 97,894,296 B (the same byte count as the 0b6918e build, a
+      coincidence), sha256 c50c4f03ab68431beccfb680c079bcbdee76b0d0591dbf49
+      e3c4962e00846846 (re-read by the CTO). THE RELAUNCH: the recorded
+      command; "'angle_indirect' is not valid, switching to 'auto'",
+      "gles_mode_selected:host" with NO memory-pressure line this time, so
+      "Failed to load snapshot 'default_boot'… different renderer
+      configured" — a cold boot (the snapshot had been saved under swangle;
+      the correlation of pass p23-devbuild-recheck holds a fourth time);
+      qemu 3663, caffeinate 4345. PROVEN ON THE EMULATOR (API 34, the dev
+      client's Welcome screen — the component mounts outside the wallet
+      gate; apr from dumpsys window windows, samples ~1.5–7 s after each
+      switch; the report's table in the scratchpad p23-navbar-fix/REPORT.md):
+      gesture light → dark: apr LIGHT_STATUS_BARS LIGHT_NAVIGATION_BARS →
+      both bits CLEAR from +1.5 s; dark → light: both bits back from +1.6 s;
+      three-button the same both ways (+1.6 s); a cold start in dark: no
+      light bits, APPEARANCE_CONTROLLED once the dev menu closed; then →
+      light: BOTH BITS from +1.4 s — the case pass p23-navbar's test 2b never
+      showed — and → dark again clear from +1.4 s; no white strip under the
+      TESTNET banner in either mode (emulator-console screenshots, because
+      the fresh install's screen protection blanked screencap): three-button
+      shows grey (102,102,102) buttons on a light scrim in light mode and
+      white buttons on a dark scrim in dark mode; the Welcome screen's
+      gesture handle (98,99,100) in light and (236,236,237) in dark; the
+      Developer line on a throwaway imported from the public all-zero-entropy
+      BIP-39 test phrase (no secret ever on screen): the appliedPlatform text
+      with "dark" / attempt 4 in light mode and "light" / attempt 5 in dark.
+      OBSERVATIONS (system-side, not the app): over the orange banner in
+      gesture mode the handle draws light in light mode and darker in dark
+      mode although the bit is right (most likely the system sampling the
+      colour under the handle — an inference); one three-button dark
+      screenshot taken right after switching navigation mode showed grey
+      buttons, white after the next switch. UNVERIFIED: Expo Go (still the
+      setStyle fallback — the old behaviour stays there; that it carries the
+      same androidx.core path is an inference); API 26–30 and 35+ (androidx
+      Impl35 calls setSystemBarsAppearance itself, so Android 15 may already
+      differ); Android 11's framework rule; dialog windows (only the
+      activity window is set); a release build; real phones; TalkBack on the
+      new lines; iOS (Android-only module, the loader returns before any
+      lookup). SLIPS: the first Settings tap hit the Tools bubble; one dark
+      screenshot retaken mid re-render; the first keyguard unlock command did
+      not take; hand mutant 3 first crashed check-devmode instead of failing
+      a check (the check made robust); the first patch cut carried the
+      module's Gradle output (the ignore rule added). END STATE: night mode
+      off, gesture navigation only; the dev client uninstalled (the throwaway
+      with it); Metro 8082 stopped and its reverse removed, Metro 8081 at
+      9fa55da untouched; Expo Go installed, not opened since the cold boot
+      (the real wallet will show its cold-start lock); qemu 3663 and
+      caffeinate 4345 running with the window in front; the main checkout
+      clean at HEAD; the agent's worktree wt-p23-navfix kept in the
+      scratchpad. FOLLOW-UP: the quick boot now needs the renderer to match
+      — a save under swangle followed by a launch under host cold-boots, and
+      the reverse; still the Chairperson's renderer decision.
