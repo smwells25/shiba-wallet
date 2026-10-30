@@ -104,15 +104,19 @@ function ScreenProtection() {
  * enableEdgeToEdge, lines 164-190, with enforceNavigationBarContrast on by
  * default), so a scheme switched while the app runs left the light
  * appearance in place. src/wallet/navigation-bar.ts does the work through
- * expo-navigation-bar 57.0.3's native module: Android only, nothing when the
- * module is absent, and a failure is one log line, never a crash. The bar's
- * background cannot be set (that package removed its background-colour
- * function in 56.0.0); it stays transparent. Mounted beside the status
- * bar's own component; it needs no wallet or preference state. Renders
- * nothing. Pass p23-build: on the emulator's development build the button
- * flag did not follow a runtime scheme change; the cause is not established
- * from source (see navigation-bar.ts), so each attempt's outcome is shown in
- * Settings → Developer for the next pass to read.
+ * the wallet's own local Expo module ShibaNavigationBar
+ * (app/modules/shiba-navigation-bar), which sets the appearance through the
+ * platform API on Android 12 and up, and falls back to expo-navigation-bar
+ * 57.0.3's setStyle where that module is absent (Expo Go). Pass p23-navbar
+ * established why setStyle alone did not follow a runtime scheme change: on
+ * API 30-34 it writes only a deprecated view flag, which Android ignores once
+ * React Native's StatusBar has set the window's appearance through the
+ * platform API (see navigation-bar.ts). Android only, nothing when both
+ * modules are absent, and a failure is one log line, never a crash. The
+ * bar's background cannot be set; it stays transparent. Mounted beside the
+ * status bar's own component; it needs no wallet or preference state.
+ * Renders nothing. Each attempt's outcome, with the path that ran, is shown
+ * in Settings → Developer.
  */
 function NavigationBarStyle() {
   const theme = useTheme();

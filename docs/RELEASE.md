@@ -535,7 +535,22 @@ wallet's `setStyle` call runs or is overridden afterwards is not
 established (a fix slice adds a log line for every outcome first). The
 library documents a visible effect only on a button navigation bar with
 `enforceContrast: false` (`src/NavigationBar.types.ts` lines 34-42); that
-option was not taken.
+option was not taken. **Established in pass p23-navbar:** on API 30-34
+`setStyle` writes only the deprecated `SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR`
+view flag (androidx.core 1.18.0, `WindowInsetsControllerCompat` Impl30
+built with a window), which Android ignores once React Native's
+`StatusBar` has set the window's appearance through
+`WindowInsetsController.setSystemBarsAppearance`. **The fix:** the app's
+own local Expo module `app/modules/shiba-navigation-bar` (JavaScript name
+`ShibaNavigationBar`; Android only; no dependency beyond what
+`expo-module-gradle-plugin` adds, i.e. `expo-modules-core`; no manifest
+entry; no permission; no network code) calls `setSystemBarsAppearance`
+for the navigation-bar bit on API 31 and up and writes the deprecated
+flag on API 26-30. It is linked by autolinking from the app's `modules`
+folder, so every development and release build carries it;
+`navigation-bar.ts` falls back to `expo-navigation-bar`'s `setStyle` only
+where the module is absent (Expo Go), and `expo-navigation-bar` stays a
+dependency for that reason.
 
 ---
 

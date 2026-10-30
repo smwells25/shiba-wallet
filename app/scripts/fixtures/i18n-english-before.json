@@ -12942,6 +12942,9 @@
   "settings.navBar.applied",
   "settings.navBar.unavailable",
   "settings.navBar.failed",
+  "settings.navBar.appliedPlatform",
+  "settings.navBar.appliedCompat",
+  "settings.navBar.unsupported",
   "bridge.measuredAttestation.one",
   "bridge.measuredAttestation.many",
   "bridge.approve.totalNote"
