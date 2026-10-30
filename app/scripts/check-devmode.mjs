@@ -2367,7 +2367,7 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
   const r3i = await NB.applyNavigationBarStyle(async () => NB.NAVIGATION_BAR_NOT_ANDROID, true, (l) => devLogs.push(l), { dev: true });
   check('navigation bar: in a development bundle "unavailable" is ONE log line; off Android it is "not-android" with nothing logged',
     r3d === 'unavailable' && r3i === 'not-android' && devLogs.length === 1 &&
-      devLogs[0] === 'Navigation bar style not applied: the native module ExpoNavigationBar was not found in this build.', JSON.stringify(devLogs));
+      devLogs[0] === 'Navigation bar style not applied: neither the native module ShibaNavigationBar nor ExpoNavigationBar was found in this build.', JSON.stringify(devLogs));
   let threw = false;
   let r4;
   let r5;
@@ -2403,9 +2403,9 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
       seen.map((o) => o.style).join(',') === 'dark,light,light,dark,dark' && failedOutcome.detail === 'no current activity', JSON.stringify(seen));
   check('navigation bar: the Settings → Developer line, exactly, for each outcome (none off Android)',
     before === 'Navigation bar style: not applied yet in this session.' &&
-      afterLight === 'Navigation bar style: setStyle("dark") succeeded (attempt 1 in this session; "dark" asks for dark buttons, "light" for light ones).' &&
-      afterDark === 'Navigation bar style: setStyle("light") succeeded (attempt 2 in this session; "dark" asks for dark buttons, "light" for light ones).' &&
-      afterMissing === 'Navigation bar style: unavailable, the ExpoNavigationBar native module was not found in this build (attempt 3 in this session).' &&
+      afterLight === 'Navigation bar style: setStyle("dark") of expo-navigation-bar succeeded (attempt 1 in this session; "dark" asks for dark buttons, "light" for light ones). The app\'s own module is not in this build, and on Android 14 this call was seen to have no effect once the status bar style is set.' &&
+      afterDark === 'Navigation bar style: setStyle("light") of expo-navigation-bar succeeded (attempt 2 in this session; "dark" asks for dark buttons, "light" for light ones). The app\'s own module is not in this build, and on Android 14 this call was seen to have no effect once the status bar style is set.' &&
+      afterMissing === 'Navigation bar style: unavailable, neither the app\'s ShibaNavigationBar module nor the ExpoNavigationBar native module was found in this build (attempt 3 in this session).' &&
       afterFailed === 'Navigation bar style: failed: no current activity (attempt 4 in this session).' && afterIos === null,
     JSON.stringify([before, afterLight, afterDark, afterMissing, afterFailed, afterIos]));
   const nbSrc = readApp('src/wallet/navigation-bar.ts');
@@ -2413,13 +2413,16 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
   const androidOnly = (src) => {
     const l = src.slice(src.indexOf('export async function loadNavigationBarNative'));
     const guard = l.indexOf("if (Platform.OS !== 'android') return NAVIGATION_BAR_NOT_ANDROID;");
-    const lookup = l.indexOf("requireOptionalNativeModule<{ setStyle?: (style: string) => Promise<void> }>('ExpoNavigationBar')");
-    return guard > 0 && lookup > guard && l.indexOf("await import('expo')") > guard && l.includes("if (!nav || typeof nav.setStyle !== 'function') return null;");
+    const lookup = l.indexOf('return pickNavigationBarNative((name) => requireOptionalNativeModule(name));');
+    const pick = src.slice(src.indexOf('export function pickNavigationBarNative'), src.indexOf('function reactNative()'));
+    return guard > 0 && lookup > guard && l.indexOf("await import('expo')") > guard &&
+      pick.includes("if (local && typeof local.setNavigationBarAppearance === 'function') {") &&
+      pick.includes("if (nav && typeof nav.setStyle === 'function') {") && /\n  return null;\n\}/.test(pick);
   };
   check('navigation bar: the loader returns NAVIGATION_BAR_NOT_ANDROID off Android before touching expo, and looks the module up with requireOptionalNativeModule (null, no throw, when absent)',
     androidOnly(nbSrc) && loader.length > 0);
   check('navigation bar: the failure path catches everything in applyNavigationBarStyle (one try / catch around load and setStyle)',
-    /const style = navigationBarStyleFor\(dark\);[\s\S]{0,120}try \{\n\s+const native = await load\(\);[\s\S]*?await native\.setStyle\(style\);[\s\S]*?\} catch \(e\) \{/.test(nbSrc));
+    /const style = navigationBarStyleFor\(dark\);[\s\S]{0,200}try \{\n\s+const native = await load\(\);[\s\S]*?await native\.setNavigationBarAppearance\(lightBarFor\(style\)\);[\s\S]*?await native\.setStyle\(style\);[\s\S]*?\} catch \(e\) \{/.test(nbSrc));
   // expo-navigation-bar's own entry throws at import when its native module
   // is missing (src/ExpoNavigationBar.android.ts, requireNativeModule), so no
   // app file may import the package itself.
@@ -2460,6 +2463,101 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
     /\{pinCostMeasurementOffered\(evmChain\.caip2\) \? <PinCostMeasurement \/> : null\}\n(?:\s+\{\/\*[\s\S]*?\*\/\}\n)?\s+\{navigationBarLine !== null \? \(\n\s+<Text style=\{\[styles\.hint, \{ color: theme\.text \}\]\}>\{navigationBarLine\}<\/Text>\n\s+\) : null\}/.test(src);
   check('navigation bar: Settings → Developer shows the last attempt\'s line under the PIN hashing measurement, re-rendered after every attempt', shown(settingsSrc));
   check('mutant caught (p23-build): the Developer line not rendered', !shown(settingsSrc.replace('{navigationBarLine !== null ? (', '{false ? (')));
+
+  // Pass p23-navbar: the wallet's own local module (app/modules/shiba-navigation-bar)
+  // sets the bar's appearance through the platform API, which Android honours
+  // after React Native's StatusBar has made the window APPEARANCE_CONTROLLED;
+  // expo-navigation-bar's setStyle stays only as the fallback (Expo Go cannot
+  // carry a local module). Every outcome now names the path that ran.
+  // (1) The fallback order: the local module first, expo-navigation-bar only without it.
+  const lookups = [];
+  const localCalls = [];
+  const expoCalls = [];
+  const fakeLocal = { setNavigationBarAppearance: async (light) => { localCalls.push(light); return 'platform-api'; } };
+  const fakeExpo = { setStyle: async (style) => { expoCalls.push(style); } };
+  const both = NB.pickNavigationBarNative((name) => { lookups.push(name); return name === 'ShibaNavigationBar' ? fakeLocal : name === 'ExpoNavigationBar' ? fakeExpo : null; });
+  const expoOnly = NB.pickNavigationBarNative((name) => (name === 'ExpoNavigationBar' ? fakeExpo : null));
+  const localWithoutFunction = NB.pickNavigationBarNative((name) => (name === 'ShibaNavigationBar' ? {} : name === 'ExpoNavigationBar' ? fakeExpo : null));
+  const neither = NB.pickNavigationBarNative(() => null);
+  await both?.setNavigationBarAppearance?.(true);
+  await expoOnly?.setStyle?.('dark');
+  check('navigation bar (p23-navbar): the local ShibaNavigationBar module is chosen when the build has it, expo-navigation-bar only without it (or without its function), null with neither',
+    NB.LOCAL_NAVIGATION_BAR_MODULE === 'ShibaNavigationBar' && NB.EXPO_NAVIGATION_BAR_MODULE === 'ExpoNavigationBar' &&
+      typeof both.setNavigationBarAppearance === 'function' && both.setStyle === undefined && lookups.join(',') === 'ShibaNavigationBar' &&
+      typeof expoOnly.setStyle === 'function' && expoOnly.setNavigationBarAppearance === undefined &&
+      typeof localWithoutFunction.setStyle === 'function' && neither === null &&
+      JSON.stringify(localCalls) === '[true]' && JSON.stringify(expoCalls) === '["dark"]', JSON.stringify({ lookups, localCalls, expoCalls }));
+  const prefersLocal = (src) => {
+    const pick = src.slice(src.indexOf('export function pickNavigationBarNative'), src.indexOf('function reactNative()'));
+    const apply = src.slice(src.indexOf('export async function applyNavigationBarStyle'), src.indexOf('export function pickNavigationBarNative'));
+    const localLookup = pick.indexOf('lookup(LOCAL_NAVIGATION_BAR_MODULE)');
+    const expoLookup = pick.indexOf('lookup(EXPO_NAVIGATION_BAR_MODULE)');
+    const localCall = apply.indexOf("typeof native.setNavigationBarAppearance === 'function'");
+    const expoCall = apply.indexOf("typeof native.setStyle === 'function'");
+    return localLookup > 0 && expoLookup > localLookup && localCall > 0 && expoCall > localCall;
+  };
+  check('navigation bar (p23-navbar): in source, the lookup and the call both try the local module before expo-navigation-bar', prefersLocal(nbSrc));
+  check('mutant caught (p23-navbar): expo-navigation-bar looked up before the local module',
+    !prefersLocal(nbSrc.replace('lookup(LOCAL_NAVIGATION_BAR_MODULE)', 'lookup(EXPO_NAVIGATION_BAR_MODULE_FIRST)').replace('lookup(EXPO_NAVIGATION_BAR_MODULE)', 'lookup(LOCAL_NAVIGATION_BAR_MODULE)').replace('lookup(EXPO_NAVIGATION_BAR_MODULE_FIRST)', 'lookup(EXPO_NAVIGATION_BAR_MODULE)')));
+  // A native layer offering both functions: only the local one is called, with
+  // light = true in light mode (dark buttons on a light bar) and false in dark mode.
+  const bothCalls = [];
+  const bothNative = { setNavigationBarAppearance: async (light) => { bothCalls.push(`local:${light}`); return 'platform-api'; }, setStyle: async (style) => { bothCalls.push(`expo:${style}`); } };
+  await NB.applyNavigationBarStyle(async () => bothNative, false, () => undefined);
+  await NB.applyNavigationBarStyle(async () => bothNative, true, () => undefined);
+  check('navigation bar (p23-navbar): with both functions only the local one runs; light mode asks for a light bar (light = true), dark mode for a dark one',
+    bothCalls.join(',') === 'local:true,local:false' && NB.lightBarFor('dark') === true && NB.lightBarFor('light') === false, bothCalls.join(','));
+  check('mutant caught (p23-navbar): the light-bar argument inverted', !/export function lightBarFor\(style: NavigationBarButtonStyle\): boolean \{\n\s+return style === 'dark';\n\}/.test(nbSrc.replace("return style === 'dark';", "return style === 'light';")) &&
+    /export function lightBarFor\(style: NavigationBarButtonStyle\): boolean \{\n\s+return style === 'dark';\n\}/.test(nbSrc));
+  // (2) The outcome's new field: which path ran, and the line naming it.
+  NB.resetNavigationBarStyleOutcome();
+  const answering = (answer) => async () => ({ setNavigationBarAppearance: async () => answer });
+  const pathRows = [];
+  const pathLogs = [];
+  for (const [load, dark] of [[answering('platform-api'), true], [answering('compat-flag'), false], [answering('unsupported'), true], [answering('surprise'), false],
+    [async () => fakeExpo, true], [async () => null, false], [async () => ({ setNavigationBarAppearance: async () => { throw new Error('The window has no insets controller yet\nstack'); } }), true]]) {
+    const r = await NB.applyNavigationBarStyle(load, dark, (l) => pathLogs.push(l));
+    const o = NB.navigationBarStyleOutcome();
+    pathRows.push({ r, result: o.result, path: o.path, detail: o.detail, line: NB.navigationBarOutcomeLine(o) });
+  }
+  check('navigation bar (p23-navbar): each outcome records which path ran (platform API, compat flag, expo-navigation-bar) and null when nothing was set',
+    pathRows.map((x) => `${x.result}/${x.path}`).join(',') ===
+      'applied/platform-api,applied/compat-flag,unsupported/null,failed/null,applied/expo-navigation-bar,unavailable/null,failed/null' &&
+      pathRows[3].detail === 'the ShibaNavigationBar module answered "surprise"' && pathRows[6].detail === 'The window has no insets controller yet' &&
+      pathLogs.length === 2 && pathLogs.every((l) => !l.includes('\n')), JSON.stringify(pathRows));
+  check('navigation bar (p23-navbar): the Settings → Developer line names the path, exactly',
+    pathRows[0].line === 'Navigation bar style: "light" set through the platform API, WindowInsetsController.setSystemBarsAppearance (attempt 1 in this session; "dark" asks for dark buttons, "light" for light ones).' &&
+      pathRows[1].line === 'Navigation bar style: "dark" set through the compat flag SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR, which Android 8 to 11 read (attempt 2 in this session; "dark" asks for dark buttons, "light" for light ones).' &&
+      pathRows[2].line === 'Navigation bar style: not changed, Android 7 has no light navigation-bar appearance (attempt 3 in this session).' &&
+      pathRows[3].line === 'Navigation bar style: failed: the ShibaNavigationBar module answered "surprise" (attempt 4 in this session).' &&
+      pathRows[4].line.startsWith('Navigation bar style: setStyle("light") of expo-navigation-bar succeeded (attempt 5 in this session;'),
+    JSON.stringify(pathRows.map((x) => x.line)));
+  const recordsPath = (src) =>
+    /lastOutcome = Object\.freeze\(\{ result, style, path, detail, attempts: /.test(src) &&
+    /if \(answer === 'platform-api' \|\| answer === 'compat-flag'\) \{\n\s+result = 'applied';\n\s+path = answer;/.test(src) &&
+    /result = 'applied';\n\s+path = 'expo-navigation-bar';/.test(src) &&
+    src.includes("if (outcome.path === 'platform-api') return t('settings.navBar.appliedPlatform'") &&
+    src.includes("if (outcome.path === 'compat-flag') return t('settings.navBar.appliedCompat'");
+  check('navigation bar (p23-navbar): in source, the path is stored with every outcome and chooses the line', recordsPath(nbSrc));
+  check('mutant caught (p23-navbar): the platform-API path not recorded', !recordsPath(nbSrc.replace('        path = answer;\n', '')));
+  // (3) The local module itself: linked from app/modules, Android only, the
+  // platform API on API 31 and up (React Native's own switch point for its
+  // status bar), on the main thread; its JavaScript name is the one looked up.
+  const moduleConfig = JSON.parse(readApp('modules/shiba-navigation-bar/expo-module.config.json'));
+  const kotlin = readApp('modules/shiba-navigation-bar/android/src/main/java/expo/modules/shibanavigationbar/ShibaNavigationBarModule.kt');
+  const gradle = readApp('modules/shiba-navigation-bar/android/build.gradle');
+  const moduleOk = (kt) =>
+    JSON.stringify(moduleConfig) === JSON.stringify({ platforms: ['android'], android: { modules: ['expo.modules.shibanavigationbar.ShibaNavigationBarModule'] } }) &&
+    kt.includes('class ShibaNavigationBarModule : Module()') && kt.includes(`Name("${NB.LOCAL_NAVIGATION_BAR_MODULE}")`) &&
+    kt.includes('AsyncFunction("setNavigationBarAppearance") { light: Boolean ->') &&
+    kt.includes('if (Build.VERSION.SDK_INT > Build.VERSION_CODES.R) {') &&
+    kt.includes('val bit = WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS') && kt.includes('controller.setSystemBarsAppearance(if (light) bit else 0, bit)') &&
+    kt.includes('if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {') && kt.includes('return@AsyncFunction "compat-flag"') && kt.includes('return@AsyncFunction "unsupported"') &&
+    kt.includes('}.runOnQueue(Queues.MAIN)') &&
+    gradle.includes("id 'expo-module-gradle-plugin'") && gradle.includes('namespace "expo.modules.shibanavigationbar"') && gradle.includes("versionName '1.0.0'") &&
+    !/\bdependencies\s*\{/.test(gradle);
+  check('navigation bar (p23-navbar): the local module is Android only, named ShibaNavigationBar, uses setSystemBarsAppearance on API 31 and up (the navigation-bar bit only) and the compat flag on API 26-30, on the main thread, with no extra dependency', moduleOk(kotlin));
+  check('mutant caught (p23-navbar): the module renamed away from the name the app looks up', !moduleOk(kotlin.replace('Name("ShibaNavigationBar")', 'Name("ShibaNavBar")')));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

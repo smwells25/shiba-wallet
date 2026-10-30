@@ -1,0 +1,20 @@
+// The wallet's own local Expo module "ShibaNavigationBar" (phase 23, pass
+// p23-navbar). Linked by Expo autolinking from app/modules (its default
+// nativeModulesDir). expo-module-gradle-plugin applies the Android library and
+// Kotlin plugins and adds expo-modules-core; android.namespace and
+// defaultConfig.versionName are required by the plugin's publishing step.
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.anonymous.shibawallet'
+version = '1.0.0'
+
+android {
+  namespace "expo.modules.shibanavigationbar"
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+  }
+}

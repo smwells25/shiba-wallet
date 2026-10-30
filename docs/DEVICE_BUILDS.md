@@ -169,6 +169,32 @@ two. `docs/RELEASE.md` section 3 has the sources for each.
   files on 2026-10-27), but whether the Expo Go on the emulator is that
   APK, and whether its module answers `setStyle`, is not verified; the
   guard makes either answer safe.
+- **The wallet's own navigation-bar module (pass p23-navbar).** Pass
+  p23-navbar established why `setStyle` alone does not make the buttons
+  follow a theme change while the app runs: on API 30-34 it writes only
+  the deprecated `SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR` view flag
+  (androidx.core 1.18.0 `WindowInsetsControllerCompat` Impl30 when built
+  with a window), and Android ignores that flag once React Native's
+  `StatusBar` has set the window's appearance through
+  `WindowInsetsController.setSystemBarsAppearance` (the window is then
+  `APPEARANCE_CONTROLLED`). The app therefore carries a small local Expo
+  module, `app/modules/shiba-navigation-bar` (JavaScript name
+  `ShibaNavigationBar`, Android only, no dependency of its own), which
+  Expo autolinking picks up from the app's `modules` folder (its default
+  `nativeModulesDir`, `expo-modules-autolinking` 57.0.14
+  `build/commands/autolinkingOptions.js` lines 166-175). Its one function,
+  `setNavigationBarAppearance(light)`, calls `setSystemBarsAppearance`
+  for the navigation-bar bit alone on API 31 and up (React Native's own
+  switch point for its status bar, `WindowUtil.kt` line 101) and writes
+  the deprecated flag on API 26-30, on the main thread.
+  `navigation-bar.ts` uses it when the build has it and falls back to
+  `expo-navigation-bar`'s `setStyle` otherwise; Expo Go cannot carry a
+  local module, so in Expo Go the old behaviour remains and
+  `expo-navigation-bar` stays a dependency for that. Settings → Developer
+  names the path that ran ("set through the platform API", "set through
+  the compat flag", or `setStyle(…)` of `expo-navigation-bar`). A local
+  module needs a rebuilt development or release build; `expo prebuild`
+  links it like any other Expo module.
 
 What the next build must verify (none of it can be seen without one):
 
@@ -225,8 +251,9 @@ emulator was closed; their files, sizes and digests are in
    rows); but the buttons' appearance did not follow a theme change made
    while the app was running (it kept the appearance of the theme the app
    started in, while the status bar followed), with no "Navigation bar
-   style not applied" line in logcat; the cause is not established and a
-   fix slice adds a log line for every outcome first. Once, right after
+   style not applied" line in logcat. Pass p23-navbar later established
+   the cause (the bullet on the wallet's own navigation-bar module above),
+   and the local module is the fix. Once, right after
    switching to three-button navigation while the app ran, the home button
    overlapped the banner's last line until the insets were laid out again
    (not seen after a cold start).
