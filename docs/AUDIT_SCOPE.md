@@ -70,7 +70,7 @@ All are in `docs/` unless stated. They are written in plain English for readers 
 | `docs/ARCHITECTURE.md` | The system design; section 7 holds the architecture decision records D1 to D9 (one phrase roots everything, the pure-TypeScript engine, chain adapters, counterfactual accounts, vendor-neutral bundlers, ERC-7579 modules, cryptography and key storage, account indices, imported keys). |
 | `docs/AA_STACK.md` | The EntryPoint and Kernel v3.3 addresses, the release commit pinned, and the on-chain verification procedure. |
 | `docs/AA_FRAMEWORKS.md` | Why Kernel was chosen, the audit and bounty landscape for smart-account frameworks, conditions C1–C3 (section 17.2). |
-| `docs/DISCLOSURE_FINDINGS.md` | The public evidence record of seven findings about third-party contracts (items A to G) and related observations, each with how it was established and what would refute it. |
+| `docs/private/DISCLOSURE_FINDINGS.md` | A private evidence record of seven findings about third-party contracts (items A to G) and related observations, each with how it was established and what would refute it. It is git-ignored and is not in the repository; sharing it is the Chairperson's decision. |
 | `docs/SESSION_KEYS.md`, `docs/SCHEDULED_PAYMENTS.md` | Session-key design and the limits of the deployed policies; recurring payments and dollar-cost averaging. |
 | `docs/MULTISIG.md` | Multi-signature accounts on the deployed weighted validator, including the proof that it cannot give an honest threshold for message signatures. |
 | `docs/DURESS_WALLET.md` | The app PIN, the duress PIN and the decoy wallet, the storage seam, and what can honestly be claimed for them. |
@@ -203,8 +203,8 @@ The wallet calls, installs or relies on contracts it did not write. Reviewing th
 | Kernel permission modules (ECDSASigner, CallPolicy v0.0.4, TimestampPolicy, GasPolicy, RateLimitPolicy, SudoPolicy) | Session keys, subscriptions, recurring payments, DCA | No published report names them; treated as unaudited (F-14, header of `packages/chains-evm/src/kernel-permissions.ts`) |
 | WeightedECDSAValidator (v3 port) and RecoveryAction | Guardians, inheritance, multisig | Kalos audited the Kernel v2 versions only; the deployed v3 forms are in no published report (F-21, `kernel-recovery.ts` header) |
 | WebAuthnValidator v0.0.3 | Passkeys | The v3.1 incremental audit covered the unpatched code; no audit of the patched v0.0.3 found (F-18, `kernel-webauthn.ts` header) |
-| ZeroDev SpendingLimit hook | Pinned for reference only; not installed (it reverts on Kernel v3.1 to v3.3, `docs/DISCLOSURE_FINDINGS.md` item E) | Its v3.1 audit named a commit that differs from the deployed source by one line (`kernel-spending.ts`) |
-| Circle token paymaster (EntryPoint v0.7) | Paying the network fee in USDC (Base and Arbitrum Sepolia) | No published audit found; GPL-3.0-or-later behind an upgradeable proxy Circle controls (F-58, `docs/DISCLOSURE_FINDINGS.md` section 8.3) |
+| ZeroDev SpendingLimit hook | Pinned for reference only; not installed (it reverts on Kernel v3.1 to v3.3, `docs/private/DISCLOSURE_FINDINGS.md` item E) | Its v3.1 audit named a commit that differs from the deployed source by one line (`kernel-spending.ts`) |
+| Circle token paymaster (EntryPoint v0.7) | Paying the network fee in USDC (Base and Arbitrum Sepolia) | No published audit found; GPL-3.0-or-later behind an upgradeable proxy Circle controls (F-58, `docs/private/DISCLOSURE_FINDINGS.md` section 8.3) |
 | Pimlico ERC-20 paymaster singleton | Paying the fee in USDC on Ethereum Sepolia | No audit of the singleton found (`erc7677-token-paymaster.ts` header) |
 | Uniswap v3 (SwapRouter02, factory, QuoterV2, pools) on Sepolia | Recurring swaps (DCA) | Not recorded; the router, factory and quoter are Sourcify matches, the pools are not source-verified and are re-checked against the factory on every read (`docs/MAINNET_READINESS.md` section 2) |
 | Lido (stETH, wstETH, withdrawal queue) and Rocket Pool (RocketStorage, rETH, deposit pool) | Staking on Sepolia and Hoodi | Not recorded beyond the readiness reason's statement that the protocols have their own audits; which audit covers the deployed test-network code was not checked (`app/src/config/readiness.ts` row `staking`, `docs/STAKING.md`) |
@@ -408,7 +408,7 @@ Row identifiers refer to `docs/THREAT_MODEL.md`: **T-nn** is a threat (section 4
 
 - **Multisig message signing (F-62, T-70, `docs/MULTISIG.md`).** The deployed weighted validator checks the threshold before the signer order in its ERC-1271 path, so fewer signers than the threshold can produce a valid message signature; the wallet therefore refuses all message signing for multisig accounts. Co-signers approve the calls and the nonce, not the fee or paymaster, which the submitter alone sets.
 - **Guardians and inheritance (F-20, F-60, T-31, T-68).** Guardians and heirs can sign messages as the account from the moment they are added (which can move tokens through permits); in message signing a repeated signer satisfies the threshold. Inheritance is a demonstration only. A very large guardian delay wraps around in the contract; the engine refuses delays above 2^32 − 1 seconds.
-- **Session keys and batching (T-35, T-69, F-63, F-74, `docs/DISCLOSURE_FINDINGS.md` item G).** CallPolicy cannot stop a session key from batching several in-rule calls into one operation; a recurring swap's minimum output is static and has no deadline.
+- **Session keys and batching (T-35, T-69, F-63, F-74, `docs/private/DISCLOSURE_FINDINGS.md` item G).** CallPolicy cannot stop a session key from batching several in-rule calls into one operation; a recurring swap's minimum output is static and has no deadline.
 - **Token-fee paymasters (F-58).** Circle's paymaster is unaudited, upgradeable and uses a fixed test-network price oracle with no staleness check; Pimlico's is permissioned and leaves the unused part of an approval in place.
 - **Bridges (F-80, T-80 to T-87).** Every LayerZero test pathway relies on one required verifier operated by LayerZero Labs; Stargate's test pools can be paused by a key whose private part is public; Stargate delivers ETH with a 2,300-gas transfer a deployed smart account cannot accept, so the wallet always bridges to the regular address; a bridge configuration change after the quote is not re-read at confirm time (T-81).
 - **rETH burn stipend (F-73).** Rocket Pool's burn pays with a 2,300-gas stipend; a holder whose receive path costs more cannot redeem.
@@ -454,7 +454,7 @@ This is a proposal for the Chairperson; nothing is published yet, and no disclos
 
 ### 8.2 Out of scope
 
-- The deployed third-party contracts themselves (section 4.1) and the services in section 4.2. Reports about them go to their vendors; the programme page should link each vendor's channel where one exists (`[VENDOR CHANNELS — to be listed when published]`; the record found none for Kernel, `docs/DISCLOSURE_FINDINGS.md` section 8.6).
+- The deployed third-party contracts themselves (section 4.1) and the services in section 4.2. Reports about them go to their vendors; the programme page should link each vendor's channel where one exists (`[VENDOR CHANNELS — to be listed when published]`; the record found none for Kernel, `docs/private/DISCLOSURE_FINDINGS.md` section 8.6).
 - The test networks' own faucets, explorers and RPC providers; denial of service against public infrastructure; social engineering of the project's people; physical attacks.
 - Findings that need a rooted or jailbroken phone, a compromised operating system, or physical access to an unlocked phone with the app open (`docs/THREAT_MODEL.md` section 1.3).
 - The project's development wallet and keys, and any mainnet funds of anyone.
@@ -502,7 +502,7 @@ Severity follows the threat model's ratings (`docs/THREAT_MODEL.md`, "How to rea
 ### 8.8 Duplicates and eligibility
 
 - The first complete report of a finding is eligible; later reports of the same root cause are duplicates.
-- Findings already public in this repository (the threat model, `docs/DISCLOSURE_FINDINGS.md`, `AGENTS.md`) are not new.
+- Findings already public in this repository (the threat model, `AGENTS.md`) are not new.
 - `[ELIGIBILITY EXCLUSIONS, FOR EXAMPLE PROJECT MEMBERS, CONTRACTORS AND AUDITORS UNDER CONTRACT — Chairperson]`.
 
 ### 8.9 Disclosure channel (to be set up)

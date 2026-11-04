@@ -257,7 +257,7 @@ examples/demo.mjs          Offline end-to-end engine demo
   node_modules clones).
 - Do not contact ZeroDev / Offchain Labs: the responsible-disclosure
   decision (the findings are collected, with their evidence and
-  status, in docs/DISCLOSURE_FINDINGS.md) is the
+  status, in the git-ignored docs/private/DISCLOSURE_FINDINGS.md) is the
   Chairperson's.
 
 ## Known blockers
@@ -2460,7 +2460,7 @@ emulator where Expo Go cannot carry a feature.
 
 ## Phase 16 plan (started 2026-10-09): the dApp browser and the findings record
 
-1. docs/DISCLOSURE_FINDINGS.md: every finding about third-party
+1. docs/private/DISCLOSURE_FINDINGS.md: every finding about third-party
    contracts gathered so far (the seven disclosure items plus the
    Circle, Pimlico, Glamsterdam and bundler observations), each with its
    claim, the exact evidence (sources at pinned commits, transactions,
@@ -2474,7 +2474,7 @@ emulator where Expo Go cannot carry a feature.
 4. Leadership refresh at the end.
 
 ## Phase 16 progress
-- [x] Item 1 — docs/DISCLOSURE_FINDINGS.md (commit below; 8,601 words;
+- [x] Item 1 — docs/private/DISCLOSURE_FINDINGS.md (commit below; 8,601 words;
       secret scan clean; nothing sent anywhere): front matter (purpose,
       status definitions — proven live / simulated / reasoned from
       source, never upgraded — the shared reproduction setup, pinned
@@ -2952,7 +2952,7 @@ meant for real value; the CTO's caveat stands — on Android the secure
 flag also blocks screenshots and recording of every screen, so it ships
 ON by default with a Settings toggle that says what it blocks, and
 emulator passes turn it off first. The Chairperson is reviewing
-docs/DISCLOSURE_FINDINGS.md.
+docs/private/DISCLOSURE_FINDINGS.md.
 
 ## Phase 17 plan (started 2026-10-10 on "start working on next phase"): the account types people share, and the wallet that tells you when
 
@@ -4716,7 +4716,7 @@ Inputs that would unlock more: Hoodi test ETH at the dev EOA
 0x16DA2CAeaDa26516F919C6872F6C38AB378CaC5C (the Hoodi staking leg: a
 Lido stake, a withdrawal request and claim, a Rocket Pool deposit and
 burn); a little OP Sepolia ETH there (the OP Sepolia smart-account path
-with a bundler saved); the review of docs/DISCLOSURE_FINDINGS.md and the
+with a bundler saved); the review of docs/private/DISCLOSURE_FINDINGS.md and the
 disclosure decision; a decision on Firebase Cloud Messaging as the
 longer-term push option (feature 93 in full).
 
@@ -5370,7 +5370,7 @@ INPUTS RECEIVED (2026-10-11): 0.1 OP Sepolia test ETH at the dev EOA
 0x16DA…C5C (read live on optimism-sepolia-rpc.publicnode.com); Hoodi
 test ETH is being mined and should arrive within the hour (0 at the
 time of writing; a watcher polls the balance). The Chairperson is still
-reviewing docs/DISCLOSURE_FINDINGS.md ("a few appear safe to ignore";
+reviewing docs/private/DISCLOSURE_FINDINGS.md ("a few appear safe to ignore";
 the final determination follows), is not concerned about the Alchemy
 Sepolia key (test funds; rotate before mainnet), and APPROVED PHASE 19.
 
@@ -5438,7 +5438,7 @@ INPUTS RECEIVED (2026-10-11, later): 33.0 Hoodi test ETH at the dev EOA
 The Chairperson asked for (a) the emulator's screen protection to stay
 OFF so the emulator window can be watched live (standing rule above
 amended), and (b) an independent security-researcher review of every
-item in docs/DISCLOSURE_FINDINGS.md in a CVE-style (NIST NVD) format
+item in docs/private/DISCLOSURE_FINDINGS.md in a CVE-style (NIST NVD) format
 that weighs real-world assumptions before anything is reported — e.g.
 that a threshold's worth of multisig keys is not given to one entity
 without accepting that risk, and that nobody sets a guardian delay
@@ -16161,3 +16161,27 @@ to the Chairperson at once.
       scratchpad. FOLLOW-UP: the quick boot now needs the renderer to match
       — a save under swangle followed by a launch under host cold-boots, and
       the reverse; still the Chairperson's renderer decision.
+
+- [x] Housekeeping (2026-11-03, at the Chairperson's request): the
+      findings document was REMOVED FROM GIT AND FROM HISTORY and is kept
+      only as the local, git-ignored docs/private/DISCLOSURE_FINDINGS.md
+      (byte-identical before the removal; references in this file and in
+      AUDIT_SCOPE.md, MAINNET_READINESS.md and THREAT_MODEL.md repointed).
+      Rewritten with git filter-branch --index-filter in a fresh clone,
+      over only the range from the file's first commit to the tip, because
+      a whole-history run also stripped the GitHub signature from "Initial
+      commit" and so changed all 515 hashes; verified before the leased
+      force-push: 515 commits, 242 unchanged, 273 rewritten, each differing
+      from its original by that one path alone with identical author,
+      committer, dates and message, and the path and its blob absent from
+      all reachable history. COMMIT HASHES IN THIS FILE AND IN THE DOCS FROM
+      THE PHASE 16 FINDINGS COMMIT ONWARD ARE THE OLD ONES: the old → new map
+      is .local/history-rewrite-2026-11-03-commit-map.tsv and a full bundle
+      of the old history is .local/history-backup-2026-11-03-before-rewrite.bundle
+      (both git-ignored; the bundle still holds the file). Old scratchpad
+      worktrees and refs/stash still reference old commits locally only.
+      Summaries of the same findings remain in other tracked documents
+      (this file, THREAT_MODEL.md, MULTISIG.md, AUDIT_SCOPE.md and
+      others); what to do about those and about GitHub's cached views of
+      the old commits is the Chairperson's decision. SHELL NOTE: the shell
+      here is zsh, where "$VAR:r…" applies a modifier; write "${VAR}:ref".

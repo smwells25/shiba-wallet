@@ -63,7 +63,7 @@ Phase 23 added one more feature with a readiness row: **wallet handles** (`walle
 
 ## 5. The third-party disclosure findings
 
-An independent, CVE-style (NIST NVD) security review of the third-party contracts the wallet relies on has been carried out. Its full classification lives in the **git-ignored `docs/private/`** directory and is deliberately kept out of the public repository; a public, non-exploitable summary of the same findings is in `docs/DISCLOSURE_FINDINGS.md`.
+An independent, CVE-style (NIST NVD) security review of the third-party contracts the wallet relies on has been carried out. Its full classification lives in the **git-ignored `docs/private/`** directory and is deliberately kept out of the public repository, as is the evidence record of the same findings, `docs/private/DISCLOSURE_FINDINGS.md`.
 
 For this memo it is enough to record that:
 
