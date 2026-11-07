@@ -17241,3 +17241,78 @@ arrive; 6 last. Subagents on Opus.
       replaced by two valid ones; a first scan of the committed tree
       instead of the changed files (re-run with --files); a probe file
       briefly in app/scripts, removed.
+- [x] The smart-account Max probe, the gas floor and the engine wording
+      (commit b7bd8df; 10 files, +280 / −29; engine 1,328 → 1,329
+      (chains-solana 78 → 79), check-aa 411 (was 404), check-token-send 85
+      (82), check-spl-tokens 92 (91); offline runner ALL GREEN in the CTO's
+      isolated worktree on HEAD c522cdd with --skip-bundle: app 11,042
+      across 66 suites, lint 0/0, tsc clean; checkout 0 / apply 0 / 10
+      files; the staged patch id 8a38bab5…a055 equal to the verified tree's
+      and the agent's; the pre-commit scan clean; three hand mutants and the
+      two in-suite mutants caught; not seen on a device). (1) THE
+      SMART-ACCOUNT MAX WAS WRONG THE SAME WAY: Kernel v3.3 moves the amount
+      with an inner CALL carrying the value (zerodevapp/kernel cd697c7e
+      src/Kernel.sol 330, src/utils/ExecLib.sol 38–45 and 93–98; the
+      engine's encodeKernelExecute puts the value word in the calldata;
+      SimpleAccount likewise, account-abstraction v0.7.0 SimpleAccount.sol
+      58 and 113–114); the EVM charges a non-zero CALL more — Prague
+      CALL_VALUE 9,000 and NEW_ACCOUNT 25,000 for a recipient that does not
+      exist (ethereum/execution-specs ce7375fe forks/prague/vm/gas.py 52–54,
+      vm/instructions/system.py 395–398), Amsterdam CALL_VALUE =
+      ACCOUNT_WRITE + CALL_STIPEND = 11,300 execution gas plus 183,600 state
+      gas for a new recipient (forks/amsterdam/vm/gas.py 48–55, 84–86;
+      system.py 505, 543–546); EIP-2780 (Last Call) prices only the
+      top-level transaction and says the standard model "governs all
+      execution-level account touches, including internal CALLs" — so the
+      zero-value probe reserved at least 9,000 / 11,300 gas too little, up
+      to a new account's charge for a never-used recipient, and Review's
+      "because the network fee rose" was false there; FIX: aa.ts
+      AA_MAX_PROBE_VALUE_WEI = MAX_ESTIMATE_VALUE_WEI (1n); maxAaSend and
+      the trim's own balance-fell probe estimate a 1-wei transfer first and
+      fall back to value 0 only when that estimate fails (every refusal a
+      user reads stays the same — an empty account gets the same funding
+      message with no bundler call); 1 wei matches what Review re-estimates
+      because the charges depend only on zero-versus-non-zero and on the
+      recipient's existence (the real amount differs only in calldata
+      bytes of the value word, which may move preVerificationGas slightly
+      by bundler — unverified; the three-round trim absorbs it); pinned in
+      check-aa with a fake bundler answering 11,300 less callGasLimit for
+      value 0 (the value word read back from the SimpleAccount 0xb61d27f6
+      or Kernel 0xe9ae5c53 calldata): one estimate with value 1, no
+      maxAdjustment and a null sentence at Review with the same fee and
+      balance, the zero-probe mutant caught (it trims with "the fee rose" at
+      an unchanged fee); NOT BUILT (reported): a reason mechanism for the
+      smart-account trim sentence like 7b422a8's regular-account one (a
+      reservation from maxAaSend, a maxReserved option on prepareAaCalls,
+      two ids, both screens remembering it) — until then the smart-account
+      "fee rose" sentence can still be inaccurate when the balance fell or
+      the estimate moved (a follow-up). (2) send.ts MIN_TRANSACTION_GAS: the
+      constant guards only the payable-call pre-check (calldata plus a
+      non-zero value); under EIP-2780 a non-zero value to another account
+      costs 12,000 + 3,000 + 6,000 = 21,000, still a correct lower bound,
+      but a non-zero value to the SENDER ITSELF costs only TX_BASE_COST
+      12,000 (an EIP-7702 account calling its own code), where the flat
+      bound could refuse a payable call the balance could pay for — new
+      MIN_SELF_TRANSACTION_GAS = 12_000n and minimumValueTransactionGas(from,
+      to) (case-insensitive) at the pre-check, the doc comments corrected
+      with citations; pinned (a payable self-call whose balance covers the
+      value plus its real 13,000-gas fee is quoted, not refused; the flat
+      bound as a caught mutant). (3) tokenTransfer.ts: "This account holds
+      no {symbol} in its associated token account, so there is nothing to
+      send." for a named token, the old "holds none of this token" kept for
+      the metadata-less fallback through the new export SPL_UNNAMED_TOKEN =
+      'this token' (a literal substitution would have printed "holds no this
+      token" — the CTO accepts the split); pinned in the engine test (an
+      end-to-end quote with the Token-2022 metadata symbol DOG → "holds no
+      DOG") and check-spl-tokens. FOLLOW-UP FOUND: token-gas.ts
+      maxAaTokenGasSend (~1506) checks that USDC covers the worst case of a
+      ZERO-value transfer to the owner with a comment saying the gas of a
+      plain transfer does not depend on the value — false by the same
+      rules; the USDC-fee native Max needs its own slice. UNVERIFIED:
+      ZeroDev giving a 1-wei Kernel transfer the same callGasLimit as the
+      real amount (fakes only); preVerificationGas variation with the value
+      word; a 7702 self-call reaching the pre-check in practice. Slips: a
+      first check-aa decoder read the value at the Kernel offset while the
+      fixtures were SimpleAccount bundles (fixed for both selectors); a
+      probe script in app/scripts deleted in the same command; a stray empty
+      scratchpad folder removed.
