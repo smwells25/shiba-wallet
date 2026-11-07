@@ -16942,3 +16942,208 @@ arrive; 6 last. Subagents on Opus.
       emulator untouched; kept: wt-ios2 (2.5 GB, 626c5d7 with the prebuild
       edits), p24-ios/dd (3.0 GB), the iOS 26.5 runtime; the main checkout
       clean.
+- [x] iOS-pass findings FIXED (commit dfb5eba; 19 files, two new —
+      app/src/i18n/article.ts and app/src/components/qr-camera.ts;
+      check-i18n 182 (was 172), check-qr 44 (31), check-inbox 114 (110),
+      check-duress 219 (214); offline runner ALL GREEN in the CTO's isolated
+      worktree on HEAD 22ea2ac with --skip-bundle: engine 1,328, app 10,993
+      across 66 suites, lint 0/0, tsc clean; checkout 0 / apply 0 / 19
+      files; the staged patch id 1016e365…0efd equal to the verified tree's
+      and the agent's; the pre-commit scan clean; eight hand mutants caught;
+      not seen on a device; the agent was cut once by the Opus session
+      limit and resumed from its worktree). (1) THE iOS "SYSTEM" LANGUAGE —
+      CAUSE ESTABLISHED: Hermes's default locale on Apple is
+      NSLocale currentLocale's localeIdentifier (facebook/hermes tag
+      hermes-v250829098.0.17, lib/Platform/Intl/PlatformIntlApple.mm 58–64;
+      that tag matches react-native 0.86.3's hermes version.properties and
+      the Podfile.lock pin; the prebuilt simulator hermesvm binary holds the
+      selectors currentLocale and localeIdentifier, not preferredLanguages),
+      and Apple's NSLocale.current page says a device set to Spanish returns
+      an English locale to an app that supports only English — the bundle
+      declares only CFBundleDevelopmentRegion "en"; FIX with no new
+      dependency: device-locale.ts pickDeviceLocaleTag reads, in order,
+      Android's I18nManager localeIdentifier, then on iOS only
+      Settings.get('AppleLanguages')[0] (react-native Libraries/Settings/
+      Settings.ios.js 21–28 and RCTSettingsManager.mm 35–38 / 58–62 export
+      NSUserDefaults' dictionaryRepresentation, documented by Apple as the
+      union of all domains incl. the global domain's language settings; the
+      key name AppleLanguages is not on Apple's pages — it is the key the
+      pass wrote to make the Simulator Spanish and the one the Mac's global
+      defaults show), then Intl, then null; never asked on Android. (2) the
+      backup-word TextInput gains textContentType "none" (TextInput.d.ts
+      217; RCTBaseTextInputView.mm 277, 347–349; the lock's passphrase
+      field already sets it) — whether the "Use Strong Password?" sheet is
+      gone is UNVERIFIED (phase 23 saw the Passwords bar persist on such a
+      field). (4) platform-aware notes — inbox.ts inboxScheduledNote
+      (platform) and notifications.ts notificationsLimitsNote(platform): on
+      iOS "A phone reminder is listed at the time it was set to appear. iOS
+      keeps a scheduled reminder and shows it at that time even when the
+      wallet is not running." (Apple's "Scheduling a notification locally
+      from your app"; expo-notifications 57.0.22 TriggerRecords.swift
+      96–107: a DATE trigger is a UNTimeIntervalNotificationTrigger); ids
+      inbox.scheduledNoteIos and settings.notifications.limitsIos with
+      Spanish drafts. (5) article.ts englishIndefiniteArticle ("an" before
+      a, e, i, o; the written rule's limit stated) and sendScanRationale
+      choosing send.scan.rationale / .rationaleAn ("Point the camera at an
+      {network} address or payment-request QR code…"); SendScreen 2673 and
+      ContactsScreen 394. (6) THE SCANNER WITH NO CAMERA — from expo-camera
+      57.0.6: iOS fires onCameraReady even with no camera (CameraView.swift
+      193–206, 319–324) and returns early with no onMountError when the
+      default video device is nil (CameraSessionManager.swift 371–373,
+      386–389), so the iOS signal is getAvailableLensesAsync() returning []
+      (CameraSessionManager 227–241, DeviceDiscovery.swift 82–108); Android
+      fires onMountError (ExpoCameraView.kt 439–452); isAvailableAsync is
+      web-only; QrScanner.tsx wires ref, onCameraReady and onMountError and
+      shows the polite live text "This device has no camera that this app
+      can use, so a QR code cannot be scanned here; paste the text instead."
+      with the mount error as technical detail (iOS's "Camera session was
+      reset" error ignored — not a missing camera); pinned in check-qr with
+      a fake camera module. (7) duress.ts createBackupFieldsReveal() — arm /
+      onSectionLayout / onFieldsLayout scroll to the section's y plus the
+      fields' y and focus the first word field once per arm; wired in
+      SettingsScreen (the AppPinSection scrollTo prop, the section and
+      fields onLayout, arm() in startBackupCheck, a ref on word 1). (8)
+      inbox.intro and inbox.empty as "changed" records: "What the wallet
+      has told you, newest first: reminders of recurring payments and swaps
+      that fell due, price alerts, alerts that a recovery of one of your
+      accounts was started, requests from connected apps that the wallet
+      sent, speed-ups and cancellations it sent, and which transaction a
+      block included when two shared a nonce. A transaction sent from the
+      wallet's own screens, such as Send, is not listed here; Activity
+      lists it. The list is kept on this phone only and never leaves it; it
+      holds the sentence that was shown at the time, never a key." /
+      "Nothing yet. Reminders, alerts, requests from connected apps that the
+      wallet sent, and speed-ups and cancellations will be listed here.";
+      LEFT (follow-up): INBOX_PIN_NOTE, INBOX_PASSPHRASE_NOTE and
+      settings.openInbox.hint still say "sent transactions". INVESTIGATED,
+      NOT CHANGED: (3) the "no strong fingerprint or face unlock enrolled"
+      sentence with Face ID enrolled — expo-secure-store 57.0.4
+      SecureStoreModule.swift 53–65 makes a fresh LAContext per call and
+      returns canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics),
+      false on any error; no caching (storage.ts canProtect ~771 is read on
+      every storageProtection() call; Settings re-reads on focus and after
+      Protect or a reveal); the working prompts used
+      .deviceOwnerAuthentication (LocalAuthenticationModule.swift 87);
+      plausible, unproven: Settings was focused before Face ID was enrolled
+      through the Simulator menu (which does not background the app), or a
+      biometry lockout after failed matches — proposed: re-read on AppState
+      active and after a successful device prompt. (11) THE MAX TRIM
+      SENTENCE IS WRONG IN THAT CASE — the balance after send 1 was
+      1,899,999,999,643,000 wei, Max reserved 480,000 = 15,000 × 32 and the
+      review 672,000 = 21,000 × 32 at the SAME per-gas fee; inference:
+      maxEvmSend (send.ts ~1009) estimates gas with value 0, and after
+      Glamsterdam a zero-value transfer costs 15,000 gas against 21,000 for
+      a non-zero value (EIP-2780), so "because the network fee rose" is
+      false; the REAL FIX is to estimate Max with a non-zero value (a
+      follow-up slice; the sentence is pinned in check-i18n, check-base and
+      check-aa). UNVERIFIED (device / Simulator): the AppleLanguages read;
+      the scanner sentence (the Simulator's empty lens list is inferred
+      from source); the Strong Password sheet; the scroll target and focus
+      with the keyboard; the new sentences' layout and the Spanish drafts.
+      Slips: a stray command hung a task two minutes (removed); the first
+      after run was red on a lint error and four check-devmode failures
+      from a useRef typed on TextInput (a BackupWordInput alias). CTO SLIP
+      on the record itself: the first record commit hung because an
+      unquoted heredoc executed a backticked example from the agent's
+      report — the 2026-10-11 rule, re-learned; the record was rewritten
+      with a quoted delimiter and the hash substituted afterwards.
+- [x] EMULATOR PASS p24-solana — SOLANA DEVNET TOKENS IN THE APP, EVERY STEP
+      THE FUNDS ALLOWED PASSED; THE USDC SEND WAITS ON A FAUCET REQUEST
+      (2026-11-07 17:30–22:30 UTC, cut once by the Opus session limit and
+      resumed; Expo Go on emulator 37.1.11 under -gpu swangle, Metro moved
+      to a fresh wt-app at 13e6479 on 8081 (the gutted old wt-app set aside
+      as wt-app-gutted-old; a stray Metro from the MAIN checkout's app
+      folder running since 2026-11-03 on 8081, pid 79047, was stopped — an
+      orphan of an earlier session; the agent's own first Metro on 8086
+      stopped too); the REAL wallet's Account 1 on Solana devnet; 3
+      prompts, all "Unlock Shiba Wallet"; isKeyguardShowing read false
+      before any input; no repository file edited; the report step by step
+      in the scratchpad p24-solana-pass/REPORT.md). ACCOUNT 1's DEVNET
+      ADDRESS (m/44'/501'/0'/0', read from Receive SOL):
+      EK5jKrBRwvQXXsSERGN6jEoYaofE2PNiZWQoaCLtrYPv — the Chairperson pastes
+      it at faucet.circle.com (Solana Devnet, 20 USDC) for the send leg.
+      FUNDING: 0.05 SOL from the dev devnet account 6TgSKzjg…455t through a
+      scratch script using the engine's systemTransfer → compileMessage →
+      signTransaction → sendTransaction path (the main checkout's mnemonic
+      read in place, never printed; a 0.1 SOL cap): signature
+      3PdTyWyJR2qXKgBdzFMJzFaiCjUpk1G9hh2gS4zKzcsnYr7iUqMeVxjGtvN4bhyXzj9BujpRbMK7iPtzAiiYJzmE,
+      slot 519736028, err null, fee 5,000 lamports, identical on
+      api.devnet.solana.com and onfinality; Account 1 0 → 50,000,000
+      lamports, the dev account 5,499,995,000 → 5,449,990,000; NO USDC
+      associated token account exists for Account 1 on either RPC (nothing
+      requested from the faucet). STEPS: (1) PASS — Settings → Developer →
+      "Use Solana devnet": the Off note as coded; the On note exactly
+      "Solana devnet is on: the Solana row shows test SOL and devnet tokens,
+      which have no value. Solana token sends are offered here (test
+      networks only). Turn it off to return the Solana row to mainnet.";
+      Home's card "Solana devnet: test SOL, no value" / "0.05 test SOL"; the
+      setting survived a force-stop. (2) PASS — the USDC row "USDC" / "USD
+      Coin · Solana devnet token" / "0 USDC" with "Send USDC ↗" and "Manage
+      Solana tokens"; Hide amounts masks SOL and USDC as "••••" (spoken
+      "Balance hidden"). (3) PASS — devnet PYUSD read back in order: "PYUSD
+      — PayPal USD", the full mint, "Token-2022 (Token Extensions) · 6
+      decimals (from the mint)", "Name and symbol: from the mint's on-chain
+      metadata.", the transfer-hook-unset note, the permanent delegate
+      DFWDTsWsyGgFLbVARTS92wHDKK2hwTUNk71uPM3mf16S, the freeze authority
+      (the same), the mint-close note, the confidential-balances note; the
+      Track prompt "Track PYUSD?" / "Mint CXk2AMBfi3TwaEL2468s6zP8xq9NxTXjp9gjMgzeUynM
+      on Solana devnet. Anyone can create a token with any name and symbol;
+      track it only if this is the mint you expect." / CANCEL / TRACK
+      PYUSD; the Home row "PYUSD" / "PayPal USD · Solana devnet token" / "0
+      PYUSD" with "Send PYUSD ↗" and no "Cannot be sent…" line (PYUSD is
+      fee-charging and sendable, as designed); EXTRA — a 1 PYUSD send to the
+      dev address was refused at Review with "This account holds none of
+      PYUSD in its associated token account, so there is nothing to send."
+      and no prompt. (4) PASS — "Remove PYUSD?" / "This only stops tracking
+      the token in this app. Your balance on the blockchain is not affected,
+      and you can track the token again any time." (5) PASS — non-address
+      text → "A mint address is a Solana address: base58 text that decodes
+      to 32 bytes. This text is not one."; a real non-mint address → "This
+      address is not a token mint: it belongs to the program
+      11111111111111111111111111111111, not to the SPL Token or Token-2022
+      program." (read from a screenshot — uiautomator dropped it). (6–7)
+      NOT POSSIBLE — no USDC held. (8) PASS — devnet OFF: the card with no
+      devnet line and "0 SOL", the USDC row "USD Coin · Solana token" with
+      no Send link, Manage titled "Solana tokens · Solana" with the gate
+      WarningBox (the readiness reason plus "Turn on Solana devnet in
+      Settings → Developer to send Solana tokens.") and the mainnet USDC
+      mint EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v with Remove only;
+      the mainnet readiness row "Solana token sends (SPL Token and
+      Token-2022) — Test networks only" with the reason as coded and
+      "Checklist and findings: W1, W2, W9, W13." (9) PASS — TalkBack
+      (level written in place 6 → 2 and back; TalkBack rewrote its file
+      while on, context kept): "Solana, EK5jKrBRwv…aCLtrYPv, Solana devnet:
+      test SOL, no value. Button. Opens the Solana receive screen", "Balance
+      0.05 test SOL", "Send. Button. Sends SOL", "Activity. Button. Opens
+      the Solana activity", "USDC, USD Coin · Solana devnet token. Balance 0
+      USDC", "Send USDC. Button. Sends USDC", "Manage Solana tokens.
+      Button". EXTRA — Solana Activity with devnet on lists the funding as
+      "Received +0.05 SOL" (the history reads devnet). FINDINGS (fix slice
+      with the send leg): (1) the Solana Activity header reads "Solana ·
+      Mainnet · Account 1" with devnet on, and the amount "+0.05 SOL" not
+      "test SOL"; (2) the devnet screens show only the EVM banner ("TESTNET
+      — Base Sepolia test mode is on. Amounts are test ETH…"); with EVM on
+      mainnet and devnet on they may show no test banner at all (inferred);
+      (3) Home's footer "The network fee for a token send is normally paid
+      in test ETH…" while Solana token rows show (their fee is SOL); (4) the
+      readiness status line and the shared hint name only the EVM test
+      networks and never the devnet switch; (5) PYUSD's read-back and Track
+      prompt do not mention its transfer-fee setting (0 bps today; the fee
+      note appears only on a send quote); (6) "holds none of PYUSD" is
+      awkward; (7) "Send USDC ↗" offered at a 0 balance (the refusal only at
+      Review); (8) the not-a-mint refusal missing from the uiautomator dump
+      (not checked under TalkBack); (9) "Manage Solana tokens. Button" has
+      no hint; (10) Expo Go only: the JavaScript-scrypt Developer line, a
+      "Cannot connect to Expo CLI." toast after the Metro switch, the Tools
+      bubble over the mint field's right end. UNVERIFIED: any token send
+      through this layer (confirm rows, the rent row, the "Approve sending
+      1 USDC" prompt, both-RPC outcome lines); a refused-class token's Home
+      line; the look-alike warning; the Hide-amounts mask spoken; the
+      no-account mint refusal. SLIPS: Metro first on 8086 (reconciled); one
+      Settings scroll showed the Danger zone heading at the bottom (nothing
+      tapped below); the first tap after closing the keyboard lost twice.
+      END STATE: Ethereum Sepolia, Home on Account 1, devnet OFF, PYUSD not
+      tracked, Hide amounts off, TalkBack off, IME ADBKeyboard, protection
+      off, Metro node 97670 on 8081 from wt-app at 13e6479 with only
+      `adb reverse tcp:8081`, qemu 86708 with caffeinate 86986, the window
+      in front.
