@@ -17316,3 +17316,77 @@ arrive; 6 last. Subagents on Opus.
       fixtures were SimpleAccount bundles (fixed for both selectors); a
       probe script in app/scripts deleted in the same command; a stray empty
       scratchpad folder removed.
+- [x] The smart-account trim sentence's reason, and the USDC-fee Max probe
+      (commit b2819c9; 13 files, +456 / −52; check-aa 423 (was 411),
+      check-cold-aa 125 (119), check-i18n 190 (188), check-token-gas 258
+      (247); offline runner ALL GREEN in the CTO's isolated worktree on HEAD
+      e80c0f3 with --skip-bundle: engine 1,329, app 11,073 across 66 suites,
+      lint 0/0, tsc clean; checkout 0 / apply 0 / 13 files; the staged patch
+      id ec5976ca…bec6 equal to the verified tree's and the agent's; the
+      pre-commit scan clean; three hand mutants and three in-suite mutants
+      caught; no engine file touched; not seen on a device). (1) aa.ts:
+      AaSendQuote.maxAdjustment is {requested, reason?}; MaxAaReservation
+      {gasTotal = callGasLimit + verificationGasLimit incl. the deposit
+      top-up headroom + preVerificationGas, maxFeePerGas, fee (0 when
+      sponsored)}; maxAaSendDetails returns {amount, reserved} and maxAaSend
+      keeps its signature; prepareAaCalls / prepareAaSend take maxReserved
+      and compute the reason with send.ts's maxAdjustmentReason (imported,
+      not copied) from the FIRST figures priced before any lowering (the
+      1-wei probe's in the balance-fell branch, else the first priced
+      quote) — only when a reservation was passed, else {requested} as
+      before; the trimmed amount never depends on the reservation;
+      aaMaxAdjustmentSentence chooses by reason ?? 'fee'; cold-aa.ts's
+      ColdAaTarget carries maxReserved into quoteColdAa; SendScreen's
+      lastAaMax (LastAaMaxResult) and ColdSignScreen's lastAaMax (the
+      smart-account record — the brief named lastMax, the regular-account
+      one, which 7b422a8 already covers) store the reservation at Max and
+      pass it at Review only while the amount is still that Max;
+      send.ts amountIsLastMax accepts a Pick of text / from / chainId so
+      the smart-account record type-checks. STRINGS: aa.maxAdjustmentGas
+      "The amount was lowered from {requested} to {amount} because the gas
+      needed for this transfer from your smart account is more than was
+      reserved when you tapped Max; the fee per unit of gas did not rise.
+      The amount plus the worst-case fee now fits your smart account's
+      balance; its EntryPoint deposit, if any, is left as a reserve for the
+      fee." and aa.maxAdjustmentBalance "…because your smart account's
+      balance is lower than when you tapped Max; the network fee did not
+      rise…"; Spanish drafts; the fixture's "new" list (AA_TRIM_NEW). PINS:
+      the b7bd8df case reproduced end to end — the OLD zero-value
+      reservation (11,300 gas less at the same per-gas fee) handed to the
+      real Review lowers the amount to balance − the non-zero fee with
+      reason 'gas' and the exact gas sentence, "network fee rose" never
+      appearing; a fee rise 3 → 5 gwei gives 'fee'; a 1,000-wei balance drop
+      gives 'balance' and lowers by exactly 1,000 wei; the balance-fell
+      probe branch 'balance'; a typed amount with a reservation is still
+      refused, never lowered; the cold owner path the same through
+      quoteColdAa. (2) token-gas.ts maxAaTokenGasSend: the amount is always
+      the full ETH balance; the probe only decides the USDC refusal, and
+      that differs by paymaster — CIRCLE prices no transfer (tokenGasFacts
+      takes the worst case from quoteCircleTokenCharge with the fixed
+      TOKEN_GAS_ESTIMATION_CEILING 1,500,000 and no bundler estimate, so
+      neither the value nor the recipient can change it; the old comment
+      never applied there), ERC-7677 (Pimlico) bounds the bundler's estimate
+      of [approve, transfer], so a zero-value probe priced the inner CALL
+      without CALL_VALUE and Max could offer the whole ETH balance that
+      Review then refused for USDC; FIX: the ERC-7677 probe prices a 1-wei
+      transfer (AA_MAX_PROBE_VALUE_WEI) to the REAL recipient (new option
+      to; SendScreen passes validation.normalized; the owner stands in
+      without it) with the fallback to value 0 when that estimate fails; an
+      account with 0 ETH priced at value 0 at once as before; the doc
+      comment describes both paths; pinned with a value-aware fake Pimlico
+      bundler (one 1-wei estimate to the recipient; USDC one unit below the
+      non-zero worst case refused as Review would; 0 ETH → Max 0; the
+      fallback; the zero-probe mutant offering the refused balance) and the
+      Circle path unchanged with the ceiling pinned in source. FOLLOW-UPS
+      FOUND: SendScreen's PASSKEY Max still probes with value 0
+      (preparePasskeyCalls(pbundle, [{to, value: 0n, …}]) ~1062) — the same
+      fault, the next slice; the ERC-7677 fallback retries an
+      impossible-estimate refusal once at value 0, roughly doubling that
+      wait (from the code, not measured). UNVERIFIED: real bundlers giving a
+      1-wei transfer the same call gas as the real amount; Review's first
+      estimate of the real amount may differ from the probe in
+      preVerificationGas (calldata bytes) or the deposit top-up headroom,
+      which could make a pure balance drop read 'gas' (inference); layout,
+      TalkBack, the Spanish drafts. Slips: the worktree's .ready marker
+      deleted and recreated; one check first labelled MUTANT without a
+      loaded mutant, relabelled.
