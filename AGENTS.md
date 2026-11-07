@@ -16185,3 +16185,11 @@ to the Chairperson at once.
       others); what to do about those and about GitHub's cached views of
       the old commits is the Chairperson's decision. SHELL NOTE: the shell
       here is zsh, where "$VAR:r…" applies a modifier; write "${VAR}:ref".
+
+DECIDED by the Chairperson (2026-11-07): a native Spanish reviewer, the
+fiat off-ramp provider (feature 66) and the ZeroDev disclosure decision are
+ON HOLD — the Spanish string table stays a draft shipped as such, feature
+66 stays Designed, and nothing goes to the vendor. The Chairperson also
+restated the standing order on the CTO's conversational voice (maximum
+dogespeak with Caveman compression in chat only; records like this file
+stay plain English) as a board-level priority.
