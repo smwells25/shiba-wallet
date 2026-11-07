@@ -8,6 +8,13 @@ section 8; where a fact was not found in those sources, the text says
 is assumed: every such point is a question in section 1. No one has touched the
 Chairperson's chips, boards or network for this document.
 
+**Updated 2026-11-07 (Stage 2).** The Chairperson's answers to section 1.1 are
+recorded under it; questions 5 to 9 are answered from the Chairperson's own
+proof-of-concept repository. Section 10 is the Stage 2 design for the role
+section 4 ranked first, section 11 the Stage 3 demo plan, section 12 the
+questions that remain and section 13 the sources added. Sections 2 to 9 are
+the Stage 1 text of 2026-10-25, unchanged except for one note under section 7.
+
 ## Summary
 
 - **TROPIC01 cannot sign an Ethereum transaction.** Its signing engine offers
@@ -44,6 +51,14 @@ Chairperson's chips, boards or network for this document.
   and no buttons on the chip side; whatever the Raspberry Pi shows on its own
   screen and accepts from its own input is what a user would trust. A product
   would need its own device (section 7).
+- **Stage 2 (2026-11-07).** The Chairperson's proof of concept drove this chip
+  from a Raspberry Pi 3B+ in Python (pytropicsquare 0.0.3) on the published
+  factory pairing key, signed Ed25519 on a toy ledger and never used
+  MAC-and-Destroy (section 1.1, answers). The design in section 10 seals a
+  secp256k1 key with MAC-and-Destroy on the Pi, answers the wallet's existing
+  cold-signing formats, forbids every irreversible chip operation, and keeps
+  the proof of concept's key slots; section 11 orders the read-only checks
+  before the smallest live Sepolia demo.
 
 ## 1. Open questions
 
@@ -103,6 +118,34 @@ design may use and what a Stage 3 demo may touch.
     wallets? Section 7 differs for each.
 14. **Mainnet.** Should any role in section 4 be considered for mainnet, or test
     networks only (as for every smart-account feature today)?
+
+#### Answers received 2026-11-07
+
+The Chairperson answered the questions above on 2026-11-07. Questions 5 to 9
+were answered by pointing at the Chairperson's own proof-of-concept repository,
+`tropic_wallet_poc` (a local repository, read read-only for this section at
+commit 5025353, branch `device-split-and-hardware-validation`, last commit
+2026-09-26; its only uncommitted change is its own `.claude/settings.json`).
+Nothing in it was run. Short label below: [POC path:line]. Where the
+repository does not settle a point, the text says so; those points are listed
+again in section 12.
+
+| # | Answer (2026-11-07) | What it settles, and what stays open |
+|---|---|---|
+| 1 | "yes it is 3B+ but I've tested it before with lite raspi OS so I know it works it is just on the very low end of the spec requirements" | Raspberry Pi 3 Model B Plus, Raspberry Pi OS Lite (version not given). The proof of concept records its hardware run on "a TS1501 shield on a Raspberry Pi 3 Model B Plus, Raspberry Pi OS based on Debian 13, Python 3.13.5, pytropicsquare 0.0.3" [POC docs/security-status.md lines 67–69] and its test suite passing on "aarch64 Raspberry Pi OS" [line 15]. Whether today's card is that same image is open. |
+| 2 | "yes TS1501" | The board is the TROPIC01 Raspberry Pi Shield, revision TS1501. The proof of concept found the chip-select jumper J2 in the CS2 position (GPIO25, physical pin 22) and confirmed it "three ways: the schematic, the SDK, and the chip answering" [POC docs/tropic01.md lines 237–256; hw/transport_config.py lines 64–68]. Whether the jumper is still there today is open (the file itself says to look). |
+| 3 | Not given (the answer field read "###") | **Open.** The part number, the firmware versions and a saved chip-identification output are the first things the read-only step in section 11.2 must capture. The proof of concept recorded, on 2026-09-20, silicon revision ACAB, a "Part Number ID" field of 0x103, RISC-V (application) firmware 2.0.0.0 and SPECT firmware 1.0.0.0, and states that "the part number itself has not been read from the board and the bootloader version has not been read from the chip"; it matched the firmware pair to the TR01-C2P-T310 row of the 2026 advisory [POC docs/tropic01.md lines 97–119]. The serial number and batch id it printed (lines 103–104) are deliberately not copied into this public repository. |
+| 4 | "I did update firmware to latest but that was a while ago so I'll need to confirm version" | **Open, and the record disagrees.** The proof of concept states that it "never issues a maintenance restart or a firmware update" [POC docs/firmware.md line 85], and its 2026-09-20 read showed application firmware 2.0.0.0 [docs/tropic01.md lines 105–106], while Tropic Square's part-number page already listed 2.1.0 [section 2.1] and libtropic 4.2.0 carries 2.2.0 update files [section 2.1]. So either the update happened outside that repository after 2026-09-21, or "latest" was 2.0.0 at the time. Only a fresh read settles it (section 11.2 step R2). |
+| 5 | "I think I used my own code but you can check tropic_wallet_poc in Downloads to see what we did exactly" | The proof of concept is Python and talks to the chip through **pytropicsquare 0.0.3**, "a third-party SDK by Petr Kracík, MIT licensed, not Tropic Square's official library", chosen "because this proof of concept is in Python" [POC docs/tropic01.md lines 83–86; requirements-hardware.txt lines 8–10: `pytropicsquare>=0.0.3`, `spidev>=3.5`, `gpiod>=2.0`]. It does **not** use libtropic (any version), `lt-util` or `tropic01_util`. Its SPI settings are bus 0, device 0, chip select GPIO25, 1 MHz [hw/transport_config.py lines 65–68], not libtropic's 5 MHz. |
+| 6 | (from the repository) | **Pairing key: slot 0, the published factory key, never changed.** Every session opens with pytropicsquare's `FACTORY_PAIRING_PRIVATE_KEY_PROD0` / `FACTORY_PAIRING_PUBLIC_KEY_PROD0` on `FACTORY_PAIRING_KEY_INDEX` [POC hw/tropic_wallet_hw.py lines 41–45, 95–99]. No pairing key was written or invalidated: "Owner pairing keys. … not implemented" [docs/security-status.md lines 149–154], the provisioning plan is "on hold at the owner's instruction. Nothing in this document has been run" [docs/pairing-key-plan.md lines 1–4]. There is therefore no private pairing key of the Chairperson's own anywhere. The repository cannot say whether any other program ever wrote slots 1–3; the read in section 11.2 step R3 does. |
+| 7 | (from the repository) | **No configuration write by the proof of concept.** Its code calls no I-Config, R-Config, maintenance-mode or firmware-update command (a search of `device/`, `host/`, `hw/`, `chain/`, `demo/`, `scripts/` and `tests/` for those calls finds only comments), and it did not apply the advisory's maintenance-mode mitigation [POC docs/firmware.md lines 86–90]. Anything done outside the repository (for example the firmware update of answer 4) is open. |
+| 8 | (from the repository) | **ECC key slot 0** holds the proof of concept's wallet key: an Ed25519 key generated on the chip, account 0 [POC hw/tropic_wallet_hw.py line 51 `DEFAULT_WALLET_KEY_SLOT = 0`, line 174; demo/run.sh line 146]. **ECC key slot 1** was used by the destructive hardware tests, which "have been run … destructive ones included" [docs/testing.md lines 167–169]: one test stores RFC 8032's published test key there and erases it afterwards [tests/hardware/test_tropic01_hil.py lines 383–412], and a later test generates an on-chip Ed25519 key in slot 1 when it is empty and does not erase it [lines 454–473]. So slot 1 most likely holds a chip-generated Ed25519 key — an inference from the test order, to be confirmed by the read in step R4. **User Data slots, monotonic counters and MAC-and-Destroy slots:** the proof of concept's code never calls the commands that touch them (same search as answer 7). Both ECC keys are proof-of-concept keys on a toy ledger and hold nothing of value, but this design preserves them (section 10.8). |
+| 9 | (from the repository) | **The proof of concept never ran MAC-and-Destroy.** It records that `mac_and_destroy` "is present … Its exact semantics have not been investigated" and that it has no PIN [POC docs/tropic01.md lines 406–411; docs/security-status.md lines 158–159]; its plan lists "A PIN, ideally using `mac_and_destroy`" as outstanding work [docs/progress.md line 374]. There are no host-side ciphertexts, tags or attempt counters anywhere in it. It signed **Ed25519 on its own toy ledger** (a 141-byte payload beginning with the domain tag `tropic-wallet-poc/transfer/v1` [docs/decisions/0001-domain-separated-payload.md lines 22–31]), never secp256k1, never Ethereum and never a public test network [README.md lines 71–82]. **Open:** the Stage 1 plan says the Chairperson had driven the PIN feature successfully; if that happened, it was outside this repository, and which program, which MAC-and-Destroy slots and where its data lives are unknown (question 12.1.4). |
+| 10 | "never plugged in it is same rasp pi shield" | The spare chip sits on a second TS1501 shield and has never been powered. Nothing in this document touches it (section 10.8). |
+| 11 | "it does not, I've only connected via SSH but I have plenty of peripherals available to use as needed" | No screen, camera or keyboard today; reached over SSH on the network. Section 10.4 states what each channel option needs and what it costs in trust. |
+| 12 | "yes you can consider it lab equipment... while keys are sensitive we don't intend to store any mainnet assets (or if we do we should limit accordingly)... do not perform any destructive actions that are irreversible such as making the chip unusable ever again... destructive actions that do not permanently and irreversibly change the state of the chip are okay (my understanding is MAC and destroy feature is destructive but only makes it so you can't use the slot again until re-initialized with new keys... this is okay... but if we destroy and we can never use it ever again even with new keys and new prototype that is not permitted)" | Lab equipment, test assets only. The understanding of MAC-and-Destroy is **correct**, with four caveats; section 10.1 checks it against the sources and sorts every chip operation into "forbidden" and "consumes state that can be set up again". |
+| 13 | "I'd like to see if the design could later become a Shiba branded hardware device that can be utilized in combination with the hot wallet (i.e. the mobile device we are building right now)" | Option (b). Section 10.10 reconciles section 7 with it. |
+| 14 | "similarly to our other features for the Shiba wallet prototype, testnet only please... if testnets are not available or not viable let me know and we can revisit" | Test networks only. They are available and viable for this role: the phone half was proven live on Ethereum Sepolia (passes p22b and p23-coldaa, `AGENTS.md`). Section 10.9 says where the rule is enforced, because the app itself offers regular-account cold signing on every network. |
 
 ### 1.2 For Tropic Square's documents (what the sources read do not say)
 
@@ -746,6 +789,9 @@ irreversible operations are listed in section 2.3.
 
 ## 7. A production path, as requirements and questions
 
+*Note added 2026-11-07: the Chairperson chose option (b), a design that could
+become a Shiba-branded device; section 10.10 reconciles this list with it.*
+
 If the Chairperson approves a direction, a product built on TROPIC01 would need
 at least the following. These are requirements to examine, not promises.
 
@@ -851,3 +897,711 @@ This repository (HEAD 16f5e72): `packages/chains-evm/src/kernel-webauthn.ts`,
 - MAC-and-Destroy behaviour on power loss mid-command.
 - How Trezor Safe 7 uses TROPIC01.
 - The TROPIC01 Model on macOS (documented as "TBA").
+
+## 10. Stage 2 design: an air-gapped signer on the Raspberry Pi, its secp256k1 key sealed by MAC-and-Destroy
+
+Written 2026-11-07 for the role section 4 ranked first, after the answers in
+section 1.1. It is a design, not code: nothing here has been built or run, and
+nothing has touched the Chairperson's hardware. Sources added for this section
+are listed in section 13 (the datasheet, the PIN note AN002, the configuration
+note AN006 and the firmware-update note AN007 were fetched again on 2026-11-07
+and their SHA-256 prefixes match those recorded in section 8, except AN006,
+which section 8 did not list). It is written as the first version of a device
+that could become a Shiba-branded product (answer 13), with every place where
+the Raspberry Pi falls short of a product stated.
+
+**What this design deliberately does that the Chairperson's proof of concept
+deliberately did not.** The proof of concept decided "for the current PoC, we
+do not implement real secp256k1 signing or a 'release secret, then sign' flow
+on the Raspberry Pi", because "Any secret released by TROPIC01 to a process
+running on the Pi is exposed the moment that process's memory is exposed"
+[POC ARCHITECTURE_DECISIONS.md lines 96–114]. That reasoning is correct and
+stands. This design builds the flow anyway, as lab equipment on test networks
+only (answers 12 and 14), because it is the only way to exercise the wallet's
+existing cold-signing and multisig formats against the chip, and because the
+parts that carry over to a product (the request formats, the display rules,
+the PIN scheme, the key derivation, the slot plan) do not depend on the Pi.
+The parts that do not carry over are named in section 10.10.
+
+### 10.1 Which chip operations are forbidden, and which only consume state (answer 12 checked)
+
+**The Chairperson's understanding of MAC-and-Destroy is correct.** A
+MAC-and-Destroy call overwrites its slot: the sequence "computes value S_i and
+overwrites the slot i with it" [AN002 §3.2 p.6]; after a wrong PIN "the slot cannot
+be used again, until its reinitialization", and after a correct PIN "the
+destroyed slots are initialized again" [AN002 p.11]. The slots are ordinary
+R-Memory slots in the MAC-and-Destroy data partition, which the chip "Reads,
+writes, and erases" [DS §7.9 p.52], and R-Memory supports erase back to 1
+[DS §7.1.1 p.20]. So a destroyed slot can be set up again with a new master
+secret and new PIN; nothing about the chip is used up for good. Four caveats:
+
+1. **The secret, not the slot, can be lost for good.** "Without the knowledge
+   of s the slots cannot be reinitialized to the correct value S_i" [AN002
+   p.11]. If every attempt of a set-up is used, or a Wiping PIN is entered
+   ("the way for the key k is forever closed" [AN002 p.13]), the key that
+   set-up protected is gone. The slots can then carry a new set-up; whatever
+   was sealed under the old key can be recovered only from its own backup
+   (in this design, the device's recovery phrase, section 10.6).
+2. **A slot's state cannot be inspected without changing it.** The only
+   command that touches the partition is MAC_And_Destroy itself [AN002 §3.2 p.6;
+   libtropic `lt_mac_and_destroy`, include/libtropic.h lines 636–652], and it
+   overwrites. Whether an earlier PIN run (outside the proof of concept,
+   answer 9) left anything in a slot can only be answered from memory, never
+   read.
+3. **Flash wears.** Endurance is 100,000 reprogram cycles [DS §9.6 p.61];
+   AN002 treats the flash write cost as part of the rate limiting [AN002
+   Appendix B p.21]. A demo uses a few hundred cycles at most.
+4. **An ECC key erased is gone, even though its slot can be reused.** The
+   proof of concept calls `ecc_key_erase` "the genuinely destructive operation
+   on this chip" [POC hw/tropic_wallet_hw.py lines 176–185]. Slot reuse is
+   fine under answer 12; losing the proof of concept's keys is a separate
+   decision, so this design leaves ECC slots 0 and 1 alone (section 10.8).
+
+**The two classes, for every operation this project might issue:**
+
+| Operation | Class | Why (source) |
+|---|---|---|
+| Write a pairing key (`Pairing_Key_Write`) | **FORBIDDEN** | Each slot can be written once, and pairing keys live in I-Memory, where "it is impossible to revert the value back to 1" [DS §7.1.2 p.23; AN005 §1.2]. It does not make the chip unusable, but it permanently uses one of four slots. Needs the Chairperson's explicit yes for that step, and is not needed by this design (section 10.7). |
+| Invalidate a pairing key | **FORBIDDEN** | "Once the Pairing Key slot is Invalidated, the state is impossible to change"; "When all Pairing Key slots are Invalidated … TROPIC01 is unusable" [DS §7.5.3 p.44]. |
+| Write any I-Config object | **FORBIDDEN** | I-Config is I-Memory; a write changes a bit "from 1 to 0" [libtropic include/libtropic.h line 416] and cannot be reverted [DS §7.1.2 p.23]. |
+| Write or erase R-Config, including maintenance-mode and user-access-privilege settings | **FORBIDDEN** | Reversible by design, but libtropic warns "Writing R-config before erasing it first can brick the TROPIC01 chip. Refer to Erratum OI_TR01_ERR_2026010800: R-Config write triggers permanent Alarm Mode" [libtropic include/libtropic.h lines 366–367]; AN006 adds that "incorrect configuration might lead to irreversible consequences" — disabling configuration changes for every pairing key leaves the configuration "permanently" [AN006 p.18], and an R-Config field can return from 0 to 1 only by erasing the whole R-Config first, "Otherwise the state of R-Config is undefined!" [AN006 p.13]. Whether the erratum applies to this chip's part number is unknown (answer 3), so the class is forbidden outright. |
+| Write to reserved configuration locations | **FORBIDDEN** | "We strongly advise the user not to write to these locations" [AN006 p.10]. |
+| Update either firmware, or enter maintenance mode for it | **FORBIDDEN** | No downgrade: "If the FW version of the incoming update is lower than the FW version in the protected bank, the bootloader rejects the update" [AN007 p.8]; mismatched application and SPECT firmware leave the chip "in Start-up mode" [AN007 p.10]. The firmware question (answer 4) is answered by reading, never by updating. |
+| Run libtropic's functional tests | **FORBIDDEN** | Tropic Square warns they "can **destroy** your chip" [LT docs/for_contributors/tests/functional_tests.md lines 13–14]. |
+| Run the proof of concept's destructive hardware tests (`TROPIC01_HIL_DESTRUCTIVE=1`) or its `init --force` | **FORBIDDEN in this design** | Not chip-destroying, but they erase ECC slots 0 and 1 [POC tests/hardware/test_tropic01_hil.py lines 289–330, 383–412; docs/hardware-bringup.md lines 122–138], which this design preserves. |
+| Anything on the spare chip | **FORBIDDEN** | Answer 10; the spare stays unpowered. |
+| `MAC_And_Destroy` on an agreed slot | Consumes state; can be set up again | Above. |
+| Erase and write an agreed User Data slot | Consumes state; can be set up again | A slot "must be erased before it is written again" [DS §7.6 p.46]; endurance as above. |
+| Initialise, decrement or reset an agreed monotonic counter | Consumes state; **can be reset** | The datasheet lists "The option to reset, decrement, or read"; `MCounter_Init` sets any start value; at 0 an update returns UPDATE_ERR and the value stays 0 [DS §7.10 pp.52–53]. Each counter spans two R-Memory slots. Because anyone holding a session with the default privileges can reset it, a counter is not a security control on this board (section 10.7). This design does not need one. |
+| Generate or erase an ECC key in an agreed slot | Consumes state; can be set up again (the old key is lost) | Section 2.6 and caveat 4 above. Not needed by this design. |
+| Start a session on pairing slot 0, Ping, Get_Info, read chip id and firmware versions, read ECC public keys, read User Data, read configuration, Random_Value_Get, read a counter | Read only | No state change except the session nonce and, for Ping, the sleep timer [DS §7.11 p.53]. |
+
+One further fact, outside anyone's control: if the chip detects a hardware
+failure during a command it "remembers the HW failure, and enters Alarm Mode
+upon each next power cycle. The chip will not function anymore" [DS
+p.32]. No design can prevent that; it is the reason the spare chip stays
+unpowered.
+
+### 10.2 The shape of the device
+
+```
+ phone (Shiba Wallet)                    Raspberry Pi 3B+ "signer"                 TROPIC01 (TS1501)
+ ───────────────────                     ───────────────────────────               ─────────────────
+ watched address ──request (QR/file)──▶  parse + recompute every hash
+ or multisig                             show decoded fields; user approves
+                                         user types PIN on the Pi  ──MAC_And_Destroy──▶ releases k
+                                         decrypt sealed seed with k  ◀── (one slot used,
+                                         derive secp256k1 key            re-initialised on success)
+                                         sign; normalise s; wipe
+ checks signature, ◀──signature (QR/file)
+ broadcasts
+```
+
+- The **phone** keeps doing exactly what it does today for a watched address
+  or a multisig: it prepares the request, checks the signature it gets back
+  against the request it stored, and broadcasts. No phone change is needed
+  for the first version (section 4, role a).
+- The **Raspberry Pi** is the signer. It holds the device's secp256k1 key only
+  as ciphertext; it decodes the request itself and never trusts the request's
+  summary; it asks the user to approve and to type the PIN on the Pi.
+- The **chip** does one job: it decides, with a hard attempt limit enforced
+  inside the chip, whether the PIN releases the 32-byte key that decrypts the
+  seed (section 2.7). It never sees the secp256k1 key and never signs the
+  Ethereum transaction (section 2.4).
+
+### 10.3 How the Pi learns what to sign: the wallet's existing formats
+
+The signer answers three request formats that already exist in this
+repository. Every one carries a plain-sentence `summary` that the signer must
+never trust; every one carries the hash the signer will sign, which the signer
+must recompute from the fields and compare. All three use the same numbered
+QR-part scheme, `<PREFIX><n>/<total>:<chunk>`, from 2 to 20 parts of at most
+858 bytes each (version 20 at error-correction level L), collected in any
+order, a part that contradicts one already read refused
+[app/src/wallet/qr-parts.ts lines 1–14, 76–140; app/src/wallet/cold-signing.ts
+lines 83–93].
+
+1. **A regular send for a watched address** (`shiba-wallet/cold-sign-request`,
+   version 1, QR prefix `SW-CS:`; app/src/wallet/cold-signing.ts lines 71–84,
+   146–188). Fields: `requestId` (16 random bytes), `chainId`, `from` (the
+   watched address), `tx` (an EIP-1559 type 0x2 transaction: `nonce`,
+   `maxPriorityFeePerGas`, `maxFeePerGas`, `gasLimit`, `to`, `value`, `data`,
+   an always-empty `accessList`), `summary` and `signingHash` =
+   keccak256(0x02 ‖ rlp(the nine fields)). The answer is
+   `shiba-wallet/cold-sign-signature` with `requestId`, `signer`,
+   `signingHash`, `yParity`, `r`, `s`. The phone refuses a signature unless
+   the request id matches, the hash recomputed from its stored request
+   matches, yParity is 0 or 1, r and s are 32 bytes, s is at most n/2, the
+   stated signer is the watched address and `ecrecover` returns it (lines
+   592–641). A type 0x04 (EIP-7702) request is refused (the record, phase 22
+   item 3). A native send is about 696 bytes (one QR code); a USDC send about
+   871 bytes (two parts).
+2. **A smart-account operation for a watched owner**
+   (`shiba-wallet/cold-sign-userop-request`, version 1, QR prefix `SW-CU:`;
+   packages/chains-evm/src/cold-userop.ts lines 62–162;
+   app/src/wallet/cold-aa.ts lines 88–106). Fields: `requestId`, `chainId`,
+   `entryPoint`, `sender` (the Kernel account), `owner`, `scheme`
+   (`kernel-v3.3-ecdsa-root/eip191-userop-hash`), `nonceKey`, `accountIndex`,
+   the thirteen operation fields, `summary`, `userOpHash` (EntryPoint v0.7),
+   `signingDigest` = the EIP-191 hash of the userOpHash, `createdAt` and
+   `expiresAt` (30 minutes by default, at most 24 hours; lines 91–98). The
+   signature is r ‖ s ‖ (27 + yParity) (lines 74–88). A deploying request is
+   about 2.3–2.5 KB, three parts (cold-aa.ts lines 91–95; the record, pass
+   p23-coldaa). The fees are inside the userOpHash, so a signed operation
+   cannot be repriced (lines 55–58).
+3. **A multisig co-signer approval** (`shiba-wallet/multisig-signing-request`
+   and `shiba-wallet/multisig-approval`, QR prefix `SW-MS:`;
+   app/src/wallet/multisig.ts lines 1127–1129). The engine part
+   (packages/chains-evm/src/kernel-multisig.ts lines 376–420) carries
+   `chainId`, `account`, `weightedValidator`, `callData`, `nonce`,
+   `callDataAndNonceHash` and the EIP-712 `approvalDigest`, which the reader
+   recomputes (lines 446–470). The co-signer signs Approve(callDataAndNonceHash),
+   which covers the calls and the nonce but "does NOT cover the gas limits,
+   the gas fees, the paymaster" (lines 383–390). The phone also accepts a bare
+   65-byte r ‖ s ‖ v signature, v 27/28 or 0/1 (multisig.ts lines 1915–1945).
+
+**Order of support.** Version 1 of the signer answers format 1 only, which is
+the smallest and was proven live through the app with a script standing in for
+the signer (pass p22b). Format 3 is next: it makes the device a co-signer of a
+2-of-N multisig with the phone, which is the arrangement that turns the device
+into a real on-chain second factor (section 4, role a variant). Format 2 is
+last; it needs the request's expiry checked against the Pi's clock, which an
+air-gapped Pi without a network time source may not have right (question
+12.1.10).
+
+**The existing stand-in to copy.** `scripts/testnet/cold-signer.mjs` already
+plays this off-line signer: it reads a request (or its parts), decodes it
+"FROM THE TRANSACTION FIELDS (never trusting the request's own summary)",
+signs, and prints the signature payload, all "through the app's own
+app/src/wallet/cold-signing.ts", and it refuses any chain outside its test
+list (lines 1–55, 65, 304–313). The Pi signer is that script with three
+changes: the key comes from the sealed seed instead of the dev phrase, the
+approval and PIN are asked on the Pi, and the output goes back by the chosen
+channel.
+
+### 10.4 The channel between phone and Pi (the Pi has no screen today)
+
+The chip's secure channel ends at the Pi (section 3.2); none of the options
+below changes that. They differ in what the Pi is exposed to.
+
+| Option | What is needed | Trust statement |
+|---|---|---|
+| (a) **QR both ways**: a small display on the Pi shows the signature as QR codes; a camera reads the phone's request codes | A display, a camera, a QR decoder and encoder on the Pi, a keypad or keyboard for the PIN | The only option that keeps the Pi air-gapped: nothing but QR images crosses, and both payload kinds hold no secret ("They contain no key and no secret", cold-signing.ts `COLD_SIGN_QR_CONTENTS`, line 695). The Pi's network interfaces can be switched off. The display and keypad are driven by the same general-purpose computer that holds the key while signing, so they are only as trustworthy as that computer (section 4, role a). Which display, camera and keypad suit a 3B+ is question 12.1.8. |
+| (b) **A USB or serial cable** to a computer or phone | A cable and a small protocol | Not air-gapped: the Pi now has an attack surface on a wire. Narrower than a network, because only one peer exists. The proof of concept's host and device spoke length-framed messages over a pipe, which it describes as standing in "for a wallet plugged into a USB port" and as "a much weaker boundary than a physical device provides" [POC host/client.py lines 178–185; device/wire.py]. A phone-to-Pi cable route was not established (section 3.2 item 4). |
+| (c) **A local-network service** on the Pi | The Pi on the network, its own authentication and encryption between phone and Pi | An online signer. Every network-facing component of a full Linux system is then in scope. Not recommended for a signer that holds keys; it is the shape role (c) of section 4 would need. |
+| (d) **Files over SSH** (today's only path: answer 11) | Nothing new | **For the first lab demo only.** The request text and the signature text are copied by hand between the Mac (the emulator's clipboard) and the Pi. The Pi stays networked, and the approval prompt and the PIN are typed into an SSH session from the Mac, so the Mac's terminal sees both. Acceptable only for a throwaway device phrase with test funds (section 11). |
+
+**What the proof of concept did for "a channel the host does not control".**
+It asked for approval on the controlling terminal, `/dev/tty`, not on the
+standard input the host process wrote to: "If confirmation were read from
+standard input, the host would be supplying it" [POC device/confirm.py
+lines 4–14], and the user had to type the amount, not press a key (lines
+24–35). That separates the host program from the approval inside one machine.
+In this design the "host" is the phone, which is a separate device, so the
+separation is physical; the lesson that carries over is that the PIN and the
+approval are entered on the Pi's own input and never relayed from the phone.
+The proof of concept also notes that its interactive confirmation was
+rehearsed only "over a non-interactive SSH session" on the software backend
+[POC docs/known-limitations.md lines 108–112], so option (d) is no weaker than
+what it showed.
+
+### 10.5 What the Pi shows before signing, and how the user approves
+
+The signer shows only what it decoded itself, in this order, and refuses
+before showing anything if a check fails:
+
+1. **Refusals first.** A chain id outside the test list (section 10.9); a
+   request whose recomputed signing hash, userOpHash, digest or approval
+   digest differs from the one it carries; an expired smart-account request;
+   a `from`, `owner` or co-signer that is not this device's address; any
+   EIP-7702 material; any request type or version the signer does not know.
+2. **The network** by name and chain id.
+3. **What moves:** for a plain transfer, the recipient in full and the exact
+   amount; for an ERC-20 `transfer`, the token contract, the recipient and the
+   exact base-unit amount (the same decoding as `decodeColdSignCall`,
+   cold-signing.ts lines 294–306); anything else is shown as "a contract call"
+   with the full calldata, and version 1 refuses it.
+4. **The worst-case fee** (gas limit × max fee for a transaction; the
+   operation's gas fields × max fee for a smart-account operation; for a
+   multisig approval, the sentence that the approval does not fix the fee).
+5. **The nonce**, and for a multisig the account and the nonce it approves.
+
+Addresses are shown in full and never abbreviated: the proof of concept gives
+the reason — "An attacker can grind a key whose address shares a short prefix
+and suffix with the intended one" [POC docs/decisions/0005-address-encoding-scope.md
+lines 67–69].
+
+**Approval** is two steps on the Pi's own input: the user types the amount (the
+proof of concept's control), then types the PIN. A refusal or a missing
+terminal means no signature (the proof of concept's fail-closed rule,
+docs/security-status.md lines 44–48). The PIN is never typed on the phone.
+
+### 10.6 The secp256k1 key: how it is made, sealed and used
+
+**Three approaches compared.**
+
+| | Where the coin key is made | What protects it at rest | Backup |
+|---|---|---|---|
+| The proof of concept | On the chip, Ed25519, never leaves [POC docs/decisions/0002-on-chip-key-no-recovery.md lines 16–17] | The chip | "There is no recovery" (line 29); not usable for Ethereum (section 2.4) |
+| Tropic Square's `tropic01_util` | A BIP-32 secp256k1 master key derived on the host from a recovery phrase [section 2.4, `pin_set.py` lines 12–23] | MAC-and-Destroy, with XOR as the cipher in its DevKit firmware and the comment "In production, replace it with some encryption standard!" [section 2.7] | The phrase |
+| **This design** | A BIP-39 phrase of the device's own, generated on the Pi; the account key derived from it on the standard Ethereum path | MAC-and-Destroy releases k; the seed is sealed under k with an authenticated cipher | The phrase, written on paper |
+
+AN002 itself says XOR is enough only "If the scheme is implemented exactly as
+defined in Subsections 3.4 and 3.5", and that "Using standardized symmetric
+ciphers is always the safe solution" [AN002 §3.3 p.6]. Sealing the seed is
+outside that scheme, so this design uses an authenticated cipher (for example
+AES-256-GCM, which the proof of concept's Python dependency `cryptography`
+provides) for the seal, and follows AN002 §3.4–3.5 exactly for the PIN layer.
+
+**Provisioning (once):**
+
+1. Generate 32 bytes of entropy on the Pi from the operating system's random
+   source, mixed (by hashing) with 32 bytes from the chip's `Random_Value_Get`
+   (TRNG2, section 2.10). Mixing means neither source alone decides the key.
+   Turn the entropy into a 24-word BIP-39 phrase.
+2. Show the phrase once; the Chairperson writes it on paper. In the SSH-only
+   demo (option d) the phrase passes through the Mac's terminal: acceptable
+   only because this phrase is a throwaway for test funds, and stated as such.
+3. Derive the 64-byte BIP-39 seed (no passphrase) and the account key at
+   m/44'/60'/0'/0/0, the path this repository's own `evmKeyProvider` uses for
+   phrase accounts (cold-signer.mjs line 18 prints "m/44'/60'/0'/0/3" for
+   index 3). Show the address; the phone will watch it.
+4. Set up the PIN per AN002 §3.4 on the agreed MAC-and-Destroy slots
+   (section 10.8): a random 32-byte master secret s, n slots initialised, one
+   ciphertext of s per slot, a tag, an attempt counter. AN002 says this host
+   data "does not require any kind of protection" [AN002 §3.3 p.6]. The
+   released key is k = KDF(s, 0x02) [AN002 §3.3–3.4].
+5. Seal the 64-byte seed under k with AES-256-GCM (a fresh 12-byte nonce).
+   Store the sealed seed and the AN002 host data together in one agreed User
+   Data slot on the chip (or on the SD card; either is allowed by AN002). By
+   this document's own arithmetic, eight 32-byte ciphertexts, a 32-byte tag,
+   a counter and a sealed seed of 92 bytes come to about 390 bytes, inside one
+   475-byte slot [DS §7.6 p.46]; the exact AN002 field sizes must be taken
+   from AN002 §3.4 before n is fixed. Keeping it on the chip means the SD card
+   holds no wallet data at all and the Pi can be rebuilt from scratch.
+6. Erase s, k, the seed and the key from memory as far as the language allows
+   (below), and run the unseal once with the correct PIN to prove the set-up.
+
+**Signing (each request):** decode and show (section 10.5); approval; PIN;
+the AN002 check uses the next slot and, on success, re-initialises the used
+slots [AN002 §3.5 p.11]; k decrypts the seed; derive the key; check that its
+address is the request's `from`, `owner` or co-signer; sign; normalise s
+(section 10.9); verify the signature locally against the address; erase; output
+the payload. A wrong PIN produces no signature and leaves one fewer attempt.
+
+**Attempt limit.** n = 8 is proposed (a judgement; Trezor uses 16 or 10,
+section 6). With a 6-digit PIN, an attacker holding the board gets 8 guesses
+in a million. The sealed seed cannot be attacked offline from a copy of the
+User Data or the SD card: k comes from the random 32-byte s, not from the PIN.
+
+**Wiping PIN (optional, later).** AN002 §3.7 describes a PIN that destroys k
+[AN002 p.13]. On this device it would leave only the paper phrase able to
+restore the key. That fits the wallet's duress design (`docs/DURESS_WALLET.md`)
+but is not in version 1.
+
+**Memory.** The key exists in the Pi's memory from the unseal to the end of
+signing. In a garbage-collected language a copy cannot be reliably zeroed —
+this repository records the same limit for a private key held as a string in
+the app (`AGENTS.md`, phase 13 item 3, "the hex string cannot be zeroed —
+N-03"). The Pi's swap should be off for the signer, and the process should run
+only for one request. These reduce, not remove, the exposure the proof of
+concept's Decision 3 describes.
+
+**Relation to ADR D1.** The device's key comes from the device's own phrase,
+not from the phone's recovery phrase; if it came from the phone's phrase, the
+phone would hold the device's key and the device would protect nothing. For a
+watched address that is already the case today (the watched address is not
+derived from the wallet's phrase), and for a multisig a co-signer key is
+separate by nature. So the phone's phrase restores the phone's accounts, and
+the device's phrase restores the device. Recorded as decision 12.1.13.
+
+### 10.7 The pairing-key policy
+
+**Today (answer 6):** every session opens on slot 0 with the factory key
+whose private half is published in the SDKs (section 2.3; [POC
+hw/tropic_wallet_hw.py lines 75–99]). As the proof of concept puts it, the
+session "protects the SPI bus against a passive eavesdropper, and nothing
+more" [POC docs/tropic01.md lines 202–205].
+
+**What that means for this design, exactly.** Anyone who holds the board (or
+runs code on the Pi) can open a session and issue every command the default
+privileges allow. Against the MAC-and-Destroy layer they can (1) burn the
+attempts, which destroys k and leaves only the paper phrase (a denial, not a
+theft); (2) read the sealed seed and the AN002 host data from the User Data
+slot, which does not help them, because k derives from the random s and the
+slot values are keyed inside the chip [AN002 Appendix B p.21]; (3) erase that
+User Data slot or any ECC slot (another denial); (4) reset any monotonic
+counter, which is why no counter is used as a control. They cannot learn k
+without the PIN within the attempt limit: the limit "holds" against a
+compromised host because each guess consumes a slot inside the chip and only
+the holder of s can re-initialise it [AN002 §3.5.1, Appendix B]. So the
+published slot-0 key costs availability, not the key, under the chip's own
+threat model. What it does cost is the ability to tell a genuine signer from a
+substituted one, which attestation through the chip's certificate chain (Tropic Square's PKI note, recorded by the proof of concept as read only in part and not implemented [POC docs/tropic01.md lines 383–391]) would address.
+
+**What a product needs.** A pairing key that only the device's own firmware
+holds, ideally the customer-specific first pairing key Tropic Square programs
+at manufacture under a custom part number, so no slot is spent in the field
+[AN005 §2.2; the proof of concept reached the same conclusion, POC
+docs/pairing-key-plan.md lines 93–105]; and user-access privileges that let
+that session do only MAC_And_Destroy, User Data and random reads [DS §7.5.4
+pp.44–45].
+
+**What this design does on the lab board: nothing.** Writing a pairing key is
+an irreversible act (section 10.1). It is not needed for any step in section
+11. If the Chairperson ever wants it, it needs an explicit yes for each step,
+on a chip the Chairperson is willing to commit, following the proof of
+concept's order — write slot 1, prove a session on slot 1 in a separate
+process, and only then consider invalidating slot 0 — whose two irreversible
+steps it names itself [POC docs/pairing-key-plan.md lines 60–91]. Invalidating
+slot 0 before slot 1 is proven would leave a chip nothing can talk to
+[DS §7.5.3 p.44].
+
+### 10.8 The slot plan
+
+| Resource | Use in this design | Status |
+|---|---|---|
+| Pairing slot 0 | Sessions (factory key) | Unchanged |
+| Pairing slots 1–3 | None | Unchanged; state read in step R3 |
+| ECC key slots 0 and 1 | None. They hold the proof of concept's Ed25519 keys (answer 8) | **Preserved**: never erased, generated into or stored into |
+| ECC key slots 2–31 | None | Read-only inventory in step R4 |
+| MAC-and-Destroy slots | **n = 8 agreed slots, proposed 120–127** (high numbers, away from any example that starts at 0; a proposal only) | Consumed and re-initialised by every PIN check. Because a slot cannot be inspected (section 10.1), the Chairperson confirms first that no earlier PIN set-up must be kept in those slots (question 12.1.4) |
+| User Data slots | **One agreed slot** for the sealed seed and the AN002 host data | Erased and written at provisioning; read at each signature. libtropic's model example keeps its PIN data in slot 511 (section 2.7); a different slot is proposed so the model example and this design can never collide on a chip that ran both |
+| Monotonic counters | None | Read-only inventory in step R6, optional |
+| I-Config, R-Config, firmware | None | **Forbidden** (section 10.1); read-only in step R7 |
+| The spare chip | None | **Never powered** |
+
+### 10.9 The signatures and where "test networks only" is enforced
+
+**Low s.** Every signature this device produces is secp256k1 ECDSA made in
+software on the Pi (the chip makes none, section 2.4), and the signer
+normalises it: if s > n/2 it replaces s with n − s and flips yParity, then
+re-verifies. Each consumer requires or tolerates exactly that:
+
+- **A regular transaction** (format 1): the phone refuses s above n/2 before
+  broadcasting, "EIP-2 (Homestead): a transaction whose s is above
+  secp256k1n / 2 is" invalid [packages/chains-evm/src/eoa-tx.ts lines
+  139–150], and recovers the signer with `recoverEip1559Signer` (line 158).
+- **A Kernel v3.3 smart-account operation** (format 2): the root
+  ECDSAValidator accepts the owner's signature over the EIP-191 form of the
+  userOpHash [packages/chains-evm/src/cold-userop.ts lines 45–51, citing
+  ECDSAValidator.sol lines 49–66 at kernel cd697c7e]; the engine refuses a
+  zero or high s before submitting (`recoverExternalSigner`,
+  packages/chains-evm/src/smart-account.ts lines 729–747), although the
+  validator would also accept the high-s twin (lines 734–736).
+- **A multisig approval** (format 3): the WeightedECDSAValidator recovers each
+  approval with Solady's `ECDSA.recover`, which passes v to the `ecrecover`
+  precompile unchanged and does not check s (app/src/wallet/multisig.ts lines
+  1922–1931, citing WeightedECDSAValidator.sol lines 215–220 and Solady
+  ECDSA.sol lines 50–77). The signer still emits low s with v = 27 or 28.
+
+**Test networks only (answer 14).** The rule has to live on the device,
+because the phone does not enforce it for format 1: a cold-signed regular send
+is "an ordinary regular-account transaction, offered wherever Send is" with no
+readiness row (the record, phase 22 item 3). Formats 2 and 3 are already
+behind test-network-only readiness rows on the phone (`cold-aa`, `multisig`).
+On the device, three independent locks:
+
+1. **A chain-id allow-list** checked before anything is shown or the PIN is
+   asked: the same list as `scripts/testnet/cold-signer.mjs`, `TEST_CHAINS =
+   ['11155111', '84532', '421614', '560048', '11155420']` (Ethereum Sepolia,
+   Base Sepolia, Arbitrum Sepolia, Hoodi, OP Sepolia; line 65, refusals at
+   lines 304–313). For format 3 the chain id is inside the EIP-712 domain the
+   signer recomputes, so a mainnet approval cannot pass as a test one.
+2. **A device phrase used for nothing else.** Its addresses are never funded
+   on a main network.
+3. **A value cap** on what the device will sign per request (for example 0.01
+   test ETH or 10 test USDC; a judgement, matching answer 12's "limit
+   accordingly").
+
+### 10.10 The product path: section 7 reconciled to option (b)
+
+Answer 13 chose (b): a design that could later become a Shiba-branded device
+used together with the phone wallet. Section 7's requirements, re-read for
+that goal:
+
+1. **A dedicated device, not a Raspberry Pi.** A microcontroller with secure
+   boot, signed firmware, its own display and buttons, no general-purpose
+   operating system — the Trezor pattern, which Tropic Square's sibling uses
+   (section 6) and which the proof of concept's Decision 3 and decision record
+   0004 describe as the requirement [POC ARCHITECTURE_DECISIONS.md lines
+   88–114; docs/decisions/0004-no-firmware-update.md lines 30–49]. The Pi
+   prototype carries over its request parsing, display rules, PIN scheme, key
+   derivation and slot plan; it does not carry over any trust in its display,
+   its memory or its boot.
+2. **The curve.** secp256k1 in the device's own firmware with the key sealed
+   by MAC-and-Destroy (this design), unless Tropic Square offers secp256k1 on
+   the chip. The proof of concept records that custom application firmware
+   "is available on request", "confirmed directly with Tropic Square"
+   [POC ARCHITECTURE_DECISIONS.md lines 13–15]; this document has no source
+   for that conversation and treats it as unverified (question 12.2.1).
+3. **Provisioning.** A customer-specific first pairing key from Tropic Square
+   (section 10.7) and privilege restrictions set at manufacture; possibly a
+   customer vendor key for firmware [AN007 custom firmware, section 2.11];
+   attestation of every device before the phone trusts it (section 2.12).
+4. **The transport.** QR both ways (section 10.4 option a). The phone needs no
+   change: the three request formats of section 10.3 are the interface. A
+   written, versioned specification of those formats is needed before a
+   second implementation exists; EIP-4527 was read and not adopted
+   (the record, phase 22 item 3).
+5. **Recovery under D1.** The device's own phrase restores the device; the
+   phone's phrase restores the phone (section 10.6). The strongest pairing
+   with the hot wallet is a 2-of-3 multisig — phone, device, and a third key
+   kept offline — so losing any one leaves the funds movable. The multisig's
+   honest limits (messages and permits refused) stay (`docs/MULTISIG.md`).
+6. **Audits and certification** (section 7 items 6 and 8), the advisory's
+   physical attack class (section 2.14), and test networks only until the
+   mainnet conditions C1–C3 are met (`docs/MAINNET_READINESS.md`).
+
+### 10.11 What runs on the Pi 3B+
+
+- **Chip access:** the proof of concept's stack, which is the only one shown to
+  work on this exact board: Python 3.13.5 with pytropicsquare 0.0.3, spidev and
+  gpiod on aarch64 Raspberry Pi OS (answer 1). libtropic (C) lists only the
+  Raspberry Pi 4 and 5 as tested (section 3.1); it stays the reference for a
+  product. Whether pytropicsquare exposes every command this design needs is
+  partly open: the proof of concept verified `mac_and_destroy(slot, data)` and
+  `random(nbytes)` in its source [POC docs/tropic01.md lines 127–143] but did
+  not list User Data, pairing-key read, counter or configuration-read calls
+  (question 12.1.9). If User Data calls are missing, the AN002 host data and
+  the sealed seed go on the SD card instead, which AN002 permits.
+- **The signer logic:** the wallet's own TypeScript, run by Node.js on the Pi
+  exactly as `cold-signer.mjs` runs it on the Mac, so the parsers, hashes and
+  checks are the same pinned code the phone uses rather than a second
+  implementation in Python that could disagree. The repository uses Node
+  v24.21.0 (`AGENTS.md`, Toolchain); whether that version installs and runs
+  the engine on a 3B+ is unverified. The alternative — one Python process —
+  would need its own RLP, Keccak-256 and EIP-712 code: the proof of concept's
+  installed `cryptography` 46.0.7 has a SECP256K1 curve
+  (cryptography/hazmat/primitives/asymmetric/ec.py line 298) and SHA3-256
+  (hashes.py line 149) but no Keccak function, and SHA3-256 is not the
+  Keccak-256 Ethereum uses, so it must not be substituted.
+- **How they meet:** a short-lived Python helper does only the PIN check and
+  hands k to the Node signer over a pipe on the same Pi. That is no weaker
+  than one process: both run on the same general-purpose system the proof of
+  concept's Decision 3 already treats as one trust domain.
+- **Nothing on the Pi needs the network** except option (d) of section 10.4
+  for the first demo.
+
+## 11. Stage 3 demo plan
+
+### 11.1 Rules for every step
+
+Every step is marked **READ** (no state change beyond the session nonce),
+**CONSUMES** (changes state that can be set up again, only in the slots agreed
+in section 10.8), or **FORBIDDEN** (section 10.1; not done without the
+Chairperson's explicit yes for that step, and not part of this plan). The
+Chairperson runs every command that talks to the chip, over SSH, on the board
+in use. An agent prepares and reviews the commands, drives the emulator and
+the Mac-side scripts, and reads chain data; an agent connects to the Pi only if
+the Chairperson grants that for a named step (Stage 1 sought no remote access,
+and none is assumed now). Output that names the chip's serial number stays
+with the Chairperson unless he chooses to share it.
+
+### 11.2 Read-only steps first (on the real board)
+
+| Step | Who | What | Class |
+|---|---|---|---|
+| R0 | Chairperson | Look at the shield: J2 on CS2; the spare shield stays unpowered | READ (no power) |
+| R1 | Chairperson, SSH | `cat /etc/os-release; uname -m; python3 --version; ls -l /dev/spidev*` — the operating system version, architecture and SPI devices | READ |
+| R2 | Chairperson, SSH, in the proof of concept's environment | `python3 -m demo.healthcheck --backend tropic01` — opens a session on slot 0, prints the chip identity and both firmware versions, pings, and inspects ECC slot 0 "without being changed"; its docstring says "Every check here is read-only" [POC demo/healthcheck.py lines 4–6, 22–26; the calls at lines 160–260 are `pair_factory`, `chip_id`, `firmware_versions`, `ping`, `read_key_info`]. Save the full output. This answers question 3 (except the bootloader version, which the proof of concept never read [docs/tropic01.md lines 115–116]) and answer 4 | READ |
+| R3 | Chairperson | Pairing-slot status. A session on slot 0 succeeding proves slot 0 is Valid. libtropic has a read-only `lt_pairing_key_read` for slots 0–3 [include/libtropic.h lines 333–343]; whether pytropicsquare has one is question 12.1.9. If neither is available on the Pi, this step is skipped and nothing is assumed about slots 1–3 | READ |
+| R4 | Chairperson | `read_key_info` for ECC slots 0–31 [POC hw/tropic_wallet_hw.py lines 187–196]; an empty slot answers with an error [POC tests/hardware/test_tropic01_hil.py lines 327–330]. Record curve and origin per slot; confirms answer 8 | READ |
+| R5 | Chairperson | Read the candidate User Data slot (if the SDK offers the read) | READ |
+| R6 | Chairperson, optional | Read monotonic counters 0–15. The datasheet says a counter must be initialised before reading [DS §7.10.1 p.52]; what a read of an uninitialised counter returns is not stated | READ |
+| R7 | Chairperson, optional | Read R-Config and I-Config (`lt_r_config_read`, `lt_i_config_read`, include/libtropic.h lines 368–436; pytropicsquare "exposes R-CONFIG and I-CONFIG registers" [POC docs/tropic01.md lines 395–404]) to learn whether anything was ever configured, maintenance mode included | READ |
+| — | — | MAC-and-Destroy slots: **no read step exists**; they cannot be inspected without being overwritten (section 10.1). Their history is question 12.1.4 | — |
+
+### 11.3 Rehearsal on the software model first
+
+Tropic Square recommends starting with the TROPIC01 Model, which libtropic
+documents as Linux only, macOS "TBA" (section 3.1). **Checked on this Mac on
+2026-11-07** (nothing installed or started): `which docker colima podman
+limactl` finds only `/usr/local/bin/docker`, a link into
+`/Applications/Docker.app` (Docker Desktop 4.12.0, its client 20.10.17, built
+2022); colima, podman and limactl are not installed; `docker version` reports
+"Cannot connect to the Docker daemon … Is the docker daemon running?". So the
+model cannot run on this Mac today without someone starting Docker Desktop,
+and whether a 2022 Docker Desktop still starts on macOS 26.7.1 was not tried.
+The options, each the Chairperson's call:
+
+1. Start Docker Desktop (or update it) and run the model in a Linux container.
+2. Run the model on the Raspberry Pi itself, which is Linux; whether it runs
+   acceptably on a 3B+ is unverified.
+3. A Linux virtual machine.
+
+Two further gaps: whether pytropicsquare can talk to the model's TCP port is
+not known (libtropic's TCP port can, section 3.1), and the model's PIN
+behaviour has never been compared with the chip by this project. What can be
+rehearsed with no model at all: everything except the chip, using the wallet's
+own `cold-signer.mjs` with the public test phrase (its `selftest`), plus a
+software stand-in for MAC_And_Destroy written from AN002 Appendix A, clearly
+labelled as not the chip.
+
+### 11.4 Prerequisites
+
+- **Before any hardware step:** the signer program itself (section 10.11),
+  written as a separate, reviewed slice in this repository, rehearsed with the
+  public test phrase and the stand-in or the model. It does not exist today.
+- **On the Pi** (the Chairperson installs; nothing here is installed by an
+  agent): SPI enabled and the user in the `spi` and `gpio` groups [POC
+  docs/hardware-bringup.md lines 42–60]; the proof of concept's Python
+  environment with `requirements-hardware.txt`; Node.js (version to be agreed,
+  question 12.1.9); the signer program and the engine's built packages copied
+  from the Mac (building on the Pi is not needed).
+- **Peripherals:** none for the first demo (option d). For the air-gapped
+  version: a display, a camera and a keypad (question 12.1.8).
+- **Test funds:** about 0.001 Sepolia ETH for the device address, sent by the
+  CTO from the dev EOA with `scripts/testnet/fund.mjs`.
+
+### 11.5 The smallest live demo: one Sepolia send, prepared on the emulator, signed on the Pi, broadcast from the wallet
+
+| Step | Who | What | Class |
+|---|---|---|---|
+| P1 | Chairperson | Confirm the agreed MAC-and-Destroy slots and User Data slot (section 10.8) | — |
+| P2 | Chairperson, SSH | Generate the device phrase (OS entropy mixed with `Random_Value_Get`), write it down, derive and show the address at m/44'/60'/0'/0/0 | READ (the random read changes nothing) |
+| P3 | Chairperson, SSH | PIN set-up on the agreed slots per AN002 §3.4 (3n MAC_And_Destroy calls); seal the seed; erase and write the agreed User Data slot | CONSUMES |
+| P4 | Chairperson, SSH | Unseal once with the correct PIN; the address must match P2 | CONSUMES (one slot used, re-initialised on success) |
+| P5 | Chairperson, SSH | One deliberately wrong PIN: no key, attempts 8 → 7; then the correct PIN: attempts back to 8 | CONSUMES (restored) |
+| D1 | agent, emulator | Watch the device address in the wallet ("Watch an address"; 0 prompts, as in pass p22b) | — |
+| D2 | CTO, Mac | Fund the device address with about 0.001 Sepolia ETH (`fund.mjs`) | — |
+| D3 | agent, emulator | "Send with an off-line signer": 0.0001 test ETH to Account 2 (an address already used, so no first-transfer surcharge); copy the request text (one QR code's worth, about 696 bytes) | — |
+| D4 | Chairperson | Move the request text to the Pi over SSH (option d: not air-gapped, stated) | — |
+| D5 | Chairperson, SSH | The signer refuses or shows (section 10.5); the Chairperson types the amount, then the PIN; the signer unseals, derives, checks the address equals `from`, signs, normalises s, verifies, erases, prints the signature payload | CONSUMES (one slot, re-initialised on success) |
+| D6 | agent, emulator | Paste the signature; expect "Signature checked: made by the watched address … over exactly the transaction shown above." (cold-signing.ts line 645); Broadcast | — |
+| D7 | agent | Read the receipt and both balances on two RPCs; reconcile to the wei | — |
+| N1 | Chairperson | A request whose chain id is 1 is refused on the Pi before the PIN is asked | READ |
+| N2 | Chairperson | A request with one character of `signingHash` changed is refused on the Pi before the PIN | READ |
+| N3 | Chairperson | A wrong PIN produces no signature | CONSUMES (restored by the next correct PIN) |
+| C1 | all | Sweep the test funds back with one more cold-signed send; remove the watched account | CONSUMES (one slot, restored) |
+| C2 | Chairperson | Keep the sealed set-up for the next demo, or erase the agreed User Data slot (the paper phrase restores the address either way) | CONSUMES |
+| — | — | Writing or invalidating a pairing key; any configuration write; a firmware update; libtropic's functional tests; the proof of concept's destructive tests; touching ECC slots 0–1; the spare chip | **FORBIDDEN** |
+
+**What the demo would prove:** that a secp256k1 key sealed by the chip's
+MAC-and-Destroy engine can sign the wallet's own cold-signing request on a
+public test network, with the attempt limit enforced by the chip and the
+phone unchanged. **What it would not prove:** that the Pi's display or memory
+can be trusted, that the device is air-gapped (option d is not), anything
+about physical attacks (section 2.14), or anything about main networks.
+
+## 12. Remaining questions after the 2026-11-07 answers
+
+### 12.1 For the Chairperson
+
+1. **The chip's identity.** Please run step R2 (section 11.2) and keep the
+   output; the part number, the firmware versions and, if any tool prints it,
+   the bootloader version are still not recorded (answer 3).
+2. **The firmware update (answer 4).** When was it done, with which program,
+   and to which versions? The proof of concept read application firmware
+   2.0.0.0 and SPECT 1.0.0.0 on 2026-09-20 and never updated it.
+3. **Other programs.** Has anything other than the proof of concept ever run
+   against this chip — libtropic's examples, `lt-util`, a vendor tool, and in
+   particular libtropic's functional tests?
+4. **The earlier PIN run.** The Stage 1 plan says the PIN ("MAC-and-destroy")
+   feature was driven successfully before; the proof of concept never called
+   it. Did that run happen, with which program, on which MAC-and-Destroy
+   slots, and does any data from it (on the SD card or in a User Data slot)
+   need keeping? Those slots cannot be read to find out (section 10.1).
+5. **The slot plan (section 10.8).** Agree MAC-and-Destroy slots 120–127 (or
+   others), one User Data slot, and that ECC slots 0 and 1 are kept.
+6. **Pairing.** Confirm that the demo stays on factory slot 0 and that no
+   pairing key is written (section 10.7).
+7. **The first demo's channel.** Accept option (d), where the device phrase,
+   the approval and the PIN pass through an SSH session from the Mac, for a
+   throwaway phrase and test funds only — or attach a display and keyboard
+   first?
+8. **Peripherals for the air-gapped version.** Which display, camera and
+   keypad or keyboard to attach to the 3B+ (answer 11: "plenty of peripherals
+   available"), and may the Pi's network be switched off once they are?
+9. **Software on the Pi.** Node.js on the Pi for the signer logic, with a
+   Python helper for the chip (section 10.11) — acceptable? And may an agent
+   read the installed pytropicsquare source on the Pi (or the Chairperson send
+   its version) to settle which calls it offers: User Data read and write,
+   pairing-key read, counter read, configuration read, a TCP transport for the
+   model?
+10. **The Pi's clock.** An air-gapped Pi has no network time. Is a real-time
+    clock module available (needed before smart-account requests, whose expiry
+    the signer checks), or should format 2 wait?
+11. **The model rehearsal (section 11.3).** Start or update Docker Desktop on
+    the Mac, run the model on the Pi, or skip the model and rehearse with the
+    software stand-in?
+12. **Funds and limits.** Agree the per-request cap (section 10.9) and the most
+    the device address may hold (proposed 0.002 Sepolia ETH).
+13. **ADR D1.** Accept that the device's key comes from the device's own
+    phrase, not the phone's (section 10.6).
+14. **Who runs what.** Confirm that the Chairperson runs every chip command,
+    or name the read-only steps an agent may run over SSH.
+15. **The product.** For option (b): build a microcontroller device, partner
+    with a maker, or both? Is there a written record of the custom-firmware
+    conversation with Tropic Square that the proof of concept mentions
+    (question 12.2.1)?
+
+### 12.2 For Tropic Square (adding to section 1.2)
+
+1. **secp256k1.** The proof of concept records that custom application
+   firmware is "available on request" [POC ARCHITECTURE_DECISIONS.md lines
+   13–15]. Does that include secp256k1 on SPECT, on which silicon, and under
+   what terms?
+2. **Licence of the SPECT firmware.** Stage 1 read the Clear BSD licence in
+   `ts-spect-fw` at 3b4681ca (section 2.14); the proof of concept records
+   Apache 2.0 [POC ARCHITECTURE_DECISIONS.md line 25; docs/tropic01.md lines
+   29–30]. Which applies, and did it change?
+3. **Monotonic counters.** May `MCounter_Init` be issued again at any time on a
+   counter that is already initialised (the datasheet's "option to reset",
+   DS §7.10 p.52), and what does `MCounter_Get` return for a counter never
+   initialised?
+4. **Bootloader version.** Which command or tool reads it?
+5. **Erratum OI_TR01_ERR_2026010800.** Which part numbers and firmware versions
+   does it affect?
+6. **The Raspberry Pi 3B+** with libtropic's Linux SPI port (section 1.2
+   question 5 stands).
+
+### 12.3 Not verified in this Stage 2 design
+
+- Nothing in sections 10 and 11 has been built or run.
+- Whether the chip's MAC-and-Destroy behaves as AN002 describes on this board
+  (the proof of concept never called it).
+- Whether pytropicsquare 0.0.3 offers the User Data, pairing-read, counter and
+  configuration calls, and whether it can reach the software model.
+- Whether Node v24.21.0 and the engine run on the 3B+; whether the model runs on
+  the 3B+ or in Docker Desktop 4.12.0 on this Mac.
+- The AN002 host-data sizes (the "about 390 bytes" figure is this document's
+  arithmetic, not AN002's).
+- Whether the WebAuthn path of section 4 role (b) works (unchanged from Stage 1).
+- Today's state of the chip: everything in answers 3, 4, 6, 7 and 8 that the
+  read-only steps of section 11.2 have not yet confirmed.
+
+## 13. Sources added on 2026-11-07
+
+- [POC] The Chairperson's proof-of-concept repository `tropic_wallet_poc`,
+  read read-only at commit 5025353 (branch
+  `device-split-and-hardware-validation`, 2026-09-26; history of eight commits
+  from 2026-09-20): README.md, ARCHITECTURE_DECISIONS.md, docs/security-status.md,
+  docs/known-limitations.md, docs/tropic01.md, docs/pairing-key-plan.md,
+  docs/firmware.md, docs/progress.md, docs/testing.md, docs/hardware-bringup.md,
+  docs/decisions/0001–0005, hw/tropic_wallet_hw.py, hw/transport_config.py,
+  device/confirm.py, device/policy.py, device/signer.py,
+  device/backends/tropic01.py, host/client.py, demo/healthcheck.py,
+  demo/run.sh, tests/hardware/test_tropic01_hil.py, requirements*.txt. None of
+  its code was run; no key from it is copied here.
+- [DS] the datasheet Rev. A.11, fetched again (SHA-256 prefix
+  ae647fa59ace0f38, equal to section 8): §7.1.1, §7.1.2, §7.5.3, §7.9,
+  §7.10, §7.11 and page 32.
+- [AN002] PIN Verification v1.2, fetched again (014fd5457d8df419, equal to
+  section 8): §3.2–§3.3 p.6, §3.5 p.11, §3.7 p.13, Appendix B p.21.
+- [AN006] Configuration Objects Application Note v1.3
+  (doc/application_notes/ODN_TR01_app_006_config_obj_1v3.pdf, SHA-256 prefix
+  09bcdcfe98d4615d): pp.8, 10, 13, 18.
+- [AN007] Firmware Update v1.5, fetched again (5f96cc4507e1c61a, equal to
+  section 8): pp.3, 8, 10.
+- [LT] libtropic `include/libtropic.h` at tag v4.2.0 (SHA-256 prefix
+  8222345edde8a586): lines 333–436 (pairing-key read and invalidation,
+  R-Config and I-Config), 596–652 (counters, MAC-and-Destroy).
+- This repository at HEAD 117e72c: `app/src/wallet/cold-signing.ts`,
+  `app/src/wallet/cold-aa.ts`, `app/src/wallet/qr-parts.ts`,
+  `app/src/wallet/multisig.ts`, `packages/chains-evm/src/cold-userop.ts`,
+  `packages/chains-evm/src/kernel-multisig.ts`,
+  `packages/chains-evm/src/eoa-tx.ts`, `packages/chains-evm/src/smart-account.ts`,
+  `scripts/testnet/cold-signer.mjs`, `AGENTS.md`.
+- This Mac, 2026-11-07: `which docker colima podman limactl`, `docker
+  version` (section 11.3).
