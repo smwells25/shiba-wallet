@@ -105,3 +105,19 @@ export function readinessIntroText(): string {
 export function readinessHintText(): string {
   return t('readiness.hint', { networks: testNetworkNames('or') });
 }
+
+/**
+ * Solana token sends are allowed on Solana devnet, which the "Use Solana
+ * devnet" switch under Settings → Developer turns on, not the Ethereum test
+ * network choice the shared enforcement line and hint name (pass p24-solana
+ * finding 4). Shown as one more line under the spl-tokens row, and after the
+ * shared hint below the list.
+ */
+export function readinessSolanaDevnetText(): string {
+  return t('readiness.solanaDevnet');
+}
+
+/** The extra line under one row, or null: today only the Solana token-send row has one. */
+export function readinessRowNoteText(feature: FeatureReadiness): string | null {
+  return feature.id === 'spl-tokens' ? readinessSolanaDevnetText() : null;
+}

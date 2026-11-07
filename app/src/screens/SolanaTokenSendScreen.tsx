@@ -12,6 +12,7 @@ import { requireLocalAuth } from '../wallet/biometric';
 import { useTheme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
 import { SOLANA_CHAIN_ID } from '../wallet/send';
+import { SolanaDevnetBanner } from '../components/SolanaDevnetBanner';
 import { listSolanaTokens } from '../wallet/tokens';
 import {
   SOLANA_SLOT_CHAIN_ID,
@@ -100,6 +101,7 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
               : `This token belongs to ${solanaNetworkLabel(token.assetId.chainId)}, but the Solana row is on ${solanaNetworkLabel(network ?? '')} now. Switch in Settings → Developer first.`;
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+        <SolanaDevnetBanner chainId={SOLANA_CHAIN_ID} />
         <WarningBox>{message}</WarningBox>
         <Button title="Back" variant="secondary" onPress={() => navigation.goBack()} />
       </ScrollView>
@@ -162,6 +164,7 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
   if (phase === 'success' && outcome && quote) {
     return (
       <ScrollView key="spl-send-success" style={screenStyle(theme)} contentContainerStyle={styles.content}>
+        <SolanaDevnetBanner chainId={SOLANA_CHAIN_ID} />
         <Text accessibilityRole="header" style={[styles.title, { color: theme.success }]}>Sent ✓</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>Transaction signature</Text>
         <Text selectable style={[styles.mono, { color: theme.text }]}>{outcome.signature}</Text>
@@ -181,6 +184,7 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
   if ((phase === 'confirm' || phase === 'sending') && quote) {
     return (
       <ScrollView key="spl-send-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
+        <SolanaDevnetBanner chainId={SOLANA_CHAIN_ID} />
         <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>
           Send {quote.symbol} on {label}
         </Text>
@@ -218,6 +222,7 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
 
   return (
     <ScrollView key="spl-send-form" style={screenStyle(theme)} contentContainerStyle={styles.content}>
+      <SolanaDevnetBanner chainId={SOLANA_CHAIN_ID} />
       <Text style={[styles.hint, { color: theme.textMuted }]}>
         Sends {token.symbol} (mint {token.assetId.reference}) on {label} from your associated token account. The network
         fee is paid in SOL; if the recipient does not hold this token yet, this transaction also creates their token

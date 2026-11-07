@@ -14,6 +14,7 @@ import type { RootStackParamList } from '../navigation';
 import { Button, ImportedKeyNotice, WarningBox, WatchOnlyNotice, screenStyle } from '../components';
 import { T } from '../i18n/T';
 import { useI18n } from '../i18n/useI18n';
+import { SolanaDevnetBanner } from '../components/SolanaDevnetBanner';
 import { IMPORTED_KEY_NO_CHAIN, IMPORTED_KEY_PATH, MULTISIG_NO_CHAIN, WATCH_ONLY_NO_CHAIN } from '../wallet/account-ids';
 import {
   MULTISIG_RECEIVE_NOTE,
@@ -172,6 +173,7 @@ export function ReceiveScreen({ route, navigation }: Props) {
 
   return (
     <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+      <SolanaDevnetBanner chainId={route.params.chainId} />
       <View
         style={[styles.badge, { backgroundColor: account.accent }]}
         accessibilityElementsHidden

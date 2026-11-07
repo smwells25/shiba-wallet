@@ -32,6 +32,7 @@ import {
   type MintProfile,
   type SignatureStatus,
   type SplTokenTransferQuote,
+  type TransferFeeConfig,
 } from '@shiba-wallet/chains-solana';
 import { isFeatureAllowed, readinessReason } from '../config/readiness.ts';
 import { parseUnits } from './balances.ts';
@@ -43,6 +44,17 @@ import { parseUnits } from './balances.ts';
  * Solana key is the same on both, so signing always names the slot.
  */
 export const SOLANA_SLOT_CHAIN_ID = SOLANA_MAINNET_CAIP2;
+
+/**
+ * True when a screen for the Solana slot shows the Solana devnet banner
+ * (components/SolanaDevnetBanner.tsx; pass p24-solana finding 2): only for
+ * the Solana slot (`slotChainId` is the route's chain id, the mainnet slot
+ * id) and only while the "Use Solana devnet" switch is on. The Ethereum
+ * network choice plays no part.
+ */
+export function solanaDevnetBannerShown(slotChainId: string | undefined, solanaDevnet: boolean): boolean {
+  return solanaDevnet === true && slotChainId === SOLANA_SLOT_CHAIN_ID;
+}
 
 /** The network's name as the screens say it. */
 export function solanaNetworkLabel(caip2: string): string {
@@ -111,6 +123,29 @@ export interface MintPreview {
   sendRefusal: string | null;
   /** The look-alike sentence (engine's lookAlikeSentence) when the symbol imitates a known or tracked token, else null. */
   lookAlike: string | null;
+  /** The mint's TransferFeeConfig as the engine decoded it (classification.transferFee), else null. */
+  transferFee: TransferFeeConfig | null;
+}
+
+/**
+ * The read-back and Track prompt line for a mint with a TransferFeeConfig
+ * (pass p24-solana finding 5), from the engine's decoded config: the rate in
+ * basis points and the most it withholds per transfer, in the token's own
+ * units. A rate of 0 is said as 0. A mint carries two rates (older and
+ * newer); the engine applies the newer one from its epoch on
+ * (transferFeeRateAt), so when they differ both are named with that epoch.
+ * The fee withheld from a send is worked out again for that send and shown
+ * on its confirm (quoteSplTokenTransfer).
+ */
+export function splTransferFeeLine(config: TransferFeeConfig, decimals: number, symbol: string | null): string {
+  const amount = (v: bigint) => `${formatBaseUnits(v, decimals)}${symbol ? ` ${symbol}` : ''}`;
+  const rate = (r: TransferFeeConfig['newerTransferFee']) => `${r.basisPoints} basis points (${amount(r.maximumFee)} max)`;
+  const older = config.olderTransferFee;
+  const newer = config.newerTransferFee;
+  const same = older.basisPoints === newer.basisPoints && older.maximumFee === newer.maximumFee;
+  return same
+    ? `Transfer fee: ${rate(newer)} — shown again on every send.`
+    : `Transfer fee: ${rate(older)} before epoch ${newer.epoch}, then ${rate(newer)} — shown again on every send.`;
 }
 
 /** Reference tokens for the look-alike rule on one network: the engine's known tokens and the tracked ones. */
@@ -175,17 +210,22 @@ export async function previewMint(
     decimals: profile.parsed.decimals,
     sendRefusal: profile.classification.refusal,
     lookAlike: lookAlikeFor(caip2, mint, symbol, tracked),
+    transferFee: profile.classification.transferFee,
   };
 }
 
 /** The Track confirmation: the full mint, the network, a look-alike warning and a send refusal when there is one. */
-export function trackPrompt(preview: Pick<MintPreview, 'mint' | 'caip2' | 'lookAlike' | 'sendRefusal'>, symbol: string): TrackPrompt {
+export function trackPrompt(
+  preview: Pick<MintPreview, 'mint' | 'caip2' | 'lookAlike' | 'sendRefusal'> & Partial<Pick<MintPreview, 'transferFee' | 'decimals'>>,
+  symbol: string,
+): TrackPrompt {
   return {
     title: `Track ${symbol}?`,
     message:
       `Mint ${preview.mint} on ${solanaNetworkLabel(preview.caip2)}.` +
       (preview.lookAlike ? ` Warning: ${preview.lookAlike}` : '') +
       (preview.sendRefusal ? ` This token can be tracked and shown, but this wallet will not send it: ${preview.sendRefusal}` : '') +
+      (preview.transferFee && preview.decimals !== undefined ? ` ${splTransferFeeLine(preview.transferFee, preview.decimals, symbol)}` : '') +
       ' Anyone can create a token with any name and symbol; track it only if this is the mint you expect.',
     confirm: `Track ${symbol}`,
   };
@@ -272,6 +312,26 @@ export async function loadSplTokenRows(
     }
   }
   return { rows, skipped: listing.skipped };
+}
+
+/**
+ * Whether a Solana token row offers its "Send <SYM>" link (pass p24-solana
+ * finding 7): only where a send is offered at all (the readiness gate gave
+ * the row an onSend), the row read cleanly, the engine does not refuse the
+ * class, the decimals are unchanged, and the associated token account (the
+ * one a send uses) holds more than 0. At exactly 0 the link is hidden, since
+ * the quote would refuse at Review with nothing to send; a balance held only
+ * in other token accounts does not count, because a send never uses them.
+ */
+export function splSendLinkShown(state: SplRowState | undefined, sendOffered: boolean): boolean {
+  return (
+    sendOffered &&
+    state !== undefined &&
+    state.status === 'ok' &&
+    state.sendRefusal === null &&
+    !state.decimalsChanged &&
+    state.associated > 0n
+  );
 }
 
 /** The line under a row whose mint balance sits partly outside the associated account. */

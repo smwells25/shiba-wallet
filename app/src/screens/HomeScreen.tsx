@@ -52,6 +52,7 @@ import {
   splDecimalsChangedLine,
   splOutsideLine,
   splSendGate,
+  splSendLinkShown,
   splSkippedLine,
   type SplRowState,
 } from '../wallet/spl-tokens';
@@ -375,7 +376,9 @@ function SolanaTokenRow({
     if (state.sendRefusal !== null) lines.push(splCannotSendLine(state.sendRefusal));
     if (state.decimalsChanged) lines.push(splDecimalsChangedLine(token.decimals, state.decimals));
   }
-  const sendable = state?.status === 'ok' && state.sendRefusal === null && !state.decimalsChanged && onSend !== undefined;
+  // Hidden at a 0 balance in the associated account too (pass p24-solana
+  // finding 7; spl-tokens.ts splSendLinkShown).
+  const sendable = splSendLinkShown(state, onSend !== undefined);
   const subtitle = token.name && token.name !== token.symbol ? `${token.name} · ${networkLabel} token` : `${networkLabel} token`;
   return (
     <View>
@@ -902,9 +905,15 @@ export function HomeScreen({ navigation }: Props) {
             {splTokens.skipped > 0 ? (
               <Text style={[styles.manageTokens, { color: theme.textMuted }]}>{splSkippedLine(splTokens.skipped)}</Text>
             ) : null}
+            {/* The fee of a Solana token send is SOL, not the Ethereum coin the
+                footer's token-fee sentence names (pass p24-solana finding 3). */}
+            {tokensHere.length > 0 ? (
+              <Text style={[styles.manageTokens, { color: theme.textMuted }]}>{t('home.solanaTokens.fee')}</Text>
+            ) : null}
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Manage Solana tokens"
+              accessibilityHint="Opens the list of tracked Solana tokens"
               onPress={() => navigation.navigate('SolanaTokens')}
               hitSlop={8}
             >
@@ -1091,7 +1100,7 @@ export function HomeScreen({ navigation }: Props) {
           <View style={styles.linkRow}>
             {cardLink('portfolio', 'Portfolio', () => navigation.navigate('Portfolio'), 'Net worth and profit and loss')}
             {cardLink('price-alerts', 'Price alerts', () => navigation.navigate('PriceAlerts'), 'Price alerts and watchlist')}
-            {cardLink('inbox', inboxLinkText(inboxUnread), () => navigation.navigate('Inbox'), 'Reminders, alerts and sent transactions')}
+            {cardLink('inbox', inboxLinkText(inboxUnread), () => navigation.navigate('Inbox'), 'Reminders, alerts, requests from connected apps that the wallet sent, speed-ups and cancellations')}
           </View>
           {/* Feature 12 (ADR D9): an imported Ethereum key has no Bitcoin,
               Dogecoin or Solana address; those networks are shown as not

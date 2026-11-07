@@ -645,9 +645,11 @@ console.log('check-inbox: routes, links and allow lists');
   const lockNotePicked = (src) =>
     src.includes("{appPinOn ? <Text style={[styles.hint, { color: theme.textMuted }]}><T>{inboxLockKind === 'phr' ? INBOX_PASSPHRASE_NOTE : INBOX_PIN_NOTE}</T></Text> : null}") &&
     src.includes('const inboxLockKind = React.useSyncExternalStore(appLockKind.subscribe, appLockKind.get);');
-  check('the inbox\'s app-lock note: the passphrase form exactly, the PIN form unchanged, picked by the lock\'s kind',
-    I.INBOX_PASSPHRASE_NOTE === 'The app passphrase is on, so the wallet posts no phone notifications. The inbox still lists what the wallet showed you on its own screens, such as the recurring-payment banner, price alerts and sent transactions.' &&
-      I.INBOX_PIN_NOTE === 'The app PIN is on, so the wallet posts no phone notifications. The inbox still lists what the wallet showed you on its own screens, such as the recurring-payment banner, price alerts and sent transactions.' &&
+  // Phase 24, the Solana-pass fix slice: both forms name what the inbox lists
+  // (as the intro reworded in dfb5eba does), never "sent transactions".
+  check('the inbox\'s app-lock note: the passphrase form and the PIN form exactly, picked by the lock\'s kind',
+    I.INBOX_PASSPHRASE_NOTE === 'The app passphrase is on, so the wallet posts no phone notifications. The inbox still lists what the wallet showed you on its own screens, such as the recurring-payment banner, price alerts, requests from connected apps that the wallet sent, and speed-ups and cancellations.' &&
+      I.INBOX_PIN_NOTE === 'The app PIN is on, so the wallet posts no phone notifications. The inbox still lists what the wallet showed you on its own screens, such as the recurring-payment banner, price alerts, requests from connected apps that the wallet sent, and speed-ups and cancellations.' &&
       lockNotePicked(screen));
   check('mutant caught (polish): the PIN note shown whatever the lock\'s kind', !lockNotePicked(screen.replace("inboxLockKind === 'phr' ? INBOX_PASSPHRASE_NOTE : INBOX_PIN_NOTE", 'INBOX_PIN_NOTE')));
   check('the screen: intro, the app-lock note, the read-only box with reset, Mark all read, the reminder note',

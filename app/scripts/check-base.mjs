@@ -48,7 +48,10 @@ import {
   amountIsLastMax,
   chainHasL1DataFee,
   maxAdjustmentSentence,
+  MAX_ESTIMATE_VALUE_WEI,
+  maxAdjustmentReason,
   maxEvmSend,
+  maxEvmSendDetails,
   opStackFeeTotal,
   prepareEvmSend,
   quoteOpStackFees,
@@ -136,7 +139,9 @@ function rpcResult(method, params) {
     case 'eth_maxPriorityFeePerGas':
       return '0x' + s.priorityFee.toString(16);
     case 'eth_estimateGas':
-      return '0x' + s.estimateGas.toString(16);
+      // estimateGasFn (the iOS-pass case below): the gas depends on the
+      // transaction asked about, as after Glamsterdam (EIP-2780).
+      return '0x' + (s.estimateGasFn ? s.estimateGasFn(params[0]) : s.estimateGas).toString(16);
     case 'eth_call': {
       const { to, data = '0x' } = params[0];
       if (to.toLowerCase() === OP_STACK_GAS_PRICE_ORACLE.toLowerCase()) {
@@ -574,6 +579,101 @@ check('amountIsLastMax: edited text → false', !amountIsLastMax(last, { text: '
 check('amountIsLastMax: other account → false', !amountIsLastMax(last, { text: '0.0079', from: TO, chainId: 'eip155:84532' }));
 check('amountIsLastMax: other chain → false', !amountIsLastMax(last, { text: '0.0079', from: FROM, chainId: 'eip155:11155111' }));
 check('amountIsLastMax: no Max yet → false', !amountIsLastMax(null, { text: '0.0079', from: FROM, chainId: 'eip155:84532' }));
+
+// ---------------------------------------------------------------------------
+// 3c. The Max estimate after Glamsterdam (the iOS pass of phase 24, finding 11)
+// ---------------------------------------------------------------------------
+
+console.log('Max estimates a transfer that carries value (EIP-2780):');
+
+// The live case: after send 1 the balance was 1,899,999,999,643,000 wei and
+// the fee 32 wei per gas; Max reserved 15,000 × 32 (a zero-value estimate)
+// while the quote of the non-zero amount needed 21,000 × 32, so Review
+// lowered the amount and said the fee rose, which it had not.
+const IOS_BALANCE = 1_899_999_999_643_000n;
+function iosScenario() {
+  const s = defaultScenario('0xaa36a7'); // Ethereum Sepolia
+  s.balance = IOS_BALANCE;
+  s.baseFeePerGas = 15n;
+  s.priorityFee = 2n; // max fee = 2 × 15 + 2 = 32 wei per gas
+  s.estimateGasFn = (tx) => (tx.value === undefined || BigInt(tx.value) === 0n ? 15_000n : 21_000n);
+  return s;
+}
+scenario = iosScenario();
+requests = [];
+const iosMax = await maxEvmSendDetails(URL, FROM, TO);
+const iosEstimates = requests.filter((r) => r.method === 'eth_estimateGas');
+check('Max estimates with 1 wei of value, once (MAX_ESTIMATE_VALUE_WEI)',
+  MAX_ESTIMATE_VALUE_WEI === 1n && iosEstimates.length === 1 && iosEstimates[0].params[0].value === '0x1',
+  JSON.stringify(iosEstimates.map((r) => r.params[0].value)));
+check('Max reserves 21,000 × 32 wei, the gas of the non-zero transfer it fills in',
+  iosMax.reserved.gasLimit === 21_000n && iosMax.reserved.maxFeePerGas === 32n && iosMax.reserved.fee === 672_000n &&
+    iosMax.amount === IOS_BALANCE - 672_000n, `${iosMax.amount} ${iosMax.reserved.gasLimit}`);
+check('maxEvmSend gives the same amount', (await maxEvmSend(URL, FROM, TO)) === iosMax.amount);
+const iosQuote = await prepareEvmSend(URL, FROM, TO, iosMax.amount, undefined, EVM_SEPOLIA.caip2, {
+  fromMax: true,
+  maxReserved: iosMax.reserved,
+});
+check('…and Review keeps that amount: no lowering, no sentence, amount + fee = the balance',
+  iosQuote.amount === iosMax.amount && !('maxAdjustment' in iosQuote) && iosQuote.total === IOS_BALANCE &&
+    iosQuote.gasLimit === 21_000n && maxAdjustmentSentence(iosQuote, String) === null);
+// The old Max (value 0: 15,000 gas) reproduced, to show what the reason says when gas, not the fee, grew.
+const oldIosMax = IOS_BALANCE - 15_000n * 32n;
+const oldReserved = { gasLimit: 15_000n, maxFeePerGas: 32n, fee: 480_000n };
+const oldTrim = await prepareEvmSend(URL, FROM, TO, oldIosMax, undefined, EVM_SEPOLIA.caip2, { fromMax: true, maxReserved: oldReserved });
+check('the old 15,000-gas reservation: Review lowers the amount by 6,000 × 32 wei to balance − 672,000',
+  oldTrim.amount === IOS_BALANCE - 672_000n && oldTrim.maxAdjustment?.requested === oldIosMax && oldTrim.total === IOS_BALANCE);
+check('…and the reason is the gas, not the fee (the per-gas fee stayed 32 wei)', oldTrim.maxAdjustment?.reason === 'gas');
+check('…so the sentence says the gas grew and does NOT say the network fee rose',
+  maxAdjustmentSentence(oldTrim, (v) => `${v} wei`) ===
+    `The amount was lowered from ${oldIosMax} wei to ${oldTrim.amount} wei because the gas needed for this transfer is more than was reserved when you tapped Max; the fee per unit of gas did not rise. The amount plus the worst-case fee now equals your balance.`,
+  String(maxAdjustmentSentence(oldTrim, (v) => `${v} wei`)));
+// The fee per gas rose after Max: the old sentence, word for word.
+scenario = iosScenario();
+const feeMax = await maxEvmSendDetails(URL, FROM, TO);
+scenario.baseFeePerGas = 20n; // 2 × 20 + 2 = 42 wei per gas
+const feeTrim = await prepareEvmSend(URL, FROM, TO, feeMax.amount, undefined, EVM_SEPOLIA.caip2, { fromMax: true, maxReserved: feeMax.reserved });
+check('the per-gas fee rose (32 → 42 wei): reason "fee" and the old sentence unchanged',
+  feeTrim.maxAdjustment?.reason === 'fee' && feeTrim.amount === IOS_BALANCE - 21_000n * 42n &&
+    maxAdjustmentSentence(feeTrim, (v) => `${v} wei`) ===
+      `The amount was lowered from ${feeMax.amount} wei to ${feeTrim.amount} wei because the network fee rose after you tapped Max. The amount plus the worst-case fee now equals your balance.`);
+// Neither the fee nor the gas grew, but the balance fell: the third sentence.
+scenario = iosScenario();
+const balMax = await maxEvmSendDetails(URL, FROM, TO);
+scenario.balance = IOS_BALANCE - 1_000n;
+const balTrim = await prepareEvmSend(URL, FROM, TO, balMax.amount, undefined, EVM_SEPOLIA.caip2, { fromMax: true, maxReserved: balMax.reserved });
+check('the balance fell with the same fee and gas: reason "balance" and its own sentence',
+  balTrim.maxAdjustment?.reason === 'balance' && balTrim.amount === balMax.amount - 1_000n &&
+    maxAdjustmentSentence(balTrim, (v) => `${v} wei`) ===
+      `The amount was lowered from ${balMax.amount} wei to ${balTrim.amount} wei because the balance is lower than when you tapped Max; the network fee did not rise. The amount plus the worst-case fee now equals your balance.`);
+// Without a reservation (an older caller): the reason is absent and the old sentence stays.
+const noRes = await prepareEvmSend(URL, FROM, TO, balMax.amount, undefined, EVM_SEPOLIA.caip2, { fromMax: true });
+check('no reservation passed: no reason, the old sentence', noRes.maxAdjustment !== undefined && !('reason' in noRes.maxAdjustment) &&
+  maxAdjustmentSentence(noRes, String).includes('because the network fee rose after you tapped Max.'));
+check('maxAdjustmentReason: per-gas fee first, then gas, then the whole fee (layer 1), else the balance',
+  maxAdjustmentReason(oldReserved, { gasLimit: 21_000n, maxFeePerGas: 33n, fee: 693_000n }) === 'fee' &&
+    maxAdjustmentReason(oldReserved, { gasLimit: 21_000n, maxFeePerGas: 32n, fee: 672_000n }) === 'gas' &&
+    maxAdjustmentReason(oldReserved, { gasLimit: 15_000n, maxFeePerGas: 32n, fee: 480_001n }) === 'fee' &&
+    maxAdjustmentReason(oldReserved, { gasLimit: 15_000n, maxFeePerGas: 32n, fee: 480_000n }) === 'balance');
+// A recipient that refuses value (or a balance of 0): the 1-wei estimate fails
+// and Max retries with value 0, as prepareEvmSend does for a plain transfer.
+scenario = iosScenario();
+scenario.estimateGasFn = (tx) => {
+  if (tx.value !== undefined && BigInt(tx.value) !== 0n) throw { code: 3, message: 'execution reverted' };
+  return 15_000n;
+};
+requests = [];
+const fallbackMax = await maxEvmSendDetails(URL, FROM, TO);
+check('1-wei estimate refused → retried with value 0 (two estimates), Max still answers',
+  requests.filter((r) => r.method === 'eth_estimateGas').map((r) => r.params[0].value).join() === '0x1,0x0' &&
+    fallbackMax.reserved.gasLimit === 15_000n && fallbackMax.amount === IOS_BALANCE - 480_000n);
+scenario = iosScenario();
+scenario.balance = 0n;
+scenario.estimateGasFn = (tx) => {
+  if (tx.value !== undefined && BigInt(tx.value) !== 0n) throw { code: -32000, message: 'insufficient funds for transfer' };
+  return 15_000n;
+};
+check('a balance of 0: Max is 0 (the 1-wei estimate fails, the value-0 one answers)', (await maxEvmSend(URL, FROM, TO)) === 0n);
 
 // ---------------------------------------------------------------------------
 // 4. Ethereum mainnet and Sepolia: unchanged, no oracle call

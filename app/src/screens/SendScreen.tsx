@@ -17,6 +17,8 @@ import { formatAssetId, nonFungibleTokenId, parseAssetId } from '@shiba-wallet/c
 import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
 import { Button, ImportedKeyNotice, WarningBox, screenStyle, switchColors, useFieldLabels } from '../components';
+import { SolanaDevnetBanner } from '../components/SolanaDevnetBanner';
+import { SOLANA_DEVNET_CAIP2 } from '../config/defaults';
 import { T } from '../i18n/T';
 import { localize, t, tx } from '../i18n/index';
 import { sendScanRationale } from '../i18n/article';
@@ -47,7 +49,8 @@ import {
   repriceTokenQuoteAtMinimumFee,
   amountIsLastMax,
   maxAdjustmentSentence,
-  maxEvmSend,
+  maxEvmSendDetails,
+  type MaxEvmReservation,
   maxSolSend,
   maxUtxoSend,
   prepareEvmSend,
@@ -822,8 +825,10 @@ export function SendScreen({ route, navigation }: Props) {
   const url = endpoint?.url ?? null;
   const isEvmKind = network?.kind === 'evm-jsonrpc';
   // Orange TESTNET presentation whenever the active EVM chain is a
-  // testnet and this screen is on the EVM slot.
-  const testnet = isEvmKind && evmChain.testnet;
+  // testnet and this screen is on the EVM slot, and on the Solana slot while
+  // it is served by Solana devnet ("Use Solana devnet"; pass p24-solana
+  // finding 1: the SOL send's line read "Solana devnet · Mainnet").
+  const testnet = (isEvmKind && evmChain.testnet) || network?.chainId === SOLANA_DEVNET_CAIP2;
   // Token mode: amounts are in the token's on-chain decimals and carry the
   // token's symbol; the fee stays in the native coin (see nativeDecimals).
   const decimals = token ? token.decimals : network?.decimals ?? 8;
@@ -985,6 +990,8 @@ export function SendScreen({ route, navigation }: Props) {
     try {
       const start = await currentEndpoint();
       let max: bigint;
+      // What the native EOA Max reserved for the fee (send.ts maxEvmSendDetails).
+      let evmReserved: MaxEvmReservation | null = null;
       if (nft) {
         // ERC-1155 Max = the on-chain balance (gas is paid in ETH, so it
         // never reduces the number of copies). ERC-721 has no amount field.
@@ -1090,11 +1097,13 @@ export function SendScreen({ route, navigation }: Props) {
         ).value;
         if (max <= 0n) throw new Error(`Your ${token.symbol} balance is zero.`);
       } else if (start.network.kind === 'evm-jsonrpc') {
-        max = (
+        const details = (
           await viaFailover(start, (ep) =>
-            maxEvmSend(ep.url, account.address, validation?.ok ? validation.normalized : undefined),
+            maxEvmSendDetails(ep.url, account.address, validation?.ok ? validation.normalized : undefined),
           )
         ).value;
+        max = details.amount;
+        evmReserved = details.reserved;
       } else if (start.network.kind === 'solana-jsonrpc') {
         max = (await viaFailover(start, (ep) => maxSolSend(ep.url, account.address))).value;
       } else {
@@ -1112,7 +1121,12 @@ export function SendScreen({ route, navigation }: Props) {
       if (max <= 0n) throw new Error('Balance is too small to cover the network fee.');
       const maxText = exact(max, decimals);
       if (!aaActive && !token && start.network.kind === 'evm-jsonrpc') {
-        lastEvmMax.current = { text: maxText, from: account.address, chainId: route.params.chainId };
+        lastEvmMax.current = {
+          text: maxText,
+          from: account.address,
+          chainId: route.params.chainId,
+          ...(evmReserved ? { reserved: evmReserved } : {}),
+        };
       }
       setAmountText(maxText);
     } catch (e) {
@@ -1425,6 +1439,8 @@ export function SendScreen({ route, navigation }: Props) {
         const quoted = await viaFailover(start, (ep) =>
           prepareEvmSend(ep.url, account.address, recipientAddress, amount, undefined, evmChain.caip2, {
             fromMax,
+            // What Max reserved, so a lowered amount says why (send.ts maxAdjustmentReason).
+            ...(fromMax && lastEvmMax.current?.reserved ? { maxReserved: lastEvmMax.current.reserved } : {}),
             ...(minimumFee ? { minimumFee } : {}),
           }),
         );
@@ -1840,6 +1856,7 @@ export function SendScreen({ route, navigation }: Props) {
   if (phase === 'success' && result) {
     return (
       <ScrollView key="send-success" style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
+        <SolanaDevnetBanner chainId={route.params.chainId} />
         <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}><T>Sent ✓</T></Text>
         <Text style={[styles.label, { color: theme.textMuted }]}><T>Transaction id</T></Text>
         <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
@@ -2318,6 +2335,7 @@ export function SendScreen({ route, navigation }: Props) {
     const sendBlocked = simulationFailed && !overrideSimulation;
     return (
       <ScrollView key="send-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
+        <SolanaDevnetBanner chainId={route.params.chainId} />
         <NetworkBadge label={network.label} testnet={testnet} theme={theme} />
 
         <Row label="From account" value={fromName} sub={quotedFrom} theme={theme} />
@@ -2442,6 +2460,7 @@ export function SendScreen({ route, navigation }: Props) {
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
     >
+      <SolanaDevnetBanner chainId={route.params.chainId} />
       <Text style={[styles.networkLine, { color: testnet ? theme.testnetFill : theme.textMuted }]}>
         {network ? `${network.label} · ${testnet ? tx('TESTNET') : tx('Mainnet')}` : tx('Unknown network')}{' '}
         {t('send.from', { account: activeAccount ? `${activeAccount.name} ` : '', address: account.address.slice(0, 10) })}

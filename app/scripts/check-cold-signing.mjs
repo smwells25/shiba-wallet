@@ -717,14 +717,23 @@ console.log('check-cold-signing: pass p22b (the rehearsal note on a refused broa
   const onMax = screen.slice(screen.indexOf('const onMax = async'), screen.indexOf('const onShow = async'));
   const maxOk = (body, src) =>
     body.includes('maxErc20Send(ep.url, from, token.assetId.reference, to, token.assetId.chainId)') &&
-    body.includes('maxEvmSend(ep.url, from, to)') &&
+    // Since the p24-solana fix slice the native Max keeps what it reserved (maxEvmSendDetails), so a lowering says why.
+    body.includes('maxEvmSendDetails(ep.url, from, to)') &&
     body.includes("throw new Error('Balance is too small to cover the network fee.');") &&
-    body.includes('if (!token) lastMax.current = { text, from, chainId: EVM_CHAIN_ID };') &&
+    body.includes('if (!token) lastMax.current = { text, from, chainId: EVM_CHAIN_ID, ...(reserved ? { reserved } : {}) };') &&
     src.includes('fromMax: amountIsLastMax(lastMax.current, { text: amountText, from, chainId: EVM_CHAIN_ID }),') &&
     src.includes('<WarningBox>{maxAdjustmentSentence(quote, (v) => `${fmt(v)} ${symbol}`)}</WarningBox>') &&
     /title=\{maxBusy \? '…' : 'Max'\}[\s\S]{0,80}onPress=\{\(\) => void onMax\(\)\}/.test(src);
   check('finding 7: Max with the Send screen\'s functions — native: maxEvmSend (balance less the worst-case fee), a token: maxErc20Send (its whole balance, refused when ETH cannot pay the fee); a native Max amount lowered at Review with the same sentence (fromMax, maxAdjustmentSentence)',
     maxOk(onMax, screen));
+  // The iOS pass of phase 24 (finding 11): both Max paths remember what Max reserved
+  // and hand it to Review, so a lowered amount says why (send.ts maxAdjustmentReason).
+  const sendScreenSrc = readFileSync(new URL('../src/screens/SendScreen.tsx', import.meta.url), 'utf8');
+  check('Max reservation passed to Review on the off-line signer screen and on the Send screen',
+    screen.includes('? { maxReserved: lastMax.current.reserved }') &&
+      sendScreenSrc.includes('...(fromMax && lastEvmMax.current?.reserved ? { maxReserved: lastEvmMax.current.reserved } : {}),') &&
+      sendScreenSrc.includes('maxEvmSendDetails(ep.url, account.address, validation?.ok ? validation.normalized : undefined),') &&
+      sendScreenSrc.includes('...(evmReserved ? { reserved: evmReserved } : {}),'));
   check('…mutant caught: Review no longer told the amount came from Max',
     !maxOk(onMax, screen.replace('fromMax: amountIsLastMax(lastMax.current, { text: amountText, from, chainId: EVM_CHAIN_ID }),', '')));
   check('…no copy of the Max arithmetic on the screen (no balance or fee figures computed there)', !/getBalance|gasLimit \*|\* quote\.maxFeePerGas/.test(onMax));

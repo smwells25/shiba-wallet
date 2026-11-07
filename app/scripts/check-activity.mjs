@@ -1695,7 +1695,9 @@ console.log('ActivityScreen source:');
   check('the screen passes the account labels and the pinned-staking lookup for the active network, and names the EVM slot by the network (findings 4, 7e, 7f)',
     /accountLabels,\n\s*stakingContractAt: pinnedStakingAt,/.test(screen) && screen.includes('const accountLabels = sentences.labels;') &&
       screen.includes('(address: string) => stakingContractAt(evmChain.caip2, address)') &&
-      screen.includes("title: account ? t('activity.title.network', { network: isEvmSlot ? evmChain.label : account.name }) : tx('Activity'),"));
+      // Since the p24-solana fix slice the Solana slot on devnet is titled after the devnet network.
+      screen.includes("? t('activity.title.network', { network: isEvmSlot ? evmChain.label : solanaDevnetSlot ? SOLANA_DEVNET_NETWORK.label : account.name })") &&
+      screen.includes("title: account\n") && screen.includes(": tx('Activity'),"));
   // Emulator re-check of 2026-10-11, findings 2 and 3: the decode set holds
   // the wallet's other smart accounts and the network's multisigs, but only
   // the account's own addresses read "yourself".

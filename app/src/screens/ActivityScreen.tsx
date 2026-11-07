@@ -20,12 +20,13 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { HistoryEntry } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
 import { Button, screenStyle, useFieldLabels } from '../components';
+import { SolanaDevnetBanner } from '../components/SolanaDevnetBanner';
 import { T } from '../i18n/T';
 import { useI18n } from '../i18n/useI18n';
 import { localTimestampLabel } from '../i18n/format';
 import { activityRowSpokenLead, spokenShortAddress } from '../a11y';
 import { Theme, useTheme } from '../theme';
-import { SOLANA_DEVNET_CAIP2, networkDefaultFor } from '../config/defaults';
+import { SOLANA_DEVNET_CAIP2, SOLANA_DEVNET_NETWORK, networkDefaultFor } from '../config/defaults';
 import { maskAmount } from '../config/prefs';
 import {
   formatBalanceDisplay,
@@ -695,9 +696,14 @@ export function ActivityScreen({ navigation, route }: Props) {
   // the devnet id, for which history.ts explorerTxUrl has no explorer (none
   // verified), so a devnet transaction gets no link rather than a mainnet
   // page that would not find it.
-  const explorerChainId = chainId === SOLANA_CHAIN_ID && solanaDevnet ? SOLANA_DEVNET_CAIP2 : chainId;
+  // The Solana slot on devnet (Settings → Developer → "Use Solana devnet"):
+  // the header, the title and the amounts name the devnet network and its
+  // "test SOL" (config/defaults.ts SOLANA_DEVNET_NETWORK), not the mainnet
+  // slot it is listed under (pass p24-solana finding 1).
+  const solanaDevnetSlot = chainId === SOLANA_CHAIN_ID && solanaDevnet;
+  const explorerChainId = solanaDevnetSlot ? SOLANA_DEVNET_CAIP2 : chainId;
   const account = accounts.find((a) => a.chainId === chainId);
-  const network = networkDefaultFor(chainId);
+  const network = networkDefaultFor(solanaDevnetSlot ? SOLANA_DEVNET_CAIP2 : chainId);
   // The active regular account's smart account is listed too, when the
   // network's smart-account settings give one without a network request
   // (activity-sentences.ts historySmartAccountFor; not for a watch-only or
@@ -811,9 +817,11 @@ export function ActivityScreen({ navigation, route }: Props) {
     // The EVM slot is named after the active network ("Ethereum Sepolia
     // activity"), as on Home; the other slots by their chain.
     navigation.setOptions({
-      title: account ? t('activity.title.network', { network: isEvmSlot ? evmChain.label : account.name }) : tx('Activity'),
+      title: account
+        ? t('activity.title.network', { network: isEvmSlot ? evmChain.label : solanaDevnetSlot ? SOLANA_DEVNET_NETWORK.label : account.name })
+        : tx('Activity'),
     });
-  }, [navigation, account, isEvmSlot, evmChain.label, language, t, tx]);
+  }, [navigation, account, isEvmSlot, solanaDevnetSlot, evmChain.label, language, t, tx]);
 
   // Transaction notes (feature 87, wallet/notes.ts) are keyed by the network
   // the transaction is on: the active EVM profile for the EVM slot (as the
@@ -863,9 +871,10 @@ export function ActivityScreen({ navigation, route }: Props) {
   // (Send, NFTs, Approvals): which network this history comes from and
   // whose address it is. The EVM slot follows the active chain profile.
   const networkLabel = isEvmSlot ? evmChain.label : network?.label ?? chainId;
-  const testnet = isEvmSlot && evmChain.testnet;
+  const testnet = (isEvmSlot && evmChain.testnet) || solanaDevnetSlot;
   const networkHeader = account ? (
     <View style={styles.headerBlock}>
+      <SolanaDevnetBanner chainId={chainId} />
       <Text style={[styles.networkLine, { color: testnet ? theme.testnetFill : theme.textMuted }]}>
         {networkLabel} · {testnet ? tx('TESTNET') : tx('Mainnet')}
         {activeAccount ? ` · ${activeAccount.name}` : ''}

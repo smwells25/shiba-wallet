@@ -12952,7 +12952,12 @@
   "readiness.spl-tokens.reason",
   "inbox.scheduledNoteIos",
   "settings.notifications.limitsIos",
-  "send.scan.rationaleAn"
+  "send.scan.rationaleAn",
+  "banner.solanaDevnet",
+  "home.solanaTokens.fee",
+  "readiness.solanaDevnet",
+  "send.maxAdjustmentGas",
+  "send.maxAdjustmentBalance"
  ],
  "changed": {
   "activity.note.privacy": {
@@ -12999,6 +13004,21 @@
    "before": "Nothing yet. Reminders, alerts and sent transactions will be listed here.",
    "en": "Nothing yet. Reminders, alerts, requests from connected apps that the wallet sent, and speed-ups and cancellations will be listed here.",
    "why": "Phase 24 item 4 (the iOS second pass, finding 8): the empty-list sentence promised sent transactions, which a send from the Send screen never adds; it now names the kinds that are listed."
+  },
+  "inbox.pinNote": {
+   "before": "The app PIN is on, so the wallet posts no phone notifications. The inbox still lists what the wallet showed you on its own screens, such as the recurring-payment banner, price alerts and sent transactions.",
+   "en": "The app PIN is on, so the wallet posts no phone notifications. The inbox still lists what the wallet showed you on its own screens, such as the recurring-payment banner, price alerts, requests from connected apps that the wallet sent, and speed-ups and cancellations.",
+   "why": "Phase 24 (the Solana-pass fix slice, the inbox leftover of the iOS-findings slice dfb5eba): the note said the inbox lists sent transactions, but a send made on the wallet's own screens is not recorded there by design; it now names what the inbox does list, as the reworded inbox intro does."
+  },
+  "settings.openInbox.hint": {
+   "before": "Lists the reminders, alerts and sent transactions the wallet has shown",
+   "en": "Lists what the wallet has told you: reminders, alerts, requests from connected apps that it sent, and speed-ups and cancellations",
+   "why": "Phase 24 (the Solana-pass fix slice, the inbox leftover of dfb5eba): the Open the inbox hint promised sent transactions, which a send from the Send screen never adds; it now names what is listed, as the reworded inbox intro does."
+  },
+  "home.link.inbox.hint": {
+   "before": "Reminders, alerts and sent transactions",
+   "en": "Reminders, alerts, requests from connected apps that the wallet sent, speed-ups and cancellations",
+   "why": "Phase 24 (the Solana-pass fix slice): Home's Inbox link hint carried the same claim (sent transactions), which a send from the Send screen never adds; it now names what is listed, as the reworded inbox intro does."
   }
  }
 }

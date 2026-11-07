@@ -18,3 +18,14 @@ export function testnetBannerText(english: string): string {
   if (builtIn) return t('banner.testnet', { network: builtIn[1] });
   return localize(english);
 }
+
+/**
+ * The Solana devnet banner (pass p24-solana finding 2), shown at the top of
+ * the Solana screens while Settings → Developer → "Use Solana devnet" is on
+ * (components/SolanaDevnetBanner.tsx). It is separate from the TESTNET
+ * banner above, which follows the Ethereum network choice only, so it is
+ * shown whatever that choice is.
+ */
+export function solanaDevnetBannerText(): string {
+  return t('banner.solanaDevnet');
+}

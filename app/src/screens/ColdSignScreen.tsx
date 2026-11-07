@@ -25,7 +25,8 @@ import {
   MINIMUM_FEE_REHEARSAL_WARNING,
   amountIsLastMax,
   maxAdjustmentSentence,
-  maxEvmSend,
+  maxEvmSendDetails,
+  type MaxEvmReservation,
   checkReplacementBeforeApproval,
   consumeMinimumFeeRehearsal,
   minimumFeeRehearsalArmed,
@@ -664,6 +665,10 @@ export function ColdSignScreen({ route, navigation }: Props) {
             // can be left pending to rehearse a cold-signed Speed up / Cancel.
             prepareEvmSend(ep.url, from, validation.normalized, amount, undefined, evmChain.caip2, {
               fromMax: amountIsLastMax(lastMax.current, { text: amountText, from, chainId: EVM_CHAIN_ID }),
+              // What Max reserved, so a lowered amount says why (send.ts maxAdjustmentReason).
+              ...(amountIsLastMax(lastMax.current, { text: amountText, from, chainId: EVM_CHAIN_ID }) && lastMax.current?.reserved
+                ? { maxReserved: lastMax.current.reserved }
+                : {}),
               ...(minimumFeeRehearsalArmed(evmChain.caip2) ? { minimumFee: true } : {}),
             }),
       );
@@ -693,18 +698,21 @@ export function ColdSignScreen({ route, navigation }: Props) {
       const validation = validateRecipient(EVM_CHAIN_ID, recipient);
       const to = validation.ok ? validation.normalized : undefined;
       let max: bigint;
+      let reserved: MaxEvmReservation | null = null;
       if (token) {
         max = (
           await withEndpoint(EVM_CHAIN_ID, (ep) => maxErc20Send(ep.url, from, token.assetId.reference, to, token.assetId.chainId))
         ).value;
         if (max <= 0n) throw new Error(`Your ${token.symbol} balance is zero.`);
       } else {
-        max = (await withEndpoint(EVM_CHAIN_ID, (ep) => maxEvmSend(ep.url, from, to))).value;
+        const details = (await withEndpoint(EVM_CHAIN_ID, (ep) => maxEvmSendDetails(ep.url, from, to))).value;
+        max = details.amount;
+        reserved = details.reserved;
       }
       if (max <= 0n) throw new Error('Balance is too small to cover the network fee.');
       const text = formatUnits(max, decimals, decimals);
       if (!mounted.current) return;
-      if (!token) lastMax.current = { text, from, chainId: EVM_CHAIN_ID };
+      if (!token) lastMax.current = { text, from, chainId: EVM_CHAIN_ID, ...(reserved ? { reserved } : {}) };
       setAmountText(text);
     } catch (e) {
       if (!mounted.current) return;

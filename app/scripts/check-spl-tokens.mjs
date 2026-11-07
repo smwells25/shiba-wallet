@@ -257,7 +257,9 @@ check('the devnet entry: Solana JSON-RPC, 9 decimals, "test SOL", the two docume
   const activity = readFileSync(resolve(HERE, '../src/screens/ActivityScreen.tsx'), 'utf8');
   check('explorer links: a Solana devnet transaction gets none (no verified devnet explorer), mainnet keeps solscan; Activity and its export build links for the devnet id on devnet',
     HISTORY.explorerTxUrl(DEVNET, 'sig') === null && HISTORY.explorerTxUrl(SOLANA_MAINNET_CAIP2, 'sig') === 'https://solscan.io/tx/sig' &&
-      activity.includes('const explorerChainId = chainId === SOLANA_CHAIN_ID && solanaDevnet ? SOLANA_DEVNET_CAIP2 : chainId;') &&
+      // The devnet test is one named condition since the p24-solana fix slice (it also sets the header).
+      activity.includes('const solanaDevnetSlot = chainId === SOLANA_CHAIN_ID && solanaDevnet;') &&
+      activity.includes('const explorerChainId = solanaDevnetSlot ? SOLANA_DEVNET_CAIP2 : chainId;') &&
       activity.includes('chainId={explorerChainId}') && activity.includes('explorerTxUrl(explorerChainId, id, evmChain.explorerTxBase)'));
   const sendSrc = readFileSync(resolve(HERE, '../src/wallet/send.ts'), 'utf8');
   const sendScreen = readFileSync(resolve(HERE, '../src/screens/SendScreen.tsx'), 'utf8');
@@ -534,6 +536,73 @@ console.log('check-spl-tokens: the confirm rows and the one-prompt send');
 }
 
 // ---------------------------------------------------------------------------
+console.log('check-spl-tokens: the fixes of pass p24-solana (transfer fee, Send at 0, the devnet banner and screens)');
+// ---------------------------------------------------------------------------
+{
+  const chain = fakeChain();
+  const pyusd = await SPL.previewMint(chain.client, DEVNET, PYUSD, []);
+  const fee = pyusd.profile.classification.transferFee;
+  check('devnet PYUSD (the recorded mint): the engine decodes a TransferFeeConfig of 0 basis points and a 0 maximum, and the preview carries it',
+    fee !== null && pyusd.transferFee === fee && fee.newerTransferFee.basisPoints === 0 && fee.newerTransferFee.maximumFee === 0n &&
+      fee.olderTransferFee.basisPoints === 0 && fee.olderTransferFee.maximumFee === 0n);
+  check('…the read-back line says 0 as 0, with the maximum in PYUSD (exact)',
+    SPL.splTransferFeeLine(fee, pyusd.decimals, 'PYUSD') === 'Transfer fee: 0 basis points (0 PYUSD max) — shown again on every send.');
+  check('…and the Track prompt carries it before the closing sentence (exact)',
+    SPL.trackPrompt(pyusd, 'PYUSD').message ===
+      `Mint ${PYUSD} on Solana devnet. Transfer fee: 0 basis points (0 PYUSD max) — shown again on every send. Anyone can create a token with any name and symbol; track it only if this is the mint you expect.`);
+  const usdc = await SPL.previewMint(chain.client, DEVNET, USDC, []);
+  check('a mint with no TransferFeeConfig (devnet USDC): no fee line, the prompt unchanged',
+    usdc.transferFee === null && !SPL.trackPrompt(usdc, 'USDC').message.includes('Transfer fee'));
+  const two = {
+    transferFeeConfigAuthority: null, withdrawWithheldAuthority: null, withheldAmount: 0n,
+    olderTransferFee: { epoch: 0n, maximumFee: 1_000_000n, basisPoints: 50 },
+    newerTransferFee: { epoch: 700n, maximumFee: 2_500_000n, basisPoints: 125 },
+  };
+  check('two different rates: both named, with the epoch the newer one starts (exact)',
+    SPL.splTransferFeeLine(two, 6, 'ABC') === 'Transfer fee: 50 basis points (1 ABC max) before epoch 700, then 125 basis points (2.5 ABC max) — shown again on every send.');
+  check('no symbol yet (typed by the user later): the maximum in units, no symbol',
+    SPL.splTransferFeeLine(fee, 6, null) === 'Transfer fee: 0 basis points (0 max) — shown again on every send.');
+  const screen = readFileSync(resolve(HERE, '../src/screens/SolanaTokensScreen.tsx'), 'utf8');
+  check('the Solana tokens screen shows the fee line in the read-back', screen.includes('{splTransferFeeLine(preview.transferFee, preview.decimals, preview.symbol)}'));
+
+  const ok = (associated, extra = {}) => ({ status: 'ok', associated, outside: 0n, outsideAccounts: 0, decimals: 6, sendRefusal: null, decimalsChanged: false, networkChainId: DEVNET, ...extra });
+  check('Send link: shown for a positive associated balance where a send is offered; hidden at exactly 0, without a send, on a refusal, a decimals change, an error or no row yet',
+    SPL.splSendLinkShown(ok(1n), true) && !SPL.splSendLinkShown(ok(0n), true) && !SPL.splSendLinkShown(ok(5n), false) &&
+      !SPL.splSendLinkShown(ok(5n, { sendRefusal: 'no' }), true) && !SPL.splSendLinkShown(ok(5n, { decimalsChanged: true }), true) &&
+      !SPL.splSendLinkShown({ status: 'error', message: 'x' }, true) && !SPL.splSendLinkShown(undefined, true));
+  check('…a balance held only outside the associated account does not show it (a send never uses those)',
+    !SPL.splSendLinkShown(ok(0n, { outside: 250_000n, outsideAccounts: 1 }), true));
+  const homeSrc = readFileSync(resolve(HERE, '../src/screens/HomeScreen.tsx'), 'utf8');
+  check('Home: the row asks splSendLinkShown; "Manage Solana tokens" has a hint like its neighbours',
+    homeSrc.includes('const sendable = splSendLinkShown(state, onSend !== undefined);') &&
+      homeSrc.includes('accessibilityHint="Opens the list of tracked Solana tokens"'));
+
+  check('the Solana devnet banner: only on the Solana slot and only with the switch on, whatever the Ethereum choice',
+    SPL.solanaDevnetBannerShown(SOLANA_MAINNET_CAIP2, true) && !SPL.solanaDevnetBannerShown(SOLANA_MAINNET_CAIP2, false) &&
+      !SPL.solanaDevnetBannerShown('eip155:1', true) && !SPL.solanaDevnetBannerShown('eip155:11155111', true) &&
+      !SPL.solanaDevnetBannerShown(undefined, true));
+  const banner = readFileSync(resolve(HERE, '../src/components/SolanaDevnetBanner.tsx'), 'utf8');
+  check('the banner component: the rule above, the table text, the TESTNET theme colours (no hard-coded colour)',
+    banner.includes('if (!solanaDevnetBannerShown(chainId, solanaDevnet)) return null;') && banner.includes('{solanaDevnetBannerText()}') &&
+      banner.includes('backgroundColor: theme.testnetFill') && banner.includes('color: theme.onTestnetFill') && !/#[0-9a-f]{3,6}\b|'white'/i.test(banner));
+  const count = (rel, needle) => (readFileSync(resolve(HERE, rel), 'utf8').split(needle).length - 1);
+  check('…drawn on Manage Solana tokens (1), every view of the Solana token send (4), Solana Activity (its header), Receive (1) and the SOL send (form, confirm, success)',
+    count('../src/screens/SolanaTokensScreen.tsx', '<SolanaDevnetBanner chainId={SOLANA_SLOT_CHAIN_ID} />') === 1 &&
+      count('../src/screens/SolanaTokenSendScreen.tsx', '<SolanaDevnetBanner chainId={SOLANA_CHAIN_ID} />') === 4 &&
+      count('../src/screens/ActivityScreen.tsx', '<SolanaDevnetBanner chainId={chainId} />') === 1 &&
+      count('../src/screens/ReceiveScreen.tsx', '<SolanaDevnetBanner chainId={route.params.chainId} />') === 1 &&
+      count('../src/screens/SendScreen.tsx', '<SolanaDevnetBanner chainId={route.params.chainId} />') === 3);
+  const activity = readFileSync(resolve(HERE, '../src/screens/ActivityScreen.tsx'), 'utf8');
+  check('Solana Activity on devnet: the devnet network entry (its label "Solana devnet", its "test SOL") and the TESTNET line, not "Mainnet"',
+    activity.includes('const network = networkDefaultFor(solanaDevnetSlot ? SOLANA_DEVNET_CAIP2 : chainId);') &&
+      activity.includes('const testnet = (isEvmSlot && evmChain.testnet) || solanaDevnetSlot;') &&
+      DEFAULTS.networkDefaultFor(DEFAULTS.SOLANA_DEVNET_CAIP2).label === 'Solana devnet' && DEFAULTS.networkDefaultFor(DEFAULTS.SOLANA_DEVNET_CAIP2).symbol === 'test SOL');
+  const send = readFileSync(resolve(HERE, '../src/screens/SendScreen.tsx'), 'utf8');
+  check('the SOL send on devnet reads TESTNET too (its network line said "Solana devnet · Mainnet")',
+    send.includes('const testnet = (isEvmKind && evmChain.testnet) || network?.chainId === SOLANA_DEVNET_CAIP2;'));
+}
+
+// ---------------------------------------------------------------------------
 console.log('check-spl-tokens: mutants of wallet/spl-tokens.ts are caught');
 // ---------------------------------------------------------------------------
 const SOURCE = readFileSync(SPL_PATH, 'utf8');
@@ -620,6 +689,28 @@ let caught = 0;
   const ok = !M.splConfirmRows(q, 'test SOL').some((r) => r.label.startsWith('Rent'));
   caught += ok ? 1 : 0;
   check('mutant caught: a confirm without the rent row when the recipient’s account is created', ok);
+}
+{
+  // M9 (pass p24-solana finding 5): the transfer-fee line dropped from the Track prompt.
+  const M = await mutant(" ${splTransferFeeLine(preview.transferFee, preview.decimals, symbol)}` : '') +", " ` : '') +");
+  const p = await M.previewMint(fakeChain().client, DEVNET, PYUSD, []);
+  const ok = !M.trackPrompt(p, 'PYUSD').message.includes('Transfer fee: 0 basis points');
+  caught += ok ? 1 : 0;
+  check('mutant caught: a Track prompt for a fee-charging mint that does not mention its fee', ok);
+}
+{
+  // M10 (finding 7): the Send link offered at a 0 associated balance again.
+  const M = await mutant('    state.associated > 0n\n', '    state.associated >= 0n\n');
+  const ok = M.splSendLinkShown({ status: 'ok', associated: 0n, outside: 0n, outsideAccounts: 0, decimals: 6, sendRefusal: null, decimalsChanged: false, networkChainId: DEVNET }, true);
+  caught += ok ? 1 : 0;
+  check('mutant caught: "Send" offered with nothing in the associated account', ok);
+}
+{
+  // M11 (finding 2): the banner shown whatever the switch.
+  const M = await mutant('  return solanaDevnet === true && slotChainId === SOLANA_SLOT_CHAIN_ID;', '  return slotChainId === SOLANA_SLOT_CHAIN_ID;');
+  const ok = M.solanaDevnetBannerShown(SOLANA_MAINNET_CAIP2, false);
+  caught += ok ? 1 : 0;
+  check('mutant caught: a devnet banner on Solana mainnet', ok);
 }
 check(`at least six mutants, all caught (${caught} of ${mutants})`, mutants >= 6 && caught === mutants);
 

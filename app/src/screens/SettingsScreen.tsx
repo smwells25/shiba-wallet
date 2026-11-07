@@ -15,6 +15,8 @@ import {
   readinessHintText,
   readinessIntroText,
   readinessReasonText,
+  readinessRowNoteText,
+  readinessSolanaDevnetText,
   readinessStatusText,
   readinessTitleText,
 } from '../i18n/readiness-text';
@@ -560,6 +562,9 @@ function ReadinessRow({
           readinessEvidenceLine give (scripts/check-i18n.mjs). */}
       <Text style={[styles.hint, { color: theme.text }]}>{readinessReasonText(feature, phrase)}</Text>
       <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{readinessEnforcementText(feature)}</Text>
+      {readinessRowNoteText(feature) !== null ? (
+        <Text style={[styles.endpointNote, { color: theme.textMuted }]}>{readinessRowNoteText(feature)}</Text>
+      ) : null}
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ expanded: showDetails }}
@@ -2438,7 +2443,7 @@ export function SettingsScreen({ navigation, route }: Props) {
         ) : (
           <NotificationSettingsSection />
         )}
-        <Button title="Open the inbox" variant="secondary" accessibilityHint="Lists the reminders, alerts and sent transactions the wallet has shown" onPress={() => navigation.navigate('Inbox')} />
+        <Button title="Open the inbox" variant="secondary" accessibilityHint="Lists what the wallet has told you: reminders, alerts, requests from connected apps that it sent, and speed-ups and cancellations" onPress={() => navigation.navigate('Inbox')} />
       </View>
 
       <AppPinSection scrollTo={scrollToSection} />
@@ -2597,7 +2602,7 @@ export function SettingsScreen({ navigation, route }: Props) {
           The ids under “Details for reviewers” (C1–C3, W1–W20 and the finding numbers) refer to the
           project&apos;s threat model: its mainnet-readiness checklist and its list of findings.
           </T>{' '}
-          {readinessHintText()}
+          {readinessHintText()} {readinessSolanaDevnetText()}
         </Text>
       </View>
 

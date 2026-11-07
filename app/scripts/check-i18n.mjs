@@ -272,6 +272,11 @@ const CCTP_TIME_CHANGED = ['bridge.cctp.mintStep', 'bridge.cctp.burned', 'bridge
 // Send scanner sentence (finding 5) are new; the inbox's intro and empty line were reworded (finding 8).
 const IOS_FIX_NEW = ['inbox.scheduledNoteIos', 'settings.notifications.limitsIos', 'send.scan.rationaleAn'];
 const INBOX_WORDING_CHANGED = ['inbox.intro', 'inbox.empty'];
+// Phase 24, the Solana-pass fix slice: the Solana devnet banner (finding 2), the Solana token-fee line on Home (finding 3),
+// the Solana devnet readiness line (finding 4) and the two Max sentences for a lowering the fee did not cause (iOS finding 11)
+// are new; the inbox's PIN note, the Open-the-inbox hint and Home's Inbox hint were reworded like the intro.
+const SOLANA_FIX_NEW = ['banner.solanaDevnet', 'home.solanaTokens.fee', 'readiness.solanaDevnet', 'send.maxAdjustmentGas', 'send.maxAdjustmentBalance'];
+const INBOX_NOTES_CHANGED = ['inbox.pinNote', 'settings.openInbox.hint', 'home.link.inbox.hint'];
 {
   const p = fixtureProblems(en, FIXTURE);
   check(`every English entry is the text the app showed at ${FIXTURE.base} (${Object.keys(FIXTURE.literal).length} literals, ${Object.keys(FIXTURE.template).length} templates by their static parts, ${Object.keys(FIXTURE.composite).length} composites) or listed as new (${FIXTURE.new.length})`,
@@ -289,14 +294,15 @@ const INBOX_WORDING_CHANGED = ['inbox.intro', 'inbox.empty'];
   // broadcast sentences (an HTTP 5xx or a dropped connection, not a timeout).
   const BROADCAST_OPEN_NEW = ['broadcast.open.title', 'broadcast.tx.open', 'broadcast.tx.openUnlisted', 'broadcast.userop.open',
     'broadcast.userop.openUnlisted', 'broadcast.open'];
-  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the Solana token-send readiness row, the wallet handle\'s, the six open-outcome broadcast sentences, the co-signer card\'s numbered Scan label, the eight period words of the hygiene slice, the four Bridge lines of pass p23-mint, the five lines of the p23-build fixes, the three Bridge lines of pass p23-bridge-recheck and the three navigation-bar lines of pass p23-navbar and the three iOS-pass lines (two iOS reminder notes, the "an" scanner sentence)',
-    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || SPL_TOKENS_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id) || NAVBAR_FIX_NEW.includes(id) || IOS_FIX_NEW.includes(id)) &&
+  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the Solana token-send readiness row, the wallet handle\'s, the six open-outcome broadcast sentences, the co-signer card\'s numbered Scan label, the eight period words of the hygiene slice, the four Bridge lines of pass p23-mint, the five lines of the p23-build fixes, the three Bridge lines of pass p23-bridge-recheck and the three navigation-bar lines of pass p23-navbar and the three iOS-pass lines (two iOS reminder notes, the "an" scanner sentence) and the five lines of the Solana-pass fix slice (the Solana devnet banner, the Solana token-fee line, the Solana devnet readiness line, two Max-lowering sentences)',
+    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || SPL_TOKENS_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id) || NAVBAR_FIX_NEW.includes(id) || IOS_FIX_NEW.includes(id) || SOLANA_FIX_NEW.includes(id)) &&
       BUILD_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && BRIDGE_RECHECK_NEW.every((id) => FIXTURE.new.includes(id)) &&
       LOCK_KIND_NEW.every((id) => FIXTURE.new.includes(id)) && COLD_AA_NEW.every((id) => FIXTURE.new.includes(id)) && SPL_TOKENS_NEW.every((id) => FIXTURE.new.includes(id)) &&
       BROADCAST_OPEN_NEW.every((id) => FIXTURE.new.includes(id)) && THIRD_PASS_NEW.every((id) => FIXTURE.new.includes(id)) && PERIOD_NEW.every((id) => FIXTURE.new.includes(id)) &&
-      BRIDGE_MINT_NEW.every((id) => FIXTURE.new.includes(id)) && NAVBAR_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && IOS_FIX_NEW.every((id) => FIXTURE.new.includes(id)));
-  check('the changed entries are exactly the transaction-notes line (reworded for the records backup), the watch-only notice (reworded for the off-line signer), the bridge readiness reason (CCTP sent, phase 23), the records-backup note (smart-account recovery records, pass p23-build) the three CCTP time sentences (the measured spread, pass p23-bridge-recheck) and the inbox intro and empty line (what is listed, phase 24 item 4), each with its reason',
-    JSON.stringify(Object.keys(FIXTURE.changed ?? {})) === JSON.stringify(['activity.note.privacy', 'notice.watchOnly', 'readiness.bridge.reason', 'recordsBackup.what', ...CCTP_TIME_CHANGED, ...INBOX_WORDING_CHANGED]) &&
+      BRIDGE_MINT_NEW.every((id) => FIXTURE.new.includes(id)) && NAVBAR_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && IOS_FIX_NEW.every((id) => FIXTURE.new.includes(id)) &&
+      SOLANA_FIX_NEW.every((id) => FIXTURE.new.includes(id)));
+  check('the changed entries are exactly the transaction-notes line (reworded for the records backup), the watch-only notice (reworded for the off-line signer), the bridge readiness reason (CCTP sent, phase 23), the records-backup note (smart-account recovery records, pass p23-build) the three CCTP time sentences (the measured spread, pass p23-bridge-recheck) and the inbox intro and empty line (what is listed, phase 24 item 4) and the inbox PIN note and the two inbox link hints (the same rewording, the Solana-pass fix slice), each with its reason',
+    JSON.stringify(Object.keys(FIXTURE.changed ?? {})) === JSON.stringify(['activity.note.privacy', 'notice.watchOnly', 'readiness.bridge.reason', 'recordsBackup.what', ...CCTP_TIME_CHANGED, ...INBOX_WORDING_CHANGED, ...INBOX_NOTES_CHANGED]) &&
       en['activity.note.privacy'] === 'Notes are kept on this phone and are not sent anywhere. They are deleted when the wallet is wiped. A records backup (Settings → Records backup) includes them, and your recovery phrase restores them from it. Hide amounts does not hide them.');
   // Pass p22a: the shared watch-only notice no longer says the wallet cannot
   // send for the address (the off-line signer screen prepares sends for it,
@@ -1805,6 +1811,48 @@ function caught(name, wasCaught) {
   caught('iOS "System" back on Intl alone (the Simulator in Spanish reads English)', m1.pickDeviceLocaleTag({ platform: 'ios', appleLanguages: ['es-ES'], intlLocale: 'en_US' }) !== 'es-ES');
   const m2 = await mutant('article.ts', "  return /^[aeio]/i.test(word.trim()) ? 'an' : 'a';", "  return 'a';");
   caught('the article always "a" ("a Ethereum address")', !m2.sendScanRationale('Ethereum').startsWith('Point the camera at an Ethereum'));
+}
+// Phase 24, the Solana-pass fix slice: the Solana devnet banner (finding 2), the Solana token-fee line (finding 3),
+// the Solana devnet readiness line (finding 4), the inbox notes and hints (the dfb5eba leftover) and the two Max
+// sentences for a lowering the fee did not cause (the iOS pass, finding 11).
+{
+  const SEND = await import('../src/wallet/send.ts');
+  const BANNER = await import('../src/i18n/banner.ts');
+  check('the Solana devnet banner (exact, both languages): its own sentence, test SOL and devnet tokens, not the Ethereum one',
+    en['banner.solanaDevnet'] === 'TESTNET — Solana devnet is on. Amounts are test SOL and devnet tokens, not real funds.' &&
+      BANNER.solanaDevnetBannerText() === en['banner.solanaDevnet'] &&
+      I.translateFrom({ en, es }, 'es', 'banner.solanaDevnet') === es['banner.solanaDevnet'] && /devnet de Solana/.test(es['banner.solanaDevnet']));
+  check('Home: the Solana token-fee line (exact) is drawn under the Solana tokens, only when some are listed, through the table',
+    en['home.solanaTokens.fee'] === 'The network fee for a Solana token send is paid in SOL (test SOL on devnet), not in the token.' &&
+      read('src/screens/HomeScreen.tsx').includes("{tokensHere.length > 0 ? (\n              <Text style={[styles.manageTokens, { color: theme.textMuted }]}>{t('home.solanaTokens.fee')}</Text>"));
+  const spl = R.FEATURE_READINESS.find((f) => f.id === 'spl-tokens');
+  check('readiness: the spl-tokens row gets the Solana devnet line (exact; it names the “Use Solana devnet” switch), no other row does, and the Settings hint below the list adds it after the shared hint',
+    en['readiness.solanaDevnet'] === 'Solana token sends work on Solana devnet, which the “Use Solana devnet” switch under Settings → Developer turns on, separately from the Ethereum test network.' &&
+      RT.readinessRowNoteText(spl) === en['readiness.solanaDevnet'] && R.FEATURE_READINESS.filter((f) => RT.readinessRowNoteText(f) !== null).length === 1 &&
+      es['readiness.solanaDevnet'].includes('“Use Solana devnet”') &&
+      read('src/screens/SettingsScreen.tsx').includes('{readinessHintText()} {readinessSolanaDevnetText()}') &&
+      read('src/screens/SettingsScreen.tsx').includes('{readinessRowNoteText(feature) !== null ? ('));
+  const homeSrc = read('src/screens/HomeScreen.tsx');
+  const settingsSrc = read('src/screens/SettingsScreen.tsx');
+  check('the inbox notes and both inbox link hints name what the inbox lists and never "sent transactions" (exact; the screens pass the new English)',
+    en['inbox.pinNote'] === inbox.INBOX_PIN_NOTE && en['inbox.passphraseNote'] === inbox.INBOX_PASSPHRASE_NOTE &&
+      inbox.INBOX_PIN_NOTE.endsWith('such as the recurring-payment banner, price alerts, requests from connected apps that the wallet sent, and speed-ups and cancellations.') &&
+      inbox.INBOX_PASSPHRASE_NOTE === inbox.INBOX_PIN_NOTE.replace('The app PIN is on', 'The app passphrase is on') &&
+      en['settings.openInbox.hint'] === 'Lists what the wallet has told you: reminders, alerts, requests from connected apps that it sent, and speed-ups and cancellations' &&
+      en['home.link.inbox.hint'] === 'Reminders, alerts, requests from connected apps that the wallet sent, speed-ups and cancellations' &&
+      settingsSrc.includes(`accessibilityHint="${en['settings.openInbox.hint']}"`) && homeSrc.includes(`'${en['home.link.inbox.hint']}')`) &&
+      !['inbox.pinNote', 'inbox.passphraseNote', 'settings.openInbox.hint', 'home.link.inbox.hint'].some((id) => /sent transactions|transacciones enviadas/.test(en[id] + es[id])));
+  check('…mutant caught: the old inbox PIN note restored',
+    fixtureProblems({ ...en, 'inbox.pinNote': FIXTURE.changed['inbox.pinNote'].before }, FIXTURE).length === 1);
+  const q = (reason) => ({ amount: 5n, maxAdjustment: { requested: 9n, ...(reason ? { reason } : {}) } });
+  const wei = (v) => `${v} wei`;
+  check('the Max sentences: "fee" and no reason keep the old sentence; "gas" and "balance" have their own, and neither says the network fee rose',
+    SEND.maxAdjustmentSentence(q(null), wei) === 'The amount was lowered from 9 wei to 5 wei because the network fee rose after you tapped Max. The amount plus the worst-case fee now equals your balance.' &&
+      SEND.maxAdjustmentSentence(q('fee'), wei) === SEND.maxAdjustmentSentence(q(null), wei) &&
+      SEND.maxAdjustmentSentence(q('gas'), wei) === 'The amount was lowered from 9 wei to 5 wei because the gas needed for this transfer is more than was reserved when you tapped Max; the fee per unit of gas did not rise. The amount plus the worst-case fee now equals your balance.' &&
+      SEND.maxAdjustmentSentence(q('balance'), wei) === 'The amount was lowered from 9 wei to 5 wei because the balance is lower than when you tapped Max; the network fee did not rise. The amount plus the worst-case fee now equals your balance.' &&
+      !/network fee rose/.test(SEND.maxAdjustmentSentence(q('gas'), wei) + SEND.maxAdjustmentSentence(q('balance'), wei)) &&
+      I.translateFrom({ en, es }, 'es', 'send.maxAdjustmentGas', { requested: '9', amount: '5' }).startsWith('El importe se redujo de 9 a 5 porque el gas'));
 }
 // Table mutants: the same checks, run on broken copies of the tables.
 {

@@ -9,6 +9,7 @@ import { NoEndpointError, getEndpoint, withEndpoint } from '../config/networks';
 import { OfflineNotice, TechnicalDetail, describeNetworkError } from '../wallet/connectivity';
 import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
+import { SolanaDevnetBanner } from '../components/SolanaDevnetBanner';
 import { addSolanaToken, listSolanaTokens, removeSolanaToken } from '../wallet/tokens';
 import { cleanTokenText, TOKEN_NAME_MAX, TOKEN_SYMBOL_MAX } from '../wallet/token-discovery';
 import {
@@ -18,6 +19,7 @@ import {
   solanaNetworkLabel,
   splSendGate,
   tokenProgramLabel,
+  splTransferFeeLine,
   trackPrompt,
   trackedAssetFor,
   type MintPreview,
@@ -160,6 +162,7 @@ export function SolanaTokensScreen({ navigation }: Props) {
 
   return (
     <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
+      <SolanaDevnetBanner chainId={SOLANA_SLOT_CHAIN_ID} />
       <View style={styles.section}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>
           Tracked tokens on {label}
@@ -261,6 +264,11 @@ export function SolanaTokensScreen({ navigation }: Props) {
                   ? 'Name and symbol: from this wallet’s list of issuer-documented tokens (no on-chain record names this mint).'
                   : (preview.profile.metadataNote ?? 'No on-chain name or symbol was found for this mint.')}
             </Text>
+            {preview.transferFee ? (
+              <Text style={[styles.hint, { color: theme.text }]}>
+                {splTransferFeeLine(preview.transferFee, preview.decimals, preview.symbol)}
+              </Text>
+            ) : null}
             {preview.lookAlike ? <WarningBox>{`Warning: ${preview.lookAlike}`}</WarningBox> : null}
             {preview.sendRefusal ? (
               <WarningBox>{`This token can be tracked and shown, but this wallet will not send it: ${preview.sendRefusal}`}</WarningBox>

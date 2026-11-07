@@ -245,8 +245,17 @@ export interface EvmSendQuote {
    * held; `amount` above is what will be signed. The confirm screen states
    * the change in a plain sentence (maxAdjustmentSentence). Absent in every
    * other case, so quotes without an adjustment are unchanged.
+   *
+   * `reason` (iOS pass finding 11) says why, so the sentence is true: 'fee'
+   * when the max fee per gas at quote time is above the one Max reserved, or
+   * the worst-case fee rose otherwise (an OP-stack layer 1 data fee); 'gas'
+   * when the per-gas fee did not rise but the transfer needs more gas than
+   * Max reserved; 'balance' when neither rose, so the balance itself is
+   * lower than it was at the Max tap. Absent when the caller passed no
+   * reservation (PrepareEvmSendOptions.maxReserved), which reads as 'fee',
+   * the only sentence there was before.
    */
-  maxAdjustment?: { requested: bigint };
+  maxAdjustment?: { requested: bigint; reason?: MaxAdjustmentReason };
   /**
    * Present only on a minimum-fee rehearsal quote (Settings → Developer, test
    * networks only; see MINIMUM_FEE_REHEARSAL_SWITCH_LABEL below): the fees
@@ -271,6 +280,13 @@ export interface PrepareEvmSendOptions {
    * raised, and the balance check below still applies to the result.
    */
   fromMax?: boolean;
+  /**
+   * What Max reserved for the fee when it produced this amount
+   * (maxEvmSendDetails). Used only with `fromMax` and only to say WHY an
+   * amount was lowered (EvmSendQuote.maxAdjustment.reason); it never changes
+   * the amount, which is always balance minus the fee read now.
+   */
+  maxReserved?: MaxEvmReservation;
   /**
    * The Send screen's minimum-fee rehearsal (Settings → Developer): price
    * this quote at a max fee of 1 wei and a priority fee of 1 wei per gas,
@@ -566,6 +582,36 @@ export interface LastMaxResult {
   from: string;
   /** The route's chain id (CAIP-2) the Max figure was computed on. */
   chainId: string;
+  /** What the native Max reserved for the fee (maxEvmSendDetails), when known. */
+  reserved?: MaxEvmReservation;
+}
+
+/** Why a Max amount was lowered at quote time (EvmSendQuote.maxAdjustment.reason). */
+export type MaxAdjustmentReason = 'fee' | 'gas' | 'balance';
+
+/** The fee the native Max reserved: its gas limit, its max fee per gas and the whole worst-case fee (with any OP-stack part). */
+export interface MaxEvmReservation {
+  gasLimit: bigint;
+  maxFeePerGas: bigint;
+  fee: bigint;
+}
+
+/**
+ * Why a Max amount had to be lowered, from what Max reserved and what the
+ * quote needs now (both before any lowering). The per-gas fee is compared
+ * first, so the old sentence ("the network fee rose") stays whenever it is
+ * true; then the gas; then the whole worst-case fee (an OP-stack layer 1 or
+ * operator fee that rose at the same per-gas price); otherwise the fee did
+ * not grow at all and the balance must be lower than at the Max tap.
+ */
+export function maxAdjustmentReason(
+  reserved: MaxEvmReservation,
+  now: { gasLimit: bigint; maxFeePerGas: bigint; fee: bigint },
+): MaxAdjustmentReason {
+  if (now.maxFeePerGas > reserved.maxFeePerGas) return 'fee';
+  if (now.gasLimit > reserved.gasLimit) return 'gas';
+  if (now.fee > reserved.fee) return 'fee';
+  return 'balance';
 }
 
 /**
@@ -597,8 +643,14 @@ export function maxAdjustmentSentence(
 ): string | null {
   if (!quote.maxAdjustment) return null;
   // Through the string table (phase 23 item 8, fourth pass); in English
-  // exactly the sentence this function built before.
-  return t('send.maxAdjustment', { requested: format(quote.maxAdjustment.requested), amount: format(quote.amount) });
+  // exactly the sentence this function built before when the fee rose (or
+  // no reason is known). The other two reasons have their own sentences, so
+  // the confirm never says the fee rose when it did not (iOS pass finding 11).
+  const values = { requested: format(quote.maxAdjustment.requested), amount: format(quote.amount) };
+  const reason = quote.maxAdjustment.reason ?? 'fee';
+  if (reason === 'gas') return t('send.maxAdjustmentGas', values);
+  if (reason === 'balance') return t('send.maxAdjustmentBalance', values);
+  return t('send.maxAdjustment', values);
 }
 
 // ---------------------------------------------------------------------------
@@ -938,6 +990,9 @@ export async function prepareEvmSend(
   const hasOpStack = chainHasL1DataFee(chainId);
   let opStack = hasOpStack ? await priceOpStack(amount) : undefined;
   let fee = gasLimit * fees.maxFeePerGas + opStackFeeTotal(opStack);
+  // The fee for the requested amount, before any Max lowering: what the
+  // adjustment's reason compares with what Max reserved.
+  const feeBeforeLowering = fee;
 
   // Max amounts only (options.fromMax): when the fee rose since the Max
   // figure was computed, lower the amount to what the balance covers now.
@@ -978,7 +1033,20 @@ export async function prepareEvmSend(
     simulation,
     ...(data && data.length > 0 ? { data } : {}),
     ...(opStack ? { opStack } : {}),
-    ...(amount !== requested ? { maxAdjustment: { requested } } : {}),
+    ...(amount !== requested
+      ? {
+          maxAdjustment: options.maxReserved
+            ? {
+                requested,
+                reason: maxAdjustmentReason(options.maxReserved, {
+                  gasLimit,
+                  maxFeePerGas: fees.maxFeePerGas,
+                  fee: feeBeforeLowering,
+                }),
+              }
+            : { requested },
+        }
+      : {}),
     ...(minimumFee ? { minimumFee } : {}),
   };
 }
@@ -993,6 +1061,35 @@ export async function prepareEvmSend(
  * tap re-verifies the chain against the active profile anyway.
  */
 export async function maxEvmSend(url: string, from: string, to?: string): Promise<bigint> {
+  return (await maxEvmSendDetails(url, from, to)).amount;
+}
+
+/**
+ * The value Max estimates a transfer's gas with: 1 wei. Since Glamsterdam
+ * (EIP-2780, on Sepolia since 2026-10-06; AGENTS.md "SEPOLIA FORK FINDINGS
+ * RESOLVED") a transfer's intrinsic gas DOES depend on whether it carries
+ * value: a zero-value transfer costs 15,000 gas, a non-zero one to an
+ * existing account 21,000 and to a never-used account about 204,600. Max
+ * used to estimate with value 0, so it reserved too little fee for the
+ * non-zero amount it then fills in, and Review lowered the amount again
+ * (the iOS pass of phase 24, finding 11: 15,000 × 32 wei reserved against
+ * 21,000 × 32 wei quoted at the same per-gas fee). Only whether the value
+ * is zero matters, not its size, and 1 wei is the smallest value a balance
+ * of at least 1 wei can always cover, so the estimate cannot fail for lack
+ * of funds the way an estimate at the full balance could on a node that
+ * prices the gas into its balance check.
+ */
+export const MAX_ESTIMATE_VALUE_WEI = 1n;
+
+/**
+ * maxEvmSend with what it reserved for the fee, so a quote that later has
+ * to lower the Max amount can say why (PrepareEvmSendOptions.maxReserved).
+ */
+export async function maxEvmSendDetails(
+  url: string,
+  from: string,
+  to?: string,
+): Promise<{ amount: bigint; reserved: MaxEvmReservation }> {
   const transport = evmHttpTransport(url);
   const node = new NodeClient(transport);
   const [balance, fees, chainId] = await Promise.all([
@@ -1000,15 +1097,22 @@ export async function maxEvmSend(url: string, from: string, to?: string): Promis
     suggestFeesRetryingOnce(node),
     node.chainId(),
   ]);
-  // Value does not change a transfer's intrinsic gas; estimate with 0 so
-  // the call cannot fail for lack of funds. Falls back to the sender
+  // The gas of the transfer Max fills in, which carries value: estimated
+  // with 1 wei (MAX_ESTIMATE_VALUE_WEI). If that estimate fails (a balance
+  // of 0, or a recipient contract that refuses value), it is retried with
+  // value 0, exactly as prepareEvmSend retries a plain transfer, so Max
+  // reserves the same gas the quote will use. Falls back to the sender
   // itself when no recipient is typed yet (an EOA-to-EOA transfer).
   const recipient = to ?? from;
   let gasLimit: bigint;
   try {
-    gasLimit = await node.estimateGas({ from, to: recipient, value: 0n });
-  } catch (error) {
-    throw asEstimateRevert(error, true);
+    gasLimit = await node.estimateGas({ from, to: recipient, value: MAX_ESTIMATE_VALUE_WEI });
+  } catch {
+    try {
+      gasLimit = await node.estimateGas({ from, to: recipient, value: 0n });
+    } catch (error) {
+      throw asEstimateRevert(error, true);
+    }
   }
   let opStackFee = 0n;
   if (chainHasL1DataFee(chainId)) {
@@ -1027,8 +1131,9 @@ export async function maxEvmSend(url: string, from: string, to?: string): Promis
       }),
     );
   }
-  const max = balance - gasLimit * fees.maxFeePerGas - opStackFee;
-  return max > 0n ? max : 0n;
+  const fee = gasLimit * fees.maxFeePerGas + opStackFee;
+  const max = balance - fee;
+  return { amount: max > 0n ? max : 0n, reserved: { gasLimit, maxFeePerGas: fees.maxFeePerGas, fee } };
 }
 
 /** Shape of Esplora's GET /fee-estimates: { "<target blocks>": sat/vB }. */
