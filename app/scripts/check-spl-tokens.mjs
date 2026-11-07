@@ -453,6 +453,13 @@ const quoteOn = (chain, over = {}) =>
   check('quote refused when SOL cannot cover the fee and the new account’s rent', poor?.message === SPL_QUOTE_SENTENCES.notEnoughSol('2044280', '1000'), poor?.message);
   const noSource = await rejection(() => quoteOn(fakeChain({ aliceUsdc: null })));
   check('quote refused when the associated account does not exist', noSource?.message === SPL_QUOTE_SENTENCES.noSourceAccount('this token'), noSource?.message);
+  // The engine's wording (phase 24 follow-up): "holds no <SYMBOL>" for a
+  // named token; a mint with no readable symbol keeps "none of this token",
+  // because "holds no this token" would not read as English.
+  check('the no-source sentence, exact: "holds no PYUSD" for a named token, "holds none of this token" without a symbol',
+    SPL_QUOTE_SENTENCES.noSourceAccount('PYUSD') === 'This account holds no PYUSD in its associated token account, so there is nothing to send.' &&
+      noSource?.message === 'This account holds none of this token in its associated token account, so there is nothing to send.',
+    noSource?.message);
   const badAmount = await rejection(() => quoteOn(fakeChain(), { amountText: '1.0000001' }));
   check('an amount with more decimals than the token has: the parser’s own sentence', badAmount?.message === 'Too many decimal places: this asset supports at most 6, got 7');
 }

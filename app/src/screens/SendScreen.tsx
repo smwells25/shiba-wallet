@@ -1004,7 +1004,7 @@ export function SendScreen({ route, navigation }: Props) {
       }
       if (aaActive) {
         // AA Max (phase 5): full smart-account balance under sponsorship,
-        // else balance minus the worst-case fee of a zero-value probe. In
+        // else balance minus the worst-case fee of a 1-wei probe. In
         // token mode: the smart account's full token balance, refused when
         // its ETH cannot cover the fee.
         if (!validation?.ok) {

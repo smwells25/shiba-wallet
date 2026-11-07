@@ -32,6 +32,7 @@ import {
   PLAIN_TRANSFER_REJECTED_SENTENCE,
   describeSendError,
   maxEvmSend,
+  minimumValueTransactionGas,
   prepareEvmSend,
 } from '../src/wallet/send.ts';
 import { QUOTE_FAILED_TITLE, retitleQuoteFailure } from '../src/wallet/aa.ts';
@@ -734,6 +735,38 @@ async function sendMutant(from, to) {
   const ma = await attempt(noPrecheck, 10n ** 14n);
   check('mutant (no balance pre-check) is caught: it estimates first and loses the exact sentence',
     ma.estimates.length > 0 && ma.error?.message !== aWant, `${ma.estimates.length} / ${ma.error?.message}`);
+
+  // EIP-2780 (Glamsterdam): a non-zero-value transaction to the sender itself
+  // costs TX_BASE_COST 12,000, not 21,000, so the pre-check's lower bound for
+  // a payable call to the sender's own address (an EIP-7702 account calling
+  // its own code) is 12,000. A balance between value + 12,000 × max fee and
+  // value + 21,000 × max fee must reach the estimate, not the "at least"
+  // refusal. Addresses compare without regard to case.
+  check('minimumValueTransactionGas: 21,000 to another account, 12,000 to the sender itself (any case)',
+    minimumValueTransactionGas(FROM, LIDO) === 21_000n && minimumValueTransactionGas(FROM, FROM) === 12_000n &&
+      minimumValueTransactionGas(FROM, FROM.toLowerCase()) === 12_000n);
+  const SELF_GAS = 13_000n;
+  const attemptSelf = async (mod) => {
+    scenario = defaultScenario();
+    scenario.ethBalance = STAKE + SELF_GAS * MAX_FEE;
+    scenario.estimateGasFn = () => '0x' + SELF_GAS.toString(16);
+    rpcLog = [];
+    try {
+      const q = await mod.prepareEvmSend(URL, FROM, FROM.toLowerCase(), STAKE, SUBMIT);
+      return { quote: q, error: null, estimates: estimates() };
+    } catch (e) {
+      return { quote: null, error: e, estimates: estimates() };
+    }
+  };
+  const self = await attemptSelf(real);
+  check('a payable call to the sender itself whose balance covers value + its real 13,000-gas fee (below 21,000 × max fee) is quoted, not refused by the pre-check',
+    self.error === null && self.estimates.length === 1 && self.quote?.gasLimit === SELF_GAS && self.quote?.total === STAKE + SELF_GAS * MAX_FEE,
+    String(self.error?.message));
+  const flatBound = await sendMutant('    const minimumFee = minimumValueTransactionGas(from, to) * fees.maxFeePerGas;', '    const minimumFee = MIN_TRANSACTION_GAS * fees.maxFeePerGas;');
+  const mSelf = await attemptSelf(flatBound);
+  check('mutant (the flat 21,000 bound for every payable call) is caught: it refuses the affordable self-call before estimating',
+    mSelf.estimates.length === 0 && /^Insufficient funds: sending \d+ wei plus a worst-case fee of at least /.test(mSelf.error?.message ?? ''),
+    String(mSelf.error?.message));
   scenario = defaultScenario();
 }
 

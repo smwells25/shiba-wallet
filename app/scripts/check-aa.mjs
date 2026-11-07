@@ -67,6 +67,7 @@ import {
   clearAaBundlerUrl,
   clearAaFactory,
   clearAaPaymaster,
+  AA_MAX_PROBE_VALUE_WEI,
   maxAaSend,
   setAaPaymaster,
   verifyAaPaymaster,
@@ -2351,7 +2352,7 @@ await (async () => {
   gasSet.vgl = 200_000n;
   const steady = tunableBundle({ senderBalance: BAL });
   const steadyMax = await maxAaSend(steady, owner.address, RECIPIENT);
-  check('Max = balance − the worst-case fee of a zero-value probe (deposit not counted)', steadyMax === BAL - priced(gasSet), String(steadyMax));
+  check('Max = balance − the worst-case fee of the probe (deposit not counted)', steadyMax === BAL - priced(gasSet), String(steadyMax));
   const plain = await prepareAaSend(steady, owner.address, RECIPIENT, steadyMax);
   const marked = await prepareAaSend(steady, owner.address, RECIPIENT, steadyMax, { fromMax: true });
   check('fee steady: the fromMax quote is identical to the plain quote (no maxAdjustment)', keysOf(plain) === keysOf(marked) && !('maxAdjustment' in marked), keysOf(marked));
@@ -2401,7 +2402,7 @@ await (async () => {
   gasSet.vgl = 200_000n;
   estimates.length = 0;
   const fallen = await prepareAaSend(tunableBundle({ senderBalance: BAL / 2n }), owner.address, RECIPIENT, BAL, { fromMax: true });
-  check('balance below the Max figure: lowered to the new balance − fee via a zero-value probe', fallen.amount === BAL / 2n - priced(gasSet) && fallen.maxAdjustment?.requested === BAL && estimates.length === 2);
+  check('balance below the Max figure: lowered to the new balance − fee via a probe first', fallen.amount === BAL / 2n - priced(gasSet) && fallen.maxAdjustment?.requested === BAL && estimates.length === 2);
   await checkRejects('…and refused with the funding message when the fee alone exceeds the balance',
     () => prepareAaSend(tunableBundle({ senderBalance: priced(gasSet) }), owner.address, RECIPIENT, BAL, { fromMax: true }), 'Fund the smart account address');
 
@@ -2415,6 +2416,101 @@ await (async () => {
   check(`…at most 1 + ${AA_MAX_TRIM_ROUNDS} estimates`, AA_MAX_TRIM_ROUNDS === 3 && estimates.length === 4, String(estimates.length));
 
   check('aaFeeFromBalance: the deposit pays first; null counts as zero', aaFeeFromBalance(5n, 3n) === 2n && aaFeeFromBalance(5n, 9n) === 0n && aaFeeFromBalance(5n, null) === 5n);
+
+  // Phase 24 follow-up: the Max probe carries a NON-ZERO value. The Kernel
+  // account moves the amount with an inner CALL, which the EVM charges more
+  // for a non-zero value (CALL_VALUE: 9,000 before Glamsterdam, 11,300
+  // after; execution-specs forks/prague and forks/amsterdam vm/gas.py), so a
+  // bundler prices a zero-value transfer lower than the transfer Max then
+  // fills in (SimpleAccount's execute makes the same kind of CALL, and the
+  // bundles here are SimpleAccount ones). This bundler does the same:
+  // callGasLimit is 11,300 lower when the call's value is 0. The value word
+  // is read back from the calldata: SimpleAccount execute(address,uint256,
+  // bytes) (0xb61d27f6) has it at bytes 36–68; Kernel execute(bytes32,bytes)
+  // (0xe9ae5c53) at bytes 120–152 (selector, mode, offset, length, target).
+  {
+    const CALL_VALUE_GAS = 11_300n;
+    const valueOfCallData = (hex) => {
+      const at = hex.startsWith('0xb61d27f6') ? 36 : hex.startsWith('0xe9ae5c53') ? 120 : null;
+      if (at === null) throw new Error(`value-aware bundler: unknown execute selector ${hex.slice(0, 10)}`);
+      return BigInt('0x' + hex.slice(2 + 2 * at, 2 + 2 * (at + 32)));
+    };
+    const valueAware = { cgl: 100_000n, vgl: 200_000n, pvg: 50_000n };
+    const valueEstimates = [];
+    const valueAwareBundle = () => {
+      const node = fakeNode({ senderBalance: BAL });
+      const bundler = async (method, params) => {
+        if (method === 'eth_estimateUserOperationGas') {
+          const value = valueOfCallData(params[0].callData);
+          valueEstimates.push(value);
+          const cgl = value === 0n ? valueAware.cgl - CALL_VALUE_GAS : valueAware.cgl;
+          return { callGasLimit: '0x' + cgl.toString(16), verificationGasLimit: '0x' + valueAware.vgl.toString(16), preVerificationGas: '0x' + valueAware.pvg.toString(16) };
+        }
+        throw new Error(`value-aware bundler: unexpected ${method}`);
+      };
+      return createAaClient({
+        nodeUrl: 'https://node.example',
+        bundlerUrl: 'https://bundler.example',
+        factory: FACTORY_INPUT,
+        transportFor: (url) => (url === 'https://node.example' ? node : bundler),
+      });
+    };
+    const nonZeroFee = (valueAware.cgl + valueAware.vgl + valueAware.pvg) * MAXFEE;
+    const zeroFee = (valueAware.cgl - CALL_VALUE_GAS + valueAware.vgl + valueAware.pvg) * MAXFEE;
+    valueEstimates.length = 0;
+    const vMax = await maxAaSend(valueAwareBundle(), owner.address, RECIPIENT);
+    check('the smart-account Max probe asks the bundler once, for a 1-wei transfer (AA_MAX_PROBE_VALUE_WEI)',
+      AA_MAX_PROBE_VALUE_WEI === 1n && valueEstimates.length === 1 && valueEstimates[0] === 1n, valueEstimates.join(','));
+    check('…so Max reserves the gas of a NON-ZERO transfer: balance − (callGasLimit with the CALL value charge + the rest) × max fee',
+      vMax === BAL - nonZeroFee, `${vMax} vs ${BAL - nonZeroFee}`);
+    valueEstimates.length = 0;
+    const vQuote = await prepareAaSend(valueAwareBundle(), owner.address, RECIPIENT, vMax, { fromMax: true });
+    check('at Review, with the same per-gas fee and balance, the Max amount is kept: no maxAdjustment, so no "the network fee rose" sentence',
+      vQuote.amount === vMax && !('maxAdjustment' in vQuote) && aaMaxAdjustmentSentence(vQuote, String) === null && vQuote.total === BAL && valueEstimates.length === 1 && valueEstimates[0] === vMax,
+      `${vQuote.amount} / ${valueEstimates.join(',')}`);
+    // The old zero-value probe (a mutant of aa.ts): Max reserved 11,300 gas
+    // too little, so Review lowered the amount and the sentence blamed a fee
+    // rise that did not happen (the per-gas fee is the same MAXFEE).
+    const aaSourceForProbe = readFileSync(new URL('../src/wallet/aa.ts', import.meta.url), 'utf8');
+    const probeAnchor = '    probe = await prepareAaSend(bundle, ownerAddress, to, AA_MAX_PROBE_VALUE_WEI);';
+    if (!aaSourceForProbe.includes(probeAnchor)) throw new Error('mutation anchor not found: the Max probe');
+    const zeroProbe = await importMutant('src/wallet/aa.ts', aaSourceForProbe.replace(probeAnchor, '    probe = await prepareAaSend(bundle, ownerAddress, to, 0n);'));
+    const oldMax = await zeroProbe.maxAaSend(valueAwareBundle(), owner.address, RECIPIENT);
+    const oldQuote = await prepareAaSend(valueAwareBundle(), owner.address, RECIPIENT, oldMax, { fromMax: true });
+    check('MUTANT (the zero-value Max probe) is caught: it reserves the zero-value fee, and Review lowers the amount with the false "the network fee rose" sentence at an unchanged per-gas fee',
+      oldMax === BAL - zeroFee && oldQuote.maxAdjustment?.requested === oldMax && oldQuote.amount === BAL - nonZeroFee &&
+        oldQuote.maxFeePerGas === MAXFEE && /because the network fee rose after you tapped Max/.test(aaMaxAdjustmentSentence(oldQuote, String) ?? ''),
+      `${oldMax} / ${oldQuote.amount}`);
+    // A smart account that cannot move even 1 wei (an empty one): the 1-wei
+    // probe is refused and the zero-value probe gives the same refusal as
+    // before, with no bundler call.
+    valueEstimates.length = 0;
+    await checkRejects('an empty smart account: Max still gives the old funding message (the zero-value fallback), no bundler call',
+      () => maxAaSend((() => {
+        const node = fakeNode({ senderBalance: 0n });
+        return createAaClient({ nodeUrl: 'https://node.example', bundlerUrl: 'https://bundler.example', factory: FACTORY_INPUT, transportFor: (url) => (url === 'https://node.example' ? node : async () => { valueEstimates.push('called'); throw new Error('no bundler call expected'); }) });
+      })(), owner.address, RECIPIENT), 'Fund the smart account address');
+    check('…and the bundler was never asked', valueEstimates.length === 0, valueEstimates.join(','));
+    // The balance fell below a Max figure: the trim's own probe is a 1-wei
+    // transfer too, so one estimate prices the probe and one the lowered
+    // amount, and the lowered amount fits beside the non-zero fee.
+    valueEstimates.length = 0;
+    const fell = await (async () => {
+      const node = fakeNode({ senderBalance: BAL / 2n });
+      const bundler = async (method, params) => {
+        if (method !== 'eth_estimateUserOperationGas') throw new Error(`unexpected ${method}`);
+        const value = valueOfCallData(params[0].callData);
+        valueEstimates.push(value);
+        const cgl = value === 0n ? valueAware.cgl - CALL_VALUE_GAS : valueAware.cgl;
+        return { callGasLimit: '0x' + cgl.toString(16), verificationGasLimit: '0x' + valueAware.vgl.toString(16), preVerificationGas: '0x' + valueAware.pvg.toString(16) };
+      };
+      const b = createAaClient({ nodeUrl: 'https://node.example', bundlerUrl: 'https://bundler.example', factory: FACTORY_INPUT, transportFor: (url) => (url === 'https://node.example' ? node : bundler) });
+      return prepareAaSend(b, owner.address, RECIPIENT, BAL, { fromMax: true });
+    })();
+    check('balance below the Max figure: the trim probes with 1 wei, then prices the lowered amount once (two estimates) and it fits',
+      valueEstimates.length === 2 && valueEstimates[0] === 1n && fell.amount === BAL / 2n - nonZeroFee && fell.total === BAL / 2n && fell.maxAdjustment?.requested === BAL,
+      `${valueEstimates.join(',')} / ${fell.amount}`);
+  }
 
   // SendScreen wiring (source checks): a separate last-Max record for the
   // smart-account path, fromMax passed only on the plain native AA quote,

@@ -91,6 +91,7 @@ export {
   SOLANA_DEVNET_CAIP2,
   SOLANA_MAINNET_CAIP2,
   SPL_QUOTE_SENTENCES,
+  SPL_UNNAMED_TOKEN,
   SplTokenRefusal,
   findMetaplexMetadataAddress,
   findSolanaLookAlike,

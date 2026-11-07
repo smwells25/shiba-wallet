@@ -52,7 +52,7 @@ import {
 } from '@shiba-wallet/chains-evm';
 // Explicit .ts extensions: this module is imported by scripts/check-aa.mjs
 // under Node's type stripping, which resolves relative specifiers literally.
-import { EVM_CHAIN_ID, validateRecipient } from './send.ts';
+import { EVM_CHAIN_ID, MAX_ESTIMATE_VALUE_WEI, validateRecipient } from './send.ts';
 import { formatUnits } from './balances.ts';
 import type { KeyValueStore } from './tokens.ts';
 import { isMultisigAccountId, smartAccountSaltFor } from './account-ids.ts';
@@ -3698,8 +3698,15 @@ export async function prepareAaCalls(
     // The balance no longer exceeds the Max figure (it fell, or the Max was
     // computed while a paymaster sponsored the gas). A transfer of more than
     // the account can pay is not a safe thing to ask the bundler to
-    // simulate, so price a zero-value transfer first, as maxAaSend does.
-    const probe = await price(withValue(0n));
+    // simulate, so price a 1-wei transfer first (AA_MAX_PROBE_VALUE_WEI,
+    // priced like the real amount), falling back to a zero-value one when
+    // that fails, as maxAaSend does.
+    let probe: Awaited<ReturnType<typeof price>>;
+    try {
+      probe = await price(withValue(AA_MAX_PROBE_VALUE_WEI));
+    } catch {
+      probe = await price(withValue(0n));
+    }
     const room = senderBalance > probe.fee ? senderBalance - probe.fee : 0n;
     if (room <= 0n) {
       throw new AaFundingError(sender, aaFundingMessage({ ...fundingFacts(), fee: probe.fee }), fundingTitle);
@@ -3925,22 +3932,68 @@ export async function maxAaErc20Send(
 }
 
 /**
+ * The value of the transfer the smart-account Max probe prices (maxAaSend,
+ * and prepareAaCalls when the balance fell below a Max figure): 1 wei, the
+ * same as the regular-account Max (MAX_ESTIMATE_VALUE_WEI in ./send.ts).
+ *
+ * WHY NOT ZERO. The account sends the amount with an inner CALL: Kernel v3.3's
+ * execute(mode, executionCalldata) for a single call runs ExecLib.execute,
+ * whose assembly is `call(gas(), target, value, …)` (zerodevapp/kernel at
+ * cd697c7e, src/Kernel.sol line 330, src/utils/ExecLib.sol lines 38–45 and
+ * 93–98; the engine's encodeKernelExecute packs the value into the
+ * calldata), and the SimpleAccount path does the same through
+ * `target.call{value: value}(data)` (eth-infinitism/account-abstraction
+ * v0.7.0, contracts/samples/SimpleAccount.sol lines 58 and 113–114). The
+ * EVM charges that CALL more when the value is non-zero:
+ * before Glamsterdam CALL_VALUE 9,000, plus NEW_ACCOUNT 25,000 when the
+ * recipient does not exist (ethereum/execution-specs at ce7375fe,
+ * src/ethereum/forks/prague/vm/gas.py lines 52–54 and
+ * vm/instructions/system.py lines 395–398); after it CALL_VALUE
+ * ACCOUNT_WRITE + CALL_STIPEND = 11,300 execution gas, plus the new-account
+ * charge as 183,600 state gas when the recipient does not exist
+ * (forks/amsterdam/vm/gas.py lines 48–55 and 84–86,
+ * vm/instructions/system.py lines 505 and 543–546). EIP-2780 changes the
+ * TOP-LEVEL transaction's intrinsic and runtime charges only: its
+ * Specification prices tx.sender, tx.to and tx.value, and it says that "all
+ * execution-level account touches, including internal CALLs" follow the
+ * standard EIP-2929 model ("Interactions with other EIPs") and that
+ * "internal CALL-based account creation … already pays for the new leaf"
+ * ("Motivation"; EIPS/eip-2780.md, Last Call, read 2026-11-07). So a
+ * zero-value probe is estimated at least 9,000 / 11,300 gas
+ * below the transfer Max then fills in, and up to a new account's charge
+ * below it for a never-used recipient, and Review then lowers the amount
+ * with a sentence blaming a fee rise that did not happen. Those charges
+ * depend only on whether the value is zero and whether the recipient
+ * exists, so 1 wei prices the same CALL as the real amount; the amount
+ * then differs from 1 wei only in a few calldata bytes of the value word,
+ * which the trim rounds absorb (AA_MAX_TRIM_ROUNDS).
+ */
+export const AA_MAX_PROBE_VALUE_WEI = MAX_ESTIMATE_VALUE_WEI;
+
+/**
  * The largest amount the smart account can send right now (phase 5's
  * AA Max slice): the full balance under sponsorship, else the balance
- * minus the worst-case fee of a zero-value transfer to the same
- * recipient (gas for a simple native transfer depends on the amount only
- * through a few calldata bytes; prepareAaCalls with fromMax re-prices the
- * exact amount at Review). Returns 0n when fees exceed the balance. The
- * EntryPoint deposit is deliberately NOT added: it stays as the reserve
- * that absorbs a fee rise at signing time (see the deposit rule for Max in
- * prepareAaCalls).
+ * minus the worst-case fee of a 1-wei transfer to the same recipient
+ * (AA_MAX_PROBE_VALUE_WEI: a non-zero value is priced like the amount Max
+ * fills in; prepareAaCalls with fromMax re-prices the exact amount at
+ * Review). If the 1-wei probe fails (a smart account holding nothing, or
+ * holding nothing beyond what the fee takes, so even 1 wei cannot move),
+ * it is retried with value 0 exactly as before, so the refusal a user reads
+ * is unchanged. Returns 0n when fees exceed the balance. The EntryPoint
+ * deposit is deliberately NOT added: it stays as the reserve that absorbs a
+ * fee rise at signing time (see the deposit rule for Max in prepareAaCalls).
  */
 export async function maxAaSend(
   bundle: AaClientBundle,
   ownerAddress: string,
   to: string,
 ): Promise<bigint> {
-  const probe = await prepareAaSend(bundle, ownerAddress, to, 0n);
+  let probe: AaSendQuote;
+  try {
+    probe = await prepareAaSend(bundle, ownerAddress, to, AA_MAX_PROBE_VALUE_WEI);
+  } catch {
+    probe = await prepareAaSend(bundle, ownerAddress, to, 0n);
+  }
   if (bundle.sponsored) return probe.senderBalance;
   const gasTotal = probe.callGasLimit + probe.verificationGasLimit + probe.preVerificationGas;
   const worstCase = gasTotal * probe.maxFeePerGas;

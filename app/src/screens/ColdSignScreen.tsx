@@ -477,7 +477,7 @@ export function ColdSignScreen({ route, navigation }: Props) {
   };
 
   // Max from the smart account, with the Send screen's smart-account rules
-  // (aa.ts maxAaSend: the balance less a zero-value transfer's worst-case
+  // (aa.ts maxAaSend: the balance less a 1-wei transfer's worst-case
   // fee; maxAaErc20Send: the whole token balance when the account's coin
   // covers the fee). A native Max amount is lowered at Review if the fee rose.
   const onAaMax = async () => {

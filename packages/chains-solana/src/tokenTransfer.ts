@@ -279,6 +279,12 @@ export class SplTokenRefusal extends Error {
   }
 }
 
+/**
+ * How the quote's sentences name a token whose mint has no readable symbol
+ * (symbolFor below), exported so the checks can pin both wordings.
+ */
+export const SPL_UNNAMED_TOKEN = 'this token';
+
 /** Refusal sentences of the transfer quote, exported so the checks pin them. */
 export const SPL_QUOTE_SENTENCES = Object.freeze({
   notTokenProgram: (owner: string): string =>
@@ -290,8 +296,14 @@ export const SPL_QUOTE_SENTENCES = Object.freeze({
     'The recipient address is not an ordinary wallet address (it has no private key; it may be a program-derived address). This wallet does not send tokens to such an address.',
   recipientIsTokenAccount:
     'The recipient address is itself a token account, not a wallet. Sending to it would put the tokens in an account that belongs to whoever owns that token account; ask the recipient for their wallet address.',
+  // "holds no PYUSD" for a token with a symbol; a mint without readable
+  // metadata has no symbol and is named "this token" (symbolFor), where
+  // "holds no this token" would not read as English, so that one case
+  // keeps "none of".
   noSourceAccount: (symbol: string): string =>
-    `This account holds none of ${symbol} in its associated token account, so there is nothing to send.`,
+    symbol === SPL_UNNAMED_TOKEN
+      ? `This account holds none of ${symbol} in its associated token account, so there is nothing to send.`
+      : `This account holds no ${symbol} in its associated token account, so there is nothing to send.`,
   sourceFrozen: 'Your token account for this token is frozen, so it cannot send until the issuer thaws it.',
   insufficient: (have: string, want: string, symbol: string): string =>
     `Not enough of ${symbol}: the account holds ${have} and this transfer needs ${want}.`,
@@ -474,7 +486,7 @@ export interface SplTokenTransferQuote {
 }
 
 function symbolFor(profile: MintProfile): string {
-  return profile.metadata?.symbol ?? 'this token';
+  return profile.metadata?.symbol ?? SPL_UNNAMED_TOKEN;
 }
 
 /**

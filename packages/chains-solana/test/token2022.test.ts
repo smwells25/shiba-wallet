@@ -49,6 +49,7 @@ import {
   SOLANA_DEVNET_CAIP2,
   SOLANA_MAINNET_CAIP2,
   SPL_QUOTE_SENTENCES,
+  SPL_UNNAMED_TOKEN,
   SplTokenRefusal,
   findMetaplexMetadataAddress,
   findSolanaLookAlike,
@@ -588,6 +589,24 @@ describe('quoteSplTokenTransfer', () => {
     expect(q.instructions).toHaveLength(1);
     expect(calls).not.toContain('getEpochInfo');
     expect(calls).not.toContain('getMinimumBalanceForRentExemption');
+  });
+
+  it('names the token in the no-source refusal: "holds no DOG", and "none of this token" only without a symbol', async () => {
+    expect(SPL_UNNAMED_TOKEN).toBe('this token');
+    expect(SPL_QUOTE_SENTENCES.noSourceAccount('PYUSD')).toBe(
+      'This account holds no PYUSD in its associated token account, so there is nothing to send.',
+    );
+    expect(SPL_QUOTE_SENTENCES.noSourceAccount(SPL_UNNAMED_TOKEN)).toBe(
+      'This account holds none of this token in its associated token account, so there is nothing to send.',
+    );
+    // Through the quote, with the symbol read from the mint's own metadata.
+    const borsh = (s: string): number[] => [...u32(s.length), ...new TextEncoder().encode(s)];
+    const named = mintBytes({ extensions: [{ type: EXT.MetadataPointer, data: [...key(AUTH), ...key(MINT)] }, { type: EXT.TokenMetadata, data: [...key(AUTH), ...key(MINT), ...borsh('Dog Coin'), ...borsh('DOG'), ...borsh(''), ...u32(0)] }] });
+    const noSource = chainWith(named, T22);
+    noSource.delete(ataOf(sender.publicKey, SPL_TOKEN_2022.toBytes()));
+    expect(await refusal(quote(fakeClient(noSource).client))).toEqual({
+      code: 'no-source', message: 'This account holds no DOG in its associated token account, so there is nothing to send.',
+    });
   });
 
   it('reads the mint metadata from the Token-2022 extension and ignores a record naming another mint', async () => {

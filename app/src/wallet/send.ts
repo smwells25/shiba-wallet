@@ -566,13 +566,42 @@ export async function repriceTokenQuoteAtMinimumFee<Q extends MinimumFeeRepricea
 const MAX_TRIM_ROUNDS = 3;
 
 /**
- * The intrinsic gas of the cheapest possible transaction (21,000; the
- * Ethereum yellow paper's G_transaction, charged to every transaction). A
- * lower bound for any transaction's gas, used only for the payable-call
- * balance pre-check in prepareEvmSend, where a lower bound guarantees the
- * pre-check never refuses a transaction the balance could pay for.
+ * Lower bounds on a transaction's gas, used only by the payable-call balance
+ * pre-check in prepareEvmSend, which runs only for a transaction carrying
+ * calldata AND a non-zero value; a lower bound guarantees the pre-check never
+ * refuses a transaction the balance could pay for.
+ *
+ * Before Glamsterdam every transaction paid a flat base of 21,000
+ * (ethereum/execution-specs at ce7375fe, src/ethereum/forks/prague/vm/gas.py
+ * TX_BASE, added to every transaction's intrinsic cost in
+ * forks/prague/transactions.py). EIP-2780 (in Glamsterdam, active on Sepolia since
+ * 2026-10-06; EIPS/eip-2780.md, "Intrinsic gas costs") decomposes it:
+ * TX_BASE_COST 12,000 for every transaction, plus COLD_ACCOUNT_ACCESS 3,000
+ * unless it is a self-transfer, plus TX_VALUE_COST 6,000 when the value is
+ * non-zero and it is not a self-transfer. So a zero-value transaction can
+ * cost 15,000 and a self-transfer 12,000, and 21,000 is no longer a bound
+ * for every transaction. The pre-check sees two shapes, each with its own
+ * bound:
+ *  - a non-zero value to ANOTHER account: 12,000 + 3,000 + 6,000 = 21,000
+ *    (and 21,000 on networks without the fork), so MIN_TRANSACTION_GAS;
+ *  - a non-zero value to the SENDER itself (for example an EIP-7702
+ *    account calling its own code): TX_BASE_COST 12,000 alone, so
+ *    MIN_SELF_TRANSACTION_GAS (on a network without the fork such a
+ *    transaction costs 21,000, which the smaller bound still lies below).
+ * A zero-value transaction (15,000 after the fork) never reaches the
+ * pre-check.
  */
 const MIN_TRANSACTION_GAS = 21_000n;
+const MIN_SELF_TRANSACTION_GAS = 12_000n;
+
+/**
+ * The lower bound on the gas of a transaction from `from` to `to` that
+ * carries a non-zero value (see MIN_TRANSACTION_GAS). Addresses are compared
+ * without regard to case.
+ */
+export function minimumValueTransactionGas(from: string, to: string): bigint {
+  return from.toLowerCase() === to.toLowerCase() ? MIN_SELF_TRANSACTION_GAS : MIN_TRANSACTION_GAS;
+}
 
 /** What SendScreen remembers about the last Max result (public data only). */
 export interface LastMaxResult {
@@ -876,8 +905,8 @@ export type SendQuote = EvmSendQuote | UtxoSendQuote | SolSendQuote;
  * reverts below its minimum when the value is 0), so the retry would
  * replace the real problem with a misleading revert. Instead, a payable
  * call (calldata and a non-zero value) is first compared with the balance
- * at the smallest fee any transaction can cost (MIN_TRANSACTION_GAS at
- * the suggested max fee) and refused with the insufficient-funds wording
+ * at the smallest fee such a transaction can cost (minimumValueTransactionGas
+ * at the suggested max fee) and refused with the insufficient-funds wording
  * before any estimate is requested.
  *
  * `options.fromMax` marks an amount produced by the Max button; see
@@ -935,12 +964,13 @@ export async function prepareEvmSend(
   // value the balance cannot cover even at the smallest possible fee
   // BEFORE estimating, so the user reads "not enough ETH" rather than the
   // contract's reaction to a value it never receives. The bound is a lower
-  // bound (every transaction costs at least MIN_TRANSACTION_GAS), so this
-  // never refuses a transaction the balance could pay for; the exact
-  // check with the estimated gas still follows below. Plain transfers and
-  // value-0 calls are unchanged.
+  // bound (a non-zero-value transaction costs at least
+  // minimumValueTransactionGas: 21,000 to another account, 12,000 to the
+  // sender itself after EIP-2780), so this never refuses a transaction the
+  // balance could pay for; the exact check with the estimated gas still
+  // follows below. Plain transfers and value-0 calls are unchanged.
   if (dataHex !== undefined && amount > 0n) {
-    const minimumFee = MIN_TRANSACTION_GAS * fees.maxFeePerGas;
+    const minimumFee = minimumValueTransactionGas(from, to) * fees.maxFeePerGas;
     if (amount + minimumFee > balance) {
       throw new Error(
         `Insufficient funds: sending ${amount} wei plus a worst-case fee of at least ${minimumFee} wei ` +
