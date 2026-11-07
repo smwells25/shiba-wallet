@@ -16504,3 +16504,78 @@ arrive; 6 last. Subagents on Opus.
       initialised counter; reading the bootloader version; the erratum's
       parts; Pi 3B+ support. Hygiene: no factory-key constant, test key,
       chip serial or batch id copied; no new 32-hex string.
+- [x] Item 3 — THE HARDENING LEFTOVERS (commit 3c78ce1; 20 files — 19 changed and
+      the new app/scripts/wipe-harness.mjs; check-storage-seam 101 (was 85),
+      check-activity 302 (295), check-pending 322 (316), check-records-backup
+      147 (143), check-tokens 159 (158); offline runner ALL GREEN in the
+      CTO's rebuilt isolated worktree on HEAD d96c343 with --skip-bundle:
+      engine 1,298, app 10,881 across 65 suites, lint 0/0, tsc clean;
+      checkout 0 / apply 0 / 20 files; the staged patch id f1c007d7…2882
+      equal to the verified tree's and the agent's; the pre-commit scan
+      clean; four hand mutants on the real files caught; the CTO read the
+      resetAccounts hunk and its three callers; not seen on a device). (1)
+      THE WIPE REMOVES KEYS: nine reset functions that wrote an empty
+      document now call removeStoreItem when the store can delete keys
+      (AsyncStorage can; a store without removeItem keeps the empty
+      document, the pattern notes.ts already used) — resetAccounts
+      (accounts.ts), resetContacts, resetSessions (forgetAllSessions takes
+      a removable store), resetMultisigRecords, resetRecoveryRecords and
+      the recovery-progress key inside wipeRecoveryData,
+      resetTakeoverScanStates (the one that had CREATED an empty
+      inheritance.v1), resetPasskeys, resetSpendingLimits (both keys),
+      forgetBrowserConnections; notes, pending, price alerts, bridge, inbox,
+      handle and tokens already removed theirs; every reader was shown to
+      treat an absent key as nothing stored (accounts.ts 320, contacts.ts
+      310, sessions.ts 590, multisig.ts 818, recovery.ts 386,
+      inheritance.ts 420, passkeys.ts 915, spending-policy.ts 410,
+      browser-sites.ts 306, records-backup.ts 683); the device-scoped keys
+      and WIPE_NOT_RESET untouched, aa-config still the partial-clear write;
+      BEHAVIOUR CHANGE, accepted: resetAccounts also serves create and
+      import, so at that moment the accounts key is REMOVED rather than
+      written with the default list — loadAccounts returns
+      defaultAccountsState() for a null read, so the effect is identical and
+      the next account change writes the key. THE HARNESS
+      (app/scripts/wipe-harness.mjs, a registered helper): reads both wipe
+      lists out of WalletContext.tsx with the TypeScript AST in order and
+      runs each reset on a given store, throwing on a call it does not know
+      so a new reset can never be skipped silently; check-storage-seam now
+      requires the last function of every reset chain to call
+      removeStoreItem, and its behavioural section seeds all 24
+      wallet-scoped keys (8 through the modules' own writers, 16 through the
+      seam in the module's document shape — a stated limit), runs both
+      lists, and asserts only WIPE_NOT_RESET remains, the plain wipe writes
+      nothing but aa-config (which keeps its bundler URL and loses the
+      EIP-7702 mark), the WalletConnect and notifications keys stay byte
+      for byte, the second wallet's resetRecords leaves the primary byte for
+      byte, and on an empty store neither list creates a key; two in-suite
+      mutants (an empty document written again; an unknown wipe call);
+      check-records-backup restores every kind onto the absent keys equal
+      to the original; the wipe dialog's "deleted from this device" is now
+      literally true and unchanged. (2) activity-sentences.ts
+      watchedOwnerSmartAccount = predictKernelAddress(owner, {index: 0n}) —
+      WATCHED_OWNER_KERNEL_INDEX 0, no request — labelled "<name>'s smart
+      account" through activityAccountLabels' new watched parameter and
+      added to activityAddressSets' decode set; ActivityScreen passes
+      watchOnlyAccounts (in the setup key); the p23-coldaa case now reads
+      "Smart-account operation by Cold 8 (watch-only)'s smart account: sent
+      0.0001 test ETH to yourself" (the address pinned equal to cold-aa.ts's
+      coldAaAccountAddress and the live 0x96e96e31…00C9; "…from other
+      accounts" without the list). (3) pending-transactions.ts
+      laterBroadcastsSentence: "N replacement(s) sent since." for speed-ups
+      and cancellations, "N more transaction(s) sent at this nonce since."
+      for later plain sends, both clauses when both exist; pinned from the
+      p22b nonce-6 group. (4) CORRECTION to the brief: the watch-only token
+      note is watch-only.ts WATCH_ONLY_TOKENS_SEND_NOTE (not tokens.ts) and
+      not in the i18n table — now "This is a watch-only address: the wallet
+      holds no key for it, so it cannot sign; a token send can be prepared
+      with "Send with an off-line signer" and signed by an off-line signer
+      that holds its key." (pinned to quote the Home link and never say
+      "cannot send"). THREAT_MODEL F-85's note about the empty documents and
+      FEATURE_UNIVERSE row 47's "empties the contact book rather than
+      removing its key" sentence are now stale — the item-6 refresh.
+      UNVERIFIED (device): the wipe's result on a real store; the Activity
+      label on screen; a watched account's own transfer to its Kernel.
+      Slips: the baseline run overlapped the first edit by under a minute
+      (its counts equal the expected baseline); a check-pending fixture
+      first built a cancellation the validator refuses (fixed to self,
+      12,000 gas).
