@@ -53,6 +53,37 @@ const COMMITMENT_RANK: Record<Commitment, number> = {
   finalized: 2,
 };
 
+/** An account as getAccountInfo answers it, with the data decoded to bytes. */
+export interface RawAccount {
+  /** The account's own address (base58). */
+  address: string;
+  /** The program that owns the account (base58). */
+  owner: string;
+  lamports: bigint;
+  executable: boolean;
+  data: Uint8Array;
+}
+
+interface RawAccountValue {
+  data: [string, string];
+  executable: boolean;
+  lamports: number;
+  owner: string;
+}
+
+function decodeRawAccount(address: string, value: RawAccountValue): RawAccount {
+  if (!Array.isArray(value.data) || value.data[1] !== 'base64') {
+    throw new Error(`account ${address} was not returned in base64 encoding`);
+  }
+  return {
+    address,
+    owner: value.owner,
+    lamports: BigInt(value.lamports),
+    executable: value.executable,
+    data: base64.decode(value.data[0]),
+  };
+}
+
 export interface LatestBlockhash {
   /** Base58-encoded blockhash to embed in a message. */
   blockhash: string;
@@ -150,6 +181,86 @@ export class SolanaRpcClient {
         decimals: info.tokenAmount.decimals,
       };
     });
+  }
+
+  /**
+   * getAccountInfo with base64 encoding. Reference
+   * (solana.com/docs/rpc/http/getaccountinfo; source
+   * solana-foundation/solana-com apps/docs/content/docs/en/rpc/http/getaccountinfo.mdx
+   * at 31f66e08, read 2026-11-07): params are the base58 pubkey and a config
+   * object ({ commitment?, encoding }); the result is { context, value }
+   * with value null for an account that does not exist, else { data:
+   * [base64, "base64"], executable, lamports, owner, space, rentEpoch }.
+   * The raw bytes are returned so the wallet parses them itself instead of
+   * trusting a node's jsonParsed rendering.
+   */
+  async getAccountInfoBase64(
+    address: string,
+    commitment?: Commitment,
+  ): Promise<RawAccount | null> {
+    const config: Record<string, unknown> = { encoding: 'base64' };
+    if (commitment) config.commitment = commitment;
+    const result = (await this.transport('getAccountInfo', [address, config])) as {
+      value: RawAccountValue | null;
+    };
+    return result.value === null ? null : decodeRawAccount(address, result.value);
+  }
+
+  /**
+   * getTokenAccountsByOwner with base64 encoding, for one token program.
+   * Reference (solana.com/docs/rpc/http/gettokenaccountsbyowner; source
+   * gettokenaccountsbyowner.mdx at 31f66e08, read 2026-11-07): the filter
+   * is { programId } or { mint }; the encoding may be base58, base64,
+   * base64+zstd, binary or jsonParsed; each entry is { pubkey, account }
+   * with account shaped as in getAccountInfo.
+   */
+  async getTokenAccountsByOwnerBase64(
+    owner: string,
+    programId: string,
+    commitment?: Commitment,
+  ): Promise<RawAccount[]> {
+    const config: Record<string, unknown> = { encoding: 'base64' };
+    if (commitment) config.commitment = commitment;
+    const result = (await this.transport('getTokenAccountsByOwner', [
+      owner,
+      { programId },
+      config,
+    ])) as { value: Array<{ pubkey: string; account: RawAccountValue }> };
+    return result.value.map((entry) => decodeRawAccount(entry.pubkey, entry.account));
+  }
+
+  /**
+   * getEpochInfo. Reference (solana.com/docs/rpc/http/getepochinfo; source
+   * getepochinfo.mdx at 31f66e08, read 2026-11-07): params are an optional
+   * config object; the result carries absoluteSlot, blockHeight, epoch,
+   * slotIndex, slotsInEpoch and transactionCount. A Token-2022 transfer fee
+   * depends on the current epoch.
+   */
+  async getEpoch(commitment?: Commitment): Promise<bigint> {
+    const params: unknown[] = commitment ? [{ commitment }] : [];
+    const result = (await this.transport('getEpochInfo', params)) as { epoch: number };
+    if (!Number.isSafeInteger(result.epoch) || result.epoch < 0) {
+      throw new Error('getEpochInfo answered without a valid epoch');
+    }
+    return BigInt(result.epoch);
+  }
+
+  /**
+   * getMinimumBalanceForRentExemption. Reference
+   * (solana.com/docs/rpc/http/getminimumbalanceforrentexemption; source
+   * getminimumbalanceforrentexemption.mdx at 31f66e08, read 2026-11-07):
+   * params are the account's data length (usize) and an optional config;
+   * the result is the lamports needed.
+   */
+  async getMinimumBalanceForRentExemption(dataLength: number): Promise<bigint> {
+    if (!Number.isSafeInteger(dataLength) || dataLength < 0) {
+      throw new Error('data length must be a non-negative integer');
+    }
+    const result = (await this.transport('getMinimumBalanceForRentExemption', [dataLength])) as number;
+    if (!Number.isSafeInteger(result) || result < 0) {
+      throw new Error('getMinimumBalanceForRentExemption answered without a valid amount');
+    }
+    return BigInt(result);
   }
 
   async getBalance(address: string, commitment?: Commitment): Promise<bigint> {

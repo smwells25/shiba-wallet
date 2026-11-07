@@ -194,3 +194,43 @@ describe('getTokenBalances', () => {
     expect((calls[0]!.params[2] as { encoding: string }).encoding).toBe('jsonParsed');
   });
 });
+
+describe('token-layer RPC methods', () => {
+  it('getAccountInfoBase64 asks for base64, decodes bytes and returns null for a missing account', async () => {
+    const { transport, calls } = fakeTransport((_m, params) =>
+      params[0] === 'missing'
+        ? { context: { slot: 1 }, value: null }
+        : { context: { slot: 1 }, value: { data: [base64.encode(Uint8Array.of(1, 2, 3)), 'base64'], executable: false, lamports: 7, owner: 'Own' } },
+    );
+    const client = new SolanaRpcClient(transport);
+    const found = await client.getAccountInfoBase64('Addr', 'confirmed');
+    expect(calls[0]).toEqual({ method: 'getAccountInfo', params: ['Addr', { encoding: 'base64', commitment: 'confirmed' }] });
+    expect(found).toEqual({ address: 'Addr', owner: 'Own', lamports: 7n, executable: false, data: Uint8Array.of(1, 2, 3) });
+    expect(await client.getAccountInfoBase64('missing')).toBeNull();
+  });
+
+  it('getAccountInfoBase64 refuses an answer in another encoding', async () => {
+    const { transport } = fakeTransport(() => ({ context: { slot: 1 }, value: { data: { parsed: {} }, executable: false, lamports: 1, owner: 'x' } }));
+    await expect(new SolanaRpcClient(transport).getAccountInfoBase64('A')).rejects.toThrow('not returned in base64');
+  });
+
+  it('getTokenAccountsByOwnerBase64 filters by program id', async () => {
+    const { transport, calls } = fakeTransport(() => ({
+      context: { slot: 1 },
+      value: [{ pubkey: 'Acc', account: { data: [base64.encode(Uint8Array.of(9)), 'base64'], executable: false, lamports: 2, owner: 'Prog' } }],
+    }));
+    const listed = await new SolanaRpcClient(transport).getTokenAccountsByOwnerBase64('Owner', 'Prog');
+    expect(calls[0]).toEqual({ method: 'getTokenAccountsByOwner', params: ['Owner', { programId: 'Prog' }, { encoding: 'base64' }] });
+    expect(listed[0]!.address).toBe('Acc');
+  });
+
+  it('getEpoch and getMinimumBalanceForRentExemption pass and check their values', async () => {
+    const { transport, calls } = fakeTransport((m) => (m === 'getEpochInfo' ? { epoch: 1203, absoluteSlot: 5 } : 2039280));
+    const client = new SolanaRpcClient(transport);
+    expect(await client.getEpoch()).toBe(1203n);
+    expect(await client.getMinimumBalanceForRentExemption(165)).toBe(2039280n);
+    expect(calls[1]).toEqual({ method: 'getMinimumBalanceForRentExemption', params: [165] });
+    const bad = new SolanaRpcClient(fakeTransport(() => ({ epoch: -1 })).transport);
+    await expect(bad.getEpoch()).rejects.toThrow('valid epoch');
+  });
+});
