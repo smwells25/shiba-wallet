@@ -16579,3 +16579,134 @@ arrive; 6 last. Subagents on Opus.
       (its counts equal the expected baseline); a check-pending fixture
       first built a cancellation the validator refuses (fixed to self,
       12,000 gas).
+- [x] Item 1, engine half — THE TOKEN-2022 TOKEN LAYER FOR SOLANA (commit 8b2bd97;
+      8 files, +2,538 lines — new packages/chains-solana/src/tokenExtensions.ts
+      and tokenTransfer.ts, rpc.ts and index.ts additive, new
+      test/token2022.test.ts (26) and 4 rpc tests, the fixture
+      test/fixtures/devnet-token-accounts-2026-11-07.json (real devnet
+      bytes of both mints and a 187-byte PYUSD token account), new
+      scripts/testnet/spl-token-smoke.mjs; engine 1,298 → 1,328
+      (chains-solana 48 → 78); offline runner ALL GREEN in the CTO's
+      isolated worktree on HEAD 626c5d7 with --skip-bundle: app 10,881
+      across 65 suites unchanged, lint 0/0, tsc clean; checkout 0 / apply 0
+      / 8 files; the staged patch id f9d7e643…09a1 equal to the verified
+      tree's and the agent's; the pre-commit scan clean; five hand mutants
+      caught; NO app/src file touched; NOTHING LIVE — the dev wallet's
+      devnet account 6TgSKzjg…455t holds 5.499995 SOL and no token under
+      either program, no airdrop was needed and creating a mint was
+      off-limits). THE GAP FOUND: splToken.ts already had the classic
+      program id, an ATA derivation taking a program id, transferChecked
+      (tag 12), the idempotent create-ATA instruction and buildSplTransfer;
+      missing were the Token-2022 id, account and mint parsing (callers
+      supplied decimals), every extension, TransferCheckedWithFee,
+      metadata, getAccountInfo / epoch / rent reads and a Solana CAIP-19
+      helper (core's regexes already accept solana:<ref>/token:<mint>); the
+      app has no SPL code at all (FEATURE_UNIVERSE row 43 "Classic SPL only,
+      engine-only"). SOURCES (2026-11-07; solana.com answered HTTP 429, so
+      its documentation was read from solana-foundation/solana-com at
+      31f66e08): solana-program/token-2022 at 5170695d (lib.rs 29 the
+      program id TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb; state.rs Mint
+      82 B / Account 165 B; extension/mod.rs the ExtensionType enum
+      1074–1141, the TLV walk 205–238, the account-type byte at 165;
+      instruction.rs TransferChecked 12, TransferFeeExtension 26;
+      transfer_fee/instruction.rs sub-tag 1; transfer_fee/mod.rs
+      calculate_fee 50–70, get_epoch_fee 152–158), the ATA program at
+      a63e1598 (processor.rs 84–150: the new account sized for
+      ImmutableOwner plus the mint's required extensions), token-metadata
+      at c1fe5e81, mpl-token-metadata at 72bd052b (metaqbxx…, the PDA, the
+      Key enum), CAIP-2 / CAIP-19 Solana namespaces at c70f619f (devnet
+      solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1; namespaces token and nft),
+      Circle's devnet USDC 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU and
+      Paxos's devnet PYUSD CXk2AMBfi3TwaEL2468s6zP8xq9NxTXjp9gjMgzeUynM from
+      their own pages, the DAS API README at 5881148e and Bubblegum
+      BGUMAp9G… (mpl-bubblegum lib.rs 20). BUILT: tokenProgramKind /
+      tokenProgramId; the extension table (types 0–28); parseMint /
+      parseTokenAccount from raw bytes (refusing non-zero padding, a wrong
+      account-type byte, an entry past the data, the 355-byte multisig size,
+      a classic account not exactly 82 / 165 B, an account extension on a
+      mint and the reverse); decoders for TransferFeeConfig, TransferHook,
+      PermanentDelegate, DefaultAccountState, Pausable, MemoTransfer,
+      MetadataPointer, TokenMetadata and the Metaplex record;
+      calculateTransferFee / transferFeeRateAt as exact bigint mirrors
+      (2,000 random cases equal to spl-token); sanitizeTokenText;
+      classifyMint → plain | fee-charging | hook-bearing | non-transferable
+      | paused | display-adjusted | unknown-extension | not-a-mint with
+      notes; associatedAccountLength; SOLANA_MAINNET_CAIP2 /
+      SOLANA_DEVNET_CAIP2, solanaTokenAssetId (token or nft, through core's
+      formatAssetId), solanaFungibleAsset for the AssetRegistry,
+      KNOWN_SOLANA_TOKENS with findSolanaLookAlike (the EVM rule: same
+      symbol, different mint, same network); transferCheckedWithFee (19 B),
+      findMetaplexMetadataAddress; readMintProfile (metadata from the
+      in-mint extension only when the MetadataPointer points at the mint
+      itself and the record names it, else Metaplex when that record names
+      it; a pointer elsewhere is not followed and said so);
+      listOwnerTokenAccounts (both programs, raw bytes, the ATA flag,
+      foreign entries skipped and counted); quoteSplTokenTransfer (sends
+      only from the sender's ATA, creates the destination ATA when missing
+      and states the rent, a fee mint ALWAYS through TransferCheckedWithFee
+      at the current epoch's fee so a changed fee fails rather than charges,
+      no epoch read for a plain mint); rpc.ts getAccountInfoBase64 (refuses
+      a non-base64 answer), getTokenAccountsByOwnerBase64, getEpoch,
+      getMinimumBalanceForRentExemption. REFUSALS (verbatim in the
+      modules): the six class sentences — "This token is non-transferable:
+      its issuer made it impossible to move to another account, so it
+      cannot be sent.", "This token runs the issuer's program {program} on
+      every transfer (a transfer hook). This wallet does not call programs
+      it does not know, so it does not send this token.", "The issuer has
+      paused this token…", the InterestBearingConfig / ScaledUiAmount
+      sentence ("…changes the amount people are meant to see from the
+      amount actually stored. This wallet does not compute that adjusted
+      amount yet, so it does not send this token rather than show a
+      misleading figure."), "This token uses Token-2022 extension number
+      {n}, which this wallet does not know. It does not send a token whose
+      behaviour it cannot describe.", "This address is not an initialized
+      token mint…" — and eighteen quote refusals (not a mint / no account /
+      an invalid or off-curve recipient / a recipient that is itself a
+      token account / nothing held / a frozen source or destination / not
+      enough / zero amount / a decimals mismatch / new accounts start
+      frozen / a memo-required destination / a confidential-transfer
+      destination / a foreign ATA / not enough SOL for fee and rent);
+      the notes beside a quote (fee, zero fee, permanent delegate, freeze
+      and mint-close authority, pausable, hook not set, confidential
+      balances, ATA rent, look-alike) in SPL_SENTENCES / SPL_QUOTE_SENTENCES.
+      TESTS cross-check against the installed @solana/spl-token 0.4.15
+      (unpackMint, unpackAccount, getExtensionTypes, the three extension
+      getters, createTransferCheckedWithFeeInstruction, the Token-2022
+      TransferChecked, the ATA and create-ATA instructions, getAccountLen)
+      and @solana/spl-token-metadata's unpack against real devnet bytes.
+      DEVNET FACTS (two RPCs, api.devnet.solana.com on solana-core 4.4.0 at
+      epoch 1203 and onfinality): the genesis hash as the CAIP-2 reference;
+      Token, Token-2022, ATA, Metaplex and Bubblegum all executable; devnet
+      USDC classic, 82 B, 6 decimals, plain, with a freeze authority, no
+      Metaplex record; devnet PYUSD Token-2022, 869 B, 6 decimals, with
+      MintCloseAuthority, PermanentDelegate, TransferFeeConfig (0 bps since
+      epoch 644), ConfidentialTransferMint, ConfidentialTransferFeeConfig
+      (type 16, unknown to spl-token 0.4.15), TransferHook unset (all-zero
+      program), a MetadataPointer to itself and TokenMetadata "PayPal USD" /
+      "PYUSD" — classified fee-charging, bytes identical on both RPCs bar
+      the supply; a real PYUSD ATA is 187 B = associatedAccountLength; the
+      public devnet RPC answered getAssetsByOwner with an empty list and
+      onfinality -32601 (no documentation says the public endpoint serves
+      DAS); the smoke's dry run "ALL CHECKS PASSED" with both quotes refused
+      no-source. CTO DECISIONS, all accepted as the agent built them: (1)
+      interest-bearing and scaled-UI mints refused rather than shown raw;
+      (2) a confidential-transfer MINT allowed with a "public balance only"
+      note (else devnet PYUSD is unsendable); (3) off-curve recipients
+      refused (spl-token's own default); (4) sends from the ATA only; (5)
+      DefaultAccountState used only to refuse when the destination is
+      missing. COMPRESSED NFTs: research only — the state lives in an
+      on-chain Merkle tree with the details at RPC providers that have the
+      DAS API switched on (an INPUT); build nothing now. FOLLOW-UPS: the
+      tests import @solana/spl-token-metadata, a transitive dependency not
+      declared in chains-solana's devDependencies (declare it in the app
+      slice); a live TransferCheckedWithFee with a non-zero fee and the
+      create-ATA-plus-transfer path need a devnet token in the dev wallet
+      (a devnet faucet mint or a transfer from a token holder — INPUT or a
+      mint of our own, which the brief forbade); the fee-epoch boundary;
+      mainnet USDC and PYUSD not read on-chain (only mainnet USDC in
+      KNOWN_SOLANA_TOKENS); the Metaplex reader seen only against a
+      synthetic record; the app half (a Solana tracked-token list, Home
+      rows, the send through the existing confirm) is the next slice.
+      Slips: a 429 crashed the first dry run (read-only retry added; never
+      on sendTransaction); a test miscounted the shared extension names;
+      the first wording "holds no this token" corrected.
