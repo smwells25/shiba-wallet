@@ -555,11 +555,20 @@ export interface AccountLabel {
  * ownWalletAddresses, which the risk card and the success screens use.
  * They follow all the accounts' own addresses, before the multisigs.
  * Without `aa` the result is exactly what it was before.
+ *
+ * `watched` (pass p23-coldaa finding 3, phase 24 item B): the watch-only
+ * accounts. Their own addresses stay unlabelled (not the wallet's own), but
+ * each one's smart account for the off-line signer (watchedOwnerSmartAccount)
+ * is labelled "<name>’s smart account" after the multisigs, so an operation
+ * that account sent reads like the other accounts' smart-account operations
+ * instead of "…from other accounts". Without `watched` the result is
+ * exactly what it was before.
  */
 export function activityAccountLabels(
   accounts: readonly { name: string; evmAddress: string | null; index?: number }[],
   multisigs: readonly { address: string; label: string }[] = [],
   aa: AaAddressFacts | null = null,
+  watched: readonly { name: string; evmAddress: string | null }[] = [],
 ): AccountLabel[] {
   const out: AccountLabel[] = [];
   const seen = new Set<string>();
@@ -578,7 +587,32 @@ export function activityAccountLabels(
     }
   }
   for (const m of multisigs) add(m.address, m.label);
+  for (const w of watched) add(w.evmAddress ? watchedOwnerSmartAccount(w.evmAddress) : null, `${w.name}’s smart account`);
   return out;
+}
+
+/**
+ * The CREATE2 index of a watched owner's smart account on the off-line
+ * signing path: cold-aa.ts coldAaAccountAddress predicts the pinned Kernel
+ * v3.3 deployment at aa.ts COLD_AA_ACCOUNT_INDEX, which is 0. Kept here as
+ * a literal rather than imported, because aa.ts and cold-aa.ts carry large
+ * import graphs; scripts/check-activity.mjs pins it equal to
+ * COLD_AA_ACCOUNT_INDEX and the address equal to coldAaAccountAddress.
+ */
+export const WATCHED_OWNER_KERNEL_INDEX = 0;
+
+/**
+ * A watched owner's smart account for the off-line signer: Kernel v3.3 at
+ * WATCHED_OWNER_KERNEL_INDEX on the pinned deployment, computed locally
+ * (CREATE2; no network request). Null for a malformed address.
+ */
+export function watchedOwnerSmartAccount(owner: string): string | null {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(owner)) return null;
+  try {
+    return predictKernelAddress(owner, { index: BigInt(WATCHED_OWNER_KERNEL_INDEX) });
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -600,6 +634,12 @@ export function activityAccountLabels(
  *    transaction ("Received … from Account 2"), not one this account sent;
  *  - `labels`: activityAccountLabels for every account, smart account and
  *    multisig.
+ *
+ * `watched` (pass p23-coldaa finding 3): each watch-only account's smart
+ * account for the off-line signer (watchedOwnerSmartAccount) joins `wallet`
+ * and `labels` like another account's smart account, so Account 2's view of
+ * an operation that account sent reads "Smart-account operation by
+ * <name>’s smart account: …". The watched address itself is not added.
  */
 export function activityAddressSets(input: {
   /** The active account's address on this network (a multisig's own address when one is active). */
@@ -611,6 +651,8 @@ export function activityAddressSets(input: {
   accounts: readonly { name: string; evmAddress: string | null; index: number }[];
   /** The network's stored multisigs (multisig.ts ownMultisigAddresses). */
   multisigs: readonly { address: string; label: string }[];
+  /** The watch-only accounts (WalletContext watchOnlyAccounts); their off-line-signer smart accounts are named. */
+  watched?: readonly { name: string; evmAddress: string | null }[];
 }): { self: string[]; wallet: string[]; labels: AccountLabel[]; selfNames: { address: string; name: string }[] } {
   const self = walletAddressesFor(input.eoa, input.accountIndex, input.aa);
   const others: string[] = [];
@@ -623,10 +665,15 @@ export function activityAddressSets(input: {
   for (const m of input.multisigs) {
     if (/^0x[0-9a-fA-F]{40}$/.test(m.address)) others.push(m.address);
   }
+  const watched = input.watched ?? [];
+  for (const w of watched) {
+    const smart = w.evmAddress ? watchedOwnerSmartAccount(w.evmAddress) : null;
+    if (smart) others.push(smart);
+  }
   return {
     self,
     wallet: dedupe([...self, ...others]),
-    labels: activityAccountLabels(input.accounts, input.multisigs, input.aa),
+    labels: activityAccountLabels(input.accounts, input.multisigs, input.aa, watched),
     // Every "yourself" address after the account's own is its smart
     // account (walletAddressesFor: the Kernel counterfactual, a recovered
     // account); as the other party of a sentence it reads "your smart

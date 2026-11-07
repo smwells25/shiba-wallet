@@ -517,6 +517,31 @@ let exported;
   check('the report sentences', JSON.stringify(rb.describeRecordsImport(report).slice(0, 2)) ===
     JSON.stringify(['Networks you added: 1 added, 0 already on this phone.', 'Contacts: 3 added, 0 already on this phone.']), JSON.stringify(rb.describeRecordsImport(report)));
 
+  // Phase 24 item B: the wipe now REMOVES each wallet-scoped key (pass
+  // p23-devbuild-recheck saw empty documents left behind). The real plain
+  // wipe list of WalletContext.tsx (./wipe-harness.mjs) runs on a copy of
+  // the populated store; the restore then reads absent keys and brings
+  // every record back.
+  {
+    const harness = await import('./wipe-harness.mjs');
+    const lists = harness.wipeCallOrder(read('src/wallet/WalletContext.tsx'));
+    const Wp = memStore();
+    for (const [k, v] of A.map) Wp.map.set(k, v);
+    await harness.runWipeList(lists.plain, Wp);
+    const left = [...Wp.map.keys()].sort();
+    check('after the wipe every record document is GONE from the store (only the device-scoped list of networks you added stays)',
+      JSON.stringify(left) === JSON.stringify(['shiba-wallet.custom-networks.v1']), JSON.stringify(left));
+    await resetBridgeTransfers();
+    const rep = await rb.importRecordsBackup({ text: exported.text, deriveKey: deriverFor(SEED_A), context: { store: Wp, ownAccounts: OWN_ACCOUNTS, verifyNetwork } });
+    check('a restore onto the wiped store (absent keys) restores every kind, nothing refused, nothing stopped',
+      rep.stoppedAt === null && rep.kinds.every((k) => k.notRestored === 0 && k.failure === null), JSON.stringify(rep));
+    const hereW = Object.fromEntries(rep.kinds.map((k) => [k.kind, k.alreadyHere]));
+    check('…"already here" only for the kept network and Sepolia\'s two default tokens',
+      Object.entries(hereW).every(([kind, n]) => n === (kind === 'tokens' ? 2 : kind === 'custom-networks' ? 1 : 0)), JSON.stringify(hereW));
+    const contentsW = await contents(Wp);
+    check('…and every kind reads back equal to the original', JSON.stringify(contentsW) === JSON.stringify(contentsA), JSON.stringify(contentsW));
+  }
+
   // The merge rule: a second restore adds nothing and writes nothing.
   const beforeSecond = snapshot(B);
   const again = await rb.importRecordsBackup({ text: exported.text, deriveKey: deriverFor(SEED_A), context: { store: B, ownAccounts: OWN_ACCOUNTS, verifyNetwork } });

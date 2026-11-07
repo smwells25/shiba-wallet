@@ -1,4 +1,5 @@
-import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
+import { AsyncStorage, readStoreItem, removeStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
+import type { RemovableKeyValueStore } from './store-keys.ts';
 import {
   MAX_GUARDIAN_APPROVAL_SCAN_BLOCKS,
   encodeVetoCall,
@@ -474,11 +475,17 @@ export async function clearTakeoverScanState(chain: string, account: string, sto
  * Wipe support (pass p23-build finding 1): forgets the takeover-scan
  * bookkeeping of every account on every network (the scanned ranges and the
  * approvals found), so nothing of a wiped wallet's checks is left on the
- * phone. Nothing on-chain changes. The record format is kept (an empty
- * entries map), as the per-account clear above writes it.
+ * phone. Nothing on-chain changes.
+ * The wipe REMOVES the key (pass p23-devbuild-recheck follow-up 1: an empty
+ * document was left behind) when the store can delete keys, as AsyncStorage
+ * can; a store without removeItem (some test fakes) gets the empty document
+ * as before. The reader treats an absent key as nothing stored (readScanMap returns
+ * {} for a null read). Pass p23-devbuild-recheck saw the earlier form
+ * CREATE an empty document where none had existed.
  */
-export async function resetTakeoverScanStates(store: KeyValueStore = AsyncStorage): Promise<void> {
-  await writeStoreItem(store, INHERITANCE_STORE_KEY, JSON.stringify({ version: STORE_VERSION, entries: {} }));
+export async function resetTakeoverScanStates(store: RemovableKeyValueStore = AsyncStorage): Promise<void> {
+  if (store.removeItem) await removeStoreItem(store, INHERITANCE_STORE_KEY);
+  else await writeStoreItem(store, INHERITANCE_STORE_KEY, JSON.stringify({ version: STORE_VERSION, entries: {} }));
 }
 
 /** The block of the heir set's install transaction, when the record names one and the node returns its receipt. */

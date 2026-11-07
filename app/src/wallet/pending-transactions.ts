@@ -1570,8 +1570,26 @@ export function pendingGroupSentence(
       : BigInt(tx.value) > 0n
         ? `calls ${tx.to} with ${formatUnits(BigInt(tx.value), 18, 18)} ${options.nativeSymbol}`
         : `calls ${tx.to}`;
-  const extra = group.txs.length > 1 ? ` ${group.txs.length - 1} replacement${group.txs.length > 2 ? 's' : ''} sent since.` : '';
-  return `Waiting to be included: transaction ${shortHash(tx.hash)} (nonce ${group.nonce}) ${what}, sent ${age}.${extra}`;
+  return `Waiting to be included: transaction ${shortHash(tx.hash)} (nonce ${group.nonce}) ${what}, sent ${age}.${laterBroadcastsSentence(group)}`;
+}
+
+/**
+ * What else was broadcast at the group's nonce after its original, worded
+ * from each record's action (the e55e5ce / f297e8b leftover, phase 24 item
+ * B): a speed-up or a cancellation is a "replacement"; another ordinary
+ * send at the same nonce (the stuck-nonce case of pass p22b, a fresh send
+ * reviewed at a nonce the endpoint still reported as pending) is not, and
+ * reads "1 more transaction sent at this nonce since.". Empty when the
+ * original is the only broadcast; both clauses when both kinds exist.
+ */
+export function laterBroadcastsSentence(group: NonceGroup): string {
+  const later = group.txs.filter((t) => t !== group.original);
+  const replacements = later.filter((t) => t.action !== 'send').length;
+  const sends = later.length - replacements;
+  let out = '';
+  if (replacements > 0) out += ` ${replacements} replacement${replacements > 1 ? 's' : ''} sent since.`;
+  if (sends > 0) out += ` ${sends} more transaction${sends > 1 ? 's' : ''} sent at this nonce since.`;
+  return out;
 }
 
 /** The pool line under a pending group. */

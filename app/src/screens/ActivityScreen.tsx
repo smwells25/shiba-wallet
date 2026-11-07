@@ -471,6 +471,8 @@ function useActivitySentences(options: {
   accountIndex: number | null;
   /** The accounts the wallet holds a key for (their smart accounts are labelled). */
   accounts: readonly { name: string; evmAddress: string | null; index: number }[];
+  /** The watch-only accounts (their off-line-signer smart accounts are labelled; pass p23-coldaa finding 3). */
+  watched: readonly { name: string; evmAddress: string | null }[];
   refreshing: boolean;
 }): {
   /** The decoded transaction for a row id, or undefined. */
@@ -495,10 +497,12 @@ function useActivitySentences(options: {
   /** The decoder's counts for the footer's technical line (null without a decoder). */
   diagnostics: ActivityDecoderDiagnostics | null;
 } {
-  const { enabled, chainCaip2, chainIdDecimal, eoa, accountIndex, accounts, refreshing } = options;
+  const { enabled, chainCaip2, chainIdDecimal, eoa, accountIndex, accounts, watched, refreshing } = options;
   // Every account's index, name and address: a rename or a new account
-  // rebuilds the labels and the decode set.
-  const accountsKey = accounts.map((a) => `${a.index}:${a.name}:${a.evmAddress ?? ''}`).join(',');
+  // rebuilds the labels and the decode set (watched addresses too).
+  const accountsKey =
+    accounts.map((a) => `${a.index}:${a.name}:${a.evmAddress ?? ''}`).join(',') +
+    `|${watched.map((w) => `${w.name}:${w.evmAddress ?? ''}`).join(',')}`;
   const setupKey =
     enabled && eoa && accountIndex !== null
       ? `${chainCaip2}|${chainIdDecimal}|${eoa}|${accountIndex}|${accountsKey}`
@@ -547,7 +551,7 @@ function useActivitySentences(options: {
         // wallet's other smart accounts and its multisigs are decoded as
         // the wallet's own but named (emulator re-check of 2026-10-11,
         // findings 2 and 3).
-        const sets = activityAddressSets({ eoa, accountIndex, aa, accounts, multisigs });
+        const sets = activityAddressSets({ eoa, accountIndex, aa, accounts, multisigs, watched });
         const built: DecoderSetup = {
           key: setupKey,
           contacts: savedContacts,
@@ -571,7 +575,7 @@ function useActivitySentences(options: {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `setupKey` covers every account's index, name and address; `accounts` is a new array on every wallet-context render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `setupKey` covers every account's index, name and address and every watched account's name and address; `accounts` and `watched` are new arrays on every wallet-context render.
   }, [setupKey, chainCaip2, chainIdDecimal, eoa, accountIndex]);
 
   // A pull-to-refresh retries rows whose decode failed earlier.
@@ -685,7 +689,7 @@ export function ActivityScreen({ navigation, route }: Props) {
   // Localisation (phase 22 item 6): the screen and its title follow the language.
   const { language, t, tx, localize } = useI18n();
   const { chainId } = route.params;
-  const { accounts, activeAccount, accountList } = useWallet();
+  const { accounts, activeAccount, accountList, watchOnlyAccounts } = useWallet();
   const { hideAmounts, evmChain } = usePrefs();
   const account = accounts.find((a) => a.chainId === chainId);
   const network = networkDefaultFor(chainId);
@@ -743,6 +747,7 @@ export function ActivityScreen({ navigation, route }: Props) {
     eoa: isEvmSlot ? account?.address ?? null : null,
     accountIndex: activeAccount?.index ?? null,
     accounts: accountList,
+    watched: watchOnlyAccounts,
     refreshing,
   });
   // Rendered on every render (cheap: cached decodes only), so Hide amounts

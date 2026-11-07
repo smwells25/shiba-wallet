@@ -1,4 +1,5 @@
-import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
+import { AsyncStorage, readStoreItem, removeStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
+import type { RemovableKeyValueStore } from './store-keys.ts';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { toChecksumAddress } from '@shiba-wallet/core';
 import {
@@ -992,9 +993,18 @@ async function updateRecord(record: PasskeyRecord, patch: Partial<PasskeyRecord>
   return next;
 }
 
-/** Clears the local list (explicit user action, or the wallet wipe). On-chain passkeys are not affected. */
-export async function resetPasskeys(store: KeyValueStore = AsyncStorage): Promise<void> {
-  await writeStoreItem(store, PASSKEYS_KEY, JSON.stringify({ version: STORE_VERSION, records: {} }));
+/**
+ * Clears the local list (explicit user action, or the wallet wipe). On-chain
+ * passkeys are not affected.
+ * The wipe REMOVES the key (pass p23-devbuild-recheck follow-up 1: an empty
+ * document was left behind) when the store can delete keys, as AsyncStorage
+ * can; a store without removeItem (some test fakes) gets the empty document
+ * as before. The reader treats an absent key as nothing stored (readRaw returns
+ * { state: 'empty' } for a null read).
+ */
+export async function resetPasskeys(store: RemovableKeyValueStore = AsyncStorage): Promise<void> {
+  if (store.removeItem) await removeStoreItem(store, PASSKEYS_KEY);
+  else await writeStoreItem(store, PASSKEYS_KEY, JSON.stringify({ version: STORE_VERSION, records: {} }));
 }
 
 // ---------------------------------------------------------------------------

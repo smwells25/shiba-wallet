@@ -53,6 +53,8 @@ import {
   rocketDepositPhrase,
   rocketDepositPoolForDescription,
   walletAddressesFor,
+  watchedOwnerSmartAccount,
+  WATCHED_OWNER_KERNEL_INDEX,
 } from '../src/wallet/activity-sentences.ts';
 import * as sentencesModule from '../src/wallet/activity-sentences.ts';
 import { EVM_MAINNET } from '../src/config/evm-chain.ts';
@@ -984,12 +986,64 @@ installFakeNode();
   check('…the screen passes the names to the renderer (source)',
     screenSrc.includes('selfNames: sentences.selfNames,') && screenSrc.includes('selfNames: sets.selfNames,'));
 
+  // Pass p23-coldaa finding 3 (phase 24 item B): on Account 2's Activity, an
+  // operation sent by a watched owner's Kernel (the off-line signer's smart
+  // account) read "Smart-account bundle with 1 operation from other
+  // accounts". The live case: watched owner dev index 8, its Kernel
+  // 0x96e96e31…00C9 (= the CREATE2 prediction recorded in AGENTS.md), 0.0001
+  // test ETH to Account 2, userOp 0x6440a4f9…3e70.
+  const COLD_OWNER = getAddress('0x8E1dEaF5d88e60DBdabcC79d8EFA570f40fb0cDF');
+  const COLD_KERNEL = getAddress('0x96e96e31123aBb64597edA1074fa907EdE7A00C9');
+  const { coldAaAccountAddress } = await import('../src/wallet/cold-aa.ts');
+  const { COLD_AA_ACCOUNT_INDEX } = await import('../src/wallet/aa.ts');
+  check('watchedOwnerSmartAccount: the live cold Kernel of pass p23-coldaa, equal to cold-aa.ts coldAaAccountAddress, at the same index as aa.ts COLD_AA_ACCOUNT_INDEX',
+    watchedOwnerSmartAccount(COLD_OWNER) === COLD_KERNEL && coldAaAccountAddress(COLD_OWNER) === COLD_KERNEL && WATCHED_OWNER_KERNEL_INDEX === COLD_AA_ACCOUNT_INDEX,
+    String(watchedOwnerSmartAccount(COLD_OWNER)));
+  check('…null for a malformed address (nothing labelled)', watchedOwnerSmartAccount('0x1234') === null);
+  const watched = [{ name: 'Cold 8 (watch-only)', evmAddress: COLD_OWNER }];
+  const a2 = activityAddressSets({ eoa: ACCOUNT_2, accountIndex: 1, aa: kernelConfig, accounts, multisigs, watched });
+  const a2Without = activityAddressSets({ eoa: ACCOUNT_2, accountIndex: 1, aa: kernelConfig, accounts, multisigs });
+  check("Account 2 with a watched account: the watched owner's smart account is decoded as the wallet's and labelled, its own address is not",
+    a2.wallet.includes(COLD_KERNEL) && !a2.wallet.includes(COLD_OWNER) && !a2.self.includes(COLD_KERNEL) &&
+      a2.labels.some((l) => l.address === COLD_KERNEL && l.label === 'Cold 8 (watch-only)’s smart account') &&
+      !a2.labels.some((l) => l.address === COLD_OWNER), JSON.stringify(a2));
+  check('…without watched accounts the sets are exactly as before', JSON.stringify(activityAddressSets({ eoa: ACCOUNT_2, accountIndex: 1, aa: kernelConfig, accounts, multisigs, watched: [] })) === JSON.stringify(a2Without));
+  const COLD_OP = '0x6440a4f9' + '00'.repeat(28);
+  const ETH_0_0001 = 100_000_000_000_000n;
+  const coldBundle = (() => {
+    const callData = toHex(encodeKernelExecute([{ to: ACCOUNT_2, value: ETH_0_0001, data: new Uint8Array() }]));
+    const op = [COLD_KERNEL, 3n, '0x', callData, '0x' + '00'.repeat(32), 0n, '0x' + '00'.repeat(32), '0x', '0x'];
+    const input = new Interface(['function handleOps((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes)[],address)'])
+      .encodeFunctionData('handleOps', [[op], BURN]);
+    return {
+      transaction: { hash: COLD_OP, from: BURN.toLowerCase(), to: ENTRYPOINT_V07.toLowerCase(), input, value: '0x0', nonce: '0x3', type: '0x2', chainId: '0xaa36a7', blockNumber: '0x12', blockHash: '0x' + 'cf'.repeat(32) },
+      receipt: {
+        transactionHash: COLD_OP, blockNumber: '0x12', blockHash: '0x' + 'cf'.repeat(32), status: '0x1',
+        logs: [{
+          address: ENTRYPOINT_V07,
+          topics: [USER_OPERATION_EVENT_TOPIC, '0x' + '64'.repeat(32), pad(COLD_KERNEL), pad('0x0000000000000000000000000000000000000000')],
+          data: '0x' + word(3n) + word(1n) + word(1234n) + word(99n),
+        }],
+      },
+    };
+  })();
+  mode.extraTx = (h) => (h === COLD_OP ? coldBundle : null);
+  const coldWith = await decodeWith(a2.wallet, [COLD_OP]);
+  const coldSentence = renderAs(coldWith.get(COLD_OP), a2);
+  check('LIVE CASE p23-coldaa — Account 2 reads "Smart-account operation by Cold 8 (watch-only)’s smart account: sent 0.0001 test ETH to yourself"',
+    coldSentence === 'Smart-account operation by Cold 8 (watch-only)’s smart account: sent 0.0001 test ETH to yourself', coldSentence);
+  const coldWithout = await decodeWith(a2Without.wallet, [COLD_OP]);
+  check('…which without the watched account read "Smart-account bundle with 1 operation from other accounts" (the finding)',
+    renderAs(coldWithout.get(COLD_OP), a2Without) === 'Smart-account bundle with 1 operation from other accounts', renderAs(coldWithout.get(COLD_OP), a2Without));
+  mode.extraTx = (h) => (h === SEND_TO_MS ? plain(h, ACCOUNT_1, MULTISIG, ETH_0_0006) : h === TOPUP_BY_KERNEL ? kernelTopUp : null);
+
   // Mutation of the app glue: the renderer without selfAddresses.
   const srcPath = join(here, '..', 'src', 'wallet', 'activity-sentences.ts');
   const original = readFileSync(srcPath, 'utf8');
   const anchorSelf = "    ...(options.selfAddresses ? { selfAddresses: options.selfAddresses } : {}),\n";
   const anchorSets = "      others.push(...walletAddressesFor(a.evmAddress, a.index, input.aa).slice(1));\n";
-  check('mutation anchors present (self list, other smart accounts)', original.includes(anchorSelf) && original.includes(anchorSets));
+  const anchorWatched = "    if (smart) others.push(smart);\n";
+  check('mutation anchors present (self list, other smart accounts, watched smart accounts)', original.includes(anchorSelf) && original.includes(anchorSets) && original.includes(anchorWatched));
   const mutantDir = join(here, `.mutants-activity-self-${process.pid}`);
   mkdirSync(mutantDir, { recursive: true });
   try {
@@ -1006,6 +1060,13 @@ installFakeNode();
     const mOut = await decodeWith(mSets.wallet, [TOPUP_BY_KERNEL]);
     check("M-self-2 caught: without the other accounts' smart accounts the top-up is \"from other accounts\" again",
       renderAs(mOut.get(TOPUP_BY_KERNEL), mSets) === 'Smart-account bundle with 1 operation from other accounts', renderAs(mOut.get(TOPUP_BY_KERNEL), mSets));
+    const m3 = await load('m3', anchorWatched, '');
+    const m3Sets = m3.activityAddressSets({ eoa: ACCOUNT_2, accountIndex: 1, aa: kernelConfig, accounts, multisigs, watched });
+    mode.extraTx = (h) => (h === COLD_OP ? coldBundle : null);
+    const m3Out = await decodeWith(m3Sets.wallet, [COLD_OP]);
+    mode.extraTx = (h) => (h === SEND_TO_MS ? plain(h, ACCOUNT_1, MULTISIG, ETH_0_0006) : h === TOPUP_BY_KERNEL ? kernelTopUp : null);
+    check('M-watched caught: without the watched smart accounts in the decode set the cold operation is "from other accounts" again (p23-coldaa finding 3)',
+      renderAs(m3Out.get(COLD_OP), m3Sets) === 'Smart-account bundle with 1 operation from other accounts', renderAs(m3Out.get(COLD_OP), m3Sets));
   } finally {
     rmSync(mutantDir, { recursive: true, force: true });
   }
@@ -1640,7 +1701,8 @@ console.log('ActivityScreen source:');
   // the account's own addresses read "yourself".
   const setsOk = (src) =>
     /ownMultisigAddresses\(chainCaip2\),/.test(src) &&
-    src.includes('const sets = activityAddressSets({ eoa, accountIndex, aa, accounts, multisigs });') &&
+    src.includes('const sets = activityAddressSets({ eoa, accountIndex, aa, accounts, multisigs, watched });') &&
+    src.includes('watched: watchOnlyAccounts,') &&
     src.includes('wallet: sets.wallet,') && src.includes('self: sets.self,') && src.includes('labels: sets.labels,') &&
     src.includes('selfAddresses: sentences.self,') && src.includes('accounts: accountList,') &&
     !src.includes('walletAddressesFor(eoa, accountIndex, aa, multisigs)');

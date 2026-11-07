@@ -717,10 +717,17 @@ console.log('\nFind my tokens: pinned liquid-staking tokens are labelled (nothin
 console.log('\nTokens screen: no Send buttons for a multisig or watch-only account:');
 {
   const wo = await import('../src/wallet/watch-only.ts');
+  {
+    // Phase 24 item B: the watch-only sentence names the off-line signer link by its exact Home label and never says "cannot send".
+    const { COLD_SIGN_HOME_LINK } = await import('../src/wallet/cold-signing.ts');
+    const note = wo.tokensSendNote({ watchOnly: true, multisig: false });
+    check('…the watch-only sentence quotes the Home link "' + COLD_SIGN_HOME_LINK.replace(' ↗', '') + '" and never says "cannot send" (phase 24 item B)',
+      note.includes(`"${COLD_SIGN_HOME_LINK.replace(' ↗', '')}"`) && !/cannot send/.test(note));
+  }
   check('tokensSendNote: none for an account with a key; the multisig and watch-only sentences (exact)',
     wo.tokensSendNote({ watchOnly: false, multisig: false }) === null && wo.tokensSendNote(null) === null &&
       wo.tokensSendNote({ watchOnly: false, multisig: true }) === 'Token sends from a multi-signature account are signing requests for its co-signers; build one on the Multisig screen.' &&
-      wo.tokensSendNote({ watchOnly: true, multisig: false }) === 'This is a watch-only address: the wallet holds no key for it, so it cannot send these tokens.' &&
+      wo.tokensSendNote({ watchOnly: true, multisig: false }) === 'This is a watch-only address: the wallet holds no key for it, so it cannot sign; a token send can be prepared with "Send with an off-line signer" and signed by an off-line signer that holds its key.' &&
       wo.tokensSendNote({ watchOnly: false }) === null);
   const screen = readFileSync(new URL('../src/screens/TokensScreen.tsx', import.meta.url), 'utf8');
   const sendProblems = (src) => [

@@ -427,6 +427,30 @@ console.log('check-pending: where a nonce stands');
     const nBack = resolvedRecordFor(g6, stBack, T0);
     check('…the original included beside only another ordinary send → "superseded", naming the other send',
       stBack.outcome === 'superseded' && nBack.minedHash === STUCK && nBack.original === FRESH);
+    // e55e5ce / f297e8b leftover (phase 24 item B): before inclusion the
+    // stuck nonce with a second ORDINARY send read "1 replacement sent
+    // since.", although nothing replaced it; the count is now worded from
+    // each record's action.
+    const line6 = pending.pendingGroupSentence(g6, { nativeSymbol: 'test ETH', nowMs: T0 + 120_000 });
+    check('a nonce with two plain sends: "1 more transaction sent at this nonce since." (not "1 replacement sent since.")',
+      line6.endsWith(' 1 more transaction sent at this nonce since.') && !line6.includes('replacement'), line6);
+    const spOfStuck = txRecordFromQuote(WATCHED, quoteLike({ nonce: 6n, amount: 10n ** 14n, maxFeePerGas: 40n, maxPriorityFeePerGas: 3n, gasLimit: 21_000n }), H(0x6010), T0 + 60_000, { action: 'speed-up', replaces: STUCK });
+    const cxOfStuck = txRecordFromQuote(WATCHED, quoteLike({ nonce: 6n, to: WATCHED, amount: 0n, maxFeePerGas: 50n, maxPriorityFeePerGas: 4n, gasLimit: 12_000n }), H(0x6011), T0 + 70_000, { action: 'cancel', replaces: STUCK });
+    const [gSp] = nonceGroups([stuck, spOfStuck], CHAIN, WATCHED);
+    const [gTwo] = nonceGroups([stuck, spOfStuck, cxOfStuck], CHAIN, WATCHED);
+    const [gMix] = nonceGroups([stuck, fresh, spOfStuck], CHAIN, WATCHED);
+    check('…a speed-up keeps the existing wording "1 replacement sent since."',
+      pending.laterBroadcastsSentence(gSp) === ' 1 replacement sent since.', pending.laterBroadcastsSentence(gSp));
+    check('…a speed-up and a cancellation: "2 replacements sent since."', pending.laterBroadcastsSentence(gTwo) === ' 2 replacements sent since.', pending.laterBroadcastsSentence(gTwo));
+    check('…a speed-up and a plain send: both clauses, each counted by its action',
+      pending.laterBroadcastsSentence(gMix) === ' 1 replacement sent since. 1 more transaction sent at this nonce since.', pending.laterBroadcastsSentence(gMix));
+    check('…the original alone: nothing', pending.laterBroadcastsSentence(nonceGroups([stuck], CHAIN, WATCHED)[0]) === '');
+    {
+      // Mutant: the old count over every later broadcast, whatever its action.
+      const oldWording = (g) => (g.txs.length > 1 ? ` ${g.txs.length - 1} replacement${g.txs.length > 2 ? 's' : ''} sent since.` : '');
+      check('mutant caught: the old wording calls a second plain send a replacement', oldWording(g6) !== pending.laterBroadcastsSentence(g6) && oldWording(g6) === ' 1 replacement sent since.');
+    }
+
     // A speed-up of the SECOND send names the second send, not the first.
     const sp = txRecordFromQuote(WATCHED, quoteLike({ nonce: 6n, amount: 10n ** 14n, maxFeePerGas: 40n, maxPriorityFeePerGas: 3n, gasLimit: 21_000n }), H(0x6006), T0 + 90_000, { action: 'speed-up', replaces: FRESH });
     const [g6b] = nonceGroups([stuck, fresh, sp], CHAIN, WATCHED);

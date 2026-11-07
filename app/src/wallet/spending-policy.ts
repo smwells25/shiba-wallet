@@ -1,4 +1,5 @@
-import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
+import { AsyncStorage, readStoreItem, removeStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
+import type { RemovableKeyValueStore } from './store-keys.ts';
 import { toChecksumAddress as checksumBytes } from '@shiba-wallet/core';
 import type { FungibleAsset } from '@shiba-wallet/core';
 import {
@@ -656,11 +657,24 @@ export async function removeSpendingPolicy(
   });
 }
 
-/** Clears every policy and the whole history (Settings "Reset", and the wallet wipe). */
-export async function resetSpendingLimits(store: KeyValueStore = AsyncStorage): Promise<void> {
+/**
+ * Clears every policy and the whole history (Settings "Reset", and the
+ * wallet wipe).
+ * The wipe REMOVES the key (pass p23-devbuild-recheck follow-up 1: an empty
+ * document was left behind) when the store can delete keys, as AsyncStorage
+ * can; a store without removeItem (some test fakes) gets the empty document
+ * as before. The reader treats an absent key as nothing stored (readBlob returns
+ * { ok: true, data: {} } for a null read of either key).
+ */
+export async function resetSpendingLimits(store: RemovableKeyValueStore = AsyncStorage): Promise<void> {
   return serialized(async () => {
-    await writeStoreItem(store, POLICIES_KEY, JSON.stringify({ version: STORE_VERSION, entries: {} }));
-    await writeStoreItem(store, HISTORY_KEY, JSON.stringify({ version: STORE_VERSION, entries: {} }));
+    if (store.removeItem) {
+      await removeStoreItem(store, POLICIES_KEY);
+      await removeStoreItem(store, HISTORY_KEY);
+    } else {
+      await writeStoreItem(store, POLICIES_KEY, JSON.stringify({ version: STORE_VERSION, entries: {} }));
+      await writeStoreItem(store, HISTORY_KEY, JSON.stringify({ version: STORE_VERSION, entries: {} }));
+    }
   });
 }
 

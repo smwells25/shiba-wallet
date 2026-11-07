@@ -1,4 +1,5 @@
-import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
+import { AsyncStorage, readStoreItem, removeStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
+import type { RemovableKeyValueStore } from './store-keys.ts';
 import { BITCOIN, DOGECOIN, addressToScriptPubKey } from '@shiba-wallet/chains-utxo';
 // Explicit .ts extensions: this module is imported by scripts/check-contacts.mjs
 // under Node's type stripping, which resolves relative specifiers literally.
@@ -569,10 +570,16 @@ export async function forgetContactsForNetwork(
 }
 
 /**
- * Replaces the whole contacts store with an empty one (every network).
- * The explicit recovery path for an unreadable store; the screen asks for
- * confirmation first.
+ * Clears the whole contacts store (every network): the explicit recovery
+ * path for an unreadable store (the screen asks for confirmation first) and
+ * the wallet wipe.
+ * The wipe REMOVES the key (pass p23-devbuild-recheck follow-up 1: an empty
+ * document was left behind) when the store can delete keys, as AsyncStorage
+ * can; a store without removeItem (some test fakes) gets the empty document
+ * as before. The reader treats an absent key as nothing stored (readRaw returns
+ * { state: 'empty' } for a null read).
  */
-export async function resetContacts(store: KeyValueStore = AsyncStorage): Promise<void> {
-  await writeStoreItem(store, CONTACTS_KEY, JSON.stringify({ version: STORE_VERSION, networks: {} }));
+export async function resetContacts(store: RemovableKeyValueStore = AsyncStorage): Promise<void> {
+  if (store.removeItem) await removeStoreItem(store, CONTACTS_KEY);
+  else await writeStoreItem(store, CONTACTS_KEY, JSON.stringify({ version: STORE_VERSION, networks: {} }));
 }

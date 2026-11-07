@@ -1,6 +1,7 @@
 // Explicit .ts extensions: this module is imported by scripts/check-browser.mjs
 // under Node's type stripping, which resolves relative specifiers literally.
-import { readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
+import { readStoreItem, removeStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
+import type { RemovableKeyValueStore } from './store-keys.ts';
 import type { KeyValueStore } from './tokens.ts';
 
 /**
@@ -329,7 +330,15 @@ export async function saveBrowserConnections(
   await writeStoreItem(store, BROWSER_CONNECTIONS_KEY, JSON.stringify(records));
 }
 
-/** Removes every record (wallet wipe). */
-export async function forgetBrowserConnections(store: KeyValueStore): Promise<void> {
-  await writeStoreItem(store, BROWSER_CONNECTIONS_KEY, '[]');
+/**
+ * Removes every record (wallet wipe).
+ * The wipe REMOVES the key (pass p23-devbuild-recheck follow-up 1: an empty
+ * document was left behind) when the store can delete keys, as AsyncStorage
+ * can; a store without removeItem (some test fakes) gets the empty document
+ * as before. The reader treats an absent key as nothing stored (loadBrowserConnections
+ * returns [] for a null read).
+ */
+export async function forgetBrowserConnections(store: RemovableKeyValueStore): Promise<void> {
+  if (store.removeItem) await removeStoreItem(store, BROWSER_CONNECTIONS_KEY);
+  else await writeStoreItem(store, BROWSER_CONNECTIONS_KEY, '[]');
 }

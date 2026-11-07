@@ -1,4 +1,5 @@
-import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
+import { AsyncStorage, readStoreItem, removeStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
+import type { RemovableKeyValueStore } from './store-keys.ts';
 import {
   ENTRYPOINT_V07,
   KERNEL_PERMISSION_MODULES,
@@ -662,9 +663,18 @@ async function updateRecord(
   return next;
 }
 
-/** Clears the whole local list (after an explicit confirmation on screen). */
-export async function resetSessions(store: KeyValueStore = AsyncStorage): Promise<void> {
-  await writeStoreItem(store, SESSIONS_KEY, JSON.stringify({ version: STORE_VERSION, records: {} }));
+/**
+ * Clears the whole local list (after an explicit confirmation on screen, and
+ * the wallet wipe through forgetAllSessions).
+ * The wipe REMOVES the key (pass p23-devbuild-recheck follow-up 1: an empty
+ * document was left behind) when the store can delete keys, as AsyncStorage
+ * can; a store without removeItem (some test fakes) gets the empty document
+ * as before. The reader treats an absent key as nothing stored (readRaw returns
+ * { state: 'empty' } for a null read).
+ */
+export async function resetSessions(store: RemovableKeyValueStore = AsyncStorage): Promise<void> {
+  if (store.removeItem) await removeStoreItem(store, SESSIONS_KEY);
+  else await writeStoreItem(store, SESSIONS_KEY, JSON.stringify({ version: STORE_VERSION, records: {} }));
 }
 
 /**
@@ -673,7 +683,7 @@ export async function resetSessions(store: KeyValueStore = AsyncStorage): Promis
  * an error); keys of an unreadable list cannot be enumerated and are left.
  */
 export async function forgetAllSessions(
-  store: KeyValueStore,
+  store: RemovableKeyValueStore,
   vault: SessionKeyVault,
 ): Promise<{ keysRemoved: number }> {
   const { records } = await loadSessions(store);

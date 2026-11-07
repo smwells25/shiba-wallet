@@ -529,11 +529,15 @@ console.log('check-storage-seam: the wipe clears every wallet-scoped key (pass p
 // WIPE_RESETS: the chain of functions that clears a key. The first is called
 // by BOTH wipe paths (the plain wipe, and the app-PIN wipe's resetRecords,
 // which ./duress.ts wipeBothWallets runs for each wallet before its sweep);
-// each calls the next; the last, in the named module, calls writeStoreItem or
-// removeStoreItem and names the module's own constant for the key
-// (`const X = STORE_KEYS.<id>.name`).
+// each calls the next; the last, in the named module, calls removeStoreItem
+// and names the module's own constant for the key
+// (`const X = STORE_KEYS.<id>.name`). Since phase 24 item B every one of
+// them REMOVES its key when the store can delete keys (pass
+// p23-devbuild-recheck saw contacts.v1 left as an empty document and
+// inheritance.v1 created empty by the wipe); a store without removeItem
+// (some test fakes) still gets the module's empty document.
 export const WIPE_RESETS = {
-  accounts: { module: 'src/wallet/accounts.ts', chain: ['resetAccounts', 'saveAccounts'] },
+  accounts: { module: 'src/wallet/accounts.ts', chain: ['resetAccounts'] },
   contacts: { module: 'src/wallet/contacts.ts', chain: ['resetContacts'] },
   tokens: { module: 'src/wallet/tokens.ts', chain: ['resetTrackedTokens'] },
   tokensPerChain: { module: 'src/wallet/tokens.ts', chain: ['resetTrackedTokens'] },
@@ -694,7 +698,7 @@ export function wipeCoverageProblems(walletIds, files, resets = WIPE_RESETS, not
         if (!calledNames(fn.body).has(chain[i + 1])) problems.push(`${id}: ${chain[i]} does not call ${chain[i + 1]}`);
       } else {
         const calls = calledNames(fn.body);
-        if (!calls.has('writeStoreItem') && !calls.has('removeStoreItem')) problems.push(`${id}: ${chain[i]} neither writes nor removes a key through the seam`);
+        if (!calls.has('removeStoreItem')) problems.push(`${id}: ${chain[i]} does not remove its key through the seam (removeStoreItem)`);
         if (constant && !identifiersIn(fn.body).has(constant)) problems.push(`${id}: ${chain[i]} does not name ${constant}`);
       }
     }
@@ -754,10 +758,10 @@ export function wipeCoverageProblems(walletIds, files, resets = WIPE_RESETS, not
   const mStale = wipeCoverageProblems(walletIds.filter((id) => id !== 'inbox'), tree);
   check('mutant caught: a stale entry (a key no longer declared per wallet)', mStale.some((p) => p.startsWith('inbox: listed here but not')), mStale.join('; '));
   const contactsSrc = tree['src/wallet/contacts.ts'];
-  const writeAnchor = 'await writeStoreItem(store, CONTACTS_KEY, JSON.stringify({ version: STORE_VERSION, networks: {} }));';
-  check('mutant anchor present (resetContacts writes the empty store)', contactsSrc.includes(writeAnchor));
-  const mBody = wipeCoverageProblems(walletIds, { ...tree, 'src/wallet/contacts.ts': contactsSrc.replace(writeAnchor, 'void store;') });
-  check('mutant caught: resetContacts no longer writes its key', mBody.some((p) => p.startsWith('contacts: resetContacts neither writes nor removes')), mBody.join('; '));
+  const removeAnchor = 'if (store.removeItem) await removeStoreItem(store, CONTACTS_KEY);\n  else await writeStoreItem(store, CONTACTS_KEY, JSON.stringify({ version: STORE_VERSION, networks: {} }));';
+  check('mutant anchor present (resetContacts removes its key)', contactsSrc.includes(removeAnchor));
+  const mBody = wipeCoverageProblems(walletIds, { ...tree, 'src/wallet/contacts.ts': contactsSrc.replace(removeAnchor, 'await writeStoreItem(store, CONTACTS_KEY, JSON.stringify({ version: STORE_VERSION, networks: {} }));') });
+  check('mutant caught: resetContacts writing the empty document again instead of removing its key', mBody.some((p) => p.startsWith('contacts: resetContacts does not remove its key')), mBody.join('; '));
   const mChain = wipeCoverageProblems(walletIds, tree, { ...WIPE_RESETS, sessions: { module: 'src/wallet/sessions.ts', chain: ['forgetAllSessions', 'resetPasskeys'] } });
   check('mutant caught: a chain link that is not called', mChain.some((p) => p.startsWith('sessions: forgetAllSessions does not call resetPasskeys')), mChain.join('; '));
   const mReason = wipeCoverageProblems(walletIds, tree, WIPE_RESETS, { ...WIPE_NOT_RESET, wcUsed: { how: 'kept', reason: '' } });
@@ -801,8 +805,16 @@ export function wipeCoverageProblems(walletIds, files, resets = WIPE_RESETS, not
   check('…refuses a store that cannot delete keys (an empty list would hide the defaults)', refused);
   await resetContacts(store);
   await resetTakeoverScanStates(store);
-  check('resetContacts and resetTakeoverScanStates leave empty documents',
+  check('resetContacts and resetTakeoverScanStates remove their keys (phase 24 item B; they wrote empty documents before)',
+    !mem.has('shiba-wallet.contacts.v1') && !mem.has(INHERITANCE_STORE_KEY));
+  // A store that cannot delete keys keeps the earlier fallback: the module's empty document.
+  const noRemove = { getItem: store.getItem, setItem: store.setItem };
+  await resetContacts(noRemove);
+  await resetTakeoverScanStates(noRemove);
+  check('…a store without removeItem still gets the empty documents (the fallback)',
     mem.get('shiba-wallet.contacts.v1') === '{"version":1,"networks":{}}' && mem.get(INHERITANCE_STORE_KEY) === '{"version":1,"entries":{}}');
+  mem.delete('shiba-wallet.contacts.v1');
+  mem.delete(INHERITANCE_STORE_KEY);
   // clearAllEip7702Owners: the marks go, the endpoint fields of the same record stay.
   const { clearAllEip7702Owners } = await import('../src/wallet/aa.ts');
   const AA_KEY = seam.STORE_KEYS.aaConfig.name;
@@ -815,6 +827,156 @@ export function wipeCoverageProblems(walletIds, files, resets = WIPE_RESETS, not
   check('clearAllEip7702Owners: every chain\'s EIP-7702 marks are deleted, the bundler fields stay byte for byte',
     aaAfter['eip155:11155111'].eip7702Owners === undefined && aaAfter['eip155:11155111'].bundlerUrl === 'https://bundler.example/rpc' &&
       aaAfter['eip155:84532'].bundlerUrl === 'https://bundler.example/base', mem.get(AA_KEY));
+}
+
+// ---------------------------------------------------------------------------
+// Phase 24 item B (pass p23-devbuild-recheck follow-up 1): after "Wipe
+// wallet" the device still held contacts.v1 as an empty document and an
+// inheritance.v1 the wipe had CREATED empty. Each reset now removes its key.
+// This section runs the REAL wipe lists of WalletContext.tsx (read from its
+// source by ./wipe-harness.mjs, in order) against an in-memory store seeded
+// with every wallet-scoped key, and against an empty one.
+// ---------------------------------------------------------------------------
+console.log('check-storage-seam: both wipe lists REMOVE the wallet-scoped keys they clear, and create none (phase 24 item B)');
+{
+  const harness = await import('./wipe-harness.mjs');
+  const { addAccount } = await import('../src/wallet/accounts.ts');
+  const { addContact } = await import('../src/wallet/contacts.ts');
+  const { addToken } = await import('../src/wallet/tokens.ts');
+  const { saveNote } = await import('../src/wallet/notes.ts');
+  const { rebuildRecoveryRecord, saveRecoveryMetadata } = await import('../src/wallet/recovery.ts');
+  const { NATIVE_TOKEN, saveSpendingPolicy } = await import('../src/wallet/spending-policy.ts');
+  const { WATCHABLE_ASSETS, addAlert, updatePriceAlerts } = await import('../src/wallet/price-alerts.ts');
+  const { OWNER_0, KERNEL_ACCOUNT_0 } = await import('./fakes-kernel.mjs');
+  const K = seam.STORE_KEYS;
+  const walletIds = Object.entries(K).filter(([, d]) => d.scope === 'wallet').map(([id]) => id);
+  const DECOY = { id: 'second', keyPrefix: 'w2' };
+  /** The declared id of a stored key name (exact names first, then prefix families). */
+  const idOfKey = (key) => {
+    for (const [id, d] of Object.entries(K)) if (d.match === 'exact' && d.name === key) return id;
+    for (const [id, d] of Object.entries(K)) if (d.match === 'prefix' && key.startsWith(d.name)) return id;
+    return null;
+  };
+  /** Wallet-scoped ids present in `map` under one profile prefix (null = the primary wallet). */
+  const walletIdsIn = (map, keyPrefix) => {
+    const ids = new Set();
+    for (const raw of map.keys()) {
+      const parsed = seam.parseStoredKeyName(raw);
+      if (!parsed || parsed.keyPrefix !== keyPrefix) continue;
+      const id = idOfKey(parsed.key);
+      if (id && K[id].scope === 'wallet') ids.add(id);
+    }
+    return [...ids].sort();
+  };
+  const erc20 = (chainId, byte, symbol) => ({
+    kind: 'fungible', symbol, name: `${symbol} test`, decimals: 6,
+    assetId: { chainId, namespace: 'erc20', reference: `0x${byte.repeat(20)}` },
+  });
+  /**
+   * One document for EVERY wallet-scoped key. Through the module's own
+   * writer where a public writer takes simple input (accounts, contacts,
+   * both token keys, notes, recovery records, spending policies, price
+   * alerts); the others written through the seam in their module's own
+   * document shape (a session, multisig, passkey or bridge record needs a
+   * deployed account or a live transfer to be built by its writer). The
+   * aa-config record carries a bundler URL (a device setting the plain
+   * wipe must keep) and an EIP-7702 mark (which it must clear).
+   */
+  async function seedEveryWalletKey(store) {
+    await addAccount('Second', store);
+    await addContact('eip155:1', 'Alice', `0x${'a1'.repeat(20)}`, { store });
+    await addToken(erc20('eip155:1', '5e', 'TST'), store);
+    await addToken(erc20('eip155:11155111', '6f', 'TSS'), store);
+    await saveNote('eip155:11155111', { txid: `0x${'ab'.repeat(32)}` }, 'rent', { store });
+    await saveRecoveryMetadata(rebuildRecoveryRecord({ chainId: 11155111n, account: KERNEL_ACCOUNT_0, originalOwner: OWNER_0, index: 0, recordedAt: 1 }), store, { now: 5 });
+    await saveSpendingPolicy({ chain: 'eip155:11155111', owner: OWNER_0 }, { token: NATIVE_TOKEN, symbol: 'ETH', decimals: 18, cap: 10n ** 17n, windowSeconds: 86_400 }, [NATIVE_TOKEN], { store, now: 1_791_000_000 });
+    await updatePriceAlerts((book) => ({ book: addAlert(book, { assetId: WATCHABLE_ASSETS[0].id, direction: 'above', threshold: '3000', quote: null, nowMs: 11 }).book, result: null }), store);
+    const raw = {
+      sessions: '{"version":1,"records":{}}',
+      multisig: '{"version":1,"nextSlot":3,"records":[]}',
+      recoveryProgress: '{"version":1,"entries":{}}',
+      inheritance: '{"version":1,"entries":{"x":{}}}',
+      passkeys: '{"version":1,"records":{}}',
+      spendingHistory: '{"version":1,"entries":{}}',
+      pendingTx: '{"version":1,"records":[]}',
+      browserConnections: '[]',
+      wcSmartBindings: '{"seeded":"bindings"}',
+      wcCalls: '{"seeded":"calls"}',
+      wcUsed: 'true',
+      aaConfig: JSON.stringify({ 'eip155:11155111': { bundlerUrl: 'https://bundler.example/rpc', eip7702Owners: [OWNER_0] } }),
+      notifications: '{"seeded":"notifications"}',
+      bridgeTransfers: '{"version":1,"records":[]}',
+      inbox: '{"seeded":"inbox"}',
+      handlePending: '{"v":1,"pending":[]}',
+    };
+    for (const [id, value] of Object.entries(raw)) await seam.writeStoreItem(store, K[id].name, value);
+  }
+  const lists = harness.wipeCallOrder(tree['src/wallet/WalletContext.tsx']);
+  check('the two wipe lists were read from WalletContext.tsx', !!lists && lists.plain.length > 0 && lists.pin.length > 0);
+  const NOT_RESET = Object.keys(WIPE_NOT_RESET).sort();
+
+  // 1. The plain wipe (no app PIN), on the primary wallet's records.
+  const s1 = harness.wipeMemStore([['shiba-wallet.prefs.v1', '{"hideAmounts":true}'], ['shiba-wallet.custom-networks.v1', '[]']]);
+  await seedEveryWalletKey(s1);
+  check(`the seed holds every wallet-scoped key (${walletIds.length})`, JSON.stringify(walletIdsIn(s1.map, null)) === JSON.stringify([...walletIds].sort()), JSON.stringify(walletIdsIn(s1.map, null)));
+  const keptBefore = Object.fromEntries(['notifications', 'wcSmartBindings', 'wcCalls', 'wcUsed'].map((id) => [id, s1.map.get(K[id].name)]));
+  s1.writes.length = 0;
+  const ranPlain = await harness.runWipeList(lists.plain, s1);
+  check(`the plain wipe ran its ${ranPlain.length} record resets`, ranPlain.length >= 17, ranPlain.join(','));
+  check('after the plain wipe NO wallet-scoped key remains except the documented WIPE_NOT_RESET set',
+    JSON.stringify(walletIdsIn(s1.map, null)) === JSON.stringify(NOT_RESET), JSON.stringify(walletIdsIn(s1.map, null)));
+  check('…the only key the plain wipe WROTE is aa-config\'s partial clear (every other reset removed its key, none wrote an empty document)',
+    s1.writes.every((k) => k === K.aaConfig.name) && s1.writes.length >= 1, JSON.stringify(s1.writes));
+  const aaAfter = JSON.parse(s1.map.get(K.aaConfig.name));
+  check('…aa-config keeps its bundler URL (a device setting) and loses the EIP-7702 mark',
+    aaAfter['eip155:11155111'].bundlerUrl === 'https://bundler.example/rpc' && aaAfter['eip155:11155111'].eip7702Owners === undefined, JSON.stringify(aaAfter));
+  check('…the reminder bookkeeping and the three WalletConnect keys are untouched, byte for byte',
+    Object.entries(keptBefore).every(([id, v]) => s1.map.get(K[id].name) === v));
+  check('…the device settings are kept', s1.map.get('shiba-wallet.prefs.v1') === '{"hideAmounts":true}' && s1.map.get('shiba-wallet.custom-networks.v1') === '[]');
+
+  // 2. The app-PIN wipe's resetRecords, run for the second wallet (as
+  // wipeBothWallets runs it for each profile before its sweep): only that
+  // wallet's keys go, the primary wallet's records stay byte for byte.
+  const s2 = harness.wipeMemStore();
+  await seedEveryWalletKey(s2);
+  const decoyStore = seam.profileBoundStore(s2, DECOY);
+  await seedEveryWalletKey(decoyStore);
+  const primaryBefore = [...s2.map.entries()].filter(([k]) => seam.parseStoredKeyName(k)?.keyPrefix === null).sort();
+  check(`the second wallet's seed holds every wallet-scoped key (${walletIds.length})`, JSON.stringify(walletIdsIn(s2.map, 'w2')) === JSON.stringify([...walletIds].sort()), JSON.stringify(walletIdsIn(s2.map, 'w2')));
+  s2.writes.length = 0;
+  const ranPin = await harness.runWipeList(lists.pin, decoyStore);
+  check('resetRecords runs the same record resets as the plain wipe', JSON.stringify([...ranPin].sort()) === JSON.stringify([...ranPlain].sort()), `${ranPin} vs ${ranPlain}`);
+  check('after resetRecords NO wallet-scoped key of that wallet remains except the WIPE_NOT_RESET set (the app-PIN sweep then removes those)',
+    JSON.stringify(walletIdsIn(s2.map, 'w2')) === JSON.stringify(NOT_RESET), JSON.stringify(walletIdsIn(s2.map, 'w2')));
+  check('…the primary wallet\'s records are untouched, byte for byte',
+    JSON.stringify([...s2.map.entries()].filter(([k]) => seam.parseStoredKeyName(k)?.keyPrefix === null).sort()) === JSON.stringify(primaryBefore));
+
+  // 3. Nothing to clear: neither list creates a key (pass p23-devbuild-recheck
+  // saw inheritance.v1 CREATED by the wipe).
+  const s3 = harness.wipeMemStore();
+  await harness.runWipeList(lists.plain, s3);
+  await harness.runWipeList(lists.pin, seam.profileBoundStore(s3, DECOY));
+  check('on a store with nothing in it, neither wipe list creates any key', s3.map.size === 0 && s3.writes.length === 0, JSON.stringify([...s3.map.keys()]));
+
+  // Mutants, each must be caught.
+  const writesEmptyAgain = {
+    ...harness.WIPE_STORE_RUNNERS,
+    resetTakeoverScanStates: (s) => seam.writeStoreItem(s, K.inheritance.name, '{"version":1,"entries":{}}'),
+  };
+  const m1 = harness.wipeMemStore();
+  await seedEveryWalletKey(m1);
+  await harness.runWipeList(lists.plain, m1, writesEmptyAgain);
+  const m1Empty = harness.wipeMemStore();
+  await harness.runWipeList(lists.plain, m1Empty, writesEmptyAgain);
+  check('mutant caught: a reset writing an empty document again (the inheritance key stays, and is created on an empty store)',
+    walletIdsIn(m1.map, null).includes('inheritance') && m1Empty.map.has(K.inheritance.name));
+  let unknownRefused = false;
+  try {
+    await harness.runWipeList([...lists.plain, 'resetSomethingNew'], harness.wipeMemStore());
+  } catch (e) {
+    unknownRefused = /resetSomethingNew/.test(e.message);
+  }
+  check('mutant caught: a wipe call the harness does not know is refused, not skipped', unknownRefused);
 }
 
 // The wipe dialog names what it deletes and keeps (finding 1), exactly.

@@ -1,4 +1,5 @@
-import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
+import { AsyncStorage, readStoreItem, removeStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
+import type { RemovableKeyValueStore } from './store-keys.ts';
 import type { ChainKeyProvider, DerivedAccount } from '@shiba-wallet/core';
 import { toChecksumAddress } from '@shiba-wallet/core';
 // Explicit .ts extensions: this module is imported by scripts/check-accounts.mjs
@@ -341,10 +342,19 @@ async function saveAccounts(state: AccountsState, store: KeyValueStore): Promise
   );
 }
 
-/** Restores the default list (used on wallet wipe and on create/import). */
-export async function resetAccounts(store: KeyValueStore = AsyncStorage): Promise<AccountsState> {
+/**
+ * Restores the default list (used on wallet wipe and on create/import).
+ * The wipe REMOVES the key (pass p23-devbuild-recheck follow-up 1: an empty
+ * document was left behind) when the store can delete keys, as AsyncStorage
+ * can; a store without removeItem (some test fakes) gets the empty document
+ * as before. The reader treats an absent key as nothing stored (loadAccounts returns
+ * defaultAccountsState() for a null read), so removing the key and writing
+ * the default list read back the same.
+ */
+export async function resetAccounts(store: RemovableKeyValueStore = AsyncStorage): Promise<AccountsState> {
   const state = defaultAccountsState();
-  await saveAccounts(state, store);
+  if (store.removeItem) await removeStoreItem(store, ACCOUNTS_KEY);
+  else await saveAccounts(state, store);
   return state;
 }
 

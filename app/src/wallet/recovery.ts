@@ -1,4 +1,5 @@
-import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
+import { AsyncStorage, readStoreItem, removeStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
+import type { RemovableKeyValueStore } from './store-keys.ts';
 import {
   BundlerClient,
   ECDSA_OWNER_REGISTERED_TOPIC,
@@ -521,9 +522,18 @@ export async function markRecordExported(
   return entry;
 }
 
-/** Clears an unreadable record store (after an explicit confirmation on screen). */
-export async function resetRecoveryRecords(store: KeyValueStore = AsyncStorage): Promise<void> {
-  await writeStoreItem(store, RECOVERY_RECORDS_KEY, JSON.stringify({ version: STORE_VERSION, entries: {} }));
+/**
+ * Clears an unreadable record store (after an explicit confirmation on
+ * screen), and the record store on the wallet wipe (wipeRecoveryData).
+ * The wipe REMOVES the key (pass p23-devbuild-recheck follow-up 1: an empty
+ * document was left behind) when the store can delete keys, as AsyncStorage
+ * can; a store without removeItem (some test fakes) gets the empty document
+ * as before. The reader treats an absent key as nothing stored (readRawMap returns
+ * { state: 'empty' } for a null read).
+ */
+export async function resetRecoveryRecords(store: RemovableKeyValueStore = AsyncStorage): Promise<void> {
+  if (store.removeItem) await removeStoreItem(store, RECOVERY_RECORDS_KEY);
+  else await writeStoreItem(store, RECOVERY_RECORDS_KEY, JSON.stringify({ version: STORE_VERSION, entries: {} }));
 }
 
 /**
@@ -534,12 +544,15 @@ export async function resetRecoveryRecords(store: KeyValueStore = AsyncStorage):
  * first (exportAllRecordsText).
  */
 export async function wipeRecoveryData(
-  store: KeyValueStore = AsyncStorage,
+  store: RemovableKeyValueStore = AsyncStorage,
   aaStore: KeyValueStore = store,
 ): Promise<{ recordsRemoved: number }> {
   const { entries } = await loadRecoveryRecords(store);
   await resetRecoveryRecords(store);
-  await writeStoreItem(store, RECOVERY_PROGRESS_KEY, JSON.stringify({ version: STORE_VERSION, entries: {} }));
+  // Removed rather than emptied when the store can delete keys (the
+  // progress reader, readRawMap, returns { state: 'empty' } for a null read).
+  if (store.removeItem) await removeStoreItem(store, RECOVERY_PROGRESS_KEY);
+  else await writeStoreItem(store, RECOVERY_PROGRESS_KEY, JSON.stringify({ version: STORE_VERSION, entries: {} }));
   await clearAllRecoveredAccounts(aaStore);
   return { recordsRemoved: entries.length };
 }

@@ -305,9 +305,16 @@ export const MULTISIG_SEND_REFUSAL =
 export const MULTISIG_TOKENS_SEND_NOTE =
   'Token sends from a multi-signature account are signing requests for its co-signers; build one on the Multisig screen.';
 
-/** The same for a watch-only account. */
+/**
+ * The same for a watch-only account. Phase 24 item B (the pass p22b /
+ * f297e8b leftover): it said "…so it cannot send these tokens." although
+ * the off-line signer screen sends tokens for a watched address (a cold
+ * USDC send was proven in pass p22b); it now says the wallet cannot SIGN,
+ * like the other watch-only sentences above and below.
+ */
 export const WATCH_ONLY_TOKENS_SEND_NOTE =
-  'This is a watch-only address: the wallet holds no key for it, so it cannot send these tokens.';
+  'This is a watch-only address: the wallet holds no key for it, so it cannot sign; a token send can be prepared ' +
+  'with "Send with an off-line signer" and signed by an off-line signer that holds its key.';
 
 /**
  * Whether the Tokens screen offers Send for the active account: null when it

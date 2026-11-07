@@ -1,4 +1,5 @@
-import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
+import { AsyncStorage, readStoreItem, removeStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
+import type { RemovableKeyValueStore } from './store-keys.ts';
 // keccak256 for approval ids: @noble/hashes, an audited dependency the app
 // already uses directly in delegation.ts and walletconnect.ts.
 import { keccak_256 } from '@noble/hashes/sha3.js';
@@ -997,9 +998,18 @@ export async function multisigListEntries(store: KeyValueStore = AsyncStorage): 
   }));
 }
 
-/** Removes every record (wallet wipe). Nothing on-chain changes. */
-export async function resetMultisigRecords(store: KeyValueStore = AsyncStorage): Promise<void> {
-  await writeStoreItem(store, MULTISIG_STORE_KEY, JSON.stringify({ version: STORE_VERSION, nextSlot: 0, records: [] }));
+/**
+ * Removes every record (wallet wipe). Nothing on-chain changes.
+ * The wipe REMOVES the key (pass p23-devbuild-recheck follow-up 1: an empty
+ * document was left behind) when the store can delete keys, as AsyncStorage
+ * can; a store without removeItem (some test fakes) gets the empty document
+ * as before. The reader treats an absent key as nothing stored (readStore returns
+ * an empty, undamaged state with nextSlot 0 for a null read — the same
+ * nextSlot the empty document held).
+ */
+export async function resetMultisigRecords(store: RemovableKeyValueStore = AsyncStorage): Promise<void> {
+  if (store.removeItem) await removeStoreItem(store, MULTISIG_STORE_KEY);
+  else await writeStoreItem(store, MULTISIG_STORE_KEY, JSON.stringify({ version: STORE_VERSION, nextSlot: 0, records: [] }));
 }
 
 function duplicateRecordError(existing: MultisigRecord): string {
