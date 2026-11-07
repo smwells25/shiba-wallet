@@ -19,6 +19,7 @@ import type { RootStackParamList } from '../navigation';
 import { Button, ImportedKeyNotice, WarningBox, screenStyle, switchColors, useFieldLabels } from '../components';
 import { T } from '../i18n/T';
 import { localize, t, tx } from '../i18n/index';
+import { sendScanRationale } from '../i18n/article';
 import { useI18n } from '../i18n/useI18n';
 import { IMPORTED_KEY_NO_CHAIN } from '../wallet/account-ids';
 import {
@@ -2669,7 +2670,7 @@ export function SendScreen({ route, navigation }: Props) {
       */}
       <QrScanner
         visible={scannerOpen}
-        rationale={t('send.scan.rationale', { network: token || nftMode ? 'Ethereum' : account.name })}
+        rationale={sendScanRationale(token || nftMode ? 'Ethereum' : account.name)}
         onScanned={(data) => {
           setScannerOpen(false);
           setFormError(null);

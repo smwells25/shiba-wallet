@@ -156,6 +156,24 @@ export const NOTIFICATIONS_LIMITS_NOTE =
   'is picked up the next time you open it. After a force stop, Android drops the scheduled reminders until ' +
   'you open the wallet again. Not included: merchant subscriptions (the merchant collects those payments, ' +
   'not this wallet) and auto-lock reminders.';
+/**
+ * The iOS form of the note above (phase 24 item 4, finding 4: "After a force
+ * stop, Android drops…" was shown on iOS). Same sources as inbox.ts
+ * INBOX_SCHEDULED_NOTE_IOS: Apple's "Scheduling a notification locally from
+ * your app" (a scheduled request "remains active until its trigger condition
+ * is met, or you explicitly cancel it"; when the app "isn't running", "the
+ * system interacts with the user for you") and expo-notifications 57.0.22
+ * TriggerRecords.swift 96–107 (a DATE trigger is a UNTimeIntervalNotificationTrigger).
+ */
+export const NOTIFICATIONS_LIMITS_NOTE_IOS =
+  'Reminders are worked out from what the wallet read the last time it was open, so a change made elsewhere ' +
+  'is picked up the next time you open it. iOS keeps a scheduled reminder and shows it at its time even when ' +
+  'the wallet is not running. Not included: merchant subscriptions (the merchant collects those payments, ' +
+  'not this wallet) and auto-lock reminders.';
+/** The limits note for this platform (Platform.OS). */
+export function notificationsLimitsNote(platform: string): string {
+  return platform === 'ios' ? NOTIFICATIONS_LIMITS_NOTE_IOS : NOTIFICATIONS_LIMITS_NOTE;
+}
 
 export const RECURRING_DUE_TITLE = 'Recurring payment due';
 export const RECURRING_DUE_BODY =

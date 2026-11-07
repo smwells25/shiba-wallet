@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from 'react';
-import { ActivityIndicator, Modal, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Modal, Platform, StyleSheet, Text, View } from 'react-native';
 // expo-camera 57.0.5 (SDK 57). API names verified against BOTH the SDK 57
 // docs (docs.expo.dev/versions/v57.0.0/sdk/camera, fetched 2026-09-27) and
 // this installed package's own typings (node_modules/expo-camera/build/
@@ -14,6 +14,13 @@ import { ActivityIndicator, Modal, StyleSheet, Text, View } from 'react-native';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
 import { Button } from '../components';
 import { useTheme } from '../theme';
+import { TechnicalDetail } from '../wallet/connectivity';
+import {
+  QR_NO_CAMERA_MESSAGE,
+  availabilityAfterMountError,
+  availabilityAfterReady,
+  type CameraAvailability,
+} from './qr-camera';
 
 /**
  * Full-screen QR scanning modal. Purely a convenience layer: every caller
@@ -43,9 +50,32 @@ export function QrScanner({
   // onBarcodeScanned fires repeatedly while a code stays in view; deliver
   // only the first hit per open. Reset whenever the modal closes.
   const deliveredRef = useRef(false);
+  // Whether a camera can be shown (./qr-camera.ts): a device with no usable
+  // camera gets a plain sentence instead of an empty preview.
+  const cameraRef = useRef<CameraView>(null);
+  const [camera, setCamera] = useState<{ availability: CameraAvailability; detail: string | null }>({
+    availability: 'checking',
+    detail: null,
+  });
   useEffect(() => {
     if (!visible) deliveredRef.current = false;
   }, [visible]);
+  // A closed scanner starts over (adjusting state when a prop changes, during
+  // render, as React's docs advise instead of an effect).
+  const [shownFor, setShownFor] = useState(visible);
+  if (shownFor !== visible) {
+    setShownFor(visible);
+    if (!visible) setCamera({ availability: 'checking', detail: null });
+  }
+  const onCameraReady = () => {
+    void availabilityAfterReady(Platform.OS, async () => cameraRef.current?.getAvailableLensesAsync()).then((availability) =>
+      setCamera((c) => (c.availability === 'none' ? c : { availability, detail: null })),
+    );
+  };
+  const onMountError = (event: { message: string }) => {
+    const next = availabilityAfterMountError(event?.message);
+    if (next) setCamera(next);
+  };
 
   const onBarcode = (result: BarcodeScanningResult) => {
     if (deliveredRef.current) return;
@@ -65,6 +95,13 @@ export function QrScanner({
           <View style={styles.messageBox}>
             <ActivityIndicator size="large" color={theme.accent} />
           </View>
+        ) : permission.granted && camera.availability === 'none' ? (
+          <View style={styles.messageBox}>
+            <Text accessibilityLiveRegion="polite" style={[styles.message, { color: theme.textMuted }]}>
+              {QR_NO_CAMERA_MESSAGE}
+            </Text>
+            {camera.detail ? <TechnicalDetail text={camera.detail} /> : null}
+          </View>
         ) : permission.granted ? (
           <View
             style={styles.cameraBox}
@@ -72,10 +109,13 @@ export function QrScanner({
             accessibilityLabel="Camera viewfinder. Point the camera at a QR code; it is read automatically."
           >
             <CameraView
+              ref={cameraRef}
               style={StyleSheet.absoluteFill}
               facing="back"
               barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
               onBarcodeScanned={onBarcode}
+              onCameraReady={onCameraReady}
+              onMountError={onMountError}
             />
             {/* Simple aim frame; the scanner reads the whole preview. */}
             <View pointerEvents="none" style={styles.frame} />

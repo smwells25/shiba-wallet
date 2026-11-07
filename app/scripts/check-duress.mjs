@@ -1793,6 +1793,40 @@ try {
     const m = await mutant('pin.ts', "  return t(kind === 'phr' ? 'lock.phr.checkFailed' : 'lock.pin.checkFailed');", "  return t('lock.pin.checkFailed');");
     check('mutant caught (polish): WalletContext\'s fallback saying PIN for a passphrase lock', m.lockCheckFailedMessage('phr') !== 'The passphrase could not be checked. Try again.');
   }
+  // Phase 24 item 4 (the iOS second pass): the backup-word fields scrolled into
+  // view and focused when they appear (finding 7), and kept out of iOS's
+  // password manager like the lock fields (finding 2).
+  {
+    const d = await import(pathToFileURL(join(SRC, 'wallet/duress.ts')).href);
+    const run = (impl) => {
+      const calls = [];
+      const r = impl.createBackupFieldsReveal();
+      const act = { scrollTo: (y) => calls.push(['scroll', y]), focusFirst: () => calls.push(['focus']) };
+      r.onSectionLayout(1200);
+      r.onFieldsLayout(500, act); // before arming: nothing
+      r.arm();
+      r.onFieldsLayout(640, act); // the fields appear
+      r.onFieldsLayout(700, act); // a later layout (the keyboard): nothing
+      return JSON.stringify(calls);
+    };
+    const want = JSON.stringify([['scroll', 1840], ['focus']]);
+    check('the backup fields: once armed, their first layout scrolls to the section offset plus theirs and focuses the first field, once', run(d) === want, run(d));
+    const settings = read('screens/SettingsScreen.tsx');
+    const wired = (src) =>
+      src.includes('<AppPinSection scrollTo={scrollToSection} />') &&
+      src.includes("<View style={styles.section} onLayout={(e) => backupReveal.onSectionLayout(e.nativeEvent.layout.y)}>") &&
+      src.includes('backupReveal.onFieldsLayout(e.nativeEvent.layout.y, {\n              scrollTo: (y) => scrollTo?.(y),') &&
+      src.includes('    backupReveal.arm();\n    setStep({ kind: \'backup\', flow,') &&
+      src.includes('ref={i === 0 ? firstBackupWord : undefined}') && src.includes('focusFirst: () => firstBackupWord.current?.focus(),');
+    check('Settings wires it: the section and the fields report their layout, the check arms it, the first field takes focus', wired(settings));
+    check('mutant caught: the backup check no longer arms the reveal (the fields stay off screen)', !wired(settings.replace('    backupReveal.arm();\n', '')));
+    const m = await mutant('duress.ts', '      act.scrollTo(sectionY + y);\n', '      act.scrollTo(y);\n');
+    check('mutant caught: the scroll ignores the section\'s own offset (lands near the top of the screen)', run(m) !== want);
+    const fieldBlock = settings.slice(settings.indexOf("const f = fieldLabel(`backup-word-${i}`"), settings.indexOf('<Button title="Check" onPress={submitBackupWords}'));
+    check('the backup-word fields set textContentType="none" (RN 0.86.3 TextInput.d.ts: "To disable autofill, set textContentType to `none`"), as the lock\'s passphrase field does, beside secure entry and autofill off',
+      fieldBlock.includes('textContentType="none"') && fieldBlock.includes('secureTextEntry') && fieldBlock.includes('importantForAutofill="no"') && fieldBlock.includes('autoComplete="off"') &&
+        read('components/LockGate.tsx').includes('textContentType="none"'));
+  }
 } finally {
   rmSync(MUTANT_DIR, { recursive: true, force: true });
   seam.setActiveStoreProfile(seam.PRIMARY_STORE_PROFILE);

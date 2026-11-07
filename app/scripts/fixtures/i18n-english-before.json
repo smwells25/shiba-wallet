@@ -12949,7 +12949,10 @@
   "bridge.measuredAttestation.many",
   "bridge.approve.totalNote",
   "readiness.spl-tokens.title",
-  "readiness.spl-tokens.reason"
+  "readiness.spl-tokens.reason",
+  "inbox.scheduledNoteIos",
+  "settings.notifications.limitsIos",
+  "send.scan.rationaleAn"
  ],
  "changed": {
   "activity.note.privacy": {
@@ -12986,6 +12989,16 @@
    "before": "Burned on {source} (block {block}). Waiting for Circle’s attestation: it comes after the source chain’s hard finality, about 17 minutes in the measured runs.",
    "en": "Burned on {source} (block {block}). Waiting for Circle’s attestation: it comes after the source chain’s hard finality, about {fromMinutes} to {toMinutes} minutes after the burn in the measured runs (not a promise).",
    "why": "Pass p23-bridge-recheck (2026-10-28): a second measurement on Base Sepolia to Arbitrum Sepolia took 1,332 to 1,352 s from the burn block to Circle's attestation, so \"about 17 minutes in the measured runs\" understated the wait; the sentence now gives the spread of every recorded attestation time (the engine's cctpAttestationRange, about 17 to 23 minutes so far) as measured, not promised."
+  },
+  "inbox.intro": {
+   "before": "What the wallet has told you: reminders, alerts and sent transactions, newest first. The list is kept on this phone only and never leaves it; it holds the sentence that was shown at the time, never a key.",
+   "en": "What the wallet has told you, newest first: reminders of recurring payments and swaps that fell due, price alerts, alerts that a recovery of one of your accounts was started, requests from connected apps that the wallet sent, speed-ups and cancellations it sent, and which transaction a block included when two shared a nonce. A transaction sent from the wallet's own screens, such as Send, is not listed here; Activity lists it. The list is kept on this phone only and never leaves it; it holds the sentence that was shown at the time, never a key.",
+   "why": "Phase 24 item 4 (the iOS second pass, finding 8): the intro said the inbox lists sent transactions, but a send made on the wallet's own screens (Send and the others) is not recorded there by design; the inbox records requests from connected apps that were sent, speed-ups and cancellations, and the notice saying which transaction a block included, so the intro now names exactly what is listed and points to Activity for the rest."
+  },
+  "inbox.empty": {
+   "before": "Nothing yet. Reminders, alerts and sent transactions will be listed here.",
+   "en": "Nothing yet. Reminders, alerts, requests from connected apps that the wallet sent, and speed-ups and cancellations will be listed here.",
+   "why": "Phase 24 item 4 (the iOS second pass, finding 8): the empty-list sentence promised sent transactions, which a send from the Send screen never adds; it now names the kinds that are listed."
   }
  }
 }

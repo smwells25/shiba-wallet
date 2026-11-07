@@ -1,5 +1,5 @@
 import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { AppState, StyleSheet, Switch, Text, View } from 'react-native';
+import { AppState, Platform, StyleSheet, Switch, Text, View } from 'react-native';
 import { NavigationContainerRefContext, useFocusEffect, type NavigationContainerRef } from '@react-navigation/native';
 import type { RootStackParamList } from '../navigation';
 import { useTheme } from '../theme';
@@ -12,7 +12,7 @@ import { loadSessions } from '../wallet/sessions';
 import { readRecurringDueStates, recurringChecksApplyTo } from '../wallet/recurring';
 import { listFoundTakeoverApprovals } from '../wallet/inheritance';
 import {
-  NOTIFICATIONS_LIMITS_NOTE,
+  notificationsLimitsNote,
   NOTIFICATIONS_PRIVACY_NOTE,
   NOTIFICATIONS_SECTION_TITLE,
   NOTIFICATIONS_SWITCH_LABEL,
@@ -321,7 +321,7 @@ export function NotificationSettingsSection() {
       </View>
       <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(NOTIFICATIONS_WHAT_NOTE)}</Text>
       <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(NOTIFICATIONS_PRIVACY_NOTE)}</Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(NOTIFICATIONS_LIMITS_NOTE)}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(notificationsLimitsNote(Platform.OS))}</Text>
       <Text style={[styles.hint, { color: bad ? theme.danger : theme.textMuted }]}>{localize(describeNotificationsStatus(shown))}</Text>
     </View>
   );

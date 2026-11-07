@@ -121,9 +121,23 @@ export type InboxRecordOutcome = 'recorded' | 'duplicate' | 'read-only' | 'faile
 // ---------------------------------------------------------------------------
 
 export const INBOX_TITLE = 'Inbox';
+/**
+ * Says exactly what is listed (the kinds above, recorded at the places in
+ * this file's header). Phase 24 item 4 (finding 8): the old intro said "sent
+ * transactions", but a send made on the wallet's own screens (Send, Swap,
+ * Staking, Bridge and the others) is not recorded here by design — only a
+ * request from a connected app that was sent, a speed-up or cancellation
+ * that was sent, and the notice saying which transaction a block included
+ * when two shared a nonce (components/PendingTransactions.tsx, App.tsx's
+ * onWcSentShown recorder).
+ */
 export const INBOX_INTRO =
-  'What the wallet has told you: reminders, alerts and sent transactions, newest first. The list is kept on this ' +
-  'phone only and never leaves it; it holds the sentence that was shown at the time, never a key.';
+  'What the wallet has told you, newest first: reminders of recurring payments and swaps that fell due, price ' +
+  'alerts, alerts that a recovery of one of your accounts was started, requests from connected apps that the ' +
+  'wallet sent, speed-ups and cancellations it sent, and which transaction a block included when two shared a ' +
+  "nonce. A transaction sent from the wallet's own screens, such as Send, is not listed here; Activity lists it. " +
+  'The list is kept on this phone only and never leaves it; it holds the sentence that was shown at the time, ' +
+  'never a key.';
 export const INBOX_PIN_NOTE =
   'The app PIN is on, so the wallet posts no phone notifications. The inbox still lists what the wallet showed you on ' +
   'its own screens, such as the recurring-payment banner, price alerts and sent transactions.';
@@ -134,7 +148,28 @@ export const INBOX_PASSPHRASE_NOTE =
 export const INBOX_SCHEDULED_NOTE =
   'A phone reminder is listed at the time it was set to appear. Android may show one a little late, and after a ' +
   'force stop it does not show it at all until the wallet is opened again.';
-export const INBOX_EMPTY = 'Nothing yet. Reminders, alerts and sent transactions will be listed here.';
+/**
+ * The iOS form of the note above (phase 24 item 4, finding 4: the Android
+ * sentence was shown on iOS). On iOS expo-notifications 57.0.22 schedules a
+ * DATE trigger as a UNTimeIntervalNotificationTrigger
+ * (ios/ExpoNotifications/Notifications/TriggerRecords.swift 96–107) through
+ * UNUserNotificationCenter, and Apple's "Scheduling a notification locally
+ * from your app" (developer.apple.com, read 2026-11-07) says: "Once
+ * scheduled, a notification request remains active until its trigger
+ * condition is met, or you explicitly cancel it" and "If the delivery of
+ * the notification occurs when your app isn't running or in the background,
+ * the system interacts with the user for you."
+ */
+export const INBOX_SCHEDULED_NOTE_IOS =
+  'A phone reminder is listed at the time it was set to appear. iOS keeps a scheduled reminder and shows it at that ' +
+  'time even when the wallet is not running.';
+/** The scheduled-reminder note for this platform (Platform.OS). */
+export function inboxScheduledNote(platform: string): string {
+  return platform === 'ios' ? INBOX_SCHEDULED_NOTE_IOS : INBOX_SCHEDULED_NOTE;
+}
+export const INBOX_EMPTY =
+  'Nothing yet. Reminders, alerts, requests from connected apps that the wallet sent, and speed-ups and cancellations ' +
+  'will be listed here.';
 export const INBOX_READ_ONLY_MESSAGE =
   'The inbox stored on this phone could not be read in full, so nothing new is added to it. The entries that could ' +
   'be read are shown. Reset the inbox to start a new, empty list.';

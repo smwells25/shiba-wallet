@@ -311,6 +311,46 @@ export function backupWordsMatch(phrase: string, positions: readonly number[], t
   return ok;
 }
 
+/**
+ * Brings the backup-word fields into view once they appear (phase 24 item 4,
+ * finding 7: turning the app-PIN switch on put the two fields at the end of
+ * the long App PIN section, off screen, and nothing scrolled there).
+ *
+ * Settings' AppPinSection arms it when the backup check starts; the section
+ * reports its own offset in the screen's scroll content and the fields'
+ * box reports its offset inside the section (both from onLayout, the
+ * pattern of SettingsScreen.tsx scrollToSection and HandleScreen.tsx's
+ * anchors since 2531763). The first layout of the fields after arming
+ * scrolls to their sum and moves focus to the first field, once; later
+ * layouts (the keyboard, a status line) do nothing until it is armed again.
+ */
+export interface BackupFieldsRevealActions {
+  scrollTo: (y: number) => void;
+  focusFirst: () => void;
+}
+export function createBackupFieldsReveal(): {
+  arm(): void;
+  onSectionLayout(y: number): void;
+  onFieldsLayout(y: number, act: BackupFieldsRevealActions): void;
+} {
+  let armed = false;
+  let sectionY = 0;
+  return {
+    arm() {
+      armed = true;
+    },
+    onSectionLayout(y) {
+      sectionY = y;
+    },
+    onFieldsLayout(y, act) {
+      if (!armed) return;
+      armed = false;
+      act.scrollTo(sectionY + y);
+      act.focusFirst();
+    },
+  };
+}
+
 /** "word 3 and word 9" style label (one-based) for the backup check. */
 export function backupCheckLabel(positions: readonly number[]): string {
   // Through the string table (phase 23 item 8); English unchanged.

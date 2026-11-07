@@ -206,6 +206,7 @@ import {
   SCREEN_PROTECTION_WITH_PIN_NOTE,
   appLockKind,
   backupCheckLabel,
+  createBackupFieldsReveal,
   backupCheckPositions,
   backupWordsMatch,
   lockCopy,
@@ -1487,7 +1488,10 @@ const otherLockKind = (kind: LockKind): LockKind => (kind === 'pin' ? 'phr' : 'p
 /** The prompt opening the recovery phrase to check a changed passphrase against its words (no word check). */
 const PASSPHRASE_PHRASE_CHECK_PROMPT = 'Check the new passphrase against your recovery phrase';
 
-function AppPinSection() {
+/** The backup-word field's handle (an alias: the source scans read `<TextInput` as a field). */
+type BackupWordInput = TextInput;
+
+function AppPinSection({ scrollTo }: { scrollTo?: (y: number) => void }) {
   const theme = useTheme();
   // Pass p22b: the section title and the switch label follow the language.
   const { localize: localizeText } = useI18n();
@@ -1522,6 +1526,11 @@ function AppPinSection() {
   const dropHeld = () => {
     held.current = { phrase: null, current: null, next: null, duressNext: null };
   };
+  // Phase 24 item 4 (finding 7): the backup-word fields are scrolled into
+  // view and the first one focused when they appear (duress.ts
+  // createBackupFieldsReveal).
+  const firstBackupWord = useRef<BackupWordInput>(null);
+  const [backupReveal] = useState(createBackupFieldsReveal);
 
   const refreshDuress = useCallback(() => {
     duressPinSet().then(setDuressSet, () => setDuressSet(false));
@@ -1572,6 +1581,7 @@ function AppPinSection() {
     held.current.phrase = phrase;
     const count = phrase.trim().split(/\s+/).length;
     setWords(['', '']);
+    backupReveal.arm();
     setStep({ kind: 'backup', flow, positions: backupCheckPositions(count, (n) => globalThis.crypto.getRandomValues(new Uint8Array(n))) });
   };
 
@@ -1707,7 +1717,7 @@ function AppPinSection() {
   const settingPassphrase = step.kind === 'pad' && step.stage !== 'current' && stageKind(step.flow, step.stage) === 'phr';
 
   return (
-    <View style={styles.section}>
+    <View style={styles.section} onLayout={(e) => backupReveal.onSectionLayout(e.nativeEvent.layout.y)}>
       <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>{localizeText(copy.sectionTitle)}</Text>
       <View style={styles.toggleRow}>
         <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text, flexShrink: 1, marginRight: 12 }]}>{localizeText(APP_LOCK_SWITCH_LABEL)}</Text>
@@ -1781,7 +1791,13 @@ function AppPinSection() {
       )}
 
       {step.kind === 'backup' ? (
-        <View style={styles.endpointEditor}>
+        <View style={styles.endpointEditor} onLayout={(e) =>
+            backupReveal.onFieldsLayout(e.nativeEvent.layout.y, {
+              scrollTo: (y) => scrollTo?.(y),
+              focusFirst: () => firstBackupWord.current?.focus(),
+            })
+          }
+        >
           <Text style={[styles.hint, { color: theme.text }]}>
             {t('settings.appLock.typeWords', { words: backupCheckLabel(step.positions) })}
           </Text>
@@ -1792,6 +1808,7 @@ function AppPinSection() {
                 <Text {...f.label} style={[styles.hint, { color: theme.textMuted }]}>{f.text}</Text>
                 <TextInput
                   {...f.input}
+                  ref={i === 0 ? firstBackupWord : undefined}
                   value={words[i]}
                   onChangeText={(t) => setWords((w) => (i === 0 ? [t, w[1]] : [w[0], t]))}
                   autoCapitalize="none"
@@ -1799,6 +1816,7 @@ function AppPinSection() {
                   autoComplete="off"
                   spellCheck={false}
                   importantForAutofill="no"
+                  textContentType="none"
                   secureTextEntry
                   style={[styles.endpointInput, { backgroundColor: theme.card, borderColor: theme.controlBorder, color: theme.text }]}
                 />
@@ -2423,7 +2441,7 @@ export function SettingsScreen({ navigation, route }: Props) {
         <Button title="Open the inbox" variant="secondary" accessibilityHint="Lists the reminders, alerts and sent transactions the wallet has shown" onPress={() => navigation.navigate('Inbox')} />
       </View>
 
-      <AppPinSection />
+      <AppPinSection scrollTo={scrollToSection} />
 
       <View style={styles.section}>
         <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Prices</T></Text>

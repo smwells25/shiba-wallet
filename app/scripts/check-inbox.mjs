@@ -639,7 +639,7 @@ console.log('check-inbox: routes, links and allow lists');
   const settings = read('src/screens/SettingsScreen.tsx');
   check('Settings: one Inbox link line, in the Privacy section after the notifications (not the PIN section)',
     (settings.match(/navigation\.navigate\('Inbox'\)/g) ?? []).length === 1 &&
-      settings.indexOf("navigation.navigate('Inbox')") > settings.indexOf('<NotificationSettingsSection />') && settings.indexOf("navigation.navigate('Inbox')") < settings.indexOf('<AppPinSection />'));
+      settings.indexOf("navigation.navigate('Inbox')") > settings.indexOf('<NotificationSettingsSection />') && settings.indexOf("navigation.navigate('Inbox')") < settings.indexOf('<AppPinSection scrollTo={scrollToSection} />'));
   const screen = read('src/screens/InboxScreen.tsx');
   // Phase 22 polish: the app-lock note names the PIN or the passphrase by the lock's kind.
   const lockNotePicked = (src) =>
@@ -652,9 +652,26 @@ console.log('check-inbox: routes, links and allow lists');
   check('mutant caught (polish): the PIN note shown whatever the lock\'s kind', !lockNotePicked(screen.replace("inboxLockKind === 'phr' ? INBOX_PASSPHRASE_NOTE : INBOX_PIN_NOTE", 'INBOX_PIN_NOTE')));
   check('the screen: intro, the app-lock note, the read-only box with reset, Mark all read, the reminder note',
     screen.includes('{appPinOn ? <Text') && screen.includes('INBOX_PIN_NOTE}') && screen.includes('<WarningBox>{INBOX_READ_ONLY_MESSAGE}</WarningBox>') &&
-      screen.includes('title="Reset the inbox"') && screen.includes('title={INBOX_MARK_ALL_READ}') && screen.includes('{INBOX_SCHEDULED_NOTE}'));
+      screen.includes('title="Reset the inbox"') && screen.includes('title={INBOX_MARK_ALL_READ}') && screen.includes('{localize(inboxScheduledNote(Platform.OS))}'));
   check('exact strings', I.INBOX_PIN_NOTE.startsWith('The app PIN is on, so the wallet posts no phone notifications. The inbox still lists') &&
-    I.INBOX_EMPTY === 'Nothing yet. Reminders, alerts and sent transactions will be listed here.' && I.inboxUnreadText(1) === '1 unread entry.' && I.inboxTimeText(Date.UTC(2026, 9, 19, 3, 30)) === '2026-10-19 03:30 UTC');
+    I.INBOX_EMPTY === 'Nothing yet. Reminders, alerts, requests from connected apps that the wallet sent, and speed-ups and cancellations will be listed here.' && I.inboxUnreadText(1) === '1 unread entry.' && I.inboxTimeText(Date.UTC(2026, 9, 19, 3, 30)) === '2026-10-19 03:30 UTC');
+  // Phase 24 item 4 (the iOS second pass, finding 8): two sends from the Send
+  // screen left the inbox "Nothing yet." although the intro said sent
+  // transactions are listed. Only the kinds recorded here are named; a send
+  // from the wallet's own screens is sent to Activity.
+  const INTRO_NOW = 'What the wallet has told you, newest first: reminders of recurring payments and swaps that fell due, price alerts, alerts that a recovery of one of your accounts was started, requests from connected apps that the wallet sent, speed-ups and cancellations it sent, and which transaction a block included when two shared a nonce. A transaction sent from the wallet\'s own screens, such as Send, is not listed here; Activity lists it. The list is kept on this phone only and never leaves it; it holds the sentence that was shown at the time, never a key.';
+  check('the intro names exactly what is listed and says a send from the wallet\'s own screens is in Activity (exact)', I.INBOX_INTRO === INTRO_NOW);
+  // Every kind the inbox stores has its words in the intro (a new kind must be named there).
+  const introNames = { 'recurring-due': 'recurring payments', 'swap-due': 'swaps that fell due', takeover: 'a recovery of one of your accounts', 'price-alert': 'price alerts', sent: 'requests from connected apps that the wallet sent', replacement: 'speed-ups and cancellations' };
+  const kinds = Object.keys(I.INBOX_TARGET_BY_KIND);
+  check('…every stored kind is named in the intro, and no other', kinds.length === 6 && kinds.every((k) => introNames[k] && I.INBOX_INTRO.includes(introNames[k])));
+  check('the screen\'s reminder note follows the platform: on iOS no Android sentence (finding 4)',
+    I.inboxScheduledNote('ios') === I.INBOX_SCHEDULED_NOTE_IOS && I.inboxScheduledNote('android') === I.INBOX_SCHEDULED_NOTE &&
+      !/Android|force stop/.test(I.INBOX_SCHEDULED_NOTE_IOS) && I.INBOX_SCHEDULED_NOTE_IOS.startsWith('A phone reminder is listed at the time it was set to appear.'));
+  {
+    const m18 = await importMutant('src/wallet/inbox.ts', '  "nonce. A transaction sent from the wallet\'s own screens, such as Send, is not listed here; Activity lists it. " +\n', '  "nonce. " +\n');
+    mutantCaught('M18 the intro no longer saying a Send-screen send is not listed (the old promise of every sent transaction)', m18.INBOX_INTRO !== INTRO_NOW);
+  }
 }
 
 // ---------------------------------------------------------------------------

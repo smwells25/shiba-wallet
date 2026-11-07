@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation';
@@ -21,10 +21,10 @@ import {
   INBOX_RECORD_FAILED_MESSAGE,
   INBOX_RESET_BODY,
   INBOX_RESET_TITLE,
-  INBOX_SCHEDULED_NOTE,
   INBOX_TARGET_BY_KIND,
   appInbox,
   inboxKindLabel,
+  inboxScheduledNote,
   inboxTargetHint,
   inboxTimeText,
   inboxUnreadCount,
@@ -191,7 +191,7 @@ export function InboxScreen({ navigation }: Props) {
           );
         })}
       </View>
-      <Text style={[styles.hint, { color: theme.textMuted }]}><T>{INBOX_SCHEDULED_NOTE}</T></Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(inboxScheduledNote(Platform.OS))}</Text>
     </ScrollView>
   );
 }

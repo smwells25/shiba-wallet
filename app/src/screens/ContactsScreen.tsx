@@ -17,6 +17,7 @@ import { resolveActiveNetworks } from '../config/defaults';
 import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
 import { extractScannedAddress } from '../wallet/scan';
+import { englishIndefiniteArticle } from '../i18n/article';
 import {
   LookalikeContactError,
   MAX_CONTACT_NAME_LENGTH,
@@ -390,7 +391,7 @@ export function ContactsScreen(_props: Props) {
         </View>
         <QrScanner
           visible={scannerOpen}
-          rationale={`Point the camera at a ${addNetwork?.network.label ?? ''} address QR code. The camera is only used to read the code.`}
+          rationale={`Point the camera at ${englishIndefiniteArticle(addNetwork?.network.label ?? '')} ${addNetwork?.network.label ?? ''} address QR code. The camera is only used to read the code.`}
           onScanned={(data) => {
             setScannerOpen(false);
             // Same conservative extraction as the send screen: only the

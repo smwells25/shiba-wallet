@@ -268,6 +268,10 @@ const NAVBAR_FIX_NEW = ['settings.navBar.appliedPlatform', 'settings.navBar.appl
 const BRIDGE_RECHECK_NEW = ['bridge.measuredAttestation.one', 'bridge.measuredAttestation.many', 'bridge.approve.totalNote'];
 // Pass p23-bridge-recheck: the three CCTP sentences that said "about 17 minutes in the measured runs" now give the measured spread.
 const CCTP_TIME_CHANGED = ['bridge.cctp.mintStep', 'bridge.cctp.burned', 'bridge.cctp.burnedBlock'];
+// Phase 24 item 4 (the iOS second pass): the iOS forms of the two reminder notes (findings 4) and the "an" form of the
+// Send scanner sentence (finding 5) are new; the inbox's intro and empty line were reworded (finding 8).
+const IOS_FIX_NEW = ['inbox.scheduledNoteIos', 'settings.notifications.limitsIos', 'send.scan.rationaleAn'];
+const INBOX_WORDING_CHANGED = ['inbox.intro', 'inbox.empty'];
 {
   const p = fixtureProblems(en, FIXTURE);
   check(`every English entry is the text the app showed at ${FIXTURE.base} (${Object.keys(FIXTURE.literal).length} literals, ${Object.keys(FIXTURE.template).length} templates by their static parts, ${Object.keys(FIXTURE.composite).length} composites) or listed as new (${FIXTURE.new.length})`,
@@ -285,14 +289,14 @@ const CCTP_TIME_CHANGED = ['bridge.cctp.mintStep', 'bridge.cctp.burned', 'bridge
   // broadcast sentences (an HTTP 5xx or a dropped connection, not a timeout).
   const BROADCAST_OPEN_NEW = ['broadcast.open.title', 'broadcast.tx.open', 'broadcast.tx.openUnlisted', 'broadcast.userop.open',
     'broadcast.userop.openUnlisted', 'broadcast.open'];
-  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the Solana token-send readiness row, the wallet handle\'s, the six open-outcome broadcast sentences, the co-signer card\'s numbered Scan label, the eight period words of the hygiene slice, the four Bridge lines of pass p23-mint, the five lines of the p23-build fixes, the three Bridge lines of pass p23-bridge-recheck and the three navigation-bar lines of pass p23-navbar',
-    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || SPL_TOKENS_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id) || NAVBAR_FIX_NEW.includes(id)) &&
+  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the Solana token-send readiness row, the wallet handle\'s, the six open-outcome broadcast sentences, the co-signer card\'s numbered Scan label, the eight period words of the hygiene slice, the four Bridge lines of pass p23-mint, the five lines of the p23-build fixes, the three Bridge lines of pass p23-bridge-recheck and the three navigation-bar lines of pass p23-navbar and the three iOS-pass lines (two iOS reminder notes, the "an" scanner sentence)',
+    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || SPL_TOKENS_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id) || NAVBAR_FIX_NEW.includes(id) || IOS_FIX_NEW.includes(id)) &&
       BUILD_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && BRIDGE_RECHECK_NEW.every((id) => FIXTURE.new.includes(id)) &&
       LOCK_KIND_NEW.every((id) => FIXTURE.new.includes(id)) && COLD_AA_NEW.every((id) => FIXTURE.new.includes(id)) && SPL_TOKENS_NEW.every((id) => FIXTURE.new.includes(id)) &&
       BROADCAST_OPEN_NEW.every((id) => FIXTURE.new.includes(id)) && THIRD_PASS_NEW.every((id) => FIXTURE.new.includes(id)) && PERIOD_NEW.every((id) => FIXTURE.new.includes(id)) &&
-      BRIDGE_MINT_NEW.every((id) => FIXTURE.new.includes(id)) && NAVBAR_FIX_NEW.every((id) => FIXTURE.new.includes(id)));
-  check('the changed entries are exactly the transaction-notes line (reworded for the records backup), the watch-only notice (reworded for the off-line signer), the bridge readiness reason (CCTP sent, phase 23), the records-backup note (smart-account recovery records, pass p23-build) and the three CCTP time sentences (the measured spread, pass p23-bridge-recheck), each with its reason',
-    JSON.stringify(Object.keys(FIXTURE.changed ?? {})) === JSON.stringify(['activity.note.privacy', 'notice.watchOnly', 'readiness.bridge.reason', 'recordsBackup.what', ...CCTP_TIME_CHANGED]) &&
+      BRIDGE_MINT_NEW.every((id) => FIXTURE.new.includes(id)) && NAVBAR_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && IOS_FIX_NEW.every((id) => FIXTURE.new.includes(id)));
+  check('the changed entries are exactly the transaction-notes line (reworded for the records backup), the watch-only notice (reworded for the off-line signer), the bridge readiness reason (CCTP sent, phase 23), the records-backup note (smart-account recovery records, pass p23-build) the three CCTP time sentences (the measured spread, pass p23-bridge-recheck) and the inbox intro and empty line (what is listed, phase 24 item 4), each with its reason',
+    JSON.stringify(Object.keys(FIXTURE.changed ?? {})) === JSON.stringify(['activity.note.privacy', 'notice.watchOnly', 'readiness.bridge.reason', 'recordsBackup.what', ...CCTP_TIME_CHANGED, ...INBOX_WORDING_CHANGED]) &&
       en['activity.note.privacy'] === 'Notes are kept on this phone and are not sent anywhere. They are deleted when the wallet is wiped. A records backup (Settings → Records backup) includes them, and your recovery phrase restores them from it. Hide amounts does not hide them.');
   // Pass p22a: the shared watch-only notice no longer says the wallet cannot
   // send for the address (the off-line signer screen prepares sends for it,
@@ -556,7 +560,7 @@ function oldSpoken(visible) {
 // The pinned constants of the wallet modules (the older suites read these).
 const CONSTANTS = {
   'inbox.title': inbox.INBOX_TITLE, 'inbox.intro': inbox.INBOX_INTRO, 'inbox.pinNote': inbox.INBOX_PIN_NOTE,
-  'inbox.scheduledNote': inbox.INBOX_SCHEDULED_NOTE, 'inbox.empty': inbox.INBOX_EMPTY, 'inbox.readOnly': inbox.INBOX_READ_ONLY_MESSAGE,
+  'inbox.scheduledNote': inbox.INBOX_SCHEDULED_NOTE, 'inbox.scheduledNoteIos': inbox.INBOX_SCHEDULED_NOTE_IOS, 'inbox.empty': inbox.INBOX_EMPTY, 'inbox.readOnly': inbox.INBOX_READ_ONLY_MESSAGE,
   'inbox.reset.title': inbox.INBOX_RESET_TITLE, 'inbox.reset.body': inbox.INBOX_RESET_BODY, 'inbox.markAllRead': inbox.INBOX_MARK_ALL_READ,
   'inbox.recurringDue.title': notif.RECURRING_DUE_TITLE, 'inbox.recurringDue.body': notif.RECURRING_DUE_BODY,
   'inbox.swapDue.title': notif.RECURRING_SWAP_DUE_TITLE, 'inbox.swapDue.body': notif.RECURRING_SWAP_DUE_BODY,
@@ -677,7 +681,7 @@ const CONSTANTS = {
   'settings.appLock.phr.notUsable': pinm.PASSPHRASE_NOT_USABLE_MESSAGE, 'settings.appLock.phr.phraseWords': pinm.PASSPHRASE_PHRASE_WORDS_MESSAGE,
   'settings.appLock.phr.mismatch': pinm.PASSPHRASE_MISMATCH_MESSAGE,
   'settings.notifications.switch': notif.NOTIFICATIONS_SWITCH_LABEL, 'settings.notifications.what': notif.NOTIFICATIONS_WHAT_NOTE,
-  'settings.notifications.privacy': notif.NOTIFICATIONS_PRIVACY_NOTE, 'settings.notifications.limits': notif.NOTIFICATIONS_LIMITS_NOTE,
+  'settings.notifications.privacy': notif.NOTIFICATIONS_PRIVACY_NOTE, 'settings.notifications.limits': notif.NOTIFICATIONS_LIMITS_NOTE, 'settings.notifications.limitsIos': notif.NOTIFICATIONS_LIMITS_NOTE_IOS,
   'settings.notifications.statusOff': notif.describeNotificationsStatus({ state: 'off' }), 'settings.notifications.statusOn': notif.describeNotificationsStatus({ state: 'on' }),
   'settings.notifications.denied': notif.NOTIFICATIONS_DENIED_TEXT,
   'accounts.watch.intro': wo.WATCH_ADDRESS_INTRO, 'accounts.watch.privacy': wo.WATCH_ADDRESS_PRIVACY_NOTE, 'accounts.watchOnly.listHint': wo.WATCH_ONLY_LIST_HINT,
@@ -1751,6 +1755,56 @@ function caught(name, wasCaught) {
   const m = await mutant('banner.ts', "  if (custom) return t('banner.testnet.custom', { network: custom[1], symbol: custom[2] });", "  if (custom) return t('banner.testnet', { network: custom[1] });");
   const custom = 'TESTNET — Linea Sepolia test mode is on (a network you added). Amounts are test ETH, not real funds.';
   caught('a network the user added banner-ed like a built-in one (its words lost)', m.testnetBannerText(custom) !== custom);
+}
+// Phase 24 item 4 (the iOS second pass): "System" on iOS (finding 1), the
+// article before a network name (finding 5), the iOS forms of the reminder
+// notes (finding 4).
+{
+  const DL = await import('../src/i18n/device-locale.ts');
+  const AR = await import('../src/i18n/article.ts');
+  const pick = (o) => DL.pickDeviceLocaleTag({ platform: 'ios', nativeLocaleIdentifier: undefined, appleLanguages: undefined, intlLocale: undefined, ...o });
+  check('iOS: the first AppleLanguages entry decides, ahead of Intl (which follows the app bundle\'s own languages: English only)',
+    pick({ appleLanguages: ['es-ES', 'en-US'], intlLocale: 'en_US' }) === 'es-ES' &&
+      I.resolveLanguage('system', pick({ appleLanguages: ['es-ES', 'en-US'], intlLocale: 'en_US' })) === 'es' &&
+      I.resolveLanguage('system', pick({ appleLanguages: ['en-GB', 'es-ES'], intlLocale: 'en_US' })) === 'en');
+  check('iOS: a missing, empty or malformed AppleLanguages falls back to Intl, then to null',
+    pick({ appleLanguages: undefined, intlLocale: 'es_MX' }) === 'es_MX' && pick({ appleLanguages: [], intlLocale: 'en' }) === 'en' &&
+      pick({ appleLanguages: 'es', intlLocale: 'en' }) === 'en' && pick({ appleLanguages: [42, 'es'], intlLocale: 'en' }) === 'en' &&
+      pick({ appleLanguages: [''], intlLocale: '' }) === null);
+  check('Android: I18nManager\'s localeIdentifier first; AppleLanguages never used off iOS',
+    DL.pickDeviceLocaleTag({ platform: 'android', nativeLocaleIdentifier: 'es_ES', appleLanguages: ['en'], intlLocale: 'en' }) === 'es_ES' &&
+      DL.pickDeviceLocaleTag({ platform: 'android', nativeLocaleIdentifier: undefined, appleLanguages: ['es'], intlLocale: 'en-US' }) === 'en-US');
+  const dl = read('src/i18n/device-locale.ts');
+  check('deviceLocaleTag reads Settings.get(\'AppleLanguages\') only on iOS (on Android Settings is the warning fallback) and requires react-native lazily',
+    /if \(rn && sources\.platform === 'ios'\) sources\.appleLanguages = rn\.Settings\.get\('AppleLanguages'\);/.test(dl) &&
+      dl.includes("rn = require('react-native') as typeof import('react-native');") && !/^import .*from 'react-native'/m.test(dl) &&
+      dl.includes('return pickDeviceLocaleTag(sources);'));
+  check('the article: "an" before a, e, i, o (Ethereum, Arbitrum Sepolia, OP Sepolia), "a" otherwise (Bitcoin, Dogecoin, Solana, Base Sepolia, Hoodi, Uniswap)',
+    ['Ethereum', 'Ethereum Sepolia', 'Arbitrum Sepolia', 'OP Sepolia', ' ethereum', 'Imaginary'].every((w) => AR.englishIndefiniteArticle(w) === 'an') &&
+      ['Bitcoin', 'Dogecoin', 'Solana', 'Base Sepolia', 'Hoodi', 'Uniswap', ''].every((w) => AR.englishIndefiniteArticle(w) === 'a'));
+  const sendSrc = read('src/screens/SendScreen.tsx');
+  const contactsSrc = read('src/screens/ContactsScreen.tsx');
+  check('the Send scanner sentence: "an Ethereum address", "a Bitcoin address"; in Spanish one sentence for both; the Send and Contacts screens use the helper and no "camera at a ${" literal is left',
+    AR.sendScanRationale('Ethereum') === 'Point the camera at an Ethereum address or payment-request QR code. The camera is only used to read the code.' &&
+      AR.sendScanRationale('Bitcoin') === 'Point the camera at a Bitcoin address or payment-request QR code. The camera is only used to read the code.' &&
+      I.translateFrom({ en, es }, 'es', 'send.scan.rationaleAn', { network: 'Ethereum' }) === I.translateFrom({ en, es }, 'es', 'send.scan.rationale', { network: 'Ethereum' }) &&
+      sendSrc.includes("rationale={sendScanRationale(token || nftMode ? 'Ethereum' : account.name)}") && !sendSrc.includes("t('send.scan.rationale'") &&
+      contactsSrc.includes('Point the camera at ${englishIndefiniteArticle(addNetwork?.network.label ?? \'\')} ${addNetwork?.network.label ?? \'\'} address QR code.') &&
+      !/camera at a \$\{/.test(sendSrc + contactsSrc));
+  check('the reminder notes per platform: iOS gets the iOS forms (no "Android", no "force stop"), every other platform the Android ones unchanged; both screens pick by Platform.OS',
+    inbox.inboxScheduledNote('ios') === en['inbox.scheduledNoteIos'] && inbox.inboxScheduledNote('android') === en['inbox.scheduledNote'] &&
+      notif.notificationsLimitsNote('ios') === en['settings.notifications.limitsIos'] && notif.notificationsLimitsNote('android') === en['settings.notifications.limits'] &&
+      !/Android|force stop/.test(en['inbox.scheduledNoteIos'] + en['settings.notifications.limitsIos']) &&
+      read('src/screens/InboxScreen.tsx').includes('{localize(inboxScheduledNote(Platform.OS))}') &&
+      read('src/components/NotificationScheduler.tsx').includes('{localize(notificationsLimitsNote(Platform.OS))}') &&
+      I.localizeIn('es', inbox.INBOX_SCHEDULED_NOTE_IOS) === es['inbox.scheduledNoteIos'] && I.localizeIn('es', notif.NOTIFICATIONS_LIMITS_NOTE_IOS) === es['settings.notifications.limitsIos']);
+  check('the inbox intro and empty line name what is listed and send the rest to Activity (exact)',
+    en['inbox.intro'] === inbox.INBOX_INTRO && inbox.INBOX_INTRO.includes("A transaction sent from the wallet's own screens, such as Send, is not listed here; Activity lists it.") &&
+      !/reminders, alerts and sent transactions/.test(inbox.INBOX_INTRO + inbox.INBOX_EMPTY));
+  const m1 = await mutant('device-locale.ts', "  if (sources.platform === 'ios' && Array.isArray(sources.appleLanguages) && nonEmpty(sources.appleLanguages[0])) {", "  if (false && Array.isArray(sources.appleLanguages)) {");
+  caught('iOS "System" back on Intl alone (the Simulator in Spanish reads English)', m1.pickDeviceLocaleTag({ platform: 'ios', appleLanguages: ['es-ES'], intlLocale: 'en_US' }) !== 'es-ES');
+  const m2 = await mutant('article.ts', "  return /^[aeio]/i.test(word.trim()) ? 'an' : 'a';", "  return 'a';");
+  caught('the article always "a" ("a Ethereum address")', !m2.sendScanRationale('Ethereum').startsWith('Point the camera at an Ethereum'));
 }
 // Table mutants: the same checks, run on broken copies of the tables.
 {

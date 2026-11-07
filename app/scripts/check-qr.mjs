@@ -226,5 +226,67 @@ check(
   `${BTC}?amount=1`,
 );
 
+// ---------------------------------------------------------------------------
+// The scanner with no camera (phase 24 item 4, finding 6): the iOS Simulator
+// has no camera and the scanner showed an empty preview. A fake camera module
+// stands in for expo-camera's CameraView.getAvailableLensesAsync().
+// ---------------------------------------------------------------------------
+{
+  const QC = await import('../src/components/qr-camera.ts');
+  const { readFileSync } = await import('node:fs');
+  const scannerSrc = readFileSync(new URL('../src/components/QrScanner.tsx', import.meta.url), 'utf8');
+  const fakeCamera = (lenses, opts = {}) => {
+    const calls = { lenses: 0 };
+    return {
+      calls,
+      getAvailableLensesAsync: async () => {
+        calls.lenses += 1;
+        if (opts.throws) throw new Error('view not found');
+        return lenses;
+      },
+    };
+  };
+  check('no-camera sentence (exact)', QC.QR_NO_CAMERA_MESSAGE,
+    'This device has no camera that this app can use, so a QR code cannot be scanned here; paste the text instead.');
+  const none = fakeCamera([]);
+  check('iOS: an empty lens list after onCameraReady means no camera', await QC.availabilityAfterReady('ios', () => none.getAvailableLensesAsync()), 'none');
+  check('iOS: the lens list was asked once', none.calls.lenses, 1);
+  check('iOS: a back camera listed keeps the preview',
+    await QC.availabilityAfterReady('ios', () => fakeCamera(['Back Camera']).getAvailableLensesAsync()), 'available');
+  check('iOS: a failed lens read proves nothing and keeps the preview',
+    await QC.availabilityAfterReady('ios', () => fakeCamera([], { throws: true }).getAvailableLensesAsync()), 'available');
+  check('iOS: a malformed lens answer keeps the preview',
+    await QC.availabilityAfterReady('ios', () => fakeCamera(undefined).getAvailableLensesAsync()), 'available');
+  const android = fakeCamera([]);
+  check('Android: onCameraReady means the camera opened; the lens list (not defined on Android) is never asked',
+    (await QC.availabilityAfterReady('android', () => android.getAvailableLensesAsync())) + ':' + android.calls.lenses, 'available:0');
+  check('a mount error (Android CameraX could not bind a camera) means no camera, with its message as the detail',
+    JSON.stringify(QC.availabilityAfterMountError('Camera could not be started, it may be unavailable or in use by another app: no camera')),
+    JSON.stringify({ availability: 'none', detail: 'Camera could not be started, it may be unavailable or in use by another app: no camera' }));
+  check('the iOS session-reset mount error is not a missing camera', QC.availabilityAfterMountError('Camera session was reset'), null);
+  check('a mount error with no message: no camera, no detail', JSON.stringify(QC.availabilityAfterMountError(undefined)), JSON.stringify({ availability: 'none', detail: null }));
+  check('QrScanner wires onCameraReady (with the view\'s lens list) and onMountError, and shows the sentence instead of the preview',
+    scannerSrc.includes('onCameraReady={onCameraReady}') && scannerSrc.includes('onMountError={onMountError}') &&
+      scannerSrc.includes('ref={cameraRef}') && scannerSrc.includes('availabilityAfterReady(Platform.OS, async () => cameraRef.current?.getAvailableLensesAsync())') &&
+      scannerSrc.includes("permission.granted && camera.availability === 'none' ? (") && scannerSrc.includes('{QR_NO_CAMERA_MESSAGE}') &&
+      scannerSrc.indexOf("camera.availability === 'none'") < scannerSrc.indexOf('<CameraView\n'), true);
+  check('…and the state starts over each time the scanner closes', scannerSrc.includes("setCamera({ availability: 'checking', detail: null });"), true);
+  // Mutant: the empty-list rule removed (the Simulator's empty preview again).
+  const src = readFileSync(new URL('../src/components/qr-camera.ts', import.meta.url), 'utf8');
+  const anchor = "  if (Array.isArray(lenses) && lenses.length === 0) return 'none';\n";
+  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'check-qr-mutant-'));
+  try {
+    writeFileSync(join(dir, 'qr-camera.ts'), src.replace(anchor, ''));
+    const m = await import(join(dir, 'qr-camera.ts'));
+    check('mutant caught: the empty lens list ignored (an empty preview with no camera)',
+      src.includes(anchor) && (await m.availabilityAfterReady('ios', async () => [])) !== 'none', true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
