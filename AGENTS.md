@@ -16710,3 +16710,104 @@ arrive; 6 last. Subagents on Opus.
       Slips: a 429 crashed the first dry run (read-only retry added; never
       on sendTransaction); a test miscounted the shared extension names;
       the first wording "holds no this token" corrected.
+- [x] Item 1, app half — SOLANA TOKENS IN THE APP BEHIND A DEVNET SWITCH
+      (commit 875d0d9; 28 files — new app/src/wallet/spl-tokens.ts (React-free
+      glue), useSplTokens.ts, screens/SolanaTokensScreen.tsx and
+      SolanaTokenSendScreen.tsx, app/scripts/check-spl-tokens.mjs (73; 8
+      in-suite mutants) registered in suites.mjs; check-readiness 229 (was
+      222); every other suite unchanged (check-tokens 159, check-home 111,
+      check-devmode 476, check-activity 302, check-i18n 172); offline
+      runner ALL GREEN in the CTO's isolated worktree on HEAD df63f6e with
+      --skip-bundle: engine 1,328, app 10,961 across 66 suites, lint 0/0,
+      tsc clean; checkout 0 / apply 0 / 28 files; the staged patch id
+      699f7ebf…93f4 equal to the verified tree's and the agent's; the
+      lockfile diff exactly one added devDependency line
+      (@solana/spl-token-metadata 0.1.6, the version it already held
+      transitively; no resolved version changed); the pre-commit scan
+      clean; seven hand mutants caught; not seen on a device; nothing
+      live). THE GAP, larger than briefed: the app had NO Solana devnet —
+      config/defaults.ts resolveActiveNetworks swapped only the EVM slot
+      and send.ts, history.ts, accounts.ts and scan.ts hard-coded the
+      mainnet CAIP-2 — so a testnet-only SPL send could never have been
+      offered anywhere; DESIGN, CTO accepted: a separate Developer switch
+      "Use Solana devnet", OFF by default (prefs solanaDevnet; only an
+      explicit stored true reads as on), which moves the WHOLE Solana slot
+      to devnet — the native SOL row ("test SOL", never priced), SOL sends,
+      history and the tracked tokens — with the note "Off: the Solana row
+      is on Solana mainnet. On: the Solana row, its sends, its history and
+      its tracked tokens use Solana devnet, where SOL and tokens have no
+      value. This choice is separate from the Ethereum network above.
+      Solana token sends are offered only on devnet."; the devnet card
+      keeps the title "Solana" (pinned lines) and adds "Solana devnet: test
+      SOL, no value"; devnet RPCs api.devnet.solana.com (Solana's clusters
+      page: "single Solana Labs hosted API node; rate-limited") and
+      solana-devnet.api.onfinality.io/public (OnFinality's page: "Public
+      endpoint rate limit: 5 req/sec"); no devnet explorer link (none
+      verified). DEVIATIONS accepted: separate screens (routes SolanaTokens
+      and SolanaTokenSend, mirroring the SOL send's confirm and prompt)
+      rather than branches in the 3,000-line SendScreen; NO new storage key
+      — the Solana lists use the declared tokensPerChain family
+      shiba-wallet.tokens.v1.<CAIP-2> (resetTrackedTokens names both
+      Solana keys so a store that cannot list keys still loses them on a
+      wipe). TOKENS: defaults — Circle's devnet USDC on devnet, mainnet
+      USDC on mainnet (its mint not read on-chain; the app re-reads the
+      mint before a balance and before a send); "Add a token" by MINT
+      through readMintProfile, the Track prompt "Mint <full mint> on
+      <network>." + " Warning: <lookAlikeSentence>" + " This token can be
+      tracked and shown, but this wallet will not send it: <refusal>" +
+      " Anyone can create a token with any name and symbol; track it only
+      if this is the mint you expect." (a refused class may be tracked and
+      shown, never sent; an uninitialized mint cannot be tracked; "A mint
+      address is a Solana address: base58 text that decodes to 32 bytes.
+      This text is not one."). HOME: the ATA balance per tracked token,
+      masked by Hide amounts; "Also <x> <SYM> held outside the associated
+      account (<n> other token account[s]), not sendable from here.";
+      "Cannot be sent from this wallet: <refusal>"; the decimals-changed
+      sentence (a send refused until re-tracked); "<n> token account(s)
+      returned by the network endpoint failed this wallet's checks and
+      is/are not shown."; link "Manage Solana tokens"; no fiat. SEND: the
+      gate hint "Turn on Solana devnet in Settings → Developer to send
+      Solana tokens."; the prompt "Approve sending <exact amount> <SYM>";
+      confirm rows From, To, Amount, [Issuer's transfer fee (withheld from
+      the amount), Recipient receives], Network fee (paid in SOL), [Rent
+      for the recipient's new token account (paid by you)], Total SOL
+      leaving your account, Mint, Token program, Your token account,
+      Recipient's token account ("… (created by this transaction)"), then
+      every engine quote note verbatim; outcome lines "The sending endpoint
+      reports the transaction confirmed." / "Read again on <host>: the
+      transaction is there (<status>)." with failed / not-seen / unreadable
+      variants. READINESS row spl-tokens "Solana token sends (SPL Token and
+      Token-2022)", testnet-only, enforced, allowed on Solana devnet only
+      (SOLANA_TEST_NETWORK_CHAINS, separate from TEST_NETWORK_CHAINS),
+      evidence W1 W2 W9 W13, reason "No Solana token transfer through this
+      wallet's token layer has been sent on any network yet: the transfers
+      are built and checked offline only. Token-2022 tokens whose
+      extensions this wallet cannot show honestly (a transfer hook,
+      non-transferable, paused, an adjusted display amount or an unknown
+      extension) are refused by class, and a token with a transfer-fee
+      setting is sent only with the fee shown before you approve. This
+      wallet offers Solana token sends only on Solana devnet."; Spanish
+      drafts in es.ts; ROUTE_FEATURES entries. FAUCET (read-only):
+      faucet.circle.com lists Solana Devnet, "There's no account required",
+      20 USDC per request, one request per asset and network every two
+      hours per address — so a live devnet leg needs only a person's
+      request (a captcha may exist; the fetch could not see one). KNOWN
+      GAPS in devnet mode (stated): the SOL send screen still says "SOL";
+      Activity's title, Receive and Contacts still label the slot "Solana";
+      no Max and no note field on the token send; token sends are not in
+      the pending registry and not counted against spending limits (the
+      limits engine is EVM-only today). EMULATOR CHECKLIST (9 steps; the
+      emulator's Account 1 funded on devnet with test SOL and 20 faucet
+      USDC — the faucet request is the Chairperson's or the CTO's action;
+      devnet PYUSD tracked and read; a 1 USDC send to Account 2 with the
+      rent row; both RPCs; devnet off restores mainnet) in the builder's
+      report. UNVERIFIED: everything on a device; any live send through
+      this layer; the create-recipient-account path; a non-zero transfer
+      fee; the OnFinality endpoint under the freshness probe; the fake rent
+      answer in the check is the documented formula, not a recorded node
+      answer. Slips: an edit during the baseline run (a clean baseline
+      re-run in a separate worktree, removable); four pinned lines first
+      broken by the Home and Activity edits (the edits redesigned, no pin
+      changed); a lint error and a warning fixed; a backup written to /tmp
+      and removed; the CTO's first commit attempt failed on shell quoting
+      (nothing lost; committed from a message file).
