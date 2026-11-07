@@ -125,7 +125,9 @@ examples/demo.mjs          Offline end-to-end engine demo
   secrets only through the ADBKeyboard IME and redact every UI dump;
   never run a Gradle build while driving the AVD (2026-10-10: the
   watchdog killed system_server) — build first, close Gradle, then drive.
-  LAUNCH THE AVD WITH `emulator -avd shiba -gpu angle_indirect` from a
+  LAUNCH THE AVD WITH `emulator -avd shiba -gpu swangle` (DECIDED 2026-11-07,
+  see the DECISION note below; the command until then was `-gpu
+  angle_indirect`, which 37.1.11 rejects) from a
   foreground Terminal tab (osascript `do script`; the new tab may first
   need its zsh compinit prompt answered): on 2026-10-14 the Chairperson
   saw only a BLACK EMULATOR WINDOW for days while adb screenshots were
@@ -144,7 +146,20 @@ examples/demo.mjs          Offline end-to-end engine demo
   snapshot was saved under (it did on 2026-10-29, pass p23-devbuild-recheck:
   the first quick boot that loaded; in three logs 'auto' chose swangle
   exactly when the emulator printed its memory-pressure warning, host
-  otherwise), so `-no-snapshot-load` is no longer needed by default; set
+  otherwise), so `-no-snapshot-load` is no longer needed by default.
+  DECISION (2026-11-07, the Chairperson delegated it: "I just want to make
+  sure I can see the emulator"): PIN `-gpu swangle`. Reasons: 37.1.11's own
+  `-help-gpu` lists auto, host, software, lavapipe, swiftshader and swangle
+  (no `_indirect` names), so `angle_indirect` was never an option; on
+  2026-10-14 `-gpu host` and the SwiftShader default were both BLACK for
+  the Chairperson while the 'auto' launch of that day was VISIBLE, and
+  swangle ("ANGLE with Swiftshader backend" — the ANGLE renderer the record
+  called visible) is the one candidate never reported black; swangle is the
+  renderer the first successful quick-boot load ran under, and pinning it
+  makes every save and load agree so the quick boot survives every graceful
+  close. UNVERIFIED until the Chairperson looks once at the next launch's
+  window: if swangle is black too, the fallback is `-gpu host` with the
+  window-visibility question reopened. Set
   ANDROID_EMULATOR_WAIT_TIME_BEFORE_KILL=120 in the launching shell so a
   graceful close finishes its save. A renderer change discards the quick-boot snapshot
   (cold boot, the PIN keyguard, `adb reverse` lost). CLOSING THE WINDOW
@@ -16193,3 +16208,71 @@ ON HOLD — the Spanish string table stays a draft shipped as such, feature
 restated the standing order on the CTO's conversational voice (maximum
 dogespeak with Caveman compression in chat only; records like this file
 stay plain English) as a board-level priority.
+
+DECIDED by the Chairperson (2026-11-07): (1) the emulator renderer is the
+CTO's educated decision as long as the window is visible — pinned to
+`-gpu swangle` (the standing rule above records the reasoning; the
+Chairperson confirms visibility at the next launch); (2) the Tropic Square
+section 1.1 answers: the Pi is a 3B+ running Raspberry Pi OS Lite (worked
+before, "very low end of the spec requirements"); the shield is TS1501; the
+chip's part number, firmware versions and saved identification output were
+NOT given (typed "###") and the firmware was updated "a while ago" — the
+version must be read on the board; the earlier PIN run most likely used the
+Chairperson's own code in ~/Downloads/tropic_wallet_poc, which answers
+questions 5–9 (being read by the Stage 2 agent); the spare chip sits on a
+second identical shield, never powered; the Pi has no screen, camera or
+keyboard and is reached over SSH, with peripherals available; the chip is
+LAB EQUIPMENT with keys treated as sensitive and no mainnet assets intended
+(or strictly limited) — IRREVERSIBLE actions that could make the chip
+unusable for ever are FORBIDDEN, actions that only consume re-initialisable
+state (a MAC-and-Destroy slot after a wrong PIN, in the Chairperson's
+understanding) are allowed; the goal is option (b), a design that could
+become a Shiba-branded hardware device used with the hot wallet; TESTNET
+ONLY, and if no testnet is viable for a step the Chairperson wants to hear
+it first; (3) PHASE 24 APPROVED as proposed below.
+
+## Phase 24 plan (approved 2026-11-07): the Solana asset ecosystem, the mainnet-readiness track, the hardening leftovers, iOS again, Tropic Square Stage 2
+
+Proposed by the CTO on 2026-11-07 and approved as proposed. Every item
+needs no outside input unless marked INPUT; the three holds (a Spanish
+reviewer, the fiat off-ramp provider, the disclosure decision) stay out.
+
+0. Phase 23 close-out: the status section, the FEATURE_UNIVERSE and
+   THREAT_MODEL rows the late slices touched, DEMO's emulator warnings with
+   the pinned renderer, the shareable page to version 26.
+1. The Solana asset ecosystem (feature 43, Tier 2): Token-2022 and the SPL
+   Token program read from primary sources — listing an owner's token
+   accounts across both programs, mint extensions classified
+   (fee-charging, hook-bearing, non-transferable and unknown extensions
+   REFUSED with plain sentences), transferChecked with the right
+   associated-token-account program, CAIP-19 ids through core's registry,
+   a devnet dry run and live leg by script; then the app half (a Solana
+   tracked-token list, Home rows, sends through the existing confirm);
+   compressed NFTs research only (a DAS indexer is an INPUT).
+2. The mainnet-readiness track: reproducible release-build steps, the
+   signing plan once a release key exists (INPUT: the Chairperson generates
+   and holds it; today every kept APK is debug-signed), the audit pack
+   handed over once the firm is chosen (INPUT), the git tag only the
+   Chairperson creates.
+3. Hardening leftovers: the wipe removing keys instead of rewriting empty
+   documents; the cold smart-account operation's Activity label; the
+   two-plain-sends replacement wording; the watch-only token-send note.
+4. iOS second pass in the simulator: the PIN pad, camera and QR, the
+   notification permission, a Sepolia send; VoiceOver still needs a person
+   (INPUT).
+5. Tropic Square Stage 2: the design for the ranked-first role (the
+   air-gapped signer on the Pi with the key sealed by MAC-and-Destroy)
+   from the Chairperson's answers and the POC repository, the Stage 3 demo
+   plan with every step marked reversible / consumes-a-slot / forbidden,
+   and whether the libtropic software model can run on this Mac; Stage 3
+   itself only after the Chairperson reads the plan.
+6. Leadership refresh and the mainnet-readiness memo at the end.
+
+Not proposed: sponsored staking (needs the ZeroDev gas policy input), gas
+paid from staking yield (nothing to stand on), widgets and a watch
+companion (little value on an emulator). Waves: 1 — items 0, 1 (engine +
+script), 3 and 5 (design) in parallel, all off-device; 2 — item 1's app
+half and item 4 (one device driver at a time); item 2 as its inputs
+arrive; 6 last. Subagents on Opus.
+
+## Phase 24 progress
