@@ -124,7 +124,11 @@ examples/demo.mjs          Offline end-to-end engine demo
   swipes at the screen edge and never fling near the Danger zone; type
   secrets only through the ADBKeyboard IME and redact every UI dump;
   never run a Gradle build while driving the AVD (2026-10-10: the
-  watchdog killed system_server) — build first, close Gradle, then drive.
+  watchdog killed system_server) — build first, close Gradle, then drive;
+  READ `adb shell dumpsys window | grep isKeyguardShowing` BEFORE ANY
+  KEYGUARD-CLEARING INPUT and send none when it is false (2026-11-07: a
+  loaded quick-boot snapshot restored an unlocked screen and a blind Enter
+  opened the real wallet's Send form).
   LAUNCH THE AVD WITH `emulator -avd shiba -gpu swangle` (DECIDED 2026-11-07,
   see the DECISION note below; the command until then was `-gpu
   angle_indirect`, which 37.1.11 rejects) from a
@@ -16231,6 +16235,87 @@ become a Shiba-branded hardware device used with the hot wallet; TESTNET
 ONLY, and if no testnet is viable for a step the Chairperson wants to hear
 it first; (3) PHASE 24 APPROVED as proposed below.
 
+## Phase 23 status (2026-11-07)
+
+Items 0 to 10 are landed and pushed; the shareable page is at version 26
+(59 proven live, 18 built, 2 designed, 20 not started; refresh commits
+2a266e8 and f7d072e). PROVEN LIVE this phase, each through the app's own
+screens unless marked by script: Circle CCTP V2 USDC transfers — two
+Standard Transfers by script, then a whole transfer through the Bridge
+screen in each direction of the Base ↔ Arbitrum Sepolia pair (the burn,
+Circle's attestation, the mint from the regular account), with the
+attestation measured four times at 986–1,352 seconds after the burn block;
+cold signing for a watched owner's smart account (the engine by script,
+then the app with zero device prompts on the cold path, a sweep by Max and
+the expiry refusal); a wallet handle — two ENS names registered on
+Sepolia's ENSv2 test contracts, one from the regular account and one from
+the smart account through ZeroDev, the primary name shown on Home and
+Receive, a sub-name for the smart account, the registration prepared and
+forgotten with the exact zero approval; the Lido and Rocket Pool legs
+already recorded; the app PIN and duress PIN with the native scrypt;
+the records backup restored after a wipe in the development build; deep
+links through the shibawallet scheme in the development build; the local
+reminders with the wallet's own notification icon; the wipe fix F-85 and
+the navigation-bar fix each seen on the device in a rebuilt development
+build. Built and verified offline: the audit pack's verification script
+(190 address pairs re-read on their networks, every code-pinned hash
+matching, the Ethereum-mainnet Kernel stack read and the docs corrected
+where they disagreed with the chain), the release-candidate configuration
+(the scheme, the sixteen badge permissions removed, expo-navigation-bar
+and then the local module that makes it work), the contract field on
+history entries with token profit-and-loss by exact contract and
+CoinGecko's price history by contract, the bounded broadcast that reports
+an unknown outcome and never "not sent" (with spending limits counting an
+open outcome, server errors and dropped connections treated as open, and
+the dApp answered with the local hash), five localisation passes (about
+2,200 string ids with Spanish drafts, byte identity of the English proven
+by golden replays), the official BIP-39 passphrase vectors through the
+wallet's own seed path, the ERC-20 subscription pull gas measured after
+Glamsterdam by simulation (the allowance kept at 1,000,000), the fixes
+from every emulator pass. Designed and researched: the cross-chain
+options compared for this wallet (docs/CROSS_CHAIN_OPTIONS.md), the
+Tropic Square secure element from primary sources (Stage 1), the
+attestations question (EAS: build nothing now). The first iOS build ever
+ran in the iOS Simulator with its Keychain store, Face ID, the secure-entry
+screenshot block, the launch lock and the native scrypt checked.
+Engine: 1,298 tests. App: 65 offline suites, 10,847 checks at 727f2c5
+(the pre-rewrite hash 057f2a9).
+
+THE HISTORY REWRITE: on 2026-11-03, at the Chairperson's request and by
+another session, the findings document was removed from the repository
+and its whole history and now lives only in the git-ignored docs/private;
+every commit from the phase 16 findings commit onward has a NEW hash, so
+the hashes recorded in this file before that date are pre-rewrite and
+resolve through .local/history-rewrite-2026-11-03-commit-map.tsv (515
+lines) and the local objects. Records written after 2026-11-03 use the
+new hashes; the docs cite the record's hashes and say so in the
+FEATURE_UNIVERSE header.
+
+Findings for the Chairperson this phase: the navigation-bar buttons did not
+follow a runtime theme change because expo-navigation-bar writes only the
+deprecated flag, which Android ignores once the status bar has been set
+through the modern API (established from bytecode and the device; fixed
+by a local module; Expo Go keeps the old look); the wipe kept contacts
+(F-85, fixed and seen on the device); the wipe still rewrites some records
+empty instead of removing the keys (phase 24 item 3); a CCTP attestation
+takes about 17 to 23 minutes on the test networks; Sepolia's ENSv2
+contracts are redeployable test contracts behind single keys, so a name may
+not survive; no release signing key exists — every kept APK is signed with
+the template's debug key; the emulator's `-gpu angle_indirect` flag was
+never valid on 37.1.11, the quick boot loads only when the renderer matches
+the saved snapshot, and the renderer is now pinned to swangle pending one
+glance at the window; the macOS temp cleaner gutted the scratchpad
+worktrees twice (recreated by .local/helpers/mkwt.sh); a dev-build ANR of
+unknown cause during a long Settings scroll.
+
+Decisions and inputs still open: the Tropic Square part number and
+firmware versions (read on the board), then the Stage 2 design's
+acceptance and Stage 3; the passphrase decoy answers (DURESS_WALLET.md
+section 8.5); the audit firm, budget and C1 scope, and the git tag; the
+release signing key; dropping stash@{0}; a glance at the emulator window
+under swangle. On hold by the Chairperson: a Spanish reviewer, the fiat
+off-ramp provider, the disclosure decision.
+
 ## Phase 24 plan (approved 2026-11-07): the Solana asset ecosystem, the mainnet-readiness track, the hardening leftovers, iOS again, Tropic Square Stage 2
 
 Proposed by the CTO on 2026-11-07 and approved as proposed. Every item
@@ -16276,3 +16361,58 @@ half and item 4 (one device driver at a time); item 2 as its inputs
 arrive; 6 last. Subagents on Opus.
 
 ## Phase 24 progress
+- [x] Item 0 — PHASE 23 CLOSE-OUT (docs commit f7d072e; four docs, +25 / −22;
+      verified in the CTO's rebuilt isolated worktree on HEAD 247ef7e: apply
+      0 / 4 files, the staged patch id 7a84616c…1ca26 equal to the agent's,
+      check-readiness 222, check-screen-protection 87, check-devmode 476,
+      check-bridge 430, check-multisig 435, the pre-commit scan clean on the
+      four files). No feature changed status (59 / 18 / 2 / 20, recounted
+      by script). FEATURE_UNIVERSE: the header's "record runs to" sentence
+      and the pre-rewrite-hash note; row 47 (the wipe fix seen in
+      p23-devbuild-recheck; the "Smart-account recovery records" label; the
+      result-line form still unseen), row 92 (the navigation-bar cause and
+      the local-module fix seen in the rebuilt development build; Expo Go
+      keeps the old behaviour; API 26–30, Android 15+, release builds, real
+      phones and TalkBack untested; stays Built), row 91 (the Spanish wipe
+      dialog seen; the reviewer on hold), row 66 (the provider on hold).
+      THREAT_MODEL: F-85 fixed and seen on the device; F-84's and T-88's
+      stale "not yet seen" clauses corrected from passes p23-build and
+      p23-devbuild-recheck; NEW F-86 for the navigation buttons (the
+      register already holds UI defects as findings — F-69, F-70; no effect
+      on keys or funds; unrated like T-91, T-92 and F-85 — rating the four
+      by the file's conventions is a follow-up); section 7.4 at 1,298 /
+      10,847 across 65 suites with the named suite counts. DEMO: warning 5
+      and the preparation bullet say `-gpu swangle`, the quick boot loads
+      when the renderer matches, `-no-snapshot-load` only after a renderer
+      change (or a broken snapshot — the p23-cctp case; the CTO accepts the
+      agent's wording and adds that case here), the swangle visibility
+      unconfirmed with host as the fallback; warning 2, steps 40 and 46, the
+      CCTP wait "about 17 to 23 minutes", a rough-edges bullet on the
+      navigation buttons in Expo Go. MAINNET_READINESS: the records-backup
+      bullet (fixed, seen on the emulator, not on a phone), the
+      plain-account condition. THE SHAREABLE PAGE rebuilt with
+      .local/fu/build-fu.py (the previous base kept as
+      .local/fu/feature-universe.v25.html; 59 / 18 / 2 / 20 asserted; one
+      40-hex run = the multisig address already in v25, no 64-hex run, no
+      project id, one inline script, one Google-Fonts stylesheet) and
+      PUBLISHED by the CTO as VERSION 26 of
+      https://claude.ai/artifact/JEfyMuPcMJ8YW5x3ZKitsw. HOUSEKEEPING the
+      same day: the temp cleaner had gutted every scratchpad worktree
+      during the idle days since 2026-10-29 (25 prunable; wt-verify's .git
+      link gone) — pruned and wt-verify rebuilt from HEAD with mkwt.sh, the
+      scratchpad touched; the EMULATOR relaunched under the pinned
+      `-gpu swangle` after a graceful close ("Saving snapshot" at 11:07
+      local, the renderer flag accepted with no "not valid" line, the
+      snapshot LOADED in 8,405 ms — the save and the load both swangle;
+      qemu 86708, caffeinate attached, `adb reverse` restored, the window
+      in front). SLIP, recorded: the restored snapshot came up UNLOCKED
+      while the CTO's keyguard-clearing sequence (wake, swipe, "1234",
+      Enter) ran blind — the Enter activated Home's focused EURC token row
+      and opened the real wallet's "Send EURC" form on Base Sepolia (where
+      the wallet had been left; nothing can be signed there without the
+      fingerprint prompt, and no amount was entered — the text went before
+      the Enter); one BACK returned to Home and the price-alert banner was
+      dismissed. STANDING RULE ADDED: read `dumpsys window | grep
+      isKeyguardShowing` BEFORE any keyguard-clearing input, and send none
+      when it is false — a loaded quick-boot snapshot restores an unlocked
+      screen and a stray Enter activates whatever Home row holds focus.
