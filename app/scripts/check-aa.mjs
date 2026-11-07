@@ -69,6 +69,7 @@ import {
   clearAaPaymaster,
   AA_MAX_PROBE_VALUE_WEI,
   maxAaSend,
+  maxAaSendDetails,
   setAaPaymaster,
   verifyAaPaymaster,
   paymasterProbeTransport,
@@ -2510,16 +2511,98 @@ await (async () => {
     check('balance below the Max figure: the trim probes with 1 wei, then prices the lowered amount once (two estimates) and it fits',
       valueEstimates.length === 2 && valueEstimates[0] === 1n && fell.amount === BAL / 2n - nonZeroFee && fell.total === BAL / 2n && fell.maxAdjustment?.requested === BAL,
       `${valueEstimates.join(',')} / ${fell.amount}`);
+
+    // The trim sentence's REASON (the regular-account mechanism of send.ts
+    // maxEvmSendDetails / maxAdjustmentReason, for the smart account): Max
+    // returns what it reserved, Review compares it with what it needs now,
+    // and the sentence says why the amount was lowered. The amount itself
+    // never depends on the reservation.
+    const RES_GAS = valueAware.cgl + valueAware.vgl + valueAware.pvg;
+    const GAS_SENTENCE = (from, to) => `The amount was lowered from ${from} to ${to} because the gas needed for this transfer from your smart account is more than was reserved when you tapped Max; the fee per unit of gas did not rise. The amount plus the worst-case fee now fits your smart account's balance; its EntryPoint deposit, if any, is left as a reserve for the fee.`;
+    const BALANCE_SENTENCE = (from, to) => `The amount was lowered from ${from} to ${to} because your smart account's balance is lower than when you tapped Max; the network fee did not rise. The amount plus the worst-case fee now fits your smart account's balance; its EntryPoint deposit, if any, is left as a reserve for the fee.`;
+    const FEE_SENTENCE = (from, to) => `The amount was lowered from ${from} to ${to} because the network fee rose after you tapped Max. The amount plus the worst-case fee now fits the smart account's balance; its EntryPoint deposit, if any, is left as a reserve for the fee.`;
+    // A value-aware bundle whose node can report another balance or base fee.
+    const valueAwareWith = ({ balance = BAL, baseFeeHex = null } = {}) => {
+      const inner = fakeNode({ senderBalance: balance });
+      const node = async (method, params) => (method === 'eth_getBlockByNumber' && baseFeeHex ? { baseFeePerGas: baseFeeHex } : inner(method, params));
+      const bundler = async (method, params) => {
+        if (method !== 'eth_estimateUserOperationGas') throw new Error(`value-aware bundler: unexpected ${method}`);
+        const value = valueOfCallData(params[0].callData);
+        const cgl = value === 0n ? valueAware.cgl - CALL_VALUE_GAS : valueAware.cgl;
+        return { callGasLimit: '0x' + cgl.toString(16), verificationGasLimit: '0x' + valueAware.vgl.toString(16), preVerificationGas: '0x' + valueAware.pvg.toString(16) };
+      };
+      return createAaClient({ nodeUrl: 'https://node.example', bundlerUrl: 'https://bundler.example', factory: FACTORY_INPUT, transportFor: (url) => (url === 'https://node.example' ? node : bundler) });
+    };
+    const details = await maxAaSendDetails(valueAwareWith(), owner.address, RECIPIENT);
+    check('maxAaSendDetails: the same amount as maxAaSend, and the reservation = the 1-wei probe\'s whole gas, its max fee per gas and its worst-case fee',
+      details.amount === vMax && details.reserved.gasTotal === RES_GAS && details.reserved.maxFeePerGas === MAXFEE && details.reserved.fee === nonZeroFee,
+      `${details.amount} ${details.reserved.gasTotal} ${details.reserved.maxFeePerGas} ${details.reserved.fee}`);
+    const unchanged = await prepareAaSend(valueAwareWith(), owner.address, RECIPIENT, details.amount, { fromMax: true, maxReserved: details.reserved });
+    check('…handed to Review with nothing changed: the amount is kept, no maxAdjustment, no sentence (a reservation never changes the quote by itself)',
+      unchanged.amount === details.amount && !('maxAdjustment' in unchanged) && aaMaxAdjustmentSentence(unchanged, String) === null);
+    // THE REPRODUCED CASE OF b7bd8df: a zero-value probe (the old Max) reserved
+    // 11,300 gas too little. Its reservation, taken from the zero-probe mutant
+    // of aa.ts, handed to the real Review: the amount is lowered exactly as
+    // before, and the reason is 'gas', never "the network fee rose".
+    const oldDetails = await zeroProbe.maxAaSendDetails(valueAwareWith(), owner.address, RECIPIENT);
+    check('…the old zero-value Max reserved 11,300 gas less (the CALL value charge) at the same per-gas fee',
+      oldDetails.amount === BAL - zeroFee && oldDetails.reserved.gasTotal === RES_GAS - CALL_VALUE_GAS && oldDetails.reserved.maxFeePerGas === MAXFEE && oldDetails.reserved.fee === zeroFee);
+    const gasQuote = await prepareAaSend(valueAwareWith(), owner.address, RECIPIENT, oldDetails.amount, { fromMax: true, maxReserved: oldDetails.reserved });
+    const gasSentence = aaMaxAdjustmentSentence(gasQuote, (v) => `${v} wei`);
+    check('the old zero-value reservation at Review: lowered to balance − the non-zero fee, reason "gas", the gas sentence, never "the network fee rose"',
+      gasQuote.amount === BAL - nonZeroFee && gasQuote.maxAdjustment?.requested === oldDetails.amount && gasQuote.maxAdjustment?.reason === 'gas' &&
+        gasSentence === GAS_SENTENCE(`${oldDetails.amount} wei`, `${gasQuote.amount} wei`) && !/network fee rose/.test(gasSentence ?? ''),
+      gasSentence);
+    // The same lowering WITHOUT a reservation keeps the old sentence (every old pin holds).
+    const noReason = await prepareAaSend(valueAwareWith(), owner.address, RECIPIENT, oldDetails.amount, { fromMax: true });
+    check('…the same Review without a reservation: the same amount, no reason, the old "fee rose" sentence',
+      noReason.amount === gasQuote.amount && !('reason' in noReason.maxAdjustment) &&
+        aaMaxAdjustmentSentence(noReason, (v) => `${v} wei`) === FEE_SENTENCE(`${oldDetails.amount} wei`, `${noReason.amount} wei`));
+    // The per-gas fee rose (base fee 1 → 2 gwei, so 3 → 5 gwei): reason "fee", the old sentence.
+    const feeQuote = await prepareAaSend(valueAwareWith({ baseFeeHex: '0x77359400' }), owner.address, RECIPIENT, details.amount, { fromMax: true, maxReserved: details.reserved });
+    check('the per-gas fee rose after Max: lowered to balance − the new fee, reason "fee", the old sentence',
+      feeQuote.maxFeePerGas === 5_000_000_000n && feeQuote.amount === BAL - RES_GAS * 5_000_000_000n && feeQuote.maxAdjustment?.reason === 'fee' &&
+        aaMaxAdjustmentSentence(feeQuote, (v) => `${v} wei`) === FEE_SENTENCE(`${details.amount} wei`, `${feeQuote.amount} wei`),
+      `${feeQuote.maxFeePerGas} ${feeQuote.amount} ${feeQuote.maxAdjustment?.reason}`);
+    // Only the balance fell (by 1,000 wei, still above the Max figure): reason "balance".
+    const balQuote = await prepareAaSend(valueAwareWith({ balance: BAL - 1000n }), owner.address, RECIPIENT, details.amount, { fromMax: true, maxReserved: details.reserved });
+    check('only the balance fell (1,000 wei): lowered by exactly 1,000 wei, reason "balance", the balance sentence, never "the network fee rose"',
+      balQuote.amount === details.amount - 1000n && balQuote.fee === nonZeroFee && balQuote.maxAdjustment?.reason === 'balance' &&
+        aaMaxAdjustmentSentence(balQuote, (v) => `${v} wei`) === BALANCE_SENTENCE(`${details.amount} wei`, `${balQuote.amount} wei`));
+    // The balance fell below the Max figure (the trim's own 1-wei probe branch): reason "balance".
+    const fellQuote = await prepareAaSend(valueAwareWith({ balance: BAL / 2n }), owner.address, RECIPIENT, details.amount, { fromMax: true, maxReserved: details.reserved });
+    check('the balance fell below the Max figure (the probe branch): lowered to the new balance − fee, reason "balance"',
+      fellQuote.amount === BAL / 2n - nonZeroFee && fellQuote.maxAdjustment?.reason === 'balance' && fellQuote.maxAdjustment?.requested === details.amount);
+    // A TYPED amount is never lowered, reservation or not.
+    await checkRejects('a typed amount (no fromMax) with a reservation: refused as before, never lowered',
+      () => prepareAaSend(valueAwareWith({ balance: BAL - 1000n }), owner.address, RECIPIENT, details.amount, { maxReserved: details.reserved }), 'Fund the smart account address');
+    // IN-SUITE MUTANTS (aa.ts): the reason ignored by the sentence, and the
+    // reservation ignored by the quote. Both must give the false "the network
+    // fee rose" sentence for the reproduced case above.
+    const aaSourceForReason = readFileSync(new URL('../src/wallet/aa.ts', import.meta.url), 'utf8');
+    const reasonAnchor = "  const reason = quote.maxAdjustment.reason ?? 'fee';";
+    if (!aaSourceForReason.includes(reasonAnchor)) throw new Error('mutation anchor not found: the sentence reason');
+    const ignoresReason = await importMutant('src/wallet/aa.ts', aaSourceForReason.replace(reasonAnchor, "  const reason = 'fee';"));
+    check('MUTANT (the reason ignored by aaMaxAdjustmentSentence) is caught: it says "the network fee rose" for the reproduced gas case',
+      /because the network fee rose after you tapped Max/.test(ignoresReason.aaMaxAdjustmentSentence(gasQuote, String) ?? '') && !/network fee rose/.test(gasSentence ?? ''));
+    const quoteAnchor = '          maxAdjustment: options.maxReserved\n';
+    if (!aaSourceForReason.includes(quoteAnchor)) throw new Error('mutation anchor not found: the quote reason');
+    const dropsReserved = await importMutant('src/wallet/aa.ts', aaSourceForReason.replace(quoteAnchor, '          maxAdjustment: false\n'));
+    const dropped = await dropsReserved.prepareAaSend(valueAwareWith(), owner.address, RECIPIENT, oldDetails.amount, { fromMax: true, maxReserved: oldDetails.reserved });
+    check('MUTANT (the reservation ignored by prepareAaCalls) is caught: no reason, so the false "the network fee rose" sentence',
+      dropped.maxAdjustment?.reason === undefined && /because the network fee rose after you tapped Max/.test(dropsReserved.aaMaxAdjustmentSentence(dropped, String) ?? ''));
   }
 
   // SendScreen wiring (source checks): a separate last-Max record for the
   // smart-account path, fromMax passed only on the plain native AA quote,
   // the sentence on the confirm.
   const send = readFileSync(new URL('../src/screens/SendScreen.tsx', import.meta.url), 'utf8');
-  check('SendScreen keeps a separate lastAaMax record, cleared on every Max tap',
-    /const lastAaMax = useRef<LastMaxResult \| null>\(null\);/.test(send) && /lastEvmMax\.current = null;\s*\n\s*lastAaMax\.current = null;/.test(send));
-  check('…set only after the smart-account native Max (not the passkey or token path)',
-    /max = await maxAaSend\(bundle, account\.address, validation\.normalized\);[\s\S]{0,400}lastAaMax\.current = \{/.test(send));
+  check('SendScreen keeps a separate lastAaMax record (with the smart-account reservation), cleared on every Max tap',
+    /const lastAaMax = useRef<LastAaMaxResult \| null>\(null\);/.test(send) && /lastEvmMax\.current = null;\s*\n\s*lastAaMax\.current = null;/.test(send));
+  check('…set only after the smart-account native Max (not the passkey or token path), with what Max reserved',
+    /const details = await maxAaSendDetails\(bundle, account\.address, validation\.normalized\);\s*max = details\.amount;[\s\S]{0,500}lastAaMax\.current = \{[\s\S]{0,200}reserved: details\.reserved,/.test(send));
+  check('…and the reservation passed to prepareAaSend only while the form holds that Max figure',
+    /prepareAaSend\(bundle, account\.address, validation\.normalized, amount, \{[\s\S]{0,600}amountIsLastMax\(lastAaMax\.current, \{[\s\S]{0,200}\}\) && lastAaMax\.current\?\.reserved\s*\? \{ maxReserved: lastAaMax\.current\.reserved \}/.test(send));
   check('…and passed as fromMax only to prepareAaSend',
     /prepareAaSend\(bundle, account\.address, validation\.normalized, amount, \{\s*fromMax: amountIsLastMax\(lastAaMax\.current,/.test(send));
   check('the confirm shows aaMaxAdjustmentSentence for a lowered smart-account Max', /quote\.kind === 'aa' && quote\.maxAdjustment[\s\S]{0,200}aaMaxAdjustmentSentence\(quote,/.test(send));

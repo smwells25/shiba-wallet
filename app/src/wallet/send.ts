@@ -647,10 +647,12 @@ export function maxAdjustmentReason(
  * True only when the form still holds exactly the text the Max button
  * wrote, for the same account and chain. Any edit of the amount, a switch
  * of account or chain, or no Max at all gives false, so an amount the user
- * typed is never lowered by prepareEvmSend.
+ * typed is never lowered by prepareEvmSend. Reads only the text, account and
+ * chain, so the smart-account record (aa.ts LastAaMaxResult, which carries a
+ * smart-account reservation instead) is accepted too.
  */
 export function amountIsLastMax(
-  last: LastMaxResult | null,
+  last: Pick<LastMaxResult, 'text' | 'from' | 'chainId'> | null,
   current: { text: string; from: string; chainId: string },
 ): boolean {
   return (

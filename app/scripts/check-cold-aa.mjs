@@ -861,6 +861,46 @@ console.log('check-cold-aa: a checked signature is dropped when its request expi
 }
 
 // ===========================================================================
+console.log('check-cold-aa: the smart-account Max reservation and the trim sentence\'s reason');
+// ===========================================================================
+{
+  // What the smart-account Max reserved travels to Review (cold-aa.ts
+  // quoteColdAa → aa.ts prepareAaSend maxReserved), so a lowered amount says
+  // why. The old zero-value Max reserved less gas than the transfer needs at
+  // the same per-gas fee; this world reproduces that by estimating 11,300 gas
+  // less call gas for the Max (the CALL value charge after Glamsterdam).
+  const w = world();
+  const details = await aa.maxAaSendDetails(bundleFor(w), OWNER, TO);
+  check('maxAaSendDetails for the cold owner: the amount maxAaSend gives, and a reservation (whole gas, max fee per gas, worst-case fee)',
+    details.amount === (await aa.maxAaSend(bundleFor(w), OWNER, TO)) && details.reserved.fee === details.reserved.gasTotal * details.reserved.maxFeePerGas &&
+      details.amount === w.state.balance - details.reserved.fee);
+  w.state.estimate = { ...w.state.estimate, callGasLimit: w.state.estimate.callGasLimit - 11_300n };
+  const lowGas = await aa.maxAaSendDetails(bundleFor(w), OWNER, TO);
+  w.state.estimate = { ...w.state.estimate, callGasLimit: w.state.estimate.callGasLimit + 11_300n };
+  check('…a Max that reserved 11,300 gas less at the same per-gas fee', lowGas.reserved.gasTotal === details.reserved.gasTotal - 11_300n &&
+    lowGas.reserved.maxFeePerGas === details.reserved.maxFeePerGas && lowGas.amount > details.amount);
+  const target = { kind: 'native', to: TO, amount: lowGas.amount, fromMax: true };
+  const withReason = await ca.quoteColdAa(bundleFor(w), OWNER, { ...target, maxReserved: lowGas.reserved });
+  const sentence = aa.aaMaxAdjustmentSentence(withReason, (v) => `${v} wei`);
+  check('quoteColdAa passes the reservation: lowered to balance − fee, reason "gas", the gas sentence, never "the network fee rose"',
+    withReason.amount === details.amount && withReason.maxAdjustment?.requested === lowGas.amount && withReason.maxAdjustment?.reason === 'gas' &&
+      sentence === `The amount was lowered from ${lowGas.amount} wei to ${details.amount} wei because the gas needed for this transfer from your smart account is more than was reserved when you tapped Max; the fee per unit of gas did not rise. The amount plus the worst-case fee now fits your smart account's balance; its EntryPoint deposit, if any, is left as a reserve for the fee.`,
+    sentence);
+  const withoutReason = await ca.quoteColdAa(bundleFor(w), OWNER, target);
+  check('…without a reservation: the same amount, no reason, the old "fee rose" sentence',
+    withoutReason.amount === withReason.amount && withoutReason.maxAdjustment?.reason === undefined &&
+      /because the network fee rose after you tapped Max/.test(aa.aaMaxAdjustmentSentence(withoutReason, String) ?? ''));
+  const screen = source('src/screens/ColdSignScreen.tsx');
+  check('ColdSignScreen: the native smart-account Max keeps its reservation (maxAaSendDetails) in lastAaMax',
+    screen.includes(': maxAaSendDetails(bundle, from, to);') &&
+      screen.includes('if (!token) lastAaMax.current = { text, owner: from, chain: evmChain.caip2, ...(reserved ? { reserved } : {}) };'));
+  check('…and passes it at Review only while the form holds that Max figure',
+    /const aaAmountIsLastMax =\s*lastAaMax\.current !== null &&\s*lastAaMax\.current\.text === amountText &&\s*lastAaMax\.current\.owner === from &&\s*lastAaMax\.current\.chain === evmChain\.caip2;/.test(screen) &&
+      screen.includes('fromMax: aaAmountIsLastMax,') &&
+      screen.includes('...(aaAmountIsLastMax && lastAaMax.current?.reserved ? { maxReserved: lastAaMax.current.reserved } : {}),'));
+}
+
+// ===========================================================================
 console.log('check-cold-aa: mutation checks (broken copies must fail)');
 // ===========================================================================
 {

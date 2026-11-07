@@ -608,6 +608,20 @@ console.log('check-token-gas: funding refusals and Max');
   check('native Max = the full ETH balance', (await maxAaTokenGasSend(kernelBundle({ node: tgNode({ eth: 777n }) }).bundle, OWNER_0)) === 777n);
   const e3 = await rejection(() => maxAaTokenGasSend(poorUsdc.bundle, OWNER_0));
   check('native Max refuses when the USDC cannot cover the fee', e3 instanceof AaFundingError);
+  // Circle's path prices no transfer: the worst case is the engine stub's fixed
+  // ceiling (tokenGasFacts), so neither the value nor the recipient of the
+  // transfer can change it, and the bundler is never asked for an estimate.
+  {
+    const kb = kernelBundle({ node: tgNode({ eth: 777n }) });
+    const withTo = await maxAaTokenGasSend(kb.bundle, OWNER_0, { to: RECIPIENT });
+    check('Circle native Max: the same full ETH balance with a recipient passed, and no bundler estimate at all (the worst case is the fixed ceiling)',
+      withTo === 777n && kb.bundler.estimated.length === 0 && !kb.bundler.calls.some((c) => c.method === 'eth_estimateUserOperationGas'));
+    const e3to = await rejection(() => maxAaTokenGasSend(poorUsdc.bundle, OWNER_0, { to: RECIPIENT }));
+    check('…and the same refusal with a recipient passed (the figure does not depend on it)', e3to instanceof AaFundingError && e3to.message === e3.message);
+    const tgSrc = readFileSync(new URL('../src/wallet/token-gas.ts', import.meta.url), 'utf8');
+    check('…tokenGasFacts takes the worst case from the fixed ceiling: TOKEN_GAS_ESTIMATION_CEILING as verification gas, call gas and preVerificationGas 0',
+      /const worst = quoteCircleTokenCharge\(state, \{\s*verificationGasLimit: TOKEN_GAS_ESTIMATION_CEILING,\s*callGasLimit: 0n,\s*preVerificationGas: 0n,/.test(tgSrc));
+  }
   const trimmed = await prepareAaTokenGasSend(kernelBundle({ node: tgNode({ eth: 500n }) }).bundle, OWNER_0, RECIPIENT, 600n, { fromMax: true });
   check('native fromMax above a balance that fell is lowered to the balance (never raised)', trimmed.amount === 500n && trimmed.maxAdjustment?.requested === 600n);
 
@@ -1229,6 +1243,74 @@ console.log('check-token-gas: the ERC-7677 source (Pimlico’s ERC-20 paymaster 
     check('USDC send of the whole balance (typed): refused, the fee would not fit', over instanceof AaFundingError, over?.message);
     const ethMax = await tg.maxAaTokenGasSend(bundle, OWNER_0, { acceptsErc7677: true });
     check('ETH Max with the USDC fee = the full ETH balance', ethMax === 10n ** 16n);
+  }
+
+  // The ERC-7677 native Max prices a transfer through the bundler, so its
+  // value matters: the account sends the amount with an inner CALL that the
+  // EVM charges more for a non-zero value (CALL_VALUE, 11,300 gas after
+  // Glamsterdam; aa.ts AA_MAX_PROBE_VALUE_WEI). This bundler answers 11,300
+  // less call gas when the transfer carries no value (the Kernel batch's
+  // second call, after the inserted approval) and records what it priced.
+  {
+    const CALL_VALUE_GAS = 11_300n;
+    const priced = [];
+    const valueAwarePim = (node, { refuseNonZero = false } = {}) => {
+      const inner = pimBundler(node);
+      const t = async (method, params) => {
+        if (method !== 'eth_estimateUserOperationGas') return inner(method, params);
+        const transfer = decodeKernelExecute(params[0].callData).calls[1];
+        priced.push({ value: transfer.value, to: transfer.to });
+        if (refuseNonZero && transfer.value !== 0n) throw new Error('RPC error -32500: AA23 reverted: the recipient refuses value');
+        const answer = await inner(method, params);
+        if (transfer.value !== 0n) return answer;
+        return { ...answer, callGasLimit: '0x' + (BigInt(answer.callGasLimit) - CALL_VALUE_GAS).toString(16) };
+      };
+      t.calls = inner.calls;
+      return t;
+    };
+    const boundFor = (call) => {
+      const b = expectedBound({ ...PADDED, call: (call * 130n) / 100n, postOpLimit: POST_OP_LIMIT, maxFee });
+      return (b * 125n + 99n) / 100n;
+    };
+    const nonZeroWorst = boundFor(0xc404n);
+    const zeroWorst = boundFor(0xc404n - CALL_VALUE_GAS);
+    check('the fixture: a zero-value transfer is priced below a non-zero one (the CALL value charge)', zeroWorst < nonZeroWorst && nonZeroWorst === expectedMax);
+    const ETH = 10n ** 16n;
+    const bundleWith = (node, opts) => pimBundle({ node, bundler: valueAwarePim(node, opts) }).bundle;
+    // USDC enough for the real (non-zero) transfer: the full ETH balance, priced once, with 1 wei, to the recipient passed.
+    priced.length = 0;
+    const ok = await tg.maxAaTokenGasSend(bundleWith(pimNode({ usdc: nonZeroWorst })), OWNER_0, { acceptsErc7677: true, to: RECIPIENT });
+    check('ERC-7677 native Max: the full ETH balance, after one estimate of a 1-wei transfer to the recipient the screen passed',
+      ok === ETH && priced.length === 1 && priced[0].value === 1n && same(priced[0].to, RECIPIENT), JSON.stringify(priced, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)));
+    priced.length = 0;
+    await tg.maxAaTokenGasSend(bundleWith(pimNode({ usdc: nonZeroWorst })), OWNER_0, { acceptsErc7677: true });
+    check('…without a recipient, the owner\'s address stands in (still 1 wei)', priced.length === 1 && priced[0].value === 1n && same(priced[0].to, OWNER_0));
+    // USDC between the two worst cases: the real transfer cannot be paid for.
+    const between = nonZeroWorst - 1n;
+    priced.length = 0;
+    const refused = await rejection(() => tg.maxAaTokenGasSend(bundleWith(pimNode({ usdc: between })), OWNER_0, { acceptsErc7677: true, to: RECIPIENT }));
+    check('USDC one unit below the non-zero worst case: Max refuses with the funding message (it no longer offers an amount Review would refuse)',
+      refused instanceof AaFundingError && between >= zeroWorst, refused?.message);
+    const reviewRefused = await rejection(() => tg.prepareAaTokenGasSend(bundleWith(pimNode({ usdc: between })), OWNER_0, RECIPIENT, ETH, { acceptsErc7677: true }));
+    check('…exactly as Review refuses the whole ETH balance with that USDC (the same figure)', reviewRefused instanceof AaFundingError, reviewRefused?.message);
+    // An account holding no ETH: priced with value 0 at once, as before (no transfer can move).
+    priced.length = 0;
+    const empty = await tg.maxAaTokenGasSend(bundleWith(pimNode({ eth: 0n, usdc: nonZeroWorst })), OWNER_0, { acceptsErc7677: true, to: RECIPIENT });
+    check('no ETH: one estimate with value 0, Max 0 (the screen then says the account holds no ETH)', empty === 0n && priced.length === 1 && priced[0].value === 0n);
+    // A 1-wei estimate that fails: retried with value 0, as aa.ts maxAaSendDetails does.
+    priced.length = 0;
+    const fallback = await tg.maxAaTokenGasSend(bundleWith(pimNode({ usdc: nonZeroWorst }), { refuseNonZero: true }), OWNER_0, { acceptsErc7677: true, to: RECIPIENT });
+    check('a refused 1-wei estimate falls back to a zero-value one (two estimates: 1 wei, then 0)',
+      fallback === ETH && priced.length === 2 && priced[0].value === 1n && priced[1].value === 0n);
+    // IN-SUITE MUTANT: the old zero-value probe. It prices the transfer 11,300
+    // gas too low and offers the whole ETH balance that Review then refuses.
+    const tgSrc = readFileSync(new URL('../src/wallet/token-gas.ts', import.meta.url), 'utf8');
+    const probeAnchor = '        priced = await erc7677Price(bundle, ownerAddress, facts, transferOf(AA_MAX_PROBE_VALUE_WEI));';
+    if (!tgSrc.includes(probeAnchor)) throw new Error('mutation anchor not found: the ERC-7677 Max probe');
+    const zeroProbe = await importMutantTg('src/wallet/token-gas.ts', tgSrc.replace(probeAnchor, '        priced = await erc7677Price(bundle, ownerAddress, facts, transferOf(0n));'));
+    const offered = await zeroProbe.maxAaTokenGasSend(bundleWith(pimNode({ usdc: between })), OWNER_0, { acceptsErc7677: true, to: RECIPIENT });
+    check('MUTANT (the zero-value ERC-7677 Max probe) is caught: it offers the whole ETH balance with USDC Review refuses for',
+      offered === ETH && refused instanceof AaFundingError && reviewRefused instanceof AaFundingError);
   }
 
   // Emulator finding 2 (phase 14 pass): the risk card on an ERC-7677 USDC-fee

@@ -38,6 +38,7 @@ import {
 import {
   AA_ESTIMATE_RETRIES,
   AA_FUNDING_TITLE,
+  AA_MAX_PROBE_VALUE_WEI,
   AaFundingError,
   aaAmountShortfallTitle,
   TOKEN_GAS_ACCOUNT_REFUSAL,
@@ -1495,22 +1496,57 @@ export async function prepareAaTokenGasErc20Send(
  * Native Max with the USDC fee: the smart account's full ETH balance (no ETH
  * pays for gas). Refuses, with the funding message, when the USDC balance
  * cannot cover the worst-case fee. Returns 0n for an empty ETH balance.
+ *
+ * The amount is never the probe's: it is always the whole ETH balance. What
+ * the probe below decides is only whether Max refuses for lack of USDC, and
+ * how that depends on the transfer differs by fee source:
+ *
+ *  - ERC-7677 (Pimlico's paymaster through the bundler): the worst case is
+ *    the paymaster's bound over the BUNDLER'S ESTIMATE of the operation
+ *    (erc7677Price), so the transfer priced matters. The account sends the
+ *    amount with an inner CALL, which the EVM charges more for a non-zero
+ *    value (CALL_VALUE) and more again for a recipient that does not exist
+ *    yet (see AA_MAX_PROBE_VALUE_WEI in ./aa.ts, with its sources). The
+ *    probe therefore prices a 1-wei transfer (AA_MAX_PROBE_VALUE_WEI, as the
+ *    smart-account Max does) to the recipient the screen passes (`to`;
+ *    without one, the owner's address stands in, which can be priced with or
+ *    without the new-account charge depending on whether the owner address
+ *    exists), and falls back to a zero-value transfer when that estimate
+ *    fails, as aa.ts maxAaSendDetails does. An account holding no ETH is
+ *    priced with value 0 at once, as before: no transfer can move then.
+ *    Review quotes the real amount and recipient again (prepareAaTokenGasSend)
+ *    and refuses there if the USDC still falls short.
+ *  - Circle's paymaster: no transfer is priced at all. tokenGasFacts takes
+ *    the worst case from the engine stub's fixed gas ceiling at the quote's
+ *    fees (TOKEN_GAS_ESTIMATION_CEILING as the verification gas, call gas and
+ *    preVerificationGas 0, plus the paymaster's verification and postOp
+ *    limits; quoteCircleTokenCharge), with no bundler estimate, so neither
+ *    the value nor the recipient can change it.
  */
 export async function maxAaTokenGasSend(
   bundle: AaClientBundle,
   ownerAddress: string,
-  options: { acceptsErc7677?: boolean } = {},
+  options: { acceptsErc7677?: boolean; to?: string } = {},
 ): Promise<bigint> {
   if (usesErc7677(bundle, options.acceptsErc7677)) {
-    // The full ETH balance (no ETH pays for gas), once the USDC covers the
-    // worst case of a zero-value transfer to the owner (a stand-in recipient:
-    // the gas of a plain transfer does not depend on it).
     const facts = await erc7677Facts(bundle, ownerAddress, null);
     if (facts.feeTokenBalance === 0n) throw erc7677FundingError(facts, null, 0n);
-    const { tokenGas } = await erc7677Price(bundle, ownerAddress, facts, [{ to: ownerAddress, value: 0n, data: new Uint8Array(0) }]);
-    if (facts.feeTokenBalance < tokenGas.maxTokenCharge) throw erc7677FundingError(facts, tokenGas, 0n);
+    const recipient = options.to ?? ownerAddress;
+    const transferOf = (value: bigint): Call[] => [{ to: recipient, value, data: new Uint8Array(0) }];
+    let priced: Awaited<ReturnType<typeof erc7677Price>>;
+    if (facts.senderBalance === 0n) {
+      priced = await erc7677Price(bundle, ownerAddress, facts, transferOf(0n));
+    } else {
+      try {
+        priced = await erc7677Price(bundle, ownerAddress, facts, transferOf(AA_MAX_PROBE_VALUE_WEI));
+      } catch {
+        priced = await erc7677Price(bundle, ownerAddress, facts, transferOf(0n));
+      }
+    }
+    if (facts.feeTokenBalance < priced.tokenGas.maxTokenCharge) throw erc7677FundingError(facts, priced.tokenGas, 0n);
     return facts.senderBalance;
   }
+  // Circle: the fixed-ceiling worst case (see above); no transfer is priced.
   const facts = await tokenGasFacts(bundle, ownerAddress, null);
   if (facts.tokenGas.tokenBalance < facts.tokenGas.maxTokenCharge) {
     throw new AaFundingError(facts.sender, tokenGasFundingMessage({ sender: facts.sender, tokenGas: facts.tokenGas, amount: 0n }));

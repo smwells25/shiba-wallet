@@ -68,6 +68,7 @@ import {
   type AaClientBundle,
   type AaErc20Target,
   type AaSendQuote,
+  type MaxAaReservation,
 } from './aa.ts';
 import { formatUnits } from './balances.ts';
 import { createQrPartCodec, type QrPartScan, type QrPartScanResult } from './qr-parts.ts';
@@ -287,7 +288,14 @@ export async function assertColdAaRoot(bundle: AaClientBundle, sender: string, o
 
 /** What the form asks to send. */
 export type ColdAaTarget =
-  | { kind: 'native'; to: string; amount: bigint; fromMax?: boolean }
+  | {
+      kind: 'native';
+      to: string;
+      amount: bigint;
+      fromMax?: boolean;
+      /** What the smart-account Max reserved (aa.ts maxAaSendDetails), so a lowered amount says why. */
+      maxReserved?: MaxAaReservation;
+    }
   | { kind: 'erc20'; token: AaErc20Target & { amount: bigint } };
 
 /**
@@ -304,7 +312,10 @@ export async function quoteColdAa(bundle: AaClientBundle, owner: string, target:
   if (typeof code === 'string' && !/^0x0*$/i.test(code)) await assertColdAaRoot(bundle, sender, owner);
   const quote =
     target.kind === 'native'
-      ? await prepareAaSend(bundle, owner, target.to, target.amount, target.fromMax === true ? { fromMax: true } : {})
+      ? await prepareAaSend(bundle, owner, target.to, target.amount, {
+          ...(target.fromMax === true ? { fromMax: true } : {}),
+          ...(target.maxReserved ? { maxReserved: target.maxReserved } : {}),
+        })
       : await prepareAaErc20Send(bundle, owner, target.token);
   assertColdAaQuote(quote, owner);
   return quote;

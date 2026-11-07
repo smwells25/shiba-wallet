@@ -12957,7 +12957,9 @@
   "home.solanaTokens.fee",
   "readiness.solanaDevnet",
   "send.maxAdjustmentGas",
-  "send.maxAdjustmentBalance"
+  "send.maxAdjustmentBalance",
+  "aa.maxAdjustmentGas",
+  "aa.maxAdjustmentBalance"
  ],
  "changed": {
   "activity.note.privacy": {

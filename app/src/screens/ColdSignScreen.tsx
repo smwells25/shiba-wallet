@@ -67,7 +67,8 @@ import {
   createColdOwnerAaClient,
   getAaConfig,
   maxAaErc20Send,
-  maxAaSend,
+  maxAaSendDetails,
+  type MaxAaReservation,
   waitForAaReceipt,
   type AaChainConfig,
   type AaClientBundle,
@@ -258,7 +259,7 @@ export function ColdSignScreen({ route, navigation }: Props) {
   const [smartAccount, setSmartAccount] = useState(false);
   const [aaAccountState, setAaAccountState] = useState<{ key: string; account: ColdAaAccount | null; error: string | null } | null>(null);
   const aaBundle = useRef<AaClientBundle | null>(null);
-  const lastAaMax = useRef<{ text: string; owner: string; chain: string } | null>(null);
+  const lastAaMax = useRef<{ text: string; owner: string; chain: string; reserved?: MaxAaReservation } | null>(null);
   const [aaQuote, setAaQuote] = useState<AaSendQuote | null>(null);
   const [aaRequest, setAaRequest] = useState<ColdUserOpRequest | null>(null);
   const [aaSignature, setAaSignature] = useState<string | null>(null);
@@ -431,6 +432,13 @@ export function ColdSignScreen({ route, navigation }: Props) {
       setError({ title: 'Check the amount', detail: e instanceof Error ? e.message : 'Invalid amount.' });
       return;
     }
+    // True only while the form still holds exactly the native Max figure for
+    // this owner and network (the Send screen's rule, aa.ts fromMax).
+    const aaAmountIsLastMax =
+      lastAaMax.current !== null &&
+      lastAaMax.current.text === amountText &&
+      lastAaMax.current.owner === from &&
+      lastAaMax.current.chain === evmChain.caip2;
     setPhase('quoting');
     try {
       const outcome = await withEndpoint(EVM_CHAIN_ID, async (ep) => {
@@ -454,11 +462,10 @@ export function ColdSignScreen({ route, navigation }: Props) {
                 kind: 'native',
                 to: validation.normalized,
                 amount,
-                fromMax:
-                  lastAaMax.current !== null &&
-                  lastAaMax.current.text === amountText &&
-                  lastAaMax.current.owner === from &&
-                  lastAaMax.current.chain === evmChain.caip2,
+                fromMax: aaAmountIsLastMax,
+                // What Max reserved, so a lowered amount says why (aa.ts
+                // prepareAaCalls option maxReserved, send.ts maxAdjustmentReason).
+                ...(aaAmountIsLastMax && lastAaMax.current?.reserved ? { maxReserved: lastAaMax.current.reserved } : {}),
               },
         );
         return { bundle, q };
@@ -477,7 +484,7 @@ export function ColdSignScreen({ route, navigation }: Props) {
   };
 
   // Max from the smart account, with the Send screen's smart-account rules
-  // (aa.ts maxAaSend: the balance less a 1-wei transfer's worst-case
+  // (aa.ts maxAaSendDetails: the balance less a 1-wei transfer's worst-case
   // fee; maxAaErc20Send: the whole token balance when the account's coin
   // covers the fee). A native Max amount is lowered at Review if the fee rose.
   const onAaMax = async () => {
@@ -488,24 +495,28 @@ export function ColdSignScreen({ route, navigation }: Props) {
     try {
       const validation = validateRecipient(EVM_CHAIN_ID, recipient);
       const to = validation.ok ? validation.normalized : from;
-      const max = (
-        await withEndpoint(EVM_CHAIN_ID, (ep) => {
+      // The native Max keeps what it reserved for the fee (aa.ts
+      // maxAaSendDetails), so a lowered amount at Review says why.
+      const { amount: max, reserved } = (
+        await withEndpoint(EVM_CHAIN_ID, async (ep): Promise<{ amount: bigint; reserved?: MaxAaReservation }> => {
           const bundle = aaBundleFor(ep.url);
           return token
-            ? maxAaErc20Send(bundle, from, {
-                contract: token.assetId.reference,
-                recipient: to,
-                symbol: token.symbol,
-                decimals: token.decimals,
-                chainCaip2: token.assetId.chainId,
-              })
-            : maxAaSend(bundle, from, to);
+            ? {
+                amount: await maxAaErc20Send(bundle, from, {
+                  contract: token.assetId.reference,
+                  recipient: to,
+                  symbol: token.symbol,
+                  decimals: token.decimals,
+                  chainCaip2: token.assetId.chainId,
+                }),
+              }
+            : maxAaSendDetails(bundle, from, to);
         })
       ).value;
       if (max <= 0n) throw new Error(token ? `The smart account's ${token.symbol} balance is zero.` : 'The smart account balance is too small to cover the network fee.');
       const text = formatUnits(max, decimals, decimals);
       if (!mounted.current) return;
-      if (!token) lastAaMax.current = { text, owner: from, chain: evmChain.caip2 };
+      if (!token) lastAaMax.current = { text, owner: from, chain: evmChain.caip2, ...(reserved ? { reserved } : {}) };
       setAmountText(text);
     } catch (e) {
       if (!mounted.current) return;

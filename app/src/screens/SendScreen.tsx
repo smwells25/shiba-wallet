@@ -90,7 +90,8 @@ import {
   describeAaError,
   effectiveAaAccountType,
   maxAaErc20Send,
-  maxAaSend,
+  maxAaSendDetails,
+  type LastAaMaxResult,
   getAaConfig,
   isAaConfigured,
   prepareAaErc20Send,
@@ -381,7 +382,7 @@ export function SendScreen({ route, navigation }: Props) {
   // The same record for the smart-account native Max (aa.ts maxAaSend), kept
   // apart so an EOA Max figure can never be lowered on the smart-account
   // path or the other way round.
-  const lastAaMax = useRef<LastMaxResult | null>(null);
+  const lastAaMax = useRef<LastAaMaxResult | null>(null);
   // Passkey signer (phase 8 item 3): offered on smart-account sends when this
   // device installed a passkey on the active account's Kernel account. Off
   // by default; the owner key stays the default signer.
@@ -1032,7 +1033,10 @@ export function SendScreen({ route, navigation }: Props) {
               throw new Error(`The smart account's ${token.symbol} balance cannot cover the amount and the network fee.`);
             }
           } else {
-            max = await maxAaTokenGasSend(tbundle, account.address, { acceptsErc7677: true });
+            // The recipient is passed so the USDC-fee check prices the
+            // transfer to it (token-gas.ts maxAaTokenGasSend); the amount is
+            // still the whole ETH balance.
+            max = await maxAaTokenGasSend(tbundle, account.address, { acceptsErc7677: true, to: validation.normalized });
             if (max <= 0n) throw new Error('The smart account holds no ETH to send.');
           }
           const tgText = exact(max, decimals);
@@ -1075,9 +1079,17 @@ export function SendScreen({ route, navigation }: Props) {
           });
           if (max <= 0n) throw new Error(`The smart account's ${token.symbol} balance is zero.`);
         } else {
-          max = await maxAaSend(bundle, account.address, validation.normalized);
+          const details = await maxAaSendDetails(bundle, account.address, validation.normalized);
+          max = details.amount;
           if (max <= 0n) throw new Error('The smart account balance cannot cover the network fee.');
-          lastAaMax.current = { text: exact(max, decimals), from: account.address, chainId: route.params.chainId };
+          // What the smart-account Max reserved for the fee (aa.ts
+          // maxAaSendDetails), so a lowered amount at Review says why.
+          lastAaMax.current = {
+            text: exact(max, decimals),
+            from: account.address,
+            chainId: route.params.chainId,
+            reserved: details.reserved,
+          };
         }
       } else if (token) {
         // Token max = the full token balance: the fee is paid in ETH, so
@@ -1398,6 +1410,15 @@ export function SendScreen({ route, navigation }: Props) {
                 from: account.address,
                 chainId: route.params.chainId,
               }),
+              // What Max reserved, so a lowered amount says why (aa.ts
+              // prepareAaCalls option maxReserved, send.ts maxAdjustmentReason).
+              ...(amountIsLastMax(lastAaMax.current, {
+                text: amountText,
+                from: account.address,
+                chainId: route.params.chainId,
+              }) && lastAaMax.current?.reserved
+                ? { maxReserved: lastAaMax.current.reserved }
+                : {}),
             });
       } else if (token) {
         // ERC-20 token mode, EOA path. Quote checks the token balance,

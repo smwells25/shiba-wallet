@@ -277,6 +277,9 @@ const INBOX_WORDING_CHANGED = ['inbox.intro', 'inbox.empty'];
 // are new; the inbox's PIN note, the Open-the-inbox hint and Home's Inbox hint were reworded like the intro.
 const SOLANA_FIX_NEW = ['banner.solanaDevnet', 'home.solanaTokens.fee', 'readiness.solanaDevnet', 'send.maxAdjustmentGas', 'send.maxAdjustmentBalance'];
 const INBOX_NOTES_CHANGED = ['inbox.pinNote', 'settings.openInbox.hint', 'home.link.inbox.hint'];
+// Phase 24, the smart-account trim slice: the smart-account Max's two sentences for a lowering the fee did not cause
+// (more gas than Max reserved; a lower balance), the smart-account forms of the two send.* sentences above.
+const AA_TRIM_NEW = ['aa.maxAdjustmentGas', 'aa.maxAdjustmentBalance'];
 {
   const p = fixtureProblems(en, FIXTURE);
   check(`every English entry is the text the app showed at ${FIXTURE.base} (${Object.keys(FIXTURE.literal).length} literals, ${Object.keys(FIXTURE.template).length} templates by their static parts, ${Object.keys(FIXTURE.composite).length} composites) or listed as new (${FIXTURE.new.length})`,
@@ -294,13 +297,13 @@ const INBOX_NOTES_CHANGED = ['inbox.pinNote', 'settings.openInbox.hint', 'home.l
   // broadcast sentences (an HTTP 5xx or a dropped connection, not a timeout).
   const BROADCAST_OPEN_NEW = ['broadcast.open.title', 'broadcast.tx.open', 'broadcast.tx.openUnlisted', 'broadcast.userop.open',
     'broadcast.userop.openUnlisted', 'broadcast.open'];
-  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the Solana token-send readiness row, the wallet handle\'s, the six open-outcome broadcast sentences, the co-signer card\'s numbered Scan label, the eight period words of the hygiene slice, the four Bridge lines of pass p23-mint, the five lines of the p23-build fixes, the three Bridge lines of pass p23-bridge-recheck and the three navigation-bar lines of pass p23-navbar and the three iOS-pass lines (two iOS reminder notes, the "an" scanner sentence) and the five lines of the Solana-pass fix slice (the Solana devnet banner, the Solana token-fee line, the Solana devnet readiness line, two Max-lowering sentences)',
-    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || SPL_TOKENS_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id) || NAVBAR_FIX_NEW.includes(id) || IOS_FIX_NEW.includes(id) || SOLANA_FIX_NEW.includes(id)) &&
+  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the Solana token-send readiness row, the wallet handle\'s, the six open-outcome broadcast sentences, the co-signer card\'s numbered Scan label, the eight period words of the hygiene slice, the four Bridge lines of pass p23-mint, the five lines of the p23-build fixes, the three Bridge lines of pass p23-bridge-recheck and the three navigation-bar lines of pass p23-navbar and the three iOS-pass lines (two iOS reminder notes, the "an" scanner sentence) and the five lines of the Solana-pass fix slice (the Solana devnet banner, the Solana token-fee line, the Solana devnet readiness line, two Max-lowering sentences) and the two smart-account Max-lowering sentences of the trim slice',
+    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || SPL_TOKENS_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id) || NAVBAR_FIX_NEW.includes(id) || IOS_FIX_NEW.includes(id) || SOLANA_FIX_NEW.includes(id) || AA_TRIM_NEW.includes(id)) &&
       BUILD_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && BRIDGE_RECHECK_NEW.every((id) => FIXTURE.new.includes(id)) &&
       LOCK_KIND_NEW.every((id) => FIXTURE.new.includes(id)) && COLD_AA_NEW.every((id) => FIXTURE.new.includes(id)) && SPL_TOKENS_NEW.every((id) => FIXTURE.new.includes(id)) &&
       BROADCAST_OPEN_NEW.every((id) => FIXTURE.new.includes(id)) && THIRD_PASS_NEW.every((id) => FIXTURE.new.includes(id)) && PERIOD_NEW.every((id) => FIXTURE.new.includes(id)) &&
       BRIDGE_MINT_NEW.every((id) => FIXTURE.new.includes(id)) && NAVBAR_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && IOS_FIX_NEW.every((id) => FIXTURE.new.includes(id)) &&
-      SOLANA_FIX_NEW.every((id) => FIXTURE.new.includes(id)));
+      SOLANA_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && AA_TRIM_NEW.every((id) => FIXTURE.new.includes(id)));
   check('the changed entries are exactly the transaction-notes line (reworded for the records backup), the watch-only notice (reworded for the off-line signer), the bridge readiness reason (CCTP sent, phase 23), the records-backup note (smart-account recovery records, pass p23-build) the three CCTP time sentences (the measured spread, pass p23-bridge-recheck) and the inbox intro and empty line (what is listed, phase 24 item 4) and the inbox PIN note and the two inbox link hints (the same rewording, the Solana-pass fix slice), each with its reason',
     JSON.stringify(Object.keys(FIXTURE.changed ?? {})) === JSON.stringify(['activity.note.privacy', 'notice.watchOnly', 'readiness.bridge.reason', 'recordsBackup.what', ...CCTP_TIME_CHANGED, ...INBOX_WORDING_CHANGED, ...INBOX_NOTES_CHANGED]) &&
       en['activity.note.privacy'] === 'Notes are kept on this phone and are not sent anywhere. They are deleted when the wallet is wiped. A records backup (Settings → Records backup) includes them, and your recovery phrase restores them from it. Hide amounts does not hide them.');
@@ -1853,6 +1856,18 @@ function caught(name, wasCaught) {
       SEND.maxAdjustmentSentence(q('balance'), wei) === 'The amount was lowered from 9 wei to 5 wei because the balance is lower than when you tapped Max; the network fee did not rise. The amount plus the worst-case fee now equals your balance.' &&
       !/network fee rose/.test(SEND.maxAdjustmentSentence(q('gas'), wei) + SEND.maxAdjustmentSentence(q('balance'), wei)) &&
       I.translateFrom({ en, es }, 'es', 'send.maxAdjustmentGas', { requested: '9', amount: '5' }).startsWith('El importe se redujo de 9 a 5 porque el gas'));
+  // The smart-account trim slice: the same three reasons for the smart account (aa.ts aaMaxAdjustmentSentence).
+  const AA = await import('../src/wallet/aa.ts');
+  check('the smart-account Max sentences: "fee" and no reason keep the old sentence; "gas" and "balance" have their own, about "your smart account", and neither says the network fee rose',
+    AA.aaMaxAdjustmentSentence(q(null), wei) === "The amount was lowered from 9 wei to 5 wei because the network fee rose after you tapped Max. The amount plus the worst-case fee now fits the smart account's balance; its EntryPoint deposit, if any, is left as a reserve for the fee." &&
+      AA.aaMaxAdjustmentSentence(q('fee'), wei) === AA.aaMaxAdjustmentSentence(q(null), wei) &&
+      AA.aaMaxAdjustmentSentence(q('gas'), wei) === "The amount was lowered from 9 wei to 5 wei because the gas needed for this transfer from your smart account is more than was reserved when you tapped Max; the fee per unit of gas did not rise. The amount plus the worst-case fee now fits your smart account's balance; its EntryPoint deposit, if any, is left as a reserve for the fee." &&
+      AA.aaMaxAdjustmentSentence(q('balance'), wei) === "The amount was lowered from 9 wei to 5 wei because your smart account's balance is lower than when you tapped Max; the network fee did not rise. The amount plus the worst-case fee now fits your smart account's balance; its EntryPoint deposit, if any, is left as a reserve for the fee." &&
+      !/network fee rose/.test(AA.aaMaxAdjustmentSentence(q('gas'), wei) + AA.aaMaxAdjustmentSentence(q('balance'), wei)) &&
+      I.translateFrom({ en, es }, 'es', 'aa.maxAdjustmentGas', { requested: '9', amount: '5' }).startsWith('El importe se redujo de 9 a 5 porque el gas que necesita esta transferencia desde tu cuenta inteligente') &&
+      I.translateFrom({ en, es }, 'es', 'aa.maxAdjustmentBalance', { requested: '9', amount: '5' }).startsWith('El importe se redujo de 9 a 5 porque el saldo de tu cuenta inteligente'));
+  check('…the "gas" and "balance" forms differ from the old sentence (a sentence that ignored the reason would give the old one for both)',
+    AA.aaMaxAdjustmentSentence(q('gas'), wei) !== AA.aaMaxAdjustmentSentence(q(null), wei) && AA.aaMaxAdjustmentSentence(q('balance'), wei) !== AA.aaMaxAdjustmentSentence(q(null), wei));
 }
 // Table mutants: the same checks, run on broken copies of the tables.
 {

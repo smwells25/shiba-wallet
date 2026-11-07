@@ -52,7 +52,14 @@ import {
 } from '@shiba-wallet/chains-evm';
 // Explicit .ts extensions: this module is imported by scripts/check-aa.mjs
 // under Node's type stripping, which resolves relative specifiers literally.
-import { EVM_CHAIN_ID, MAX_ESTIMATE_VALUE_WEI, validateRecipient } from './send.ts';
+import {
+  EVM_CHAIN_ID,
+  MAX_ESTIMATE_VALUE_WEI,
+  maxAdjustmentReason,
+  validateRecipient,
+  type LastMaxResult,
+  type MaxAdjustmentReason,
+} from './send.ts';
 import { formatUnits } from './balances.ts';
 import type { KeyValueStore } from './tokens.ts';
 import { isMultisigAccountId, smartAccountSaltFor } from './account-ids.ts';
@@ -2558,8 +2565,18 @@ export interface AaSendQuote {
    * longer fitted beside it, so the quote lowered the amount (see
    * AA_MAX_TRIM_ROUNDS). `requested` is the amount the form held; `amount`
    * and `calls` above are what will be signed. Absent in every other case.
+   *
+   * `reason` says why, so the confirm sentence is true (the same rule as the
+   * regular-account Max, send.ts maxAdjustmentReason, applied to the whole
+   * operation's gas): 'fee' when the max fee per gas is above the one Max
+   * reserved, or the worst-case fee rose otherwise; 'gas' when the per-gas
+   * fee did not rise but the operation needs more gas than Max reserved;
+   * 'balance' when neither rose, so the smart account's balance is lower
+   * than at the Max tap. Absent when the caller passed no reservation
+   * (prepareAaCalls option maxReserved), which reads as 'fee', the only
+   * sentence there was before.
    */
-  maxAdjustment?: { requested: bigint };
+  maxAdjustment?: { requested: bigint; reason?: MaxAdjustmentReason };
   /**
    * 'kernel-7702' only. upgrade = true means the account is still a plain
    * EOA and THIS operation carries the EIP-7702 authorization (the confirm
@@ -3035,8 +3052,15 @@ export function aaMaxAdjustmentSentence(
 ): string | null {
   if (!quote.maxAdjustment) return null;
   // Through the string table (phase 23 item 8, fourth pass); in English
-  // exactly the sentence this function built before.
-  return t('aa.maxAdjustment', { requested: format(quote.maxAdjustment.requested), amount: format(quote.amount) });
+  // exactly the sentence this function built before when the fee rose (or
+  // no reason is known). The other two reasons have their own sentences, so
+  // the confirm never says the fee rose when it did not (the regular-account
+  // rule of send.ts maxAdjustmentSentence, for the smart account).
+  const values = { requested: format(quote.maxAdjustment.requested), amount: format(quote.amount) };
+  const reason = quote.maxAdjustment.reason ?? 'fee';
+  if (reason === 'gas') return t('aa.maxAdjustmentGas', values);
+  if (reason === 'balance') return t('aa.maxAdjustmentBalance', values);
+  return t('aa.maxAdjustment', values);
 }
 
 /** Neutral confirm-screen sentence for a Kernel deployment through any non-Alchemy bundler. */
@@ -3436,6 +3460,13 @@ export async function prepareAaCalls(
      * with the last Max result). See the Max section below.
      */
     fromMax?: boolean;
+    /**
+     * What the smart-account Max reserved for the fee when it produced this
+     * amount (maxAaSendDetails). Used only with `fromMax` and only to say WHY
+     * an amount was lowered (AaSendQuote.maxAdjustment.reason); it never
+     * changes the amount, which is always the balance minus the fee read now.
+     */
+    maxReserved?: MaxAaReservation;
   } = {},
 ): Promise<AaSendQuote> {
   if (calls.length === 0) throw new Error('Nothing to send: the operation has no calls.');
@@ -3688,8 +3719,13 @@ export async function prepareAaCalls(
     const worstCaseGasCost = gasTotal * fees.maxFeePerGas;
     // With a paymaster the sponsor pays the gas: the account only needs to
     // cover the amount itself. Self-paid keeps the full worst-case check.
-    return { estimated, gas, fee: bundle.sponsored ? 0n : worstCaseGasCost };
+    return { estimated, gas, gasTotal, fee: bundle.sponsored ? 0n : worstCaseGasCost };
   };
+  // Why a Max amount had to be lowered: what Max reserved against the first
+  // figures priced here, before any lowering (the rule is send.ts
+  // maxAdjustmentReason, with the operation's whole gas in place of a
+  // transaction's gas limit). Only used when the caller passed a reservation.
+  let firstPriced: { gasTotal: bigint; fee: bigint } | null = null;
 
   // The single call of a Max transfer with another value.
   const withValue = (value: bigint): Call[] => [{ ...calls[0]!, value }];
@@ -3707,6 +3743,10 @@ export async function prepareAaCalls(
     } catch {
       probe = await price(withValue(0n));
     }
+    // The balance-fell branch: the reason compares the probe (a 1-wei
+    // transfer, as Max priced) with the reservation, so with the same fee and
+    // gas it reads 'balance'.
+    firstPriced = probe;
     const room = senderBalance > probe.fee ? senderBalance - probe.fee : 0n;
     if (room <= 0n) {
       throw new AaFundingError(sender, aaFundingMessage({ ...fundingFacts(), fee: probe.fee }), fundingTitle);
@@ -3715,6 +3755,7 @@ export async function prepareAaCalls(
     currentCalls = withValue(amount);
   }
   let priced = await price(currentCalls);
+  if (firstPriced === null) firstPriced = priced;
   if (trimMax) {
     for (let round = 0; round < AA_MAX_TRIM_ROUNDS && amount + priced.fee > senderBalance; round++) {
       const lowered = senderBalance - priced.fee;
@@ -3768,7 +3809,23 @@ export async function prepareAaCalls(
     ...(eip7702 ? { eip7702 } : {}),
     ...(bundle.recovered ? { recovered: true } : {}),
     ...(deposit !== null ? { deposit } : {}),
-    ...(amount !== requested ? { maxAdjustment: { requested } } : {}),
+    ...(amount !== requested
+      ? {
+          maxAdjustment: options.maxReserved
+            ? {
+                requested,
+                reason: maxAdjustmentReason(
+                  {
+                    gasLimit: options.maxReserved.gasTotal,
+                    maxFeePerGas: options.maxReserved.maxFeePerGas,
+                    fee: options.maxReserved.fee,
+                  },
+                  { gasLimit: firstPriced.gasTotal, maxFeePerGas: fees.maxFeePerGas, fee: firstPriced.fee },
+                ),
+              }
+            : { requested },
+        }
+      : {}),
   };
 }
 
@@ -3828,13 +3885,16 @@ export async function prepareAaSend(
   ownerAddress: string,
   to: string,
   amount: bigint,
-  options: { fromMax?: boolean } = {},
+  options: { fromMax?: boolean; maxReserved?: MaxAaReservation } = {},
 ): Promise<AaSendQuote> {
   return prepareAaCalls(
     bundle,
     ownerAddress,
     [{ to, value: amount, data: new Uint8Array(0) }],
-    options.fromMax === true ? { fromMax: true } : {},
+    {
+      ...(options.fromMax === true ? { fromMax: true } : {}),
+      ...(options.maxReserved ? { maxReserved: options.maxReserved } : {}),
+    },
   );
 }
 
@@ -3988,16 +4048,53 @@ export async function maxAaSend(
   ownerAddress: string,
   to: string,
 ): Promise<bigint> {
+  return (await maxAaSendDetails(bundle, ownerAddress, to)).amount;
+}
+
+/**
+ * What the smart-account Max reserved for the fee: the operation's whole gas
+ * (callGasLimit + verificationGasLimit, with the deposit top-up headroom the
+ * quote adds, + preVerificationGas), the max fee per gas it was priced at,
+ * and the worst-case fee (0 under sponsorship, when the account pays none).
+ */
+export interface MaxAaReservation {
+  gasTotal: bigint;
+  maxFeePerGas: bigint;
+  fee: bigint;
+}
+
+/**
+ * What SendScreen remembers about the last smart-account native Max: the
+ * same fields as the regular-account record (send.ts LastMaxResult), with
+ * the smart-account reservation in place of the transaction's.
+ */
+export type LastAaMaxResult = Omit<LastMaxResult, 'reserved'> & { reserved?: MaxAaReservation };
+
+/**
+ * maxAaSend with what it reserved for the fee, so a quote that later has to
+ * lower the Max amount can say why (prepareAaCalls option maxReserved), as
+ * send.ts maxEvmSendDetails does for the regular account.
+ */
+export async function maxAaSendDetails(
+  bundle: AaClientBundle,
+  ownerAddress: string,
+  to: string,
+): Promise<{ amount: bigint; reserved: MaxAaReservation }> {
   let probe: AaSendQuote;
   try {
     probe = await prepareAaSend(bundle, ownerAddress, to, AA_MAX_PROBE_VALUE_WEI);
   } catch {
     probe = await prepareAaSend(bundle, ownerAddress, to, 0n);
   }
-  if (bundle.sponsored) return probe.senderBalance;
   const gasTotal = probe.callGasLimit + probe.verificationGasLimit + probe.preVerificationGas;
+  if (bundle.sponsored) {
+    return { amount: probe.senderBalance, reserved: { gasTotal, maxFeePerGas: probe.maxFeePerGas, fee: 0n } };
+  }
   const worstCase = gasTotal * probe.maxFeePerGas;
-  return probe.senderBalance > worstCase ? probe.senderBalance - worstCase : 0n;
+  return {
+    amount: probe.senderBalance > worstCase ? probe.senderBalance - worstCase : 0n,
+    reserved: { gasTotal, maxFeePerGas: probe.maxFeePerGas, fee: worstCase },
+  };
 }
 
 /**
