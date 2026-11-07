@@ -17147,3 +17147,97 @@ arrive; 6 last. Subagents on Opus.
       off, Metro node 97670 on 8081 from wt-app at 13e6479 with only
       `adb reverse tcp:8081`, qemu 86708 with caffeinate 86986, the window
       in front.
+- [x] Solana-pass findings FIXED, and MAX ESTIMATED WITH A NON-ZERO VALUE
+      (commit 7b422a8; 24 files, +640 / −56, new
+      app/src/components/SolanaDevnetBanner.tsx; check-i18n 188 (was 182),
+      check-spl-tokens 91 (73; mutants 8 → 11), check-base 131 (118),
+      check-cold-signing 111 (110); offline runner ALL GREEN in the CTO's
+      isolated worktree on HEAD d635b62 with --skip-bundle: engine 1,328,
+      app 11,031 across 66 suites, lint 0/0, tsc clean; checkout 0 / apply 0
+      / 24 files; the staged patch id 9cd12182…198d equal to the verified
+      tree's and the agent's; the pre-commit scan clean; nineteen hand
+      mutants caught; no engine file touched; not seen on a device). (B)
+      THE MAX ESTIMATE: send.ts MAX_ESTIMATE_VALUE_WEI = 1n; the new
+      maxEvmSendDetails estimates with 1 wei and falls back to value 0 only
+      when that estimate fails (as prepareEvmSend retries a plain
+      transfer), returning the amount AND the reservation {gasLimit,
+      maxFeePerGas, fee}; maxEvmSend keeps its signature (callers and tests
+      unchanged); 1 wei rather than the balance because the recorded
+      EIP-2780 figures depend only on zero versus non-zero (15,000 / 21,000
+      / about 204,600 for a never-used account) and nodes refuse a value
+      above the balance; the reservation travels as LastMaxResult.reserved
+      → PrepareEvmSendOptions.maxReserved (SendScreen and ColdSignScreen
+      remember it at Max and pass it at Review); maxAdjustmentReason
+      decides, in order, 'fee' (the per-gas fee rose), 'gas' (more gas
+      needed), 'fee' again when only the whole fee rose (an OP-stack
+      layer-1 fee), else 'balance'; with no reservation the old sentence
+      shows, so every old pin and the golden fixture hold; the trim amount
+      itself never changes. SENTENCES: send.maxAdjustment unchanged; NEW
+      send.maxAdjustmentGas "The amount was lowered from {requested} to
+      {amount} because the gas needed for this transfer is more than was
+      reserved when you tapped Max; the fee per unit of gas did not rise.
+      The amount plus the worst-case fee now equals your balance." and
+      send.maxAdjustmentBalance "…because the balance is lower than when
+      you tapped Max; the network fee did not rise…" (beyond the brief,
+      accepted — neither existing sentence is true when only the balance
+      dropped). THE iOS CASE pinned end to end in check-base §3c (a Sepolia
+      fake answering 15,000 gas at value 0 and 21,000 otherwise, base fee 15
+      + tip 2): Max asks one estimate with value 0x1, reserves 21,000 × 32 =
+      672,000 and Review keeps the amount with no sentence; the old
+      15,000-gas reservation gives reason 'gas' and the gas sentence, never
+      "the fee rose"; a fee rise 32 → 42 gives 'fee'; a 1,000-wei balance
+      drop gives 'balance'; the fallback and Max = 0 at a 0 balance covered.
+      (A) THE SOLANA PASS: (1) ActivityScreen solanaDevnetSlot — the title
+      and symbol from the devnet network entry ("Solana devnet", "test
+      SOL") and the TESTNET line; the SOL send's line had the same fault
+      ("Solana devnet · Mainnet") and now treats the devnet chain as a test
+      network (its symbol still "SOL" — a known gap); (2) the banner
+      "TESTNET — Solana devnet is on. Amounts are test SOL and devnet
+      tokens, not real funds." (id banner.solanaDevnet; rule
+      solanaDevnetBannerShown: the Solana slot with the switch on, whatever
+      the Ethereum choice) drawn on Manage Solana tokens, the four token-send
+      views, Activity's header, Receive and the SOL send's form, confirm and
+      success views, in the theme's testnet colours; the app-wide Ethereum
+      banner and its pins untouched; (3) home.solanaTokens.fee "The network
+      fee for a Solana token send is paid in SOL (test SOL on devnet), not
+      in the token." under the Solana token rows when there are rows (the
+      footer unchanged); (4) readiness.solanaDevnet "Solana token sends work
+      on Solana devnet, which the "Use Solana devnet" switch under Settings
+      → Developer turns on, separately from the Ethereum test network." as
+      an extra line under the spl-tokens row (readiness-text.ts
+      readinessRowNoteText) and after the shared hint; the shared lines
+      unchanged (the Spanish quotes the untranslated switch label); (5)
+      splTransferFeeLine from the engine's decoded config carried as
+      MintPreview.transferFee — "Transfer fee: {bps} basis points ({max}
+      {SYM} max) — shown again on every send." (a two-rate form naming the
+      epoch) on the Track prompt and the read-back; pinned with the devnet
+      PYUSD fixture: "Transfer fee: 0 basis points (0 PYUSD max) — shown
+      again on every send."; (6) ENGINE, reported only: the proposed
+      wording for SPL_QUOTE_SENTENCES "This account holds no {symbol} in
+      its associated token account, so there is nothing to send."
+      (tokenTransfer.ts 294; the next engine slice); (7) splSendLinkShown
+      hides "Send <SYM> ↗" at an exactly-zero associated balance (a balance
+      held only in other token accounts shows no link either — a send never
+      uses them); the ERC-20 rows do not hide Send at 0 and were left as
+      they are; (9) the "Manage Solana tokens" hint "Opens the list of
+      tracked Solana tokens". (C) THE INBOX LEFTOVERS: INBOX_PIN_NOTE /
+      inbox.pinNote and inbox.passphraseNote "…such as the recurring-payment
+      banner, price alerts, requests from connected apps that the wallet
+      sent, and speed-ups and cancellations.", settings.openInbox.hint
+      "Lists what the wallet has told you: reminders, alerts, requests from
+      connected apps that it sent, and speed-ups and cancellations" and,
+      beyond the brief, home.link.inbox.hint likewise; three "changed"
+      fixture records and five new ids with Spanish drafts. FOLLOW-UPS
+      FOUND: aa.ts maxAaSend also probes with value 0 (prepareAaSend(…,
+      0n)) — the smart-account Max sentence may be false the same way (an
+      inference; next slice); send.ts MIN_TRANSACTION_GAS = 21_000n is
+      commented as a lower bound for any transaction, untrue since
+      Glamsterdam (15,000 / 12,000); readinessRefusal('spl-tokens') would
+      still give the Ethereum hint (nothing calls it for that row).
+      UNVERIFIED (device): the banner beside the app-wide Ethereum banner,
+      its colours, TalkBack, the Spanish lengths; whether real nodes answer
+      a 1-wei estimate with 21,000 gas (inferred from the recorded EIP-2780
+      figures; checked on fakes only). Slips: a malformed first A5 mutant
+      replaced by two valid ones; a first scan of the committed tree
+      instead of the changed files (re-run with --files); a probe file
+      briefly in app/scripts, removed.
