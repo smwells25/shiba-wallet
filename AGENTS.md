@@ -16416,3 +16416,91 @@ arrive; 6 last. Subagents on Opus.
       isKeyguardShowing` BEFORE any keyguard-clearing input, and send none
       when it is false — a loaded quick-boot snapshot restores an unlocked
       screen and a stray Enter activates whatever Home row holds focus.
+- [x] Item 5, Stage 2 — THE TROPIC01 AIR-GAPPED SIGNER DESIGNED AND THE STAGE 3
+      DEMO PLANNED (docs commit c23fb86; docs/TROPIC_SQUARE.md +754 lines,
+      about 9,870 words — the document is now about 17,900; sections 2–9
+      unchanged; no other file; the agent edited the main checkout's copy
+      directly by the CTO's own briefing slip — docs only, scan clean,
+      nothing else in the tree; no hardware touched, no POC code run; the
+      CTO spot-checked the POC claims below in the repository itself).
+      ANSWERS 5–9 FROM THE POC (~/Downloads/tropic_wallet_poc at 5025353 on
+      the branch device-split-and-hardware-validation, read only): the chip
+      is driven in PYTHON through pytropicsquare 0.0.3 (a third-party MIT
+      SDK; requirements-hardware.txt), not libtropic, lt-util or
+      tropic01_util; it ran on a Pi 3B+ with aarch64 Raspberry Pi OS and
+      Python 3.13.5, chip select GPIO25 at 1 MHz; EVERY SESSION USES THE
+      PUBLISHED FACTORY PAIRING KEY IN SLOT 0 (hw/tropic_wallet_hw.py 76–89
+      carries the SDK's own security warning) — no pairing key of the
+      Chairperson's own was ever written or invalidated; no config write, no
+      firmware update, no maintenance mode (docs/firmware.md 85); ECC slot 0
+      holds the POC's on-chip Ed25519 wallet key, slot 1 most likely a
+      chip-generated Ed25519 key (inferred from the destructive tests'
+      order); no User Data slot or counter touched; THE POC NEVER RAN
+      MAC-AND-DESTROY — docs/known-limitations.md 41 reads "No PIN. Anyone
+      at the device's terminal can approve." and the PIN on MAC-and-Destroy
+      appears only as a recommendation and future work (threat-model.md
+      305, production-readiness.md 260, slides.md 507) — which DISAGREES
+      with the Chairperson's recollection of a successful PIN-authentication
+      run (put to the Chairperson: a different or unsaved experiment?); it
+      signed Ed25519 on its own toy ledger only, never secp256k1, never a
+      public chain; it read firmware RISC-V 2.0.0.0 / SPECT 1.0.0.0 on
+      2026-09-20 while newer firmware was already published (so answer 4's
+      "updated to latest" needs the read on the board); its own Decision 3
+      REJECTED the "release the secret, then sign" flow on a Raspberry Pi —
+      section 10 states this and justifies the flow only as lab equipment
+      on test networks. Q12 CHECKED AGAINST THE SOURCES — the Chairperson's
+      understanding is CORRECT: a MAC-and-Destroy slot can be set up again
+      (AN002 §3.2 p.6, §3.5 p.11; DS §7.9 p.52; R-Memory erasable DS §7.1.1
+      p.20), with caveats (a lost secret or a Wiping PIN closes that KEY for
+      ever, not the slot; a slot cannot be inspected without being
+      overwritten; flash wear 100,000 cycles; an erased ECC key is gone
+      though its slot is reusable); counters CAN be reset (DS §7.10 p.52).
+      FORBIDDEN CLASS, cited: pairing-key writes (I-Memory, DS §7.1.2 p.23)
+      and invalidation (DS §7.5.3 p.44 — all four = unusable), I-Config
+      writes, R-Config writes (libtropic.h 366–367 "can brick", erratum
+      OI_TR01_ERR_2026010800; AN006 pp.13, 18), reserved configuration
+      locations (AN006 p.10), firmware updates (no downgrade AN007 p.8;
+      mismatch → Start-up mode p.10), libtropic's functional tests, the
+      POC's destructive tests (they erase ECC slots 0 and 1), the spare
+      chip. DESIGN (section 10.1–10.11): the forbidden / consumes classes,
+      the device's shape, the wallet's existing SW-CS / SW-CU request
+      formats and the multisig approvals as the signing requests, the
+      channel options with their trust statements, what the Pi shows, how
+      the secp256k1 key is derived and sealed (a device phrase of its own,
+      not the phone's — the D1 question), the pairing-key policy (slot 0's
+      published key stays for the demo; writing a new key is irreversible
+      and needs an explicit yes), the slot plan (MAC-and-Destroy 120–127,
+      one User Data slot, ECC 0–1 kept), low-s and test-network rules, the
+      option (b) product path, what runs on a 3B+ (Node plus a Python chip
+      helper). STAGE 3 PLAN (section 11): read-only steps R0–R7 first (chip
+      identification and firmware versions, pairing-slot status, occupied
+      slots), the rehearsal on the software model, the prerequisites, then
+      the smallest Sepolia demo (a watched address's send prepared on the
+      emulator, signed on the Pi, broadcast from the wallet) with every step
+      marked READ / CONSUMES / FORBIDDEN; proposed fund cap 0.002 Sepolia
+      ETH. THE SOFTWARE MODEL CANNOT RUN ON THIS MAC TODAY: only
+      /usr/local/bin/docker exists (Docker Desktop 4.12.0, client 20.10.17
+      from 2022) and its daemon is not running; no colima, podman or
+      limactl; nothing installed — the Chairperson's call (start or update
+      Docker Desktop, run the model on the Pi, or a Linux VM). NOT VERIFIED
+      (section 12 lists them): AN002 §3.4 field sizes (the "about 390 bytes
+      fits one User Data slot" figure is the agent's arithmetic);
+      pytropicsquare's API beyond what the POC used (User Data, pairing-key
+      read, counters, config reads, a TCP transport to the model); Node 24
+      on the 3B+; the POC's "Tropic Square confirmed directly" custom-
+      firmware claim (no source); the SPECT firmware licence (the POC says
+      Apache 2.0, Stage 1 read Clear BSD); whether the R-Config erratum
+      covers this part; what sits in ECC slot 1. QUESTIONS FOR THE
+      CHAIRPERSON (12.1, fifteen): the chip identity through step R2; when
+      and how the firmware was updated; whether any other program —
+      especially libtropic's functional tests — ever ran on this chip;
+      WHETHER THE EARLIER PIN RUN HAPPENED and on which slots; agree the slot
+      plan; keep factory pairing slot 0 for the demo; SSH-only first demo or
+      a display and keypad first, and which; Node plus the Python helper;
+      the Pi's clock; the model rehearsal route; the fund cap; the device's
+      own phrase (D1); who runs chip commands; build versus partner and any
+      written record of the custom-firmware conversation. FOR TROPIC SQUARE
+      (12.2): secp256k1 on SPECT; the SPECT licence; MCounter_Init on an
+      initialised counter; reading the bootloader version; the erratum's
+      parts; Pi 3B+ support. Hygiene: no factory-key constant, test key,
+      chip serial or batch id copied; no new 32-hex string.
