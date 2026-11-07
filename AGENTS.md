@@ -16811,3 +16811,134 @@ arrive; 6 last. Subagents on Opus.
       changed); a lint error and a warning fixed; a backup written to /tmp
       and removed; the CTO's first commit attempt failed on shell quoting
       (nothing lost; committed from a message file).
+- [x] Item 4 — THE iOS SECOND PASS IN THE SIMULATOR: THE PIN PAD, THE SCHEME,
+      A SEPOLIA SEND, SPANISH (2026-11-07 16:29–17:37 UTC; the Debug
+      Simulator build from HEAD 626c5d7 in the fresh worktree wt-ios2 — the
+      old wt-ios and its derived data were empty shells left by the temp
+      cleaner; a THROWAWAY wallet with a NEW phrase, its backup screen
+      captured only into a 0700 directory and OCR'd by a script that
+      printed "indices found: 12; contiguous: true; checksum valid: true",
+      the quiz answered by coordinates, the phrase file deleted with rm -P
+      after the in-app wipe; the Android emulator and Expo Go never
+      touched; the report step by step in the scratchpad p24-ios/REPORT.md;
+      THE CTO RE-READ the three Sepolia receipts and the dev EOA's balance
+      on publicnode — all equal). BUILD: mkwt 32.7 s; prebuild 3.4 s
+      ("Apple bundle identifier: com.anonymous.shiba-wallet"; worktree-only
+      app.json / package.json edits as in phase 23); pod install 50 s, 117
+      pods, "[QuickCrypto] ✅ Static OpenSSL ready" (the podspec raises on a
+      checksum mismatch, so ready implies the pinned hash matched);
+      FIRST CHECK PASSED — the Android-only local module
+      app/modules/shiba-navigation-bar was ignored without a warning (not
+      autolinked, not in Podfile.lock or ExpoModulesProvider.swift, no
+      symbol in the dylib); xcodebuild "BUILD SUCCEEDED" in 753 s, 0 errors,
+      1,450 warning lines (845 unique); the .app 138 MB x86_64;
+      CFBundleURLSchemes now ["shibawallet", "com.anonymous.shiba-wallet"]
+      plus exp+shiba-wallet — THE SCHEME IS REGISTERED ON iOS; entitlements
+      aps-environment development and the placeholder associated domain;
+      device "shiba-ios2" (iPhone 17, iOS 26.5); Metro 8083 with lazy
+      bundling off, 2,447 modules; driven by simctl screenshots, a
+      Vision-framework OCR helper and CGEvent clicks (the Simulator exposes
+      no iOS accessibility tree to macOS). STEPS: (3) NOTIFICATIONS — PASS:
+      iOS's own prompt ("Shiba Wallet" Would Like to Send You Notifications
+      / Don't Allow / Allow) → "Reminders are on." (1) THE PIN PAD — PASS
+      bar its spoken labels (NOT POSSIBLE: no AX tree, no VoiceOver): the
+      backup check "Type word 7 and word 9 of your recovery phrase, from
+      your written backup." after a Face ID sheet; "Choose a 6-digit PIN" →
+      "Type the new PIN again" → "The app PIN is on…"; six circles, 1–9, 0,
+      delete, Cancel, centred; after 75 s in the background the pad with no
+      Face ID sheet; a wrong PIN answered in 1.0–1.4 s (the native scrypt),
+      the fifth "Wrong PIN. Try again in 30 seconds." counting down; on a
+      cold-start repeat the correct PIN inside the wait was REFUSED AT ONCE
+      ("Too many wrong PINs. Try again in 25 seconds."), then "You can enter
+      your PIN again." and Home 3–5 s after the last digit — the F-82
+      lockout holds on iOS; a cold start showed blank → the dev client's
+      download → the pad at 17 s with "Auto-lock is on, so the wallet starts
+      locked…" (no Home frame sampled; the 1.7 s gaps not covered). (2)
+      DEEP LINKS — PASS: `simctl openurl shibawallet://inbox` rc 0 (phase 23
+      got error 115 without the scheme); iOS asked "Open in Shiba Wallet?"
+      once; inbox, home, activity?chain=bitcoin ("Bitcoin activity"),
+      receive?chain=solana ("Receive SOL"), price-alerts and sessions each
+      opened; a send?uri EIP-681 link opened "Send ETH" with the outside-link
+      sentence first, then the EIP-681 box, "Asks for: 0.00001 ETH.", the
+      no-network note and the recipient filled (nothing sent); the three
+      "does not open anything" refusals and the approve-URI refusal exact;
+      while locked only the pad, then "Receive BTC" after the PIN; a launch
+      link after terminate → the dev launcher's server list (dev build
+      only), the PIN lock, then "Receive SOL" once. (6) DEVELOPER LINES —
+      PASS: "PIN hashing path: native scrypt (react-native-quick-crypto),
+      self-check passed"; NO navigation-bar line (navigationBarOutcomeLine
+      returns null for 'not-android' and Settings renders only a non-null
+      line — as coded); the measurement 2^12 20 ms, 2^13 33, 2^14 55, 2^15
+      102, 2^16 192, total 405 ms, "Platform: ios · Hermes: yes · development
+      bundle (__DEV__): yes · Hashing: native scrypt…". (4) A SEPOLIA SEND —
+      PASS: funding 0.002 ETH by fund.mjs from the main checkout (tx
+      0xcd5df08e4a1d34a5705147691600fb7277635a55a573315a12f92237b2712495,
+      block 12084963, 204,600 gas at 21 wei); 0.0001 test ETH to the dev EOA
+      with Face ID matching (tx
+      0x69d0a812b8c3fbaa3fb2039dee9e2a86b4a616bca3314e2b8722aa5fda41d300,
+      block 12085080, status 0x1, 21,000 gas at 17 wei; publicnode at once,
+      0xrpc.io after 20 s, 1rpc agreeing); the sweep with Max, trimmed by
+      the fee-rose rule ("…lowered from 0.001899999999163 test ETH to
+      0.001899999998971 test ETH…"; tx
+      0x7be601cd85adc4070f84dee2d4dcdabd503a9ecb41d5c297ebc3b1a03a880e96,
+      block 12085095, status 0x1); the dev EOA 39,002,571,909,795,125 →
+      39,002,571,904,469,525 wei (net cost 5,325,600 wei; nonce 55 → 56);
+      315,000 wei stranded on the throwaway (Max's unused fee reserve). (5)
+      DARK MODE — PASS (the confirm, Home, Settings readable; no white
+      strips). (7) SPANISH — FAIL through the Simulator's language, PASS
+      through the in-app choice: with AppleLanguages es and AppleLocale
+      es_ES after two reboots iOS itself was Spanish but the app read "In
+      use now: English." under System; "Español" gave "Ajustes", "Cuentas",
+      "Idioma", "Copia de seguridad", Home's "Ocultar importes" / "Enviar
+      Actividad Intercambiar NFT Mejorar Aprobaciones" / "Firma múltiple" /
+      "Puente" / "Alias de billetera (ENS)" / "Gestionar tokens", the
+      Spanish banner, the lock "Shiba Wallet está bloqueada" / "Introduce tu
+      PIN" / "PIN incorrecto. Vuelve a intentarlo."; set back to System.
+      (8) CAMERA — the Simulator has none: "Point the camera at a Ethereum
+      address or payment-request QR code…" / "Allow camera access" → iOS's
+      prompt → an empty grey preview in a rounded frame with Cancel and no
+      message. WIPE — PASS: the PIN-aware dialog, onboarding, a relaunch
+      with no pad, AsyncStorage left with only language.v1 and prefs.v1, 0
+      keychain rows in any shiba access group. FINDINGS (fix slice
+      dispatched): (1) on iOS "System" does NOT follow the phone's language
+      — the app read English with the Simulator in Spanish; cause not
+      established (inference: Hermes's Intl locale follows the app's own
+      localizations, and the bundle declares only CFBundleDevelopmentRegion
+      "en" with no .lproj and no CFBundleLocalizations; device-locale.ts's
+      own comment says the iOS value was never checked on a device); (2)
+      focusing the secure "Word N of your recovery phrase" field raised
+      iOS's "Use Strong Password?" sheet, and dismissing it cleared the
+      field (the password-manager family phase 23 saw on the passphrase
+      fields); (3) Settings → Recovery phrase protection said "This phone
+      has no strong fingerprint or face unlock enrolled…" although Face ID
+      was enrolled and worked for three prompts — cause not established
+      (expo-secure-store asks LAContext.canEvaluatePolicy(.deviceOwner
+      AuthenticationWithBiometrics); Face ID was enrolled after the wallet
+      was created — whether that matters is unknown); (4) Android-only
+      sentences shown on iOS: the notifications "After a force stop, Android
+      drops the scheduled reminders…" and the Inbox "Android may show one a
+      little late…"; (5) "Point the camera at a Ethereum address" → "an";
+      (6) with no camera the scanner shows an empty preview and says
+      nothing; (7) turning the app-PIN switch on puts the backup-word fields
+      at the end of the long section, off screen, and the screen does not
+      scroll there; (8) observation — the Inbox says sent transactions are
+      listed, but two Send-screen sends left it "Nothing yet." (by design it
+      records WalletConnect sent views and replacement notices; the wording
+      to align); (9) Spanish gaps on Home: "Switch ▾", "test ETH", "Apps",
+      "Staking"; (10) dev build only — the launch link shows the dev
+      launcher's server list first, which advertised the Android pass's
+      Metro over the LAN (not tapped); (11) the Max trim sentence blamed a
+      fee rise while the reviewed max fee equalled send 1's 672,000 wei and
+      Max had reserved 480,000 — the result exact (total = balance), the
+      wording possibly off. UNVERIFIED: VoiceOver and the pad's labels; the
+      first wait's exact timing; a delivered notification; camera scanning;
+      WalletConnect; real Face ID, the Secure Enclave and the biometric
+      keychain class; a release or arm64 build. SLIPS: a tap on the Tools
+      bubble opened the dev menu; one Settings scroll overshot to the
+      Danger zone (nothing tapped until the deliberate wipe); a chip tap
+      landed on a paragraph; keystrokes dropped characters (pasted
+      instead); a `sleep` command blocked (run as a script). END STATE: the
+      device deleted, Simulator quit, Metro 8083 stopped, Metro 8081 and the
+      emulator untouched; kept: wt-ios2 (2.5 GB, 626c5d7 with the prebuild
+      edits), p24-ios/dd (3.0 GB), the iOS 26.5 runtime; the main checkout
+      clean.
