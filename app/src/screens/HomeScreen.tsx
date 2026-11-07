@@ -23,7 +23,7 @@ import { IMPORTED_KEY_NO_CHAIN, MULTISIG_NO_CHAIN, WATCH_ONLY_NO_CHAIN } from '.
 import { useTheme } from '../theme';
 import { textOnFill } from '../theme-palette';
 import { sendLinkHint, spokenLinkText, tokenRowSpokenLabel } from '../a11y';
-import { EVM_CHAIN_ID, addSendAcceptedListener } from '../wallet/send';
+import { EVM_CHAIN_ID, SOLANA_CHAIN_ID, addSendAcceptedListener } from '../wallet/send';
 import { addAaSentListener } from '../wallet/aa';
 import { createSendRefreshTracker, reloadNowAndLater } from '../wallet/home-refresh';
 import { ChainAccount, useWallet } from '../wallet/WalletContext';
@@ -38,12 +38,23 @@ import { COLD_SIGN_HOME_LINK, COLD_SIGN_LINK_HINT } from '../wallet/cold-signing
 import { httpTransport } from '@shiba-wallet/chains-evm';
 import { MULTISIG_DEPOSIT_ROW_LABEL, readMultisigFunds } from '../wallet/multisig';
 import { getEndpoint } from '../config/networks';
+import { SOLANA_DEVNET_CAIP2 } from '../config/defaults';
 import { OfflineNotice } from '../wallet/connectivity';
 import { usePrefs } from '../wallet/PrefsContext';
 import { maskAmount } from '../config/prefs';
 import { BalanceState, useBalances } from '../wallet/useBalances';
 import { formatBalanceDisplay, spokenAmount } from '../wallet/balances';
 import { useTokenBalances } from '../wallet/useTokenBalances';
+import { useSplTokens } from '../wallet/useSplTokens';
+import {
+  solanaNetworkLabel,
+  splCannotSendLine,
+  splDecimalsChangedLine,
+  splOutsideLine,
+  splSendGate,
+  splSkippedLine,
+  type SplRowState,
+} from '../wallet/spl-tokens';
 import { useAccountDelegation } from '../wallet/useDelegation';
 import { useSessionEligibility } from '../wallet/useSessionEligibility';
 import { useRecoveryInfo } from '../wallet/useRecoveryInfo';
@@ -311,6 +322,118 @@ function UnavailableChains({ accounts, sentence: englishSentence }: { accounts: 
   );
 }
 
+/** The Solana devnet CAIP-2 id the Solana token list is compared with (config/defaults.ts). */
+const SOLANA_DEVNET_ROW_CAIP2 = SOLANA_DEVNET_CAIP2;
+
+/** The Solana card's line while Settings → Developer → "Use Solana devnet" is on (phase 24 item 1). */
+const SOLANA_DEVNET_CARD_LINE = 'Solana devnet: test SOL, no value';
+
+/**
+ * One tracked Solana token under the Solana row (phase 24 item 1): its
+ * symbol, name and network, the balance of the owner's associated token
+ * account (the one a send uses), and the lines that say what else is true —
+ * a balance held in other token accounts of the mint (counted, not sendable
+ * from here), a class this wallet will not send (the engine's own sentence),
+ * a change in the mint's decimals. Read as one element, like the ERC-20 rows.
+ */
+function SolanaTokenRow({
+  token,
+  state,
+  networkLabel,
+  hidden,
+  onRetry,
+  onSend,
+}: {
+  token: FungibleAsset;
+  state: SplRowState | undefined;
+  networkLabel: string;
+  hidden: boolean;
+  onRetry: () => void;
+  /** Absent where Solana token sends are refused (the readiness row, mainnet). */
+  onSend?: () => void;
+}) {
+  const theme = useTheme();
+  useI18n();
+  const balanceState: BalanceState | undefined =
+    state === undefined
+      ? undefined
+      : state.status === 'error'
+        ? { status: 'error', message: state.message }
+        : {
+            status: 'ok',
+            display: formatBalanceDisplay(state.associated, state.decimals),
+            symbol: token.symbol,
+            amount: state.associated,
+            decimals: state.decimals,
+            networkChainId: state.networkChainId,
+          };
+  const lines: string[] = [];
+  if (state?.status === 'ok') {
+    if (state.outside > 0n) {
+      lines.push(splOutsideLine(maskAmount(formatBalanceDisplay(state.outside, state.decimals), hidden), token.symbol, state.outsideAccounts));
+    }
+    if (state.sendRefusal !== null) lines.push(splCannotSendLine(state.sendRefusal));
+    if (state.decimalsChanged) lines.push(splDecimalsChangedLine(token.decimals, state.decimals));
+  }
+  const sendable = state?.status === 'ok' && state.sendRefusal === null && !state.decimalsChanged && onSend !== undefined;
+  const subtitle = token.name && token.name !== token.symbol ? `${token.name} · ${networkLabel} token` : `${networkLabel} token`;
+  return (
+    <View>
+      <View
+        style={[styles.tokenRow, { backgroundColor: theme.card, borderColor: theme.border }]}
+        accessible
+        accessibilityLabel={`${token.symbol}, ${subtitle}. ${balanceSpokenText(balanceState, hidden, null)}`}
+        {...(state?.status === 'error'
+          ? {
+              accessibilityRole: 'button' as const,
+              accessibilityHint: tx('Asks the network endpoint for this balance again'),
+              accessibilityActions: [{ name: 'activate', label: tx('Retry') }],
+              onAccessibilityAction: (e: { nativeEvent: { actionName: string } }) => {
+                if (e.nativeEvent.actionName === 'activate') onRetry();
+              },
+            }
+          : {})}
+      >
+        {/* Read once, as the row's own label (the ERC-20 rows' rule): the
+            visible pieces are hidden from screen readers. */}
+        <View style={[styles.tokenBadge, { borderColor: theme.border }]} importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+          <Text style={[styles.tokenBadgeText, { color: theme.textMuted }]} numberOfLines={1}>
+            {token.symbol}
+          </Text>
+        </View>
+        <View style={styles.cardBody} importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+          <Text style={[styles.tokenName, { color: theme.text }]} numberOfLines={1}>
+            {token.symbol}
+          </Text>
+          <Text style={[styles.tokenKind, { color: theme.textMuted }]} numberOfLines={2}>
+            {subtitle}
+          </Text>
+        </View>
+        <View importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+          <BalanceCell state={balanceState} onRetry={onRetry} hidden={hidden} fiat={null} />
+        </View>
+      </View>
+      {lines.map((line) => (
+        <Text key={line} style={[styles.manageTokens, { color: theme.textMuted }]}>
+          {line}
+        </Text>
+      ))}
+      {sendable ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Send ${token.symbol}`}
+          accessibilityHint={sendLinkHint(token.symbol)}
+          onPress={onSend}
+          hitSlop={8}
+        >
+          <Text style={[styles.manageTokens, { color: theme.accent }]}>Send {token.symbol} ↗</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+
 /** The four launch chains: address, live native balance, tap to receive. */
 export function HomeScreen({ navigation }: Props) {
   const theme = useTheme();
@@ -338,10 +461,16 @@ export function HomeScreen({ navigation }: Props) {
   const multisig = activeAccount?.multisig === true;
   // No key of this wallet signs alone for the active account.
   const noKey = watchOnly || multisig;
-  const { hideAmounts, setHideAmounts, evmChain, sepolia, showFiat } = usePrefs();
+  const { hideAmounts, setHideAmounts, evmChain, sepolia, showFiat, solanaDevnet } = usePrefs();
   // The active EVM chain is passed so a mode flip (mainnet <-> Sepolia)
   // re-fetches the EVM row (useBalances handles it).
-  const { balances, refreshing, refreshAll, refreshOne } = useBalances(accounts, evmChain.caip2);
+  // The Solana slot's network (phase 24 item 1) is part of the reload key
+  // too: a switch to or from Solana devnet re-reads the rows at once. With
+  // devnet off the key is exactly the EVM chain id, as before.
+  const { balances, refreshing, refreshAll, refreshOne } = useBalances(
+    accounts,
+    solanaDevnet ? `${evmChain.caip2}|solana-devnet` : evmChain.caip2,
+  );
   const evmAccount = accounts.find((a) => a.chainId === EVM_CHAIN_ID);
   // The EVM address's ENS primary name (phase 23 item 6): read on mainnet
   // and Ethereum Sepolia only, re-read whenever Home gains focus.
@@ -390,7 +519,7 @@ export function HomeScreen({ navigation }: Props) {
   // tokens are never priced). The hook requests nothing while "Show fiat
   // values" is off.
   const priceIds = [
-    ...nativePriceIds(sepolia),
+    ...nativePriceIds(sepolia, solanaDevnet),
     ...tokens.map((t) => tokenPriceAssetId(t, evmChain.caip2)),
   ];
   const { quotes, refresh: refreshPrices } = usePrices(priceIds);
@@ -413,6 +542,17 @@ export function HomeScreen({ navigation }: Props) {
     useCallback(() => {
       void reloadTokens();
     }, [reloadTokens]),
+  );
+
+  // Solana tokens (phase 24 item 1): the tracked list of the network serving
+  // the Solana slot, re-read on every focus (and when devnet is switched).
+  const solanaAccount = accounts.find((a) => a.chainId === SOLANA_CHAIN_ID);
+  const splTokens = useSplTokens(noKey ? undefined : solanaAccount?.address, solanaDevnet);
+  const reloadSplTokens = splTokens.reload;
+  useFocusEffect(
+    useCallback(() => {
+      void reloadSplTokens();
+    }, [reloadSplTokens]),
   );
 
   // Balances after a send (Base Sepolia finding 7): Home stays mounted
@@ -515,6 +655,9 @@ export function HomeScreen({ navigation }: Props) {
     // because other screens use it. Only this card's visible title and its
     // screen-reader labels use the profile label.
     const title = isEvm ? evmChain.label : item.name;
+    // The Solana card on devnet (phase 24 item 1) keeps its title and says
+    // on its own line which network it shows.
+    const solanaDevnetLine = item.chainId === SOLANA_CHAIN_ID && solanaDevnet ? SOLANA_DEVNET_CARD_LINE : null;
     // Account tools that appear only after asynchronous eligibility checks
     // (session keys, guardians, passkey). They get their own row with its
     // height reserved from the start, so nothing above or below moves when
@@ -589,7 +732,7 @@ export function HomeScreen({ navigation }: Props) {
               ownership or smart-account box). */}
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`${title}, ${watchOnly ? t('home.card.watchedAddress', { address: item.address }) : shortAddress(item.address)}${isEvm && evmNameLine ? `, ${evmNameLine}` : ''}`}
+            accessibilityLabel={`${title}, ${watchOnly ? t('home.card.watchedAddress', { address: item.address }) : shortAddress(item.address)}${isEvm && evmNameLine ? `, ${evmNameLine}` : ''}${solanaDevnetLine ? `, ${solanaDevnetLine}` : ''}`}
             accessibilityHint={
               watchOnly ? tx('Opens the watched address and its QR code') : t('home.card.receive.hint', { title })
             }
@@ -606,6 +749,9 @@ export function HomeScreen({ navigation }: Props) {
               </Text>
               {isEvm && evmNameLine ? (
                 <Text style={[styles.address, { color: theme.textMuted }]}>{evmNameLine}</Text>
+              ) : null}
+              {solanaDevnetLine ? (
+                <Text style={[styles.address, { color: theme.testnetFill }]}>{solanaDevnetLine}</Text>
               ) : null}
             </View>
           </Pressable>
@@ -726,6 +872,48 @@ export function HomeScreen({ navigation }: Props) {
   // it, plus the entry point to the token management screen.
   const renderItem = ({ item }: { item: ChainAccount }) => {
     const card = renderChainCard({ item });
+    if (item.chainId === SOLANA_CHAIN_ID && !noKey) {
+      // The Solana row's tracked tokens (phase 24 item 1), shown only once
+      // the list belongs to the network serving the slot now.
+      const network = splTokens.network;
+      const tokensHere = network !== null && network === (solanaDevnet ? SOLANA_DEVNET_ROW_CAIP2 : SOLANA_CHAIN_ID) ? splTokens.tokens : [];
+      const refusal = network !== null ? splSendGate(network) : null;
+      return (
+        <View style={styles.evmGroup}>
+          {card}
+          <View style={styles.tokenSection}>
+            {tokensHere.map((token) => {
+              const id = formatAssetId(token.assetId);
+              return (
+                <SolanaTokenRow
+                  key={id}
+                  token={token}
+                  state={splTokens.rows[id]}
+                  networkLabel={solanaNetworkLabel(token.assetId.chainId)}
+                  hidden={hideAmounts}
+                  onRetry={() => void reloadSplTokens()}
+                  {...(refusal === null ? { onSend: () => navigation.navigate('SolanaTokenSend', { assetId: id }) } : {})}
+                />
+              );
+            })}
+            {splTokens.error ? (
+              <Text style={[styles.manageTokens, { color: theme.danger }]}>{splTokens.error}</Text>
+            ) : null}
+            {splTokens.skipped > 0 ? (
+              <Text style={[styles.manageTokens, { color: theme.textMuted }]}>{splSkippedLine(splTokens.skipped)}</Text>
+            ) : null}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Manage Solana tokens"
+              onPress={() => navigation.navigate('SolanaTokens')}
+              hitSlop={8}
+            >
+              <Text style={[styles.manageTokens, { color: theme.accent }]}>Manage Solana tokens</Text>
+            </Pressable>
+          </View>
+        </View>
+      );
+    }
     if (item.chainId !== EVM_CHAIN_ID) return card;
     return (
       <View style={styles.evmGroup}>

@@ -63,6 +63,11 @@ interface PrefsContextValue {
    */
   notifications: boolean;
   /**
+   * The Solana slot on devnet (phase 24 item 1; config/prefs.ts
+   * AppPrefs.solanaDevnet). Default off.
+   */
+  solanaDevnet: boolean;
+  /**
    * True while an app PIN is set (wallet/pin.ts; read from the PIN record at
    * launch, before the wallet loads; null-as-false until then). While it is
    * on: auto-lock is forced on (`autoLockMs` is never null), screen
@@ -86,6 +91,7 @@ interface PrefsContextValue {
   setShowFiat: (on: boolean) => Promise<void>;
   setScreenProtection: (on: boolean) => Promise<void>;
   setNotifications: (on: boolean) => Promise<void>;
+  setSolanaDevnet: (on: boolean) => Promise<void>;
 }
 
 const PrefsContext = createContext<PrefsContextValue | null>(null);
@@ -152,6 +158,7 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
       // is kept, so turning the PIN off restores the user's choice.
       screenProtection: prefs.screenProtection || forced.screenProtection,
       notifications: forced.notifications,
+      solanaDevnet: prefs.solanaDevnet,
       appPinOn,
       customNetworks,
       // customNetworks is in the dependency list so a change to a custom
@@ -163,6 +170,7 @@ export function PrefsProvider({ children }: { children: React.ReactNode }) {
       setAutoLockMs: (ms) => (appPinOn && ms === null ? Promise.reject(new Error(APP_PIN_FORCES_MESSAGE)) : patch({ autoLockMs: ms })),
       setShowFiat: (on) => patch({ showFiat: on }),
       setScreenProtection: (on) => patch({ screenProtection: on }),
+      setSolanaDevnet: (on) => patch({ solanaDevnet: on }),
       setNotifications: (on) => (appPinOn && on ? Promise.reject(new Error(notificationsOffWithLock(appLockKind.get()))) : patch({ notifications: on })),
     };
   }, [ready, prefs, patch, customNetworks, appPinOn]);

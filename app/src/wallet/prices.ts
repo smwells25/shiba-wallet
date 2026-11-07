@@ -149,8 +149,8 @@ export function tokenPriceAssetId(token: FungibleAsset, activeEvmCaip2: string):
  * null. Computed up front (not per loaded balance) so Home asks for all
  * natives in one request instead of one per arriving balance.
  */
-export function nativePriceIds(sepolia: boolean): (string | null)[] {
-  return resolveActiveNetworks(sepolia).map(({ slot, network }) =>
+export function nativePriceIds(sepolia: boolean, solanaDevnet = false): (string | null)[] {
+  return resolveActiveNetworks(sepolia, solanaDevnet).map(({ slot, network }) =>
     nativePriceAssetId(slot, network.chainId),
   );
 }

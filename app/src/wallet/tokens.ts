@@ -15,6 +15,14 @@ import type { Asset, FungibleAsset } from '@shiba-wallet/core';
 // Explicit .ts extensions: this module is imported by scripts/check-tokens.mjs
 // under Node's type stripping, which resolves relative specifiers literally.
 import { USDC_MAINNET } from './erc20.ts';
+// The engine's Solana token tables (phase 24 item 1). A package import, so
+// Node's type stripping and Metro load the same built module.
+import {
+  KNOWN_SOLANA_TOKENS,
+  SOLANA_DEVNET_CAIP2,
+  SOLANA_MAINNET_CAIP2,
+  solanaFungibleAsset,
+} from '@shiba-wallet/chains-solana';
 import { EVM_MAINNET, allEvmProfiles, evmProfileByCaip2, evmProfileFor, isBuiltInEvmChain } from '../config/evm-chain.ts';
 import { loadPrefs } from '../config/prefs.ts';
 
@@ -91,6 +99,7 @@ export function isTokenChain(chainCaip2: string): boolean {
  */
 export function defaultTokensForChain(chainCaip2: string): FungibleAsset[] {
   if (chainCaip2 === EVM_MAINNET.caip2) return [USDC_MAINNET];
+  if (isSolanaTokenChain(chainCaip2)) return defaultSolanaTokens(chainCaip2);
   return knownTokensForChain(chainCaip2);
 }
 
@@ -542,6 +551,9 @@ export async function resetTrackedTokens(
   if (!store.removeItem) throw new Error('This store cannot delete keys, so the tracked-token lists were not reset.');
   const keys = new Set<string>([MAINNET_TOKENS_KEY]);
   for (const profile of allEvmProfiles()) keys.add(tokenStoreKey(profile.caip2));
+  // The Solana slot's two lists (phase 24 item 1), named here too so a store
+  // that cannot list its keys still loses them.
+  for (const caip2 of SOLANA_TOKEN_CHAINS) keys.add(tokenStoreKey(caip2));
   if (store.getAllKeys) {
     const ownPrefix = storeProfileOf(store).keyPrefix;
     const lister = store as { getAllKeys: () => Promise<readonly string[]> };
@@ -599,4 +611,98 @@ export function knownStakingTokensForChain(chainCaip2: string): KnownToken[] {
  */
 export function tokenRowSubtitle(token: Pick<FungibleAsset, 'symbol' | 'name'>): string {
   return token.name && token.name !== token.symbol ? `${token.name} · ERC-20` : 'ERC-20';
+}
+
+// ---------------------------------------------------------------------------
+// Solana tracked tokens (phase 24 item 1, feature 43)
+// ---------------------------------------------------------------------------
+
+/**
+ * The two Solana networks whose tracked lists this wallet keeps: Solana
+ * mainnet and Solana devnet, by the engine's CAIP-2 ids
+ * (packages/chains-solana tokenTransfer.ts SOLANA_MAINNET_CAIP2 /
+ * SOLANA_DEVNET_CAIP2, from the ChainAgnostic namespaces repository
+ * solana/caip2.md). Each list is stored like an EVM test network's, under
+ * shiba-wallet.tokens.v1.<CAIP-2> (the declared tokensPerChain family in
+ * store-keys.ts), as core's AssetRegistry JSON; entries are fungible assets
+ * in the CAIP-19 "token" namespace whose reference is the mint address, so
+ * the registry stays chain-agnostic.
+ */
+export const SOLANA_TOKEN_CHAINS: readonly string[] = [SOLANA_MAINNET_CAIP2, SOLANA_DEVNET_CAIP2];
+
+/** True for the two Solana networks above. */
+export function isSolanaTokenChain(chainCaip2: string): boolean {
+  return SOLANA_TOKEN_CHAINS.includes(chainCaip2);
+}
+
+/**
+ * The list a Solana network starts with: USDC only — Circle's devnet USDC
+ * (4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU) on devnet and Circle's USDC
+ * (EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v) on mainnet, both from the
+ * engine's KNOWN_SOLANA_TOKENS (Circle's "USDC contract addresses" page,
+ * fetched 2026-11-07; the devnet mint read on-chain that day, the mainnet
+ * mint NOT read on-chain by the engine slice). Paxos's devnet PYUSD is known
+ * to the engine but deliberately not default-tracked. The decimals stored
+ * here come from that table; the wallet re-reads the mint before it shows a
+ * balance and before every send (spl-tokens.ts), and a send is refused when
+ * the mint's own decimals differ.
+ */
+export function defaultSolanaTokens(chainCaip2: string): FungibleAsset[] {
+  return KNOWN_SOLANA_TOKENS.filter((t) => t.caip2 === chainCaip2 && t.symbol === 'USDC').map((t) =>
+    solanaFungibleAsset({ caip2: t.caip2, mint: t.mint, symbol: t.symbol, name: t.name, decimals: t.decimals }),
+  );
+}
+
+/** The tracked tokens of one Solana network, in stored order (that network's defaults when never edited). */
+export async function listSolanaTokens(
+  chainCaip2: string,
+  store: KeyValueStore = AsyncStorage,
+): Promise<FungibleAsset[]> {
+  if (!isSolanaTokenChain(chainCaip2)) return [];
+  const registry = await loadTokenRegistry(chainCaip2, store);
+  return registry
+    .list(chainCaip2)
+    .filter((a): a is FungibleAsset => a.kind === 'fungible' && a.assetId.namespace === 'token');
+}
+
+/**
+ * Adds a Solana token to the list of its own network (the asset's CAIP-2
+ * id). Refuses another chain, an asset outside the CAIP-19 "token"
+ * namespace, and a duplicate by CAIP-19 id (the mint address is the
+ * reference, and base58 has one spelling, so a mint cannot be added twice).
+ */
+export async function addSolanaToken(
+  asset: FungibleAsset,
+  store: KeyValueStore = AsyncStorage,
+): Promise<void> {
+  const chain = asset.assetId.chainId;
+  if (!isSolanaTokenChain(chain)) {
+    throw new Error(`Solana tokens can only be tracked on Solana mainnet or Solana devnet (got ${chain}).`);
+  }
+  if (asset.kind !== 'fungible' || asset.assetId.namespace !== 'token') {
+    throw new Error('Only fungible Solana tokens can be tracked.');
+  }
+  const registry = await loadTokenRegistry(chain, store);
+  const id = formatAssetId(asset.assetId);
+  if (registry.get(id)) throw new Error(`This token is already in your list (${id}).`);
+  registry.add(asset as Asset);
+  await saveTokenRegistry(chain, registry, store);
+}
+
+/** Removes a Solana token by CAIP-19 id from the list of the network the id names. */
+export async function removeSolanaToken(
+  assetId: string,
+  store: KeyValueStore = AsyncStorage,
+): Promise<boolean> {
+  let chain: string;
+  try {
+    chain = parseAssetId(assetId).chainId;
+  } catch {
+    return false;
+  }
+  if (!isSolanaTokenChain(chain)) return false;
+  const registry = await loadTokenRegistry(chain, store);
+  const removed = registry.remove(assetId);
+  if (removed) await saveTokenRegistry(chain, registry, store);
+  return removed;
 }

@@ -1724,6 +1724,7 @@ export async function sendSol(
   url: string,
   signer: DerivedAccount,
   quote: SolSendQuote,
+  networkChainId: string = SOLANA_CHAIN_ID,
 ): Promise<SendResult> {
   const client = new SolanaRpcClient(solanaHttpTransport(url));
   const { blockhash } = await client.getLatestBlockhash('confirmed');
@@ -1733,7 +1734,12 @@ export async function sendSol(
   ]);
   const signature = await client.sendTransaction(signed.wireBytes);
   notifySendAccepted();
-  return { txid: signature, explorerUrl: `https://solscan.io/tx/${signature}` };
+  // Solscan's page is for mainnet; on Solana devnet (phase 24 item 1) no
+  // devnet explorer link has been verified, so none is shown.
+  return {
+    txid: signature,
+    explorerUrl: networkChainId === SOLANA_CHAIN_ID ? `https://solscan.io/tx/${signature}` : null,
+  };
 }
 
 // ---------------------------------------------------------------------------

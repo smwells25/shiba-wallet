@@ -455,6 +455,8 @@ export const en = {
   // ---- Wallet handle (phase 23 item 6; screens/HandleScreen.tsx, wallet/handle.ts) ----
   'readiness.wallet-handle.title': 'Wallet handles (ENS names)',
   'readiness.wallet-handle.reason': 'A wallet handle is an ENS name registered on Ethereum Sepolia’s ENSv2 test contracts, which ENS has redeployed before and which single keys can change there, so a name may not survive. ENSv2 has not launched on Ethereum mainnet, where names still go through contracts this wallet does not use. This wallet registers handles only on Ethereum Sepolia, paid in test USDC.',
+  'readiness.spl-tokens.title': 'Solana token sends (SPL Token and Token-2022)',
+  'readiness.spl-tokens.reason': 'No Solana token transfer through this wallet’s token layer has been sent on any network yet: the transfers are built and checked offline only. Token-2022 tokens whose extensions this wallet cannot show honestly (a transfer hook, non-transferable, paused, an adjusted display amount or an unknown extension) are refused by class, and a token with a transfer-fee setting is sent only with the fee shown before you approve. This wallet offers Solana token sends only on Solana devnet.',
   'handle.title': 'Wallet handle (ENS)',
   'handle.link.hint': 'Registers an ENS name for this account on Ethereum Sepolia',
   'handle.intro': 'A handle is a .eth name that points to this account: people can send to the name instead of the address, and wallets that read ENS show the name for the address. This wallet registers handles only on Ethereum Sepolia, a test network, so it is a test-network name, separate from mainnet names.',

@@ -223,6 +223,49 @@ export const BASE_SEPOLIA_NETWORK: NetworkDefault = {
 };
 
 /**
+ * Solana DEVNET (phase 24 item 1, the app half of the Solana token layer):
+ * the network the Solana slot uses while Settings → Developer → "Use Solana
+ * devnet" is on (AppPrefs.solanaDevnet). Its CAIP-2 id is the engine's
+ * SOLANA_DEVNET_CAIP2 (packages/chains-solana/src/tokenTransfer.ts: the first
+ * 32 characters of devnet's genesis hash, from the ChainAgnostic namespaces
+ * repository solana/caip2.md and confirmed by getGenesisHash on
+ * api.devnet.solana.com on 2026-11-07); scripts/check-spl-tokens.mjs pins
+ * the two equal. The endpoint probe (./endpoint-probe.ts) compares
+ * getGenesisHash with this reference before an endpoint is used, so a
+ * mainnet endpoint can never serve the devnet slot.
+ *
+ * Candidates, in order:
+ *  1. https://api.devnet.solana.com — the Devnet endpoint in Solana's
+ *     clusters page (solana-foundation/solana-com
+ *     apps/docs/content/docs/en/references/clusters.mdx at 31f66e08, read
+ *     2026-11-07: "single Solana Labs hosted API node; rate-limited", 100
+ *     requests per 10 seconds per IP).
+ *  2. https://solana-devnet.api.onfinality.io/public — OnFinality's public
+ *     Solana Devnet endpoint (https://onfinality.io/networks/solana-devnet,
+ *     read 2026-11-07: "Public endpoint rate limit: 5 req/sec"; its quick
+ *     start sends no API key, which the page does not state in words).
+ * Both answered devnet's genesis hash on 2026-11-07 in the engine's devnet
+ * dry run (scripts/testnet/spl-token-smoke.mjs). Devnet SOL has no value, so
+ * the symbol reads "test SOL" and no price is ever requested for it
+ * (wallet/prices.ts nativePriceAssetId: the slot id differs from this one).
+ */
+export const SOLANA_DEVNET_CAIP2 = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1';
+const SOLANA_DEVNET_RPC_DEFAULTS: readonly string[] = [
+  'https://api.devnet.solana.com',
+  'https://solana-devnet.api.onfinality.io/public',
+];
+export const SOLANA_DEVNET_NETWORK: NetworkDefault = {
+  chainId: SOLANA_DEVNET_CAIP2,
+  label: 'Solana devnet',
+  kind: 'solana-jsonrpc',
+  defaultUrls: SOLANA_DEVNET_RPC_DEFAULTS,
+  defaultUrl: SOLANA_DEVNET_RPC_DEFAULTS[0],
+  decimals: 9,
+  symbol: 'test SOL',
+  note: 'Solana devnet — balances and sends here are test SOL and test tokens, not real funds.',
+};
+
+/**
  * The network entry of a test profile that has no hand-written entry
  * above: derived from the profile alone, so a new profile in
  * ./evm-chain.ts gets its row without another list to edit here.
@@ -281,6 +324,7 @@ export function customEvmNetworks(): NetworkDefault[] {
 }
 
 export function networkDefaultFor(chainId: string): NetworkDefault | undefined {
+  if (chainId === SOLANA_DEVNET_CAIP2) return SOLANA_DEVNET_NETWORK;
   const test = TEST_EVM_NETWORKS.find((n) => n.chainId === chainId);
   if (test) return test;
   const builtIn = DEFAULT_NETWORKS.find((n) => n.chainId === chainId);
@@ -292,7 +336,10 @@ export function networkDefaultFor(chainId: string): NetworkDefault | undefined {
 /**
  * One chain "slot" of the app (the four launch chains, keyed by the
  * mainnet CAIP-2 ids the accounts and routes carry) resolved to the
- * network that is ACTIVE for it right now. Only the EVM slot ever swaps:
+ * network that is ACTIVE for it right now. The EVM slot swaps (below), and
+ * since phase 24 the Solana slot swaps to SOLANA_DEVNET_NETWORK while
+ * `solanaDevnet` is true (a separate Developer switch, off by default).
+ * For the EVM slot:
  * with a test network chosen, its network becomes that test network's
  * entry (SEPOLIA_NETWORK or BASE_SEPOLIA_NETWORK) while `slot` stays
  * 'eip155:1' so accounts, navigation params and per-slot UI keep matching.
@@ -321,10 +368,15 @@ function evmNetworkFor(selection: boolean | string | null): NetworkDefault | nul
   return custom ? customNetworkDefault(custom) : SEPOLIA_NETWORK;
 }
 
-export function resolveActiveNetworks(selection: boolean | string | null): ActiveNetwork[] {
+export function resolveActiveNetworks(selection: boolean | string | null, solanaDevnet = false): ActiveNetwork[] {
   const testNetwork = evmNetworkFor(selection);
   return DEFAULT_NETWORKS.map((n) => ({
     slot: n.chainId,
-    network: n.kind === 'evm-jsonrpc' && testNetwork ? testNetwork : n,
+    network:
+      n.kind === 'evm-jsonrpc' && testNetwork
+        ? testNetwork
+        : n.kind === 'solana-jsonrpc' && solanaDevnet
+          ? SOLANA_DEVNET_NETWORK
+          : n,
   }));
 }

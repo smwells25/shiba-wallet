@@ -109,4 +109,12 @@ export type RootStackParamList = {
    * not on the list is ignored.
    */
   Apps: { origin?: string } | undefined;
+  /**
+   * The tracked Solana tokens of the Solana slot's active network (mainnet,
+   * or devnet while Settings → Developer → "Use Solana devnet" is on), and
+   * adding one by its mint address (phase 24 item 1, feature 43).
+   */
+  SolanaTokens: undefined;
+  /** Sends one tracked Solana token, by its CAIP-19 id (phase 24 item 1). */
+  SolanaTokenSend: { assetId: string };
 };

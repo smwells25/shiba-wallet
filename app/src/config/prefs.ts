@@ -80,6 +80,15 @@ export interface AppPrefs {
    * a notification is an opt-in. Only an explicit stored `true` reads as on.
    */
   notifications: boolean;
+  /**
+   * The Solana slot on DEVNET instead of mainnet (phase 24 item 1; Settings →
+   * Developer → "Use Solana devnet"). Default OFF, and only an explicit stored
+   * `true` reads as on, so nobody's Solana row moves without a choice. While
+   * it is on, the Solana row, its sends, its history and its tracked tokens
+   * all use Solana devnet (config/defaults.ts SOLANA_DEVNET_NETWORK). It is
+   * separate from `testNetwork`, which chooses only the EVM network.
+   */
+  solanaDevnet: boolean;
 }
 
 export const DEFAULT_PREFS: AppPrefs = {
@@ -90,6 +99,7 @@ export const DEFAULT_PREFS: AppPrefs = {
   showFiat: true,
   screenProtection: true,
   notifications: false,
+  solanaDevnet: false,
 };
 
 /** The selectable auto-lock thresholds: off, 1 minute, 5 minutes. */
@@ -117,6 +127,7 @@ function sanitize(parsed: unknown): AppPrefs {
     screenProtection:
       typeof p.screenProtection === 'boolean' ? p.screenProtection : DEFAULT_PREFS.screenProtection,
     notifications: p.notifications === true,
+    solanaDevnet: p.solanaDevnet === true,
   };
 }
 

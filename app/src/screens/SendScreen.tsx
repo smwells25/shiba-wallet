@@ -1690,7 +1690,7 @@ export function SendScreen({ route, navigation }: Props) {
         // calldata — through the same sendEvm signing/broadcast path.
         if (quote.kind === 'nft') return sendNft(sendUrl, signer, quote, evmChain.explorerTxBase);
         if (quote.kind === 'evm') return sendEvm(sendUrl, signer, quote, evmChain.explorerTxBase);
-        if (quote.kind === 'sol') return sendSol(sendUrl, signer, quote);
+        if (quote.kind === 'sol') return sendSol(sendUrl, signer, quote, endpoint?.network.chainId);
         return sendUtxo(sendUrl, route.params.chainId, signer, quote, utxoOptions);
       });
       setResult(sent);

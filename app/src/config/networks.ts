@@ -199,7 +199,7 @@ export async function getEndpoint(
 ): Promise<NetworkEndpoint | undefined> {
   const store = options.store ?? AsyncStorage;
   const [overrides, prefs] = await Promise.all([loadOverrides(store), loadPrefs(store)]);
-  const match = resolveActiveNetworks(prefs.testNetwork).find(
+  const match = resolveActiveNetworks(prefs.testNetwork, prefs.solanaDevnet).find(
     (e) => e.slot === chainId || e.network.chainId === chainId,
   );
   return match ? resolveSlot(match.slot, match.network, overrides, store) : undefined;
@@ -212,7 +212,7 @@ export async function getAllEndpoints(
   const store = options.store ?? AsyncStorage;
   const [overrides, prefs] = await Promise.all([loadOverrides(store), loadPrefs(store)]);
   return Promise.all(
-    resolveActiveNetworks(prefs.testNetwork).map(({ slot, network }) =>
+    resolveActiveNetworks(prefs.testNetwork, prefs.solanaDevnet).map(({ slot, network }) =>
       resolveSlot(slot, network, overrides, store),
     ),
   );

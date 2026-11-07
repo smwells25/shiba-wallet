@@ -116,6 +116,8 @@ const EXPECTED_IDS = [
   'cold-aa',
   // Phase 23 item 6: a wallet handle on Ethereum Sepolia (gate in wallet/handle.ts).
   'wallet-handle',
+  // Phase 24 item 1: Solana token sends on Solana devnet (gate in wallet/spl-tokens.ts).
+  'spl-tokens',
 ];
 const ids = FEATURE_READINESS.map((f) => f.id);
 check('every expected feature id is present exactly once', EXPECTED_IDS.every((id) => ids.filter((x) => x === id).length === 1) && ids.length === EXPECTED_IDS.length, ids.join());
@@ -246,6 +248,20 @@ for (const id of ['eoa-send', 'tokens', 'nft', 'swap', 'walletconnect', 'dogecoi
   check('wallet-handle is refused on mainnet and allowed by readiness on every built-in test network (the screen allows only Sepolia)',
     !isFeatureAllowed('wallet-handle', MAINNET) && TEST_NETWORK_CHAINS.every((c) => isFeatureAllowed('wallet-handle', c)));
 }
+// Phase 24 item 1 (feature 43): Solana token sends are testnet-only and
+// enforced, allowed on Solana devnet only (SOLANA_TEST_NETWORK_CHAINS) and on
+// no Solana main network; the reason says no transfer has been sent through
+// the layer yet and that Token-2022 extensions are refused by class.
+{
+  const f = featureReadiness('spl-tokens');
+  check('spl-tokens is testnet-only, enforced, evidence W1 W2 W9 W13',
+    f.status === 'testnet-only' && f.enforced === true && f.evidence.join() === 'W1,W2,W9,W13', JSON.stringify(f));
+  check('spl-tokens: allowed on Solana devnet only, refused on Solana mainnet and Ethereum mainnet',
+    isFeatureAllowed('spl-tokens', 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1') && !isFeatureAllowed('spl-tokens', 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp') &&
+      !isFeatureAllowed('spl-tokens', MAINNET) && isTestNetwork('solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1') && !isTestNetwork('solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'));
+  check('spl-tokens reason: no transfer sent on any network yet; Token-2022 extensions refused by class; Solana devnet only',
+    /has been sent on any network yet/.test(f.reason) && /refused by class/.test(f.reason) && /only on Solana devnet\.$/.test(f.reason), f.reason);
+}
 check('dogecoin-send names W6 (the one real broadcast)', featureReadiness('dogecoin-send').evidence.includes('W6'));
 check('swap names W7 (a live 0x quote)', featureReadiness('swap').evidence.includes('W7'));
 check('paymaster names W8 (live sponsorship)', featureReadiness('paymaster').evidence.includes('W8'));
@@ -261,7 +277,7 @@ check('walletconnect names W11 and W12 (permit decoding, dApp identity)', ['W11'
       /tested offline/.test(wc) && /live app over the WalletConnect relay/.test(wc) && /not yet cleared for real funds/.test(wc), wc);
 }
 // Every enforced feature has a gate in the app modules (static check).
-const gateSources = ['aa.ts', 'delegation.ts', 'sessions.ts', 'passkeys.ts', 'recovery.ts', 'token-gas.ts', 'inheritance.ts', 'browser-bridge.ts', 'multisig.ts', 'staking.ts', 'bridge.ts', 'handle.ts']
+const gateSources = ['aa.ts', 'delegation.ts', 'sessions.ts', 'passkeys.ts', 'recovery.ts', 'token-gas.ts', 'inheritance.ts', 'browser-bridge.ts', 'multisig.ts', 'staking.ts', 'bridge.ts', 'handle.ts', 'spl-tokens.ts']
   .map((f) => readFileSync(join(HERE, '..', 'src', 'wallet', f), 'utf8'))
   .join('\n');
 for (const f of FEATURE_READINESS.filter((x) => x.enforced)) {

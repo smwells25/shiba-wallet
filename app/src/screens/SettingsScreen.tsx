@@ -1889,6 +1889,16 @@ function LanguageSection() {
   );
 }
 
+/** Settings → Developer: the Solana devnet switch (phase 24 item 1). */
+const SOLANA_DEVNET_SWITCH_LABEL = 'Use Solana devnet';
+const SOLANA_DEVNET_OFF_NOTE =
+  'Off: the Solana row is on Solana mainnet. On: the Solana row, its sends, its history and its tracked tokens use ' +
+  'Solana devnet, where SOL and tokens have no value. This choice is separate from the Ethereum network above. ' +
+  'Solana token sends are offered only on devnet.';
+const SOLANA_DEVNET_ON_NOTE =
+  'Solana devnet is on: the Solana row shows test SOL and devnet tokens, which have no value. Solana token sends ' +
+  'are offered here (test networks only). Turn it off to return the Solana row to mainnet.';
+
 export function SettingsScreen({ navigation, route }: Props) {
   const theme = useTheme();
   // Localisation (phase 22 item 6): the screen re-renders when the language
@@ -1951,6 +1961,8 @@ export function SettingsScreen({ navigation, route }: Props) {
   const navigationBarLine = navigationBarOutcomeLine(navigationBarOutcome);
   // Settings → Privacy (phase 17 item 0): the app-wide screen protection.
   const { screenProtection, setScreenProtection } = usePrefs();
+  // Settings → Developer (phase 24 item 1): the Solana slot on devnet.
+  const { solanaDevnet, setSolanaDevnet } = usePrefs();
   const screenProtectionStatus = React.useSyncExternalStore(
     appScreenProtection().subscribe,
     appScreenProtection().status,
@@ -2914,6 +2926,23 @@ export function SettingsScreen({ navigation, route }: Props) {
         {navigationBarLine !== null ? (
           <Text style={[styles.hint, { color: theme.text }]}>{navigationBarLine}</Text>
         ) : null}
+        {/* The Solana slot on devnet (phase 24 item 1): separate from the
+            EVM network above, off by default. */}
+        <View style={styles.toggleRow}>
+          <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text, flexShrink: 1, marginRight: 12 }]}>
+            {SOLANA_DEVNET_SWITCH_LABEL}
+          </Text>
+          <Switch {...switchColors(theme)}
+            accessibilityLabel={SOLANA_DEVNET_SWITCH_LABEL}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: solanaDevnet }}
+            value={solanaDevnet}
+            onValueChange={(v) => void setSolanaDevnet(v)}
+          />
+        </View>
+        <Text style={[styles.hint, { color: solanaDevnet ? theme.testnetFill : theme.textMuted }]}>
+          {solanaDevnet ? SOLANA_DEVNET_ON_NOTE : SOLANA_DEVNET_OFF_NOTE}
+        </Text>
         <CustomNetworksSection customNetworks={customNetworks} choice={testNetwork} onChoose={setTestNetwork} />
       </View>
 

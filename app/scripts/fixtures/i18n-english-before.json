@@ -12947,7 +12947,9 @@
   "settings.navBar.unsupported",
   "bridge.measuredAttestation.one",
   "bridge.measuredAttestation.many",
-  "bridge.approve.totalNote"
+  "bridge.approve.totalNote",
+  "readiness.spl-tokens.title",
+  "readiness.spl-tokens.reason"
  ],
  "changed": {
   "activity.note.privacy": {

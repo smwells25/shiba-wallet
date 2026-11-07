@@ -25,7 +25,7 @@ import { useI18n } from '../i18n/useI18n';
 import { localTimestampLabel } from '../i18n/format';
 import { activityRowSpokenLead, spokenShortAddress } from '../a11y';
 import { Theme, useTheme } from '../theme';
-import { networkDefaultFor } from '../config/defaults';
+import { SOLANA_DEVNET_CAIP2, networkDefaultFor } from '../config/defaults';
 import { maskAmount } from '../config/prefs';
 import {
   formatBalanceDisplay,
@@ -40,7 +40,7 @@ import {
   hidesZeroNativeAmount,
   transactionsWithTokenAmounts,
 } from '../wallet/history';
-import { EVM_CHAIN_ID } from '../wallet/send';
+import { EVM_CHAIN_ID, SOLANA_CHAIN_ID } from '../wallet/send';
 import { useHistory } from '../wallet/useHistory';
 import { usePrefs } from '../wallet/PrefsContext';
 import { useWallet } from '../wallet/WalletContext';
@@ -690,7 +690,12 @@ export function ActivityScreen({ navigation, route }: Props) {
   const { language, t, tx, localize } = useI18n();
   const { chainId } = route.params;
   const { accounts, activeAccount, accountList, watchOnlyAccounts } = useWallet();
-  const { hideAmounts, evmChain } = usePrefs();
+  const { hideAmounts, evmChain, solanaDevnet } = usePrefs();
+  // The id the explorer link is built for: on Solana devnet (phase 24 item 1)
+  // the devnet id, for which history.ts explorerTxUrl has no explorer (none
+  // verified), so a devnet transaction gets no link rather than a mainnet
+  // page that would not find it.
+  const explorerChainId = chainId === SOLANA_CHAIN_ID && solanaDevnet ? SOLANA_DEVNET_CAIP2 : chainId;
   const account = accounts.find((a) => a.chainId === chainId);
   const network = networkDefaultFor(chainId);
   // The active regular account's smart account is listed too, when the
@@ -975,7 +980,7 @@ export function ActivityScreen({ navigation, route }: Props) {
       nativeSymbol: symbol,
       nativeDecimals: network.decimals,
       notes: noteIndex,
-      explorerUrlFor: (id) => explorerTxUrl(chainId, id, evmChain.explorerTxBase),
+      explorerUrlFor: (id) => explorerTxUrl(explorerChainId, id, evmChain.explorerTxBase),
       counterpartyFor: (id) => (isEvmSlot ? sentences.lookup(id)?.description.counterparty ?? null : null),
       userOpHashesFor: (id) => (isEvmSlot ? userOpHashesFor(id) : []),
     });
@@ -1092,7 +1097,7 @@ export function ActivityScreen({ navigation, route }: Props) {
           return (
           <EntryRow
             entry={item}
-            chainId={chainId}
+            chainId={explorerChainId}
             decimals={network.decimals}
             symbol={symbol}
             hidden={hideAmounts}

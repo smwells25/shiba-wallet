@@ -101,7 +101,9 @@ export type FeatureId =
   // Phase 23 item 5: cold signing for a watched owner's smart account (feature 11).
   | 'cold-aa'
   // Phase 23 item 6: a wallet handle (an ENS name) registered on Ethereum Sepolia.
-  | 'wallet-handle';
+  | 'wallet-handle'
+  // Phase 24 item 1: Solana token sends (SPL Token and Token-2022) on Solana devnet.
+  | 'spl-tokens';
 
 export interface FeatureReadiness {
   id: FeatureId;
@@ -553,7 +555,38 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
     evidence: ['C1', 'W1', 'W2', 'W9', 'W13'],
     enforced: true,
   },
+  // Phase 24 item 1 (feature 43): Solana token sends through the engine's
+  // token layer (packages/chains-solana tokenTransfer.ts; app glue
+  // wallet/spl-tokens.ts, which holds the gate). Appended at the end of the
+  // table. Evidence: W1 / W2 (the device conditions every send shares: the
+  // transfer is signed by the phrase account's Solana key after the device
+  // check), W9 (the switchboard that enforces this row) and W13 (every fact
+  // the quote decides on is read from one RPC provider). Listing and reading
+  // tracked Solana tokens is not gated: only the send is.
+  {
+    id: 'spl-tokens',
+    title: 'Solana token sends (SPL Token and Token-2022)',
+    status: 'testnet-only',
+    reason:
+      'No Solana token transfer through this wallet’s token layer has been sent on any network yet: the transfers ' +
+      'are built and checked offline only. Token-2022 tokens whose extensions this wallet cannot show honestly (a ' +
+      'transfer hook, non-transferable, paused, an adjusted display amount or an unknown extension) are refused by ' +
+      'class, and a token with a transfer-fee setting is sent only with the fee shown before you approve. This wallet ' +
+      'offers Solana token sends only on Solana devnet.',
+    evidence: ['W1', 'W2', 'W9', 'W13'],
+    enforced: true,
+  },
 ];
+
+/**
+ * The Solana CAIP-2 ids this wallet treats as test networks: Solana devnet
+ * only (config/defaults.ts SOLANA_DEVNET_CAIP2, the engine's
+ * SOLANA_DEVNET_CAIP2; phase 24 item 1). Kept apart from TEST_NETWORK_CHAINS,
+ * which lists exactly the EVM test profiles. Solana mainnet
+ * (solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp) and every other id count as main
+ * networks.
+ */
+export const SOLANA_TEST_NETWORK_CHAINS: readonly string[] = ['solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1'];
 
 /**
  * The CAIP-2 ids this wallet treats as test networks: exactly the
@@ -574,7 +607,8 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
 export const TEST_NETWORK_CHAINS: readonly string[] = EVM_TEST_PROFILES.map((p) => p.caip2);
 
 /**
- * True for a CAIP-2 id in TEST_NETWORK_CHAINS, and for a network the user
+ * True for a CAIP-2 id in TEST_NETWORK_CHAINS or SOLANA_TEST_NETWORK_CHAINS
+ * (Solana devnet, phase 24), and for a network the user
  * added (feature 33, wallet/custom-networks.ts) only when they marked it as
  * a test network AND its chain id is on the allow-list of well-known public
  * test networks (config/evm-chain.ts KNOWN_PUBLIC_TEST_CHAIN_IDS, re-checked
@@ -583,7 +617,7 @@ export const TEST_NETWORK_CHAINS: readonly string[] = EVM_TEST_PROFILES.map((p) 
  * plain features carry the same advisory status as on Ethereum mainnet.
  */
 export function isTestNetwork(caip2: string): boolean {
-  return TEST_NETWORK_CHAINS.includes(caip2) || isCustomTestNetwork(caip2);
+  return TEST_NETWORK_CHAINS.includes(caip2) || SOLANA_TEST_NETWORK_CHAINS.includes(caip2) || isCustomTestNetwork(caip2);
 }
 
 /** The table entry for one feature; throws for an unknown id (a programming error). */
