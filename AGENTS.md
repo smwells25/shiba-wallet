@@ -17975,7 +17975,7 @@ arrive; 6 last. Subagents on Opus.
       front.
 - [x] Pass p24-solfix2 findings FIXED — THE SOLANA HISTORY FOLLOWS THE TRACKED
       TOKENS' ASSOCIATED ACCOUNTS, AND THE ROWS ARE SPOKEN IN FULL (commit
-      CODEHASH; 19 files, +1,270 / −89, one new fixture
+      67daf2a; 19 files, +1,270 / −89, one new fixture
       packages/chains-solana/test/fixtures/devnet-token-account-history-
       2026-11-08.json; engine 1,340 → 1,349 (chains-solana 90 → 99),
       check-activity 310 (was 302), check-home 116 (114), check-i18n 199
@@ -18293,3 +18293,163 @@ arrive; 6 last. Subagents on Opus.
       SECURE window), night mode off, /sdcard/Download empty; Metro 19547 /
       19581 at 9dfd216 with only `adb reverse tcp:8081`; qemu 86708 (PRI 55)
       with caffeinate 86986, the window in front; the main checkout clean.
+- [x] Item 6 — LEADERSHIP REFRESH (docs commit 3b65a0b; 4 documents, +61 / −28;
+      verified in the CTO's isolated worktree on HEAD 377d68a: apply 0 / 4
+      files, the staged patch id 749b07dd…0258 equal to the agent's,
+      check-readiness 229, check-screen-protection 87, check-devmode 476,
+      check-bridge 430, check-multisig 435, check-spl-tokens 153 all green on
+      the patched tree, the pre-commit scan clean). FEATURE_UNIVERSE section
+      15: row 43 (the Solana asset ecosystem) Not started → Proven live,
+      partial, with its limits (Solana devnet only behind a Developer switch
+      off by default; SPL Token and Token-2022 mints classified, fee-charging
+      mints sent only with the fee shown, non-transferable / hook-bearing /
+      paused / display-adjusted / unknown-extension mints refused by class;
+      USDC and EURC sent through the app incl. the recipient's account
+      creation; no Token-2022 transfer and no transfer with a non-zero fee
+      sent; compressed NFTs research only — a DAS provider is an input; no Max,
+      note field, pending entry or spending-limit count on the token send);
+      rows 8, 11, 27, 31, 38, 47, 52, 80, 82, 87, 90, 91, 92 and 95 extended
+      with this phase's passes and commits; the header's "record runs to"
+      sentence and the summary paragraph; the status column recounted by
+      script and by the page builder: PROVEN LIVE 60 (T1 29, T2 31), BUILT 18
+      (9 / 9), DESIGNED 2 (1 / 1), NOT STARTED 19 (1 / 3 / 15) — every count
+      sentence agrees. THREAT_MODEL: T-93 (the Solana token layer — the mint
+      read and classified before every balance and send, unsupported mints
+      refused by class, fee mints only through TransferCheckedWithFee, exact
+      transferChecked from the sender's associated account only, the issuer's
+      authorities named beside the quote, Activity attributing a balance only
+      to its recorded owner, the history following at most 4 mints within 18
+      requests; the trust in the issuers and the public devnet endpoints;
+      devnet only), F-87 (the stale SOL balance after a token send; fixed
+      56d095d, seen p24-solfix2), F-88 (Activity misdescribing Solana token
+      transfers and the history missing incoming transfers into an existing
+      token account; fixed 56d095d and 67daf2a, seen p24-solfix2 and
+      p24-solhist), F-89 (the zero-value Max estimate under-reserving gas
+      since Glamsterdam; found in p24-ios, fixed on all four Max paths, seen
+      in p24-recheck and p24-unblock bar the reason sentences and the
+      passkey path) — all four "Not rated in this refresh" like T-91, T-92
+      and F-85; F-85's note on the 3c78ce1 key removal (verified offline
+      only); spl-token-smoke.mjs in the 7.5 scripts table with no live leg;
+      section 7.4 at engine 1,349 / app 11,215 across 66 suites at acb84eb
+      (the new suite check-spl-tokens). DEMO: warning 2's rehearsal status for
+      the two new steps, warning 3's devnet switch, step 49 (the Solana
+      devnet switch, tracking a mint with its read-back and refusals, a USDC
+      send with the rent row, the SOL row refreshing, Activity on both
+      accounts; rehearsed in p24-solana, p24-recheck, p24-unblock,
+      p24-solfix2 and p24-solhist) and step 50 (a pending smart-account card
+      settling by itself; rehearsed in p24-a11y on two old cards, a fresh
+      operation not seen), the "cannot show" paragraph naming the Solana
+      limits. MAINNET_READINESS: the status line dated 2026-11-08; a Solana
+      bullet in section 2 (devnet only; the known-mint table — devnet USDC,
+      PYUSD and EURC, mainnet USDC and EURC; EURC's mainnet mint account read
+      once, USDC's mainnet mint never read on-chain, neither mainnet mint's
+      metadata read; what mainnet would need); section 4's second iOS
+      Simulator pass; a Solana bullet in the staged path (section 8) — the
+      CTO's staging proposal, not a recorded decision, and marked as the
+      memo's proposals are. THE SHAREABLE PAGE rebuilt with
+      .local/fu/build-fu.py (the previous base kept as
+      .local/fu/feature-universe.v26.html; 60 / 18 / 2 / 19 asserted in the
+      tiles, the table and the header; a phase 24 sentence added to the
+      static summary paragraph; the scan: one 40-hex run — the multisig
+      address already in v26 — no uuid, one inline script, one Google-Fonts
+      stylesheet, no project id) and PUBLISHED by the CTO as VERSION 27 of
+      https://claude.ai/artifact/JEfyMuPcMJ8YW5x3ZKitsw (the CTO read every
+      line of the new build and of the live version's saved source before
+      republishing, as the publishing tool now requires; the live source was
+      byte-identical to the v26 base bar the host's wrapper line). NOTED BY
+      THE REFRESH AGENT, acted on: the "Pass p24-solfix2 findings FIXED"
+      record carried an unreplaced "CODEHASH" placeholder (the CTO's sed had
+      missed it across a line break) — now 67daf2a; six zero-width spaces
+      sit inside "ZEROD​EV" in this file's own headings and sentences (from
+      earlier sessions; a quoted heading will not match a plain-text search)
+      — left as they are; rows 5 and 54 were not extended; DEMO step 49's
+      rent row needs a recipient that has never held the token, and the
+      record names none; the two untraced +20 USDC deposits are not in the
+      documents (their Activity rows name the senders; the Chairperson's
+      confirmation is pending).
+
+## Phase 24 status (2026-11-08)
+
+Items 0, 1, 3, 4 and 6, and item 5's Stage 2, are landed and pushed; item 2
+(the mainnet-readiness track) and item 5's Stage 3 wait on the Chairperson's
+inputs. The shareable page is at version 27 (60 proven live, 18 built, 2
+designed, 19 not started). PROVEN LIVE this phase, through the app's own
+screens on the emulator unless marked: Solana tokens on Solana devnet behind
+the Developer switch "Use Solana devnet" (feature 43, partial) — 1 USDC and 1
+EURC from Account 1 to Account 2, each creating the recipient's token account
+with the rent read from the node, and a third transfer into the account that
+then existed (passes p24-unblock and p24-solfix2), tracking a mint by its
+address with the read-back (devnet PYUSD, a Token-2022 mint with a
+0-basis-point fee setting, and EURC), Activity describing the transfers on
+both accounts and the history following the tracked tokens' associated
+accounts (passes p24-solfix2 and p24-solhist), and the SOL row refreshing by
+itself after a token send; Max on Ethereum Sepolia, a regular-account Max with
+no lowering and a smart-account Max exact to the wei with the fee in test ETH
+and in USDC (passes p24-recheck and p24-unblock); the ZeroDev bundler re-saved
+and verified on four networks after the stale project id (pass p24-unblock);
+pending smart-account cards settling by the poll (pass p24-a11y); TalkBack
+reading masked amounts as "(amount hidden)", the mint and the header address
+once, and Activity rows in full (passes p24-solhist and p24-a11y); and, in the
+iOS Simulator only, the PIN pad with the F-82 lockout, the shibawallet links,
+a Sepolia send with its Max sweep and the Spanish strings chosen in the app
+(pass p24-ios). Built and verified offline: the Token-2022 token layer in the
+engine (8b2bd97), EURC known on Solana devnet and mainnet (f383a57), the
+hardening leftovers (3c78ce1: the wipe removes keys, a watched owner's smart
+account named in Activity, the two-plain-sends wording, the watch-only token
+note), the iOS fixes (dfb5eba: the "System" language on iOS, the camera-less
+scanner, platform-aware notes, the backup fields scrolled into view, the inbox
+wording), Max estimated with a value on every path and the lowering sentence
+naming its reason (7b422a8, b7bd8df, b2819c9, 6959de9), and an access refusal
+named as such (7f89feb). Designed: the Tropic Square air-gapped signer and its
+Stage 3 demonstration plan (c23fb86). Engine: 1,349 tests. App: 66 offline
+suites, 11,215 checks at acb84eb.
+
+Findings for the Chairperson this phase: the ZeroDev project id stored on this
+machine and on the emulator was an old project that ZeroDev refuses (not an
+allowlist), and running kernel-smoke.mjs with a bundler URL set sent live from
+the dev EOA (bounded, test funds); since the Glamsterdam fork Max reserved too
+little gas because it estimated a zero-value transfer (F-89, fixed on every
+path); Solana's getSignaturesForAddress does not list a transfer into an
+existing token account under the owner's wallet, so the history missed
+incoming token transfers until it followed the associated accounts (F-88);
+Solana devnet's rent for a token account is 1,488,440 lamports, read from the
+node, not the classic figure; Circle's EURC uses the same mint address on
+Solana devnet and mainnet, two separate accounts; the proof-of-concept
+repository for the TROPIC01 never ran the PIN feature (MAC-and-Destroy), which
+disagrees with the Chairperson's recollection; the TROPIC01 software model
+cannot run on this Mac until a container runtime is running; on iOS the app's
+"System" language followed the app bundle's single declared language rather
+than the phone's (fixed, a Simulator re-check running); in the iOS Simulator
+the Settings sentence said no face unlock was enrolled although Face ID worked
+(cause not established); an earlier pass's "Press select to activate" finding
+was TalkBack's hint for the next button, as its own log showed; the two +20
+USDC deposits of 4 November on Account 1 and the Kernel are, by their Activity
+rows, from faucet-like senders — most likely the Chairperson's requests, not
+confirmed.
+
+Decisions and inputs still open: the fifteen Tropic Square questions in
+docs/TROPIC_SQUARE.md section 12.1 (the chip's identity and firmware through
+the read-only step R2, whether the earlier PIN run happened, the slot plan,
+keeping factory pairing slot 0, the display, Node with the Python helper, the
+model rehearsal route, the fund cap, the device's own phrase, who runs chip
+commands); item 2's inputs (a release signing key, the audit firm, budget and
+C1 scope, the git tag); whether Home should say that a Solana token send needs
+test SOL when an account holds none (finding F of pass p24-solfix2); explicit
+"Copy" accessibility actions for the mint and the Activity header address (a
+TalkBack user cannot reach the selectable text since acb84eb); the answers in
+docs/DURESS_WALLET.md section 8.5; dropping stash@{0}; Homebrew's rust and
+ruby ahead of rustup; one glance at the emulator window under -gpu swangle.
+On hold by the Chairperson: a native Spanish reviewer, the fiat off-ramp
+provider, the disclosure decision.
+
+Follow-ups (no inputs): the dfb5eba iOS fixes in the Simulator (a pass is
+running); a Token-2022 transfer and one with a non-zero transfer fee live
+(needs a devnet Token-2022 token in the wallet); Max, a note field, the pending
+list and spending limits for the Solana token send; the engine's refusal for a
+send with no SOL says "SOL" on devnet; masked amounts still spoken as bullets
+in the balance-change preview, approvals, typed-data summaries, spending-limit
+lines, portfolio and profit and loss; the Solana mainnet SOL card offers Send
+at 0 SOL; mainnet USDC's Solana mint not read on-chain; the threat-model
+ratings of T-91 to T-93 and F-85 to F-89; the readiness row spl-tokens could
+cite T-93 among its evidence; the readiness memo's Solana staged-path bullet
+is a proposal awaiting the Chairperson.
