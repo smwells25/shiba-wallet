@@ -18368,6 +18368,97 @@ arrive; 6 last. Subagents on Opus.
       documents (their Activity rows name the senders; the Chairperson's
       confirmation is pending).
 
+- [x] iOS SIMULATOR PASS p24-ios2 — THE dfb5eba FIXES RE-CHECKED: EIGHT OF
+      NINE PASS, THE PASSWORD-MANAGER SHEET STILL FAILS, AND THE SIMULATOR'S
+      FACE ID MYSTERY EXPLAINED (2026-11-08 20:47–~22:40 UTC; the Debug
+      Simulator build from 377d68a in wt-ios2 (its prebuild edits dropped and
+      remade; the APFS-cloned node_modules reused — the dependency files
+      differ from 626c5d7 only by the @solana/spl-token-metadata line);
+      `npm run build` 9.7 s, prebuild 4.1 s, `pod install` 52 s / 117 pods —
+      NO OpenSSL download this time because QuickCrypto.podspec 38–60 fetches
+      and checksums the archive only when ios/openssl is missing and the
+      cloned node_modules held the copy verified on 2026-11-07, so this
+      build's OpenSSL was not re-checked; xcodebuild BUILD SUCCEEDED in 5 min
+      34 s with the p24-ios derived data reused, 0 errors, 2,416 warning
+      lines; the .app 141,620 KB x86_64, bundle id com.anonymous.shiba-wallet,
+      CFBundleDevelopmentRegion en with no CFBundleLocalizations, URL schemes
+      shibawallet / com.anonymous.shiba-wallet / exp+shiba-wallet; device
+      shiba-ios3 (iPhone 17, iOS 26.5); Metro 8083 with lazy bundling off,
+      2,457 modules; a THROWAWAY wallet; the driver was cut once by the Opus
+      limit after check 1 and resumed with the device, Metro and the wallet
+      intact; nothing sent, no funds, .dev-wallet not read, no repository
+      file edited; the report step by step in the previous session's
+      scratchpad p24-ios2/REPORT.md with screenshots). (1) THE "SYSTEM"
+      LANGUAGE — PASS: AppleLanguages ( es ) and AppleLocale es_ES written
+      with simctl and read back, ONE reboot, Language left at "System" → the
+      app read "Ajustes", "Ocultar importes", "Enviar ↗ Actividad
+      Intercambiar NFT…", the chip "✓ Sistema" with "En uso ahora:
+      Español.", the Sepolia banner "RED DE PRUEBA: el modo de prueba Sepolia
+      está activado. Los importes son ETH de prueba, no fondos reales.";
+      back to ( en ) / en_US and a reboot → "In use now: English." (a
+      region-tagged value such as es-ES not tried). (2) THE BACKUP-WORD FIELD
+      — FAIL, three runs: the moment the first "Word N of your recovery
+      phrase" field took focus iOS showed "Use Strong Password? / Protect
+      your account with a strong, unique password. It will be saved in
+      "Passwords". / Fill Strong Password" in place of the keyboard —
+      textContentType "none" does not stop it, and because dfb5eba now
+      focuses the first field automatically the sheet appears with no tap;
+      closing it with X left both fields empty; one driving slip tapped
+      "Fill Strong Password", which put a generated password into BOTH word
+      fields (no PIN was set, the keychain shows iOS saved no password); each
+      run ended with Cancel → "Nothing was changed."; candidate fixes,
+      untested: textContentType "oneTimeCode", or dropping secureTextEntry on
+      these two fields. (3) THE NO-CAMERA SCANNER — PASS: Send → Scan →
+      "Allow camera access" → iOS's prompt with the app.json usage string →
+      exactly "This device has no camera that this app can use, so a QR code
+      cannot be scanned here; paste the text instead."; the empty grey
+      preview is gone. (4) THE iOS NOTES — PASS: Settings → Notifications
+      "…iOS keeps a scheduled reminder and shows it at its time even when the
+      wallet is not running…" and the Inbox "A phone reminder is listed at
+      the time it was set to appear. iOS keeps a scheduled reminder and
+      shows it at that time even when the wallet is not running.", no
+      Android sentence on either. (5) PASS: "Point the camera at an Ethereum
+      address or payment-request QR code. The camera is only used to read
+      the code." (6) SCROLL-AND-FOCUS — PASS: the backup step lands right
+      under the header (the instruction at about y 128 pt, the captions at
+      177 and 254, Check / Cancel at 345) and the first field takes focus by
+      itself (iOS's sheet appearing with no tap is the evidence). (7) THE
+      INBOX INTRO — PASS, exact, incl. "A transaction sent from the wallet's
+      own screens, such as Send, is not listed here; Activity lists it." and
+      the empty line "Nothing yet. Reminders, alerts, requests from connected
+      apps that the wallet sent, and speed-ups and cancellations will be
+      listed here." (8) DEVELOPER LINES — PASS: "PIN hashing path: native
+      scrypt (react-native-quick-crypto), self-check passed" followed
+      directly by the measurement hint; no "Navigation bar style" line
+      anywhere in the section. (9) DEEP LINK — PASS: `simctl openurl
+      "shibawallet://inbox"` rc 0, the Inbox opened. THE LAST PASS'S FINDING
+      3 EXPLAINED, NOT AN APP BUG: a Simulator REBOOT drops the device's Face
+      ID enrolment while Features → Face ID → Enrolled still shows a tick;
+      after this pass's reboots Settings truthfully read "This phone has no
+      strong fingerprint or face unlock enrolled…" and the backup check
+      opened the phrase with NO prompt — requireLocalAuth returns ok, not
+      gated, when nothing is enrolled (biometric.ts 105–112); toggling
+      Enrolled off and on restored "Protect with biometrics" and the Face ID
+      prompt; RULE for iOS passes: re-toggle Face ID after every reboot.
+      HYGIENE SLIP, recorded by the driver: on the first "Create a new
+      wallet" a mis-filtered OCR helper printed that never-confirmed phrase's
+      words into the driver's working output (nowhere else; the screenshot
+      and OCR text deleted with rm -P); the phrase was discarded unconfirmed
+      and a fresh one drawn, captured only into a 0700 folder whose check
+      printed "indices found: 12; contiguous: true; checksum valid: true",
+      the quiz answered by coordinates. CLEAN-UP: the wallet wiped in-app
+      ("Wipe wallet?" → Continue → "Are you absolutely sure?" → Wipe wallet
+      → onboarding; AsyncStorage left with only shiba-wallet.prefs.v1, the
+      keychain 0 rows in any shiba access group), the phrase file rm -P,
+      Metro 8083 stopped, the device shut down and deleted, Simulator.app
+      quit (its process terminated because AppleScript quit did not take);
+      Metro 8081, the Android emulator and Expo Go untouched; kept: wt-ios2
+      at 377d68a with its prebuild edits and app/ios/ (2.5 GB), the derived
+      data p24-ios/dd (3.2 GB), the iOS 26.5 runtime; the main checkout
+      clean. UNVERIFIED: VoiceOver (none in the Simulator); a region-tagged
+      AppleLanguages value; the flow after the two words are typed; this
+      build's OpenSSL checksum. A fix slice for check 2 is dispatched.
+
 ## Phase 24 status (2026-11-08)
 
 Items 0, 1, 3, 4 and 6, and item 5's Stage 2, are landed and pushed; item 2
