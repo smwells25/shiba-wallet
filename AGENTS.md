@@ -17572,3 +17572,52 @@ arrive; 6 last. Subagents on Opus.
       (device): the new wording on Send, Max and the USDC-fee line, the
       Send link appearing once a balance is read, Receive and Send on devnet
       under TalkBack, the Spanish drafts.
+- [x] THE ZEROD​EV BLOCK WAS A STALE PROJECT ID, NOT AN ALLOWLIST (2026-11-07;
+      CI on 595e859 CI:completed:success — the re-check fix slice 7f89feb is
+      green). The Chairperson named the project id in chat; compared inside a
+      shell against .dev-wallet/env without printing either: the stored
+      ZERODEV_PROJECT_ID (beginning fce4) is a DIFFERENT project, and it
+      answers HTTP 403 "Access denied: Neither IP nor domain is on the
+      allowlist." on every method, while the Chairperson's id answers
+      eth_chainId, eth_supportedEntryPoints (v0.6, v0.7 and two others) and
+      pimlico_getUserOperationGasPrice on 11155111 / 84532 / 421614 /
+      11155420 — so the p24-recheck finding "the project now refuses this
+      machine" was wrong in its cause: the machine was using an old
+      project. The env now holds the Chairperson's id (git-ignored;
+      env.bak-2026-11-07 beside it, 0600). CTO SLIP 1: the first `sed`
+      replaced the FIRST uuid in the file, which was NOWNODES_KEY (also
+      uuid-shaped), not the ZeroDev line; caught when the sourced id still
+      began fce4; the file was rebuilt from the backup with exactly one line
+      changed (the NowNodes key equal to the backup, the ZeroDev line the
+      given id) — RULE: edit a secrets file by KEY NAME, never by value
+      shape. CTO SLIP 2: `kernel-smoke.mjs` with BUNDLER_URL set is NOT a
+      dry run — the CTO ran it believing it one, and it sent LIVE from the
+      dev EOA on Ethereum Sepolia: a 1,050,505,235,125,653-wei funding of the
+      dev Kernel 0xc995…C5AC (tx 0x8d1b256846532d85c1f29741ece20900e2a75b8a2c22b12b91f48d82fd0381a0,
+      block 12088235, 27,539 gas), op 1 userOp 0x7613e43d3d3e65dd8605c46da372727342289b17a03e512f4ccdc9c7103b2c97
+      (actualGasCost 42,528,603,969,336 wei), op 2 userOp
+      0x985a12405731b5d7b84b5dfed92a5085943f6c362718ddce3d6b1546c1274934 in
+      bundle tx 0x5bb77e3eec9af43aa6336be594388af933761ace8157eca6f36324af076bc602
+      (block 12088237, status 0x1, nonce 3, actualGasCost 37,086,903,461,444
+      wei) — bounded, test funds, the dev account, and incidentally THE FIRST
+      LIVE PROOF that the Chairperson's project accepts this wallet's
+      operations; RULE: read a script's live / dry-run switch in its header
+      before running it with any endpoint set. THE EMULATOR'S SAVED BUNDLERS
+      still carry the old project on four networks (Ethereum, Base, Arbitrum
+      and OP Sepolia) — re-saved in the dispatched pass through Settings
+      from a 0600 file via the ADBKeyboard broadcast. THE 0.01 TEST ETH TOP-UP
+      on Account 1 (Sepolia) was the Chairperson's (confirmed in chat). THE
+      DEVNET DEPOSIT IS IN: Account 1's devnet address
+      EK5jKrBRwvQXXsSERGN6jEoYaofE2PNiZWQoaCLtrYPv holds 20 USDC on Circle's
+      pinned devnet mint 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU and 20
+      of HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr, which Circle's EURC
+      contract-addresses page (fetched 2026-11-07) lists for Solana Devnet —
+      THE SAME ADDRESS AS ITS SOLANA MAINNET ROW; on-chain the mint is a
+      classic SPL Token account (owner Tokenkeg…) with 6 decimals; SOL
+      50,000,000 lamports. Circle's public faucet (faucet.circle.com, fetched
+      2026-11-07): "There's no account required", 20 USDC "every 2 hours, per
+      address, and per blockchain", Solana Devnet in its network list — the
+      answer to "where do I get devnet USDC". Tropic Square: the firmware and
+      bootloader versions are pending from the Chairperson. Dispatched: the
+      emulator pass (bundler re-save, the smart-account Max re-check, the
+      SPL send leg) and an engine slice pinning EURC on devnet.
