@@ -1827,6 +1827,135 @@ console.log('check-pending: the section after a replacement is sent (pass p21g: 
     check('…and the earlier one, answering late with "pending", draws nothing over it', views.length === drawnAfterB, `${views.length} vs ${drawnAfterB}`);
   }
 
+  // Pass p24-solhist finding 6: smart-account operations included long ago
+  // stayed listed because only "Check status" settled them. The re-read now
+  // asks the configured bundler too (a few per re-read) and settles exactly
+  // as "Check status" does.
+  {
+    const RECEIPT_TX = H(0x7e57);
+    const fakeBundler = (state) => {
+      const calls = [];
+      const fn = async (method, params) => {
+        calls.push([method, params[0]]);
+        if (state.error) throw new Error('bundler down');
+        if (method === 'eth_getUserOperationReceipt') return state.receipts.get(params[0]) ?? null;
+        if (method === 'eth_getUserOperationByHash') return state.ops.get(params[0]) ?? null;
+        throw new Error(`unexpected ${method}`);
+      };
+      return { fn, calls };
+    };
+    const opSection = async (mod, { hashes, state, bundlerOff = false, noOption = false }) => {
+      const store = memoryStore();
+      for (const [i, h] of hashes.entries()) {
+        await mod.recordPendingUserOperation({ chain: CHAIN, userOpHash: h, sender: TO, owner: FROM, resend: null, origin: 'other', sentAt: T0 + i }, store, T0 + i);
+      }
+      const b = fakeBundler(state);
+      const views = [];
+      let bundlerReads = 0;
+      const refresher = mod.createPendingSectionRefresher({
+        chain: CHAIN,
+        from: FROM,
+        store,
+        now: () => T0 + 60_000,
+        reader: async () => null,
+        ...(noOption ? {} : {
+          bundler: async () => {
+            bundlerReads += 1;
+            return bundlerOff ? null : b.fn;
+          },
+        }),
+        apply: (v) => views.push(v),
+      });
+      return { store, b, views, refresher, bundlerReads: () => bundlerReads, mod };
+    };
+    const opsIn = async (mod, store) => mod.userOpsFor((await mod.loadPendingRegistry(store)).records, CHAIN, FROM).map((r) => r.userOpHash);
+    const A = H(0xa0491), B = H(0xa0cea);
+    const includedRun = async (mod) => {
+      const state = { receipts: new Map([[A, { success: true, receipt: { transactionHash: RECEIPT_TX } }]]), ops: new Map(), error: false };
+      const sec = await opSection(mod, { hashes: [A, B], state });
+      await sec.refresher.refresh();
+      return { sec, left: await opsIn(mod, sec.store), last: sec.views.at(-1) };
+    };
+    const inc = await includedRun(pending);
+    check('a receipt answered: the poll settles the operation with no tap — it leaves the registry, exactly as after "Check status"',
+      !inc.left.includes(A) && inc.left.includes(B), JSON.stringify(inc.left));
+    check('…and the draw shows it once more as included, with the "Check status" sentence (exact)',
+      inc.last.settledUserOps?.length === 1 && inc.last.settledUserOps[0].userOpHash === A &&
+        inc.last.userOpStatuses?.[A]?.state === 'included' &&
+        pending.userOpStatusSentence(inc.last.userOpStatuses[A], inc.last.settledUserOps[0]) === `Included in transaction ${shortHashOf(RECEIPT_TX)}.`,
+      JSON.stringify(inc.last.userOpStatuses));
+    check('…the other operation (no receipt, the bundler has no record, one minute old) stays, read as unknown with no "Send again"',
+      inc.last.userOpStatuses?.[B]?.state === 'unknown' && inc.last.userOpStatuses[B].resendOffered === false);
+    {
+      const state = { receipts: new Map([[A, { success: false, receipt: { transactionHash: RECEIPT_TX } }]]), ops: new Map(), error: false };
+      const sec = await opSection(pending, { hashes: [A], state });
+      await sec.refresher.refresh();
+      const st = sec.views.at(-1).userOpStatuses?.[A];
+      check('a reverted operation is settled the same way: removed and shown "Included, but the operation reverted." (exact)',
+        (await opsIn(pending, sec.store)).length === 0 && pending.userOpStatusSentence(st) === 'Included, but the operation reverted.');
+    }
+    {
+      const state = { receipts: new Map(), ops: new Map([[A, { userOpHash: A }]]), error: false };
+      const sec = await opSection(pending, { hashes: [A], state });
+      const before = (await sec.store.getItem('shiba-wallet.pending-tx.v1'));
+      await sec.refresher.refresh();
+      check('a null receipt with the operation still in the bundler: the record is unchanged (byte for byte) and the card reads "The bundler still holds it…"',
+        before !== null && (await sec.store.getItem('shiba-wallet.pending-tx.v1')) === before && sec.views.at(-1).userOpStatuses?.[A]?.state === 'in-bundler');
+    }
+    {
+      const state = { receipts: new Map(), ops: new Map(), error: true };
+      const sec = await opSection(pending, { hashes: [A], state });
+      const before = (await sec.store.getItem('shiba-wallet.pending-tx.v1'));
+      await sec.refresher.refresh();
+      const last = sec.views.at(-1);
+      check('a bundler error: the record is unchanged and no status is drawn for it (the card keeps what it showed)',
+        before !== null && (await sec.store.getItem('shiba-wallet.pending-tx.v1')) === before && sec.b.calls.length === 1 && last.userOpStatuses?.[A] === undefined);
+    }
+    {
+      const state = { receipts: new Map(), ops: new Map(), error: false };
+      const off = await opSection(pending, { hashes: [A], state, bundlerOff: true });
+      await off.refresher.refresh();
+      const none = await opSection(pending, { hashes: [A], state, noOption: true });
+      await none.refresher.refresh();
+      check('no bundler configured for the network: no bundler request, the record kept, one draw only (from the registry)',
+        off.bundlerReads() === 1 && off.b.calls.length === 0 && off.views.length === 1 && (await opsIn(pending, off.store)).length === 1 &&
+          none.views.length === 1 && none.b.calls.length === 0);
+    }
+    {
+      const hashes = [1, 2, 3, 4, 5].map((n) => H(0xb000 + n));
+      const state = { receipts: new Map(), ops: new Map(), error: false };
+      const sec = await opSection(pending, { hashes, state });
+      await sec.refresher.refresh();
+      const first = sec.b.calls.filter((c) => c[0] === 'eth_getUserOperationReceipt').map((c) => c[1]);
+      await sec.refresher.refresh();
+      const both = sec.b.calls.filter((c) => c[0] === 'eth_getUserOperationReceipt').map((c) => c[1]);
+      check(`bounded: one re-read asks about at most ${pending.PENDING_USEROP_CHECKS_PER_REFRESH} operations (oldest first), and the next re-read takes the others in turn`,
+        pending.PENDING_USEROP_CHECKS_PER_REFRESH === 3 && first.join() === hashes.slice(0, 3).join() &&
+          new Set(both).size === 5 && both.length === 6,
+        JSON.stringify([first.length, both.length]));
+    }
+    // In-suite mutant: the refresher without the smart-account read (the old code).
+    const srcP = readFileSync(join(HERE_S, '../src/wallet/pending-transactions.ts'), 'utf8');
+    const POLL = '      if (ops.length > 0 && options.bundler) {';
+    const toUrlsP = (src) => src.replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolvePath(join(HERE_S, '../src/wallet'), spec)).href}'`);
+    const mDir = join(HERE_S, `.mutants-pending-userop-${process.pid}`);
+    mkdirSync(mDir, { recursive: true });
+    try {
+      const f = join(mDir, 'pending-no-userop-poll.ts');
+      writeFileSync(f, toUrlsP(srcP.replace(POLL, '      if (false) {')));
+      const mod = await import(pathToFileURL(f).href);
+      const m = await includedRun(mod);
+      check('MUTANT caught: without the bundler read on the re-read, the included operation stays listed until a tap',
+        srcP.includes(POLL) && m.left.includes(A));
+    } finally {
+      rmSync(mDir, { recursive: true, force: true });
+    }
+    const pcsU = readFileSync(join(HERE_S, '../src/components/PendingTransactions.tsx'), 'utf8');
+    check('the section hands the refresher the bundler configured now (getAaConfig at each re-read, never stored) and draws the statuses and settled operations (source)',
+      /bundler: async \(\) => \{\n\s+const aa = await getAaConfig\(chain\);\n\s+return aa\.bundlerUrl \? httpTransport\(aa\.bundlerUrl\) : null;\n\s+\},/.test(pcsU) &&
+        pcsU.includes('view.settledUserOps ?? []') && pcsU.includes('const fresh = view.userOpStatuses?.[record.userOpHash];'));
+  }
+
   // The component draws through the refresher and renders the new lines (source).
   const pcs = readFileSync(join(HERE_S, '../src/components/PendingTransactions.tsx'), 'utf8');
   check('the section re-reads through createPendingSectionRefresher (no own copy of the old two-step refresh)',
@@ -1841,8 +1970,11 @@ console.log('check-pending: the section after a replacement is sent (pass p21g: 
   const mutantDir = join(HERE_S, `.mutants-pending-section-${process.pid}`);
   mkdirSync(mutantDir, { recursive: true });
   try {
-    const FINAL = '      draw(pendingSectionView(after, options.chain, options.from, results));';
-    const GAP = "      draw({ ...pendingSectionView(after, options.chain, options.from, results), groups: results.filter((x) => x.status.state !== 'mined').map((x) => ({ group: x.group, status: x.status })) });";
+    // (Since pass p24-solhist finding 6 the final draw also carries the
+    // smart-account statuses and keeps the earlier group statuses when no
+    // node answered; the mutant is the same old step order.)
+    const FINAL = '      draw(pendingSectionView(after, options.chain, options.from, nodeAsked ? results : shown, { statuses: userOpStatuses, settled: settledUserOps }));';
+    const GAP = "      draw({ ...pendingSectionView(after, options.chain, options.from, nodeAsked ? results : shown, { statuses: userOpStatuses, settled: settledUserOps }), groups: results.filter((x) => x.status.state !== 'mined').map((x) => ({ group: x.group, status: x.status })) });";
     const gapFile = join(mutantDir, 'pending-gap.ts');
     writeFileSync(gapFile, toUrls(pendingSrc.replace(FINAL, GAP)));
     const gapMod = await import(pathToFileURL(gapFile).href);

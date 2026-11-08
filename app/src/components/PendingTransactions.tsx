@@ -191,18 +191,28 @@ export function PendingTransactionsSection({
           const url = (await getEndpoint(EVM_CHAIN_ID))?.url ?? null;
           return url ? nodeReader(httpTransport(url)) : null;
         },
+        // The bundler "Check status" asks, read again at each re-read (pass
+        // p24-solhist finding 6: an included operation used to stay listed
+        // until its button was tapped).
+        bundler: async () => {
+          const aa = await getAaConfig(chain);
+          return aa.bundlerUrl ? httpTransport(aa.bundlerUrl) : null;
+        },
         apply: (view: PendingSectionView) => {
           if (!mounted.current) return;
           setRegistry(view.registry);
           setNowMs(Date.now());
           setGroups(view.groups);
           setNotices(view.notices);
-          setUserOps((prev) =>
-            userOpsFor(view.registry.records, chain, from).map((record) => {
+          setUserOps((prev) => {
+            const listed = userOpsFor(view.registry.records, chain, from);
+            const settled = (view.settledUserOps ?? []).filter((r) => !listed.some((l) => l.userOpHash === r.userOpHash));
+            return [...listed, ...settled].map((record) => {
               const old = prev.find((p) => p.record.userOpHash === record.userOpHash);
-              return { record, status: old?.status ?? null, checking: false, error: old?.error ?? null };
-            }),
-          );
+              const fresh = view.userOpStatuses?.[record.userOpHash];
+              return { record, status: fresh ?? old?.status ?? null, checking: false, error: fresh ? null : old?.error ?? null };
+            });
+          });
         },
         onSettled: () => onChanged?.(),
       }),

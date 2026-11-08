@@ -230,7 +230,19 @@ export function SolanaTokensScreen({ navigation }: Props) {
                 <Text style={[styles.tokenName, { color: theme.textMuted }]} numberOfLines={1}>
                   {token.name} · {token.decimals} decimals
                 </Text>
-                <Text selectable style={[styles.tokenAddress, { color: theme.textMuted }]}>
+                {/* The mint stays visible and selectable for copying, but a
+                    selectable Text is its own clickable, long-clickable node
+                    on Android (TextView.setTextIsSelectable), so TalkBack
+                    stopped on it a second time right after the row and read
+                    the 44 characters twice (pass p24-solhist finding 2). The
+                    row's label already says the mint in full. The Staking
+                    balance rows hide their selectable amount the same way. */}
+                <Text
+                  selectable
+                  importantForAccessibility="no"
+                  accessibilityElementsHidden
+                  style={[styles.tokenAddress, { color: theme.textMuted }]}
+                >
                   Mint {token.assetId.reference}
                 </Text>
                 {balanceLine !== null ? (

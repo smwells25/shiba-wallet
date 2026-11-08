@@ -125,6 +125,28 @@ export function payloadQrSpokenLabel(caption: string, label?: string): string {
  * reads that sentence, which was visible but never spoken. Without
  * `sentenceAbove`, or with the same sentence, the lead is exactly as before.
  */
+/**
+ * The visible mask Hide amounts puts in place of an amount — exactly what
+ * config/prefs.ts maskAmount returns (pinned equal in check-activity; this
+ * module stays free of React Native imports, so it does not import prefs).
+ */
+export const AMOUNT_MASK = '••••';
+
+/**
+ * A text as a screen reader should hear it when Hide amounts has masked an
+ * amount INSIDE it (pass p24-solhist finding 1). The visible mask "••••" is
+ * four U+2022 BULLET characters, and TalkBack spoke a sentence such as
+ * "Sent •••• USDC to 9WMg…471n" as "Sent 4 Bullet USDC to 9WMg…471n". Each
+ * mask is spoken as the wording the row's own amount already uses under
+ * Hide amounts, in parentheses: "Sent (amount hidden) USDC to 9WMg…471n".
+ * Only the spoken form changes; the visible text keeps its "••••". A text
+ * with no mask is returned unchanged.
+ */
+export function spokenMaskedText(text: string): string {
+  if (!text.includes(AMOUNT_MASK)) return text;
+  return text.split(AMOUNT_MASK).join(`(${t('activity.amountHidden')})`);
+}
+
 export function activityRowSpokenLead(p: {
   sentence: string | null;
   loading: boolean;
@@ -132,11 +154,12 @@ export function activityRowSpokenLead(p: {
   loadingLabel: string;
   sentenceAbove?: string | null;
 }): string {
+  // Compared as shown (with any mask), spoken with the mask in words.
   if (p.sameAsAbove) {
     const own = p.sentence !== null && p.sentence !== '' && p.sentenceAbove !== undefined && p.sentence !== p.sentenceAbove;
-    return own ? `${t('activity.row.sameAsAbove')} ${p.sentence}. ` : `${t('activity.row.sameAsAbove')} `;
+    return own ? `${t('activity.row.sameAsAbove')} ${spokenMaskedText(p.sentence as string)}. ` : `${t('activity.row.sameAsAbove')} `;
   }
-  if (p.sentence) return `${p.sentence}. `;
+  if (p.sentence) return `${spokenMaskedText(p.sentence)}. `;
   return p.loading ? `${p.loadingLabel}. ` : '';
 }
 

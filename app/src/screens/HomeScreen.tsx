@@ -22,7 +22,7 @@ import { CHAINS } from '../wallet/chains';
 import { IMPORTED_KEY_NO_CHAIN, MULTISIG_NO_CHAIN, WATCH_ONLY_NO_CHAIN } from '../wallet/account-ids';
 import { useTheme } from '../theme';
 import { textOnFill } from '../theme-palette';
-import { sendLinkHint, solanaTokenSendLinkHint, solanaTokenSendLinkText, spokenLinkText, tokenRowSpokenLabel } from '../a11y';
+import { sendLinkHint, solanaTokenSendLinkHint, solanaTokenSendLinkText, spokenLinkText, spokenMaskedText, tokenRowSpokenLabel } from '../a11y';
 import { EVM_CHAIN_ID, SOLANA_CHAIN_ID, addSendAcceptedListener } from '../wallet/send';
 import { addAaSentListener } from '../wallet/aa';
 import { createSendRefreshTracker, reloadNowAndLater } from '../wallet/home-refresh';
@@ -417,7 +417,9 @@ function SolanaTokenRow({
         </View>
       </View>
       {lines.map((line) => (
-        <Text key={line} style={[styles.manageTokens, { color: theme.textMuted }]}>
+        // "Also •••• USDC held outside…" under Hide amounts: the mask is spoken
+        // in words (pass p24-solhist finding 1).
+        <Text key={line} accessibilityLabel={spokenMaskedText(line)} style={[styles.manageTokens, { color: theme.textMuted }]}>
           {line}
         </Text>
       ))}

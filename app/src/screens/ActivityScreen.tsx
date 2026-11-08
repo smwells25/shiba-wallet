@@ -24,7 +24,7 @@ import { SolanaDevnetBanner } from '../components/SolanaDevnetBanner';
 import { T } from '../i18n/T';
 import { useI18n } from '../i18n/useI18n';
 import { localTimestampLabel } from '../i18n/format';
-import { activityRowSpokenFee, activityRowSpokenLead, spokenShortAddress } from '../a11y';
+import { activityRowSpokenFee, activityRowSpokenLead, spokenMaskedText, spokenShortAddress } from '../a11y';
 import { Theme, useTheme } from '../theme';
 import { SOLANA_DEVNET_CAIP2, SOLANA_DEVNET_NETWORK, networkDefaultFor } from '../config/defaults';
 import { maskAmount } from '../config/prefs';
@@ -306,13 +306,16 @@ function EntryRow({
     symbol,
     hidden,
   });
-  const rowLabel =
+  // Every masked amount in the label is spoken in words, never as "4 Bullet"
+  // (pass p24-solhist finding 1; a11y.ts spokenMaskedText).
+  const rowLabel = spokenMaskedText(
     activityRowSpokenLead({ sentence, loading, sameAsAbove, loadingLabel: ROW_DETAILS_LOADING_LABEL, sentenceAbove }) +
     (replacementLine ? `${replacementLine} ` : '') +
     (failedIncoming ? `${shownTitle}, ` : `${directionTransactionText(entry.direction, t)}, `) +
     `${spokenAmount}${spokenFee ? `, ${spokenFee}` : ''}, ${localTimestampLabel(entry)}` +
     (spokenStatus ? `, ${spokenStatus}` : '') +
-    (unavailable ? `. ${localize(ROW_DETAILS_UNAVAILABLE_LINE)}` : '');
+    (unavailable ? `. ${localize(ROW_DETAILS_UNAVAILABLE_LINE)}` : ''),
+  );
   const rowContent = (
     <>
       <DirectionBadge entry={entry} theme={theme} />
@@ -973,14 +976,23 @@ export function ActivityScreen({ navigation, route }: Props) {
       </Text>
       {/* The full address stays on screen (and selectable); a screen reader
           hears the short form, "0x772e…F44F", as on the multisig rows (pass
-          p21a: TalkBack read all 42 characters). */}
-      <Text
-        selectable
-        accessibilityLabel={spokenShortAddress(account.address)}
-        style={[styles.addressLine, { color: theme.textMuted }]}
-      >
-        {account.address}
-      </Text>
+          p21a: TalkBack read all 42 characters). The short form is said by a
+          plain accessible View around the address: a selectable Text is a
+          clickable node on Android (TextView.setTextIsSelectable calls
+          setClickable and setLongClickable), so TalkBack offered "Press
+          select to activate" on it although activating does nothing useful
+          (pass p24-solhist finding 3); the selectable Text itself is hidden
+          from screen readers. */}
+      <View accessible accessibilityLabel={spokenShortAddress(account.address)}>
+        <Text
+          selectable
+          importantForAccessibility="no"
+          accessibilityElementsHidden
+          style={[styles.addressLine, { color: theme.textMuted }]}
+        >
+          {account.address}
+        </Text>
+      </View>
     </View>
   ) : null;
 

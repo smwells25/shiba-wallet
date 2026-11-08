@@ -2173,7 +2173,9 @@ reset();
   const { spokenShortAddress } = await import('../src/a11y.ts');
   const screen = readFileSync(join(here, '..', 'src', 'screens', 'ActivityScreen.tsx'), 'utf8');
   const headerOk = (src) =>
-    /<Text\s+selectable\s+accessibilityLabel=\{spokenShortAddress\(account\.address\)\}\s+style=\{\[styles\.addressLine, \{ color: theme\.textMuted \}\]\}\s*>\s*\{account\.address\}\s*<\/Text>/.test(src);
+    // Since pass p24-solhist finding 3 the short form is said by a plain
+    // accessible View around the selectable (clickable) Text, which is hidden.
+    /<View accessible accessibilityLabel=\{spokenShortAddress\(account\.address\)\}>\s*<Text\s+selectable\s+importantForAccessibility="no"\s+accessibilityElementsHidden\s+style=\{\[styles\.addressLine, \{ color: theme\.textMuted \}\]\}\s*>\s*\{account\.address\}\s*<\/Text>\s*<\/View>/.test(src);
   check('p21a: the Activity header shows the full address and speaks the short one, "0x772e…F44F" (source + exact)',
     headerOk(screen) && spokenShortAddress('0x772eF8c0b0A9E1d3b2C4D5e6F7a8B9c0d1E2F44F') === '0x772e…F44F');
   check('…mutant caught: the header address spoken in full again (no label)',
@@ -2338,6 +2340,81 @@ console.log('pass p24-solfix2: what an Activity row speaks (findings A and B)');
   check('finding B: a row with no explorer link is a plain accessible View with the same label (no button role, no press, no "disabled"); a row with one stays a button (source)', inertOk(screen));
   check('…mutant caught: the old single Pressable with disabled={!url}',
     !inertOk(screen.replace('        accessibilityHint={tx(\'Opens the transaction in the block explorer\')}\n', "        accessibilityHint={tx('Opens the transaction in the block explorer')}\n        disabled={!url}\n")));
+}
+
+console.log('pass p24-solhist finding 1: a masked amount inside a row is spoken in words, not "4 Bullet"');
+{
+  const a11y = await import('../src/a11y.ts');
+  const { maskAmount } = await import('../src/config/prefs.ts');
+  check('the mask a11y.ts recognises is exactly what config/prefs.ts maskAmount shows under Hide amounts',
+    a11y.AMOUNT_MASK === maskAmount('1.5', true) && maskAmount('1.5', false) === '1.5');
+  const EVM = 'Staked •••• test ETH with Lido (stETH contract 0x3e3F…40Af): received •••• stETH';
+  const SOL = 'Sent •••• USDC to 9WMg…471n';
+  const RENT = 'In the same transaction, •••• test SOL also left this account besides the network fee (a token transfer can pay rent for the recipient’s new token account)';
+  check('spokenMaskedText speaks every mask as "(amount hidden)" and leaves an unmasked text unchanged (exact)',
+    a11y.spokenMaskedText(SOL) === 'Sent (amount hidden) USDC to 9WMg…471n' &&
+      a11y.spokenMaskedText(EVM) === 'Staked (amount hidden) test ETH with Lido (stETH contract 0x3e3F…40Af): received (amount hidden) stETH' &&
+      a11y.spokenMaskedText('Sent 1 USDC to 9WMg…471n') === 'Sent 1 USDC to 9WMg…471n');
+  const leadOf = (mod, sentence, sameAsAbove = false, sentenceAbove) =>
+    mod.activityRowSpokenLead({ sentence, loading: false, sameAsAbove, loadingLabel: 'x', sentenceAbove });
+  const leadOk = (mod) =>
+    leadOf(mod, SOL) === 'Sent (amount hidden) USDC to 9WMg…471n. ' &&
+    leadOf(mod, EVM).startsWith('Staked (amount hidden) test ETH') &&
+    leadOf(mod, RENT, true, SOL) === 'Same transaction as the row above. In the same transaction, (amount hidden) test SOL also left this account besides the network fee (a token transfer can pay rent for the recipient’s new token account). ' &&
+    !leadOf(mod, SOL).includes('•') && !leadOf(mod, RENT, true, SOL).includes('•');
+  check('the row lead speaks the Solana and the EVM sentence, and the rent row\'s own sentence, with no bullet left (exact)', leadOk(a11y));
+  check('…an unmasked sentence keeps its lead byte for byte', leadOf(a11y, 'Sent 1 USDC to 9WMg…471n') === 'Sent 1 USDC to 9WMg…471n. ');
+  // In-suite mutant: the lead without the spoken form (the old code).
+  const a11ySrc = readFileSync(join(here, '..', 'src', 'a11y.ts'), 'utf8');
+  const dir = join(here, `.mutants-a11y-mask-${process.pid}`);
+  mkdirSync(dir, { recursive: true });
+  try {
+    const OLD = "  if (p.sentence) return `${spokenMaskedText(p.sentence)}. `;";
+    const toUrls = (src) => src.replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolvePath(join(here, '..', 'src'), spec)).href}'`);
+    const file = join(dir, 'a11y-mask.ts');
+    writeFileSync(file, toUrls(a11ySrc.replace(OLD, '  if (p.sentence) return `${p.sentence}. `;')));
+    const mutant = await import(pathToFileURL(file).href);
+    check('…mutant caught: the lead speaking the sentence with its bullets', a11ySrc.includes(OLD) && !leadOk(mutant));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  const screen = readFileSync(join(here, '..', 'src', 'screens', 'ActivityScreen.tsx'), 'utf8');
+  const wrapOk = (src) =>
+    /const rowLabel = spokenMaskedText\(\n    activityRowSpokenLead\(/.test(src) &&
+    src.includes("(unavailable ? `. ${localize(ROW_DETAILS_UNAVAILABLE_LINE)}` : ''),\n  );");
+  check('the whole row label goes through spokenMaskedText (the replacement line too), on Solana and EVM rows alike (source)', wrapOk(screen));
+  check('…mutant caught: the row label without the wrapper',
+    !wrapOk(screen.replace('const rowLabel = spokenMaskedText(\n', 'const rowLabel = (\n')));
+  const home = readFileSync(join(here, '..', 'src', 'screens', 'HomeScreen.tsx'), 'utf8');
+  check('Home\'s Solana token lines ("Also •••• USDC held outside…") are spoken through spokenMaskedText too (source)',
+    home.includes('<Text key={line} accessibilityLabel={spokenMaskedText(line)} style={[styles.manageTokens, { color: theme.textMuted }]}>'));
+}
+
+console.log('pass p24-solhist finding 3: an inert row carries nothing that makes it clickable');
+{
+  // A selectable Text is a clickable, long-clickable node on Android
+  // (AOSP TextView.setTextIsSelectable calls setClickable(selectable) and
+  // setLongClickable(selectable)), and TalkBack's clickable hint ("Press
+  // select to activate") follows isClickable or ACTION_CLICK. The inert
+  // row's View is only `accessible` (React Native ReactViewManager.kt
+  // setAccessible: isFocusable only), and nothing inside the row is
+  // selectable, pressable or given an action.
+  const screen = readFileSync(join(here, '..', 'src', 'screens', 'ActivityScreen.tsx'), 'utf8');
+  const start = screen.indexOf('  const rowContent = (');
+  const end = screen.indexOf('    {note || onEditNote ? (');
+  const rowSrc = start > 0 && end > start ? screen.slice(start, end) : '';
+  const inert = (src) => {
+    const open = src.indexOf('<View accessible accessibilityLabel={rowLabel} style={styles.row}>');
+    const content = src.slice(0, src.indexOf('  return ('));
+    return open > 0 && content.length > 0 &&
+      !/\bselectable\b|onPress|onLongPress|accessibilityActions|accessibilityRole|focusable=/.test(content) &&
+      !/<View accessible accessibilityLabel=\{rowLabel\}[^>]*(onPress|accessibilityRole|accessibilityActions|focusable|onAccessibilityAction)/.test(src);
+  };
+  check('the inert row: a plain accessible View, and no selectable text, press handler, role or action inside the row content (source)', inert(rowSrc), rowSrc.length);
+  check('…mutant caught: a selectable text inside the row content',
+    !inert(rowSrc.replace('<Text style={[styles.rowTime, { color: theme.textMuted }]}>', '<Text selectable style={[styles.rowTime, { color: theme.textMuted }]}>')));
+  check('…mutant caught: an action on the inert row',
+    !inert(rowSrc.replace('<View accessible accessibilityLabel={rowLabel} style={styles.row}>', "<View accessible accessibilityLabel={rowLabel} accessibilityActions={[{ name: 'activate' }]} style={styles.row}>")));
 }
 
 console.log(`\ncheck-activity: ${passed} passed, ${failed} failed`);

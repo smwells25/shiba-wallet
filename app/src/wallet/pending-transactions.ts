@@ -102,6 +102,15 @@ export const USEROP_UNKNOWN_AFTER_MS = 10 * 60 * 1000;
 /** How often the open Activity screen re-reads pending transactions (judgement). */
 export const PENDING_POLL_MS = 15_000;
 
+/**
+ * How many smart-account operations one re-read asks the bundler about
+ * (pass p24-solhist finding 6; judgement). Each check is at most two bundler
+ * requests (the receipt, then the operation), so a re-read every
+ * PENDING_POLL_MS makes at most six; the operations are taken in turn,
+ * oldest first, so more than three are all reached within a few re-reads.
+ */
+export const PENDING_USEROP_CHECKS_PER_REFRESH = 3;
+
 export type ReplacementAction = 'speed-up' | 'cancel';
 
 /** One transaction this wallet broadcast from a regular (EOA) account. */
@@ -1326,6 +1335,17 @@ export interface PendingSectionView {
   registry: PendingRegistry;
   groups: PendingGroupView[];
   notices: ResolvedRecord[];
+  /**
+   * Smart-account statuses read by this re-read, by userOpHash (only on a
+   * draw after the bundler was asked; an operation not asked, or whose
+   * check failed, has none).
+   */
+  userOpStatuses?: Readonly<Record<string, UserOpStatus>>;
+  /**
+   * Operations this re-read found included and removed from the registry,
+   * shown once more with their status — as after a "Check status" tap.
+   */
+  settledUserOps?: readonly PendingUserOpRecord[];
 }
 
 /**
@@ -1355,12 +1375,18 @@ export function pendingSectionView(
   chain: string,
   from: string,
   statuses: readonly PendingGroupView[],
+  userOps?: { statuses: Readonly<Record<string, UserOpStatus>>; settled: readonly PendingUserOpRecord[] },
 ): PendingSectionView {
   const groups = nonceGroups(registry.records, chain, from).map((group) => {
     const known = statuses.find((s) => s.group.nonce === group.nonce && s.group.latest.hash === group.latest.hash);
     return { group, status: known ? known.status : null };
   });
-  return { registry, groups, notices: resolvedNotices(registry.records, chain, from) };
+  const view: PendingSectionView = { registry, groups, notices: resolvedNotices(registry.records, chain, from) };
+  if (userOps) {
+    view.userOpStatuses = userOps.statuses;
+    view.settledUserOps = userOps.settled;
+  }
+  return view;
 }
 
 /**
@@ -1406,6 +1432,13 @@ export function createPendingSectionRefresher(options: {
   from: string;
   /** The reader for the network endpoint in use now; null when none is configured. */
   reader: () => Promise<ChainReader | null>;
+  /**
+   * The bundler configured NOW for this network (the one "Check status"
+   * asks — the URL is read at each re-read and never stored in a record);
+   * null when none is configured. Without it smart-account operations are
+   * settled only by "Check status", as before (pass p24-solhist finding 6).
+   */
+  bundler?: () => Promise<((method: string, params: unknown[]) => Promise<unknown>) | null>;
   /** Draws a view. */
   apply: (view: PendingSectionView) => void;
   /** Called after a network re-read that may have settled a nonce. */
@@ -1418,6 +1451,7 @@ export function createPendingSectionRefresher(options: {
   let started = 0;
   let drawnFirst = 0;
   let drawnFinal = 0;
+  let userOpTurn = 0;
   let shown: PendingGroupView[] = [];
   const draw = (view: PendingSectionView) => {
     shown = view.groups;
@@ -1436,15 +1470,58 @@ export function createPendingSectionRefresher(options: {
         drawnFirst = seq;
         draw(pendingSectionView(registry, options.chain, options.from, shown));
       }
-      if (nonceGroups(registry.records, options.chain, options.from).length === 0) return;
-      let reader: ChainReader | null = null;
-      try {
-        reader = await options.reader();
-      } catch {
-        reader = null;
+      const hasGroups = nonceGroups(registry.records, options.chain, options.from).length > 0;
+      const ops = userOpsFor(registry.records, options.chain, options.from);
+      if (!hasGroups && (ops.length === 0 || !options.bundler)) return;
+      let nodeAsked = false;
+      let results: Awaited<ReturnType<typeof refreshAccountPending>> = [];
+      if (hasGroups) {
+        let reader: ChainReader | null = null;
+        try {
+          reader = await options.reader();
+        } catch {
+          reader = null;
+        }
+        if (reader) {
+          results = await refreshAccountPending({ reader, chain: options.chain, from: options.from, store, nowMs: now() });
+          nodeAsked = true;
+        }
       }
-      if (!reader) return;
-      const results = await refreshAccountPending({ reader, chain: options.chain, from: options.from, store, nowMs: now() });
+      // Smart-account operations: the same read and the same settle as the
+      // card's "Check status" (an included operation leaves the registry;
+      // anything else only shows its status), a few per re-read, in turn.
+      let bundlerAsked = false;
+      const userOpStatuses: Record<string, UserOpStatus> = {};
+      const settledUserOps: PendingUserOpRecord[] = [];
+      if (ops.length > 0 && options.bundler) {
+        let bundler: ((method: string, params: unknown[]) => Promise<unknown>) | null = null;
+        try {
+          bundler = await options.bundler();
+        } catch {
+          bundler = null;
+        }
+        if (bundler) {
+          bundlerAsked = true;
+          const oldestFirst = [...ops].reverse();
+          const count = Math.min(PENDING_USEROP_CHECKS_PER_REFRESH, oldestFirst.length);
+          const start = userOpTurn % oldestFirst.length;
+          userOpTurn += count;
+          for (let i = 0; i < count; i++) {
+            const record = oldestFirst[(start + i) % oldestFirst.length]!;
+            try {
+              const status = await checkUserOperation(bundler, record, now());
+              userOpStatuses[record.userOpHash] = status;
+              if (status.state === 'included') {
+                await forgetUserOperation({ chain: options.chain, userOpHash: record.userOpHash }, store, now()).catch(() => undefined);
+                settledUserOps.push(record);
+              }
+            } catch {
+              // A bundler error leaves the record and its shown status as they were.
+            }
+          }
+        }
+      }
+      if (!nodeAsked && !bundlerAsked) return;
       let after: PendingRegistry;
       try {
         after = await loadPendingRegistry(store);
@@ -1453,7 +1530,9 @@ export function createPendingSectionRefresher(options: {
       }
       if (seq <= drawnFinal) return;
       drawnFinal = seq;
-      draw(pendingSectionView(after, options.chain, options.from, results));
+      // Without a network answer for the nonces this re-read keeps the cards'
+      // earlier statuses, as its first draw did.
+      draw(pendingSectionView(after, options.chain, options.from, nodeAsked ? results : shown, { statuses: userOpStatuses, settled: settledUserOps }));
       options.onSettled?.();
     },
   };

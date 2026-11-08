@@ -997,6 +997,29 @@ async function appHistoryOf(owner, mints) {
   check('…the screen: the details column is one accessible element with that label, before the buttons in the tree (source)', groupOk(manage));
   check('…mutant caught: the details as separate texts again (Send read before the balance)',
     !groupOk(manage.replace('                style={styles.tokenInfo}\n                accessible\n', '                style={styles.tokenInfo}\n')));
+  // Pass p24-solhist finding 2: the selectable mint line was ALSO its own stop
+  // (a selectable Text is a clickable, long-clickable node on Android — AOSP
+  // TextView.setTextIsSelectable), so each mint was read twice. It stays
+  // visible and selectable; screen readers hear it once, in the row's label.
+  const MINT_TEXT = '                <Text\n                  selectable\n                  importantForAccessibility="no"\n                  accessibilityElementsHidden\n                  style={[styles.tokenAddress, { color: theme.textMuted }]}\n                >\n                  Mint {token.assetId.reference}\n                </Text>';
+  const mintOk = (src) => {
+    const info = src.indexOf('accessibilityLabel={splManageRowSpokenLabel({');
+    const mint = src.indexOf(MINT_TEXT);
+    const buttons = src.indexOf('<View style={styles.rowButtons}>');
+    return info > 0 && mint > info && buttons > mint && (src.match(/Mint \{token\.assetId\.reference\}/g) ?? []).length === 1;
+  };
+  check('finding 2 (p24-solhist): the mint line stays visible and selectable inside the row, hidden from screen readers, so the mint is spoken once (source)',
+    mintOk(manage) && label.split(DEVNET_USDC).length === 2);
+  check('…mutant caught: the mint line exposed to screen readers again (the old selectable Text)',
+    !mintOk(manage.replace(MINT_TEXT, '                <Text selectable style={[styles.tokenAddress, { color: theme.textMuted }]}>\n                  Mint {token.assetId.reference}\n                </Text>')));
+  check('…mutant caught: the mint line made unselectable (no longer copyable)',
+    !mintOk(manage.replace(MINT_TEXT, MINT_TEXT.replace('                  selectable\n', ''))));
+  // Pass p24-solhist finding 1 on a Solana row: the masked sentence is spoken in words.
+  const { activityRowSpokenLead } = await import('../src/a11y.ts');
+  const maskedFunding = SOLACT.solanaActivitySentence(fundingRow, { hidden: true, ...DEVNET_NATIVE, companion: false });
+  check('finding 1 (p24-solhist): a Solana row\'s masked sentence ("Received •••• test SOL…") is spoken "Received (amount hidden) test SOL from 6TgS…455t" (exact)',
+    maskedFunding === 'Received •••• test SOL from 6TgS…455t' &&
+      activityRowSpokenLead({ sentence: maskedFunding, loading: false, sameAsAbove: false, loadingLabel: 'x' }) === 'Received (amount hidden) test SOL from 6TgS…455t. ');
 }
 check(`solana-activity.ts with the p24-solfix2 mutant: all caught (${solactCaught} of ${solactMutants})`, solactMutants >= 4 && solactCaught === solactMutants);
 
