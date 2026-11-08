@@ -12969,7 +12969,8 @@
   "activity.solana.receivedUnnamed",
   "activity.solana.unknownToken",
   "activity.solana.nativeOut",
-  "activity.solana.nativeIn"
+  "activity.solana.nativeIn",
+  "activity.row.feeHidden"
  ],
  "changed": {
   "activity.note.privacy": {

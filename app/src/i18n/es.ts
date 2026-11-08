@@ -2040,4 +2040,5 @@ export const es: Readonly<Partial<Record<StringId, string>>> = {
   'activity.solana.unknownToken': 'del token con mint {mint}',
   'activity.solana.nativeOut': 'En la misma transacción también salieron {amount} {symbol} de esta cuenta, además de la comisión de red (una transferencia de tokens puede pagar el alquiler de la nueva cuenta de token del destinatario)',
   'activity.solana.nativeIn': 'En la misma transacción también llegaron {amount} {symbol} a esta cuenta',
+  'activity.row.feeHidden': 'comisión oculta',
 };

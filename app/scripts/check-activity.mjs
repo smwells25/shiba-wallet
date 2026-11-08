@@ -1666,15 +1666,17 @@ console.log('ActivityScreen source:');
   const { activityRowSpokenLead } = await import('../src/a11y.ts');
   const lead = (sentence, loading, sameAsAbove = false) => activityRowSpokenLead({ sentence, loading, sameAsAbove, loadingLabel: 'Transaction, details loading' });
   const loadingLabel = (src) =>
-    src.includes('activityRowSpokenLead({ sentence, loading, sameAsAbove, loadingLabel: ROW_DETAILS_LOADING_LABEL }) +') &&
+    src.includes('activityRowSpokenLead({ sentence, loading, sameAsAbove, loadingLabel: ROW_DETAILS_LOADING_LABEL, sentenceAbove }) +') &&
     lead('Sent 1 USDC to Account 2', true) === 'Sent 1 USDC to Account 2. ' &&
     lead(null, true) === 'Transaction, details loading. ' && lead(null, false) === '';
   check('screen readers hear the sentence first, or "Transaction, details loading" while it may still come (finding F5)', loadingLabel(screen));
-  check('…a row label without the lead is caught', !loadingLabel(screen.replace('activityRowSpokenLead({ sentence, loading, sameAsAbove, loadingLabel: ROW_DETAILS_LOADING_LABEL }) +', "(sentence ? `${sentence}. ` : '') +")));
+  check('…a row label without the lead is caught', !loadingLabel(screen.replace('activityRowSpokenLead({ sentence, loading, sameAsAbove, loadingLabel: ROW_DETAILS_LOADING_LABEL, sentenceAbove }) +', "(sentence ? `${sentence}. ` : '') +")));
   check('pass p20c finding 12: the second row of one transaction says "Same transaction as the row above." instead of the sentence again (exact)',
     lead('Sent 1 USDC to Account 2', false, true) === 'Same transaction as the row above. ' && lead(null, true, true) === 'Same transaction as the row above. ');
   check('…and the list marks a row whose previous row has the same transaction id (source)',
-    screen.includes('sameAsAbove={index > 0 && state.entries[index - 1]?.id === listed.id}') && screen.includes('renderItem={({ item: listed, index }) => {'));
+    // Since pass p24-solfix2 finding A the flag is computed once in renderItem and the row above's sentence passed along.
+    screen.includes('const sameAsAbove = index > 0 && state.entries[index - 1]?.id === listed.id;') && screen.includes('sameAsAbove={sameAsAbove}') &&
+      screen.includes('renderItem={({ item: listed, index }) => {'));
   const memo = (src) =>
     src.includes('setup && setup.key === setupKey ? setup : setupKey ? (DECODER_SETUPS.get(setupKey) ?? null) : null;') &&
     src.includes('rememberDecoderSetup(built);') && src.includes('if (!cancelled) setSetupFailedKey(setupKey);');
@@ -2156,7 +2158,9 @@ reset();
   const screen = readFileSync(join(here, '..', 'src', 'screens', 'ActivityScreen.tsx'), 'utf8');
   check('the screen applies the decoded status to every row and to the export, and a failed incoming row shows its title and no amount (source)',
     // Since the p24-unblock fixes the non-EVM branch labels Solana rows (wallet/solana-activity.ts); the EVM branch is unchanged.
-    screen.includes('const item = isEvmSlot\n            ? entryWithReceiptStatus(listed, sentences.lookup(listed.id))\n            : isSolanaSlot') &&
+    // Since pass p24-solfix2 the per-row transform is shownEntry, also used for the row above (finding A).
+    screen.includes('const shownEntry = (listed: HistoryEntry): HistoryEntry =>\n    isEvmSlot\n      ? entryWithReceiptStatus(listed, sentences.lookup(listed.id))\n      : isSolanaSlot') &&
+      screen.includes('const item = shownEntry(listed);') &&
       screen.includes('entries: isEvmSlot\n        ? loadedEntries.map((e) => entryWithReceiptStatus(e, sentences.lookup(e.id)))\n        : isSolanaSlot') &&
       screen.includes('const title = failedIncoming ? FAILED_INCOMING_TITLE : directionLabel(entry.direction);') &&
       screen.includes('const showAmount = !noAmount && !failedIncoming;') &&
@@ -2297,6 +2301,43 @@ console.log('HistoryEntry.contract through the merged four-stream feed (phase 23
     withC.map((x) => [x.uid, x.contract]));
   check('…and an answer without rawContract.address gives entries without the key (old-shaped)',
     without.every((x) => !('contract' in x)));
+}
+
+console.log('pass p24-solfix2: what an Activity row speaks (findings A and B)');
+{
+  const { activityRowSpokenLead, activityRowSpokenFee } = await import('../src/a11y.ts');
+  const RENT = 'In the same transaction, 0.00148844 test SOL also left this account besides the network fee (a token transfer can pay rent for the recipient’s new token account)';
+  const TOKEN = 'Sent 1 USDC to 9WMg…471n';
+  const lead = (sentence, sentenceAbove) => activityRowSpokenLead({ sentence, loading: false, sameAsAbove: true, loadingLabel: 'x', sentenceAbove });
+  check('finding A: the rent row under its token row says it is the same transaction AND reads its own sentence (exact)',
+    lead(RENT, TOKEN) === `Same transaction as the row above. ${RENT}. `);
+  check('…a second row with the same sentence as the row above, or no sentence, or no sentenceAbove, keeps the old lead (exact)',
+    lead(TOKEN, TOKEN) === 'Same transaction as the row above. ' && lead(null, TOKEN) === 'Same transaction as the row above. ' &&
+      lead(RENT, undefined) === 'Same transaction as the row above. ' &&
+      activityRowSpokenLead({ sentence: TOKEN, loading: false, sameAsAbove: false, loadingLabel: 'x', sentenceAbove: RENT }) === `${TOKEN}. `);
+  check('finding A: the fee is spoken with the row\'s visible words, "fee hidden" under Hide amounts, nothing without a fee (exact)',
+    activityRowSpokenFee({ fee: '0.000005', symbol: 'test SOL', hidden: false }) === 'fee 0.000005 test SOL' &&
+      activityRowSpokenFee({ fee: '0.000005', symbol: 'test SOL', hidden: true }) === 'fee hidden' &&
+      activityRowSpokenFee({ fee: null, symbol: 'test SOL', hidden: false }) === '');
+  const screen = readFileSync(join(here, '..', 'src', 'screens', 'ActivityScreen.tsx'), 'utf8');
+  const labelOk = (src) =>
+    src.includes("const sentenceAbove = sameAsAbove ? rowTextFor(shownEntry(state.entries[index - 1]!)).sentence : undefined;") &&
+    src.includes('sentenceAbove={sentenceAbove}') &&
+    src.includes('fee: entry.fee === undefined ? null : formatUnits(entry.fee, decimals, decimals),') &&
+    src.includes("`${spokenAmount}${spokenFee ? `, ${spokenFee}` : ''}, ${localTimestampLabel(entry)}` +");
+  check('…the screen passes the row above\'s sentence and puts the spoken fee after the amount (source)', labelOk(screen));
+  check('…mutant caught: the label without the fee',
+    !labelOk(screen.replace("`${spokenAmount}${spokenFee ? `, ${spokenFee}` : ''}, ${localTimestampLabel(entry)}` +", '`${spokenAmount}, ${localTimestampLabel(entry)}` +')));
+  check('…mutant caught: the row above\'s sentence not passed',
+    !labelOk(screen.replace('sentenceAbove={sentenceAbove}', '')));
+  const inertOk = (src) =>
+    !src.includes('disabled={!url}') && !/accessibilityRole=\{url \?/.test(src) &&
+    src.includes('{url ? (\n      <Pressable\n        accessibilityRole="button"\n        accessibilityLabel={rowLabel}') &&
+    src.includes('<View accessible accessibilityLabel={rowLabel} style={styles.row}>') &&
+    /if \(url\) void Linking\.openURL\(url\);/.test(src);
+  check('finding B: a row with no explorer link is a plain accessible View with the same label (no button role, no press, no "disabled"); a row with one stays a button (source)', inertOk(screen));
+  check('…mutant caught: the old single Pressable with disabled={!url}',
+    !inertOk(screen.replace('        accessibilityHint={tx(\'Opens the transaction in the block explorer\')}\n', "        accessibilityHint={tx('Opens the transaction in the block explorer')}\n        disabled={!url}\n")));
 }
 
 console.log(`\ncheck-activity: ${passed} passed, ${failed} failed`);

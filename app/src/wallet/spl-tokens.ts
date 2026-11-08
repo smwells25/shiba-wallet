@@ -98,6 +98,31 @@ export function splManageBalanceLine(state: SplRowState | undefined, symbol: str
   return `Balance: ${maskAmount(formatBalanceDisplay(state.associated, state.decimals), hidden)} ${symbol}`;
 }
 
+/**
+ * The spoken label of a tracked token's details on the Solana tokens screen
+ * (pass p24-solfix2 finding C): the lines it shows — the symbol, the name
+ * and decimals, the mint, then the balance line (or "Balance hidden" under
+ * Hide amounts, as the line itself is spoken) — as ONE element, so a screen
+ * reader reads the balance before the row's Send and Remove buttons. As
+ * separate texts TalkBack read the Send button between the mint and the
+ * balance (the buttons sit beside the text column, the balance below them;
+ * that TalkBack orders by position there is an inference from the pass, its
+ * code is not on this machine). The mint is read in full, as on the confirm
+ * screens.
+ */
+export function splManageRowSpokenLabel(p: {
+  symbol: string;
+  name: string;
+  decimals: number;
+  mint: string;
+  balanceLine: string | null;
+  balanceHidden: boolean;
+}): string {
+  const parts = [`${p.symbol}, ${p.name} · ${p.decimals} decimals`, `Mint ${p.mint}`];
+  if (p.balanceLine !== null) parts.push(p.balanceHidden ? 'Balance hidden' : p.balanceLine.replace(/\.$/, ''));
+  return `${parts.join('. ')}.`;
+}
+
 /** The network's name as the screens say it. */
 export function solanaNetworkLabel(caip2: string): string {
   if (caip2 === SOLANA_DEVNET_CAIP2) return 'Solana devnet';

@@ -70,6 +70,11 @@ export function solanaRowAsset(entry: HistoryEntry): string | null {
  *  - the native entry that follows a token entry of the same transaction
  *    (`companion`): that these lamports moved besides the fee, in the same
  *    transaction;
+ *  - any other native entry that names its counterparty (the engine names
+ *    one only when exactly one other account received what this address
+ *    sent, or sent what it received — pass p24-solfix2 finding E): the same
+ *    sentence as a token entry, with the network's coin ("Received 0.05 test
+ *    SOL from 6TgS…455t");
  *  - any other native entry: null (the row says enough).
  * Amounts are masked by Hide amounts like the row's own amount.
  */
@@ -91,8 +96,15 @@ export function solanaActivitySentence(
       ? t('activity.solana.received', { amount, asset, from: party })
       : t('activity.solana.receivedUnnamed', { amount, asset });
   }
-  if (!options.companion || entry.amount === undefined || entry.direction === 'self') return null;
+  if (entry.amount === undefined || entry.direction === 'self') return null;
   const amount = maskAmount(formatUnits(entry.amount, options.nativeDecimals, options.nativeDecimals), options.hidden);
+  if (!options.companion) {
+    if (entry.counterparty === undefined) return null;
+    const party = shortSolanaAddress(entry.counterparty);
+    return entry.direction === 'out'
+      ? t('activity.solana.sent', { amount, asset: options.nativeSymbol, to: party })
+      : t('activity.solana.received', { amount, asset: options.nativeSymbol, from: party });
+  }
   return entry.direction === 'out'
     ? t('activity.solana.nativeOut', { amount, symbol: options.nativeSymbol })
     : t('activity.solana.nativeIn', { amount, symbol: options.nativeSymbol });

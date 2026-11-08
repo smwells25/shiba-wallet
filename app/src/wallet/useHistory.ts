@@ -4,7 +4,7 @@ import type { HistoryPage } from '@shiba-wallet/core';
 // loadHistoryPage from this module under Node's type stripping.
 import { callWithFailover, getEndpoint, type NetworkEndpoint } from '../config/networks.ts';
 import { historySourceFor, indexerHistoryStreams, type HistorySource } from './history.ts';
-import { listTokens } from './tokens.ts';
+import { listSolanaTokens, listTokens } from './tokens.ts';
 import type { TrackedTokenRef } from './token-history.ts';
 import { getIndexerConfig } from './indexer.ts';
 import { createMergedHistoryFeed, type HistoryStream, type SmartAccountHistoryStatus } from './smart-account-history.ts';
@@ -66,6 +66,16 @@ async function sourceForEndpoint(
       };
     }
   }
+  // Solana (pass p24-solfix2): the tracked tokens of the network the
+  // endpoint serves (devnet or mainnet), whose associated token accounts the
+  // history follows too, so a transfer into an existing token account is
+  // listed. Read on every page like the EVM list; the engine keeps the set a
+  // session started with (its cursor), so a token tracked mid-scroll is
+  // followed from the next reload.
+  const solanaTokenMints =
+    endpoint.network.kind === 'solana-jsonrpc'
+      ? (await listSolanaTokens(endpoint.network.chainId).catch(() => [])).map((t) => t.assetId.reference)
+      : undefined;
   return {
     source: historySourceFor(
       endpoint.network.kind,
@@ -73,6 +83,7 @@ async function sourceForEndpoint(
       indexerUrl,
       endpoint.headers,
       evmTokenLogs,
+      solanaTokenMints,
     ),
     viaIndexer: indexerUrl !== null,
     indexerUrl,

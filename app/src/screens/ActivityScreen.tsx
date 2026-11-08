@@ -24,7 +24,7 @@ import { SolanaDevnetBanner } from '../components/SolanaDevnetBanner';
 import { T } from '../i18n/T';
 import { useI18n } from '../i18n/useI18n';
 import { localTimestampLabel } from '../i18n/format';
-import { activityRowSpokenLead, spokenShortAddress } from '../a11y';
+import { activityRowSpokenFee, activityRowSpokenLead, spokenShortAddress } from '../a11y';
 import { Theme, useTheme } from '../theme';
 import { SOLANA_DEVNET_CAIP2, SOLANA_DEVNET_NETWORK, networkDefaultFor } from '../config/defaults';
 import { maskAmount } from '../config/prefs';
@@ -139,7 +139,13 @@ function directionTransactionText(direction: HistoryEntry['direction'], t: Retur
  * One transaction row: direction badge, label + time + optional fee on the
  * left, signed amount (em-dash when the provider supplied none) and status
  * chips on the right. Tapping opens the chain's verified block explorer;
- * rows stay inert when no explorer is verified (Dogecoin).
+ * rows stay inert when no explorer is verified (Dogecoin, Solana devnet).
+ * An inert row is a plain accessible View, not a disabled button (pass
+ * p24-solfix2 finding B: TalkBack ended every devnet row with "disabled",
+ * because React Native's Pressable passes `disabled` on as the
+ * accessibilityState it hands to View — node_modules/react-native/Libraries/
+ * Components/Pressable/Pressable.js 227–236 and 257 — which TalkBack
+ * announces).
  */
 function EntryRow({
   entry,
@@ -156,6 +162,7 @@ function EntryRow({
   unavailable = false,
   replacementLine = null,
   sameAsAbove = false,
+  sentenceAbove,
   assetFallback = null,
 }: {
   entry: HistoryEntry;
@@ -211,6 +218,13 @@ function EntryRow({
    * repeating the transaction's sentence (pass p20c finding 12).
    */
   sameAsAbove?: boolean;
+  /**
+   * The sentence of the row above when it is the same transaction (pass
+   * p24-solfix2 finding A): a row with a different sentence of its own (a
+   * Solana rent row under its token row) still speaks it after "Same
+   * transaction as the row above."
+   */
+  sentenceAbove?: string | null;
   /**
    * What the amount column names next to a token amount whose entry carries
    * no symbol: on the Solana slot the token entry's shortened mint
@@ -286,25 +300,21 @@ function EntryRow({
   // failed-incoming title stay English in history.ts / activity-sentences.ts,
   // which also feed the CSV export).
   const shownTitle = localize(title);
-  return (
-    <View style={[styles.rowCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
-    <Pressable
-      accessibilityRole={url ? 'button' : undefined}
-      accessibilityLabel={
-        activityRowSpokenLead({ sentence, loading, sameAsAbove, loadingLabel: ROW_DETAILS_LOADING_LABEL }) +
-        (replacementLine ? `${replacementLine} ` : '') +
-        (failedIncoming ? `${shownTitle}, ` : `${directionTransactionText(entry.direction, t)}, `) +
-        `${spokenAmount}, ${localTimestampLabel(entry)}` +
-        (spokenStatus ? `, ${spokenStatus}` : '') +
-        (unavailable ? `. ${localize(ROW_DETAILS_UNAVAILABLE_LINE)}` : '')
-      }
-      accessibilityHint={url ? tx('Opens the transaction in the block explorer') : undefined}
-      disabled={!url}
-      onPress={() => {
-        if (url) void Linking.openURL(url);
-      }}
-      style={({ pressed }) => [styles.row, { opacity: pressed ? 0.8 : 1 }]}
-    >
+  // The fee line is visible, so it is spoken too (pass p24-solfix2 finding A).
+  const spokenFee = activityRowSpokenFee({
+    fee: entry.fee === undefined ? null : formatUnits(entry.fee, decimals, decimals),
+    symbol,
+    hidden,
+  });
+  const rowLabel =
+    activityRowSpokenLead({ sentence, loading, sameAsAbove, loadingLabel: ROW_DETAILS_LOADING_LABEL, sentenceAbove }) +
+    (replacementLine ? `${replacementLine} ` : '') +
+    (failedIncoming ? `${shownTitle}, ` : `${directionTransactionText(entry.direction, t)}, `) +
+    `${spokenAmount}${spokenFee ? `, ${spokenFee}` : ''}, ${localTimestampLabel(entry)}` +
+    (spokenStatus ? `, ${spokenStatus}` : '') +
+    (unavailable ? `. ${localize(ROW_DETAILS_UNAVAILABLE_LINE)}` : '');
+  const rowContent = (
+    <>
       <DirectionBadge entry={entry} theme={theme} />
       <View style={styles.rowBody}>
         <Text style={[styles.rowTitle, { color: theme.text }]}>
@@ -345,7 +355,29 @@ function EntryRow({
           ) : null}
         </View>
       </View>
-    </Pressable>
+    </>
+  );
+  return (
+    <View style={[styles.rowCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+    {url ? (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={rowLabel}
+        accessibilityHint={tx('Opens the transaction in the block explorer')}
+        onPress={() => {
+          if (url) void Linking.openURL(url);
+        }}
+        style={({ pressed }) => [styles.row, { opacity: pressed ? 0.8 : 1 }]}
+      >
+        {rowContent}
+      </Pressable>
+    ) : (
+      // No explorer: one accessible element with the same label, and no
+      // button role, press handler or disabled state to announce.
+      <View accessible accessibilityLabel={rowLabel} style={styles.row}>
+        {rowContent}
+      </View>
+    )}
     {note || onEditNote ? (
       // Outside the row's Pressable, so the note and its action are their
       // own elements for screen readers and taps on them never open the
@@ -838,6 +870,15 @@ export function ActivityScreen({ navigation, route }: Props) {
   // a staking bundle never reads as an amount staked; else the decoded
   // transaction's sentence; a row still waiting for it says it is loading.
   const activeIsMultisig = activeAccount?.multisig === true;
+  // A listed entry as its row shows it: with its decoded receipt's status
+  // (a reverted transaction moved nothing) on the EVM slot, with its symbol
+  // from the wallet's own lists on the Solana slot.
+  const shownEntry = (listed: HistoryEntry): HistoryEntry =>
+    isEvmSlot
+      ? entryWithReceiptStatus(listed, sentences.lookup(listed.id))
+      : isSolanaSlot
+        ? labelSolanaEntry(listed, shownSolanaSymbols)
+        : listed;
   const rowTextFor = (entry: HistoryEntry): { sentence: string | null; loading: boolean; unavailable: boolean } => {
     if (isSolanaSlot && state.status === 'ok') {
       return {
@@ -1159,12 +1200,12 @@ export function ActivityScreen({ navigation, route }: Props) {
         renderItem={({ item: listed, index }) => {
           // The row with its decoded receipt's status (a reverted
           // transaction moved nothing).
-          const item = isEvmSlot
-            ? entryWithReceiptStatus(listed, sentences.lookup(listed.id))
-            : isSolanaSlot
-              ? labelSolanaEntry(listed, shownSolanaSymbols)
-              : listed;
+          const item = shownEntry(listed);
           const rowText = rowTextFor(item);
+          // The previous row's sentence when it is the same transaction, so
+          // a different sentence of this row is still spoken (finding A).
+          const sameAsAbove = index > 0 && state.entries[index - 1]?.id === listed.id;
+          const sentenceAbove = sameAsAbove ? rowTextFor(shownEntry(state.entries[index - 1]!)).sentence : undefined;
           return (
           <EntryRow
             entry={item}
@@ -1177,7 +1218,8 @@ export function ActivityScreen({ navigation, route }: Props) {
             loading={rowText.loading}
             unavailable={rowText.unavailable}
             replacementLine={isEvmSlot && account ? replacementRowLine(pendingRecords, evmChain.caip2, item.id, account.address) : null}
-            sameAsAbove={index > 0 && state.entries[index - 1]?.id === listed.id}
+            sameAsAbove={sameAsAbove}
+            sentenceAbove={sentenceAbove}
             assetFallback={isSolanaSlot ? solanaRowAsset(item) : null}
             noAmount={hidesZeroNativeAmount(item, tokenTxIds, sentences.lookup(item.id)?.description)}
             note={noteFor(item.id)}

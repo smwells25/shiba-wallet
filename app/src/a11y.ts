@@ -116,16 +116,39 @@ export function payloadQrSpokenLabel(caption: string, label?: string): string {
  * (a token transfer and its native leg are listed as two rows), "Same
  * transaction as the row above." instead of the same sentence again; or
  * the loading label while the sentence may still arrive.
+ *
+ * `sentenceAbove` (pass p24-solfix2 finding A) is the sentence of the row
+ * above when it belongs to the same transaction. When this row has a
+ * sentence of its OWN that differs from it — a Solana token transfer's rent
+ * row ("In the same transaction, 0.00148844 test SOL also left this account
+ * besides the network fee…") under its token row — the row says so and then
+ * reads that sentence, which was visible but never spoken. Without
+ * `sentenceAbove`, or with the same sentence, the lead is exactly as before.
  */
 export function activityRowSpokenLead(p: {
   sentence: string | null;
   loading: boolean;
   sameAsAbove: boolean;
   loadingLabel: string;
+  sentenceAbove?: string | null;
 }): string {
-  if (p.sameAsAbove) return `${t('activity.row.sameAsAbove')} `;
+  if (p.sameAsAbove) {
+    const own = p.sentence !== null && p.sentence !== '' && p.sentenceAbove !== undefined && p.sentence !== p.sentenceAbove;
+    return own ? `${t('activity.row.sameAsAbove')} ${p.sentence}. ` : `${t('activity.row.sameAsAbove')} `;
+  }
   if (p.sentence) return `${p.sentence}. `;
   return p.loading ? `${p.loadingLabel}. ` : '';
+}
+
+/**
+ * The network fee as an Activity row speaks it (pass p24-solfix2 finding A:
+ * the row shows "fee 0.000005 test SOL" but its label never said it): the
+ * row's visible words — "fee", the amount, the coin — or "fee hidden" under
+ * Hide amounts; '' for a row with no fee.
+ */
+export function activityRowSpokenFee(p: { fee: string | null; symbol: string; hidden: boolean }): string {
+  if (p.fee === null) return '';
+  return p.hidden ? t('activity.row.feeHidden') : `${t('activity.row.fee')} ${p.fee} ${p.symbol}`;
 }
 
 /**

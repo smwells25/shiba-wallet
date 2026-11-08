@@ -547,12 +547,22 @@ console.log('Home: one spoken element per token row, the Hide amounts switch, li
   const sepoliaProfile = testProfiles.find((p) => p.caip2 === 'eip155:11155111');
   check('p20d finding 6: sendLinkHint names the coin it is given: "Sends test ETH" with Sepolia\'s displaySymbol, "Sends ETH" on mainnet (exact)',
     sendLinkHint(sepoliaProfile.displaySymbol) === 'Sends test ETH' && sendLinkHint('ETH') === 'Sends ETH' && sendLinkHint('stETH') === 'Sends stETH');
+  // Since pass p24-solfix2 finding D the Solana card says "test SOL" while devnet is on (the pin moved with it).
   const hintOk = (src) =>
-    src.includes('sendLinkHint(isEvm ? evmChain.displaySymbol : item.symbol),') &&
+    src.includes('sendLinkHint(isEvm ? evmChain.displaySymbol : solanaDevnetLine ? SOLANA_DEVNET_NETWORK.symbol : item.symbol),') &&
     src.includes(": sendLinkHint(token.symbol),") && !/`Sends \$\{/.test(src);
   check('…Home: the chain card\'s Send link takes the profile\'s displaySymbol on the EVM card; token rows their own symbol; no hint is built from a hard-coded "Sends ${…}" (source)', hintOk(home));
   check('…mutant caught: the old hint from the chain row\'s symbol',
-    !hintOk(home.replace('sendLinkHint(isEvm ? evmChain.displaySymbol : item.symbol),', '`Sends ${item.symbol}`,')));
+    !hintOk(home.replace('sendLinkHint(isEvm ? evmChain.displaySymbol : solanaDevnetLine ? SOLANA_DEVNET_NETWORK.symbol : item.symbol),', '`Sends ${item.symbol}`,')));
+  // Pass p24-solfix2 finding D: the devnet Solana card's Send hint said "Sends SOL" while the card reads "test SOL".
+  const { SOLANA_DEVNET_NETWORK } = await import('../src/config/defaults.ts');
+  const devnetHintOk = (src) =>
+    src.includes('sendLinkHint(isEvm ? evmChain.displaySymbol : solanaDevnetLine ? SOLANA_DEVNET_NETWORK.symbol : item.symbol),') &&
+    src.includes("const solanaDevnetLine = item.chainId === SOLANA_CHAIN_ID && solanaDevnet ? SOLANA_DEVNET_CARD_LINE : null;") &&
+    SOLANA_DEVNET_NETWORK.symbol === 'test SOL' && sendLinkHint(SOLANA_DEVNET_NETWORK.symbol) === 'Sends test SOL';
+  check('p24-solfix2 finding D: the Solana card\'s Send hint is "Sends test SOL" while Solana devnet is on (the devnet network\'s own symbol), "Sends SOL" otherwise (source and exact)', devnetHintOk(home));
+  check('…mutant caught: the card hint back to the slot\'s symbol ("Sends SOL" on devnet)',
+    !devnetHintOk(home.replace('sendLinkHint(isEvm ? evmChain.displaySymbol : solanaDevnetLine ? SOLANA_DEVNET_NETWORK.symbol : item.symbol),', 'sendLinkHint(isEvm ? evmChain.displaySymbol : item.symbol),')));
   // Pass p24-unblock finding 5: the Ethereum token row and the Solana token row both read "Send USDC" (label and
   // hint "Sends USDC"), so neither a screen reader nor the pass's driver could tell the networks apart. The Solana
   // row's link now names its network; the EVM row's pinned label and hint are unchanged.

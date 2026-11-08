@@ -914,6 +914,93 @@ async function solactMutant(from, to) {
 check(`solana-activity.ts: at least three mutants, all caught (${solactCaught} of ${solactMutants})`, solactMutants >= 3 && solactCaught === solactMutants);
 
 // ---------------------------------------------------------------------------
+console.log('check-spl-tokens: pass p24-solfix2 (the recipient\'s missing incoming transfer, native counterparties, the Manage reading order)');
+// ---------------------------------------------------------------------------
+const TOKEN_ACCOUNT_FIXTURE = JSON.parse(
+  readFileSync(resolve(HERE, '../../packages/chains-solana/test/fixtures/devnet-token-account-history-2026-11-08.json'), 'utf8'),
+);
+const INCOMING_SIG = '4abaH22978MmD5yX8PE32kLoRFQrZtAD1j147fkxJ5E241iTQ9M1hgZAouhHGhpXprZTw595eVXQf6pBkUZh442f';
+const FUNDING_SIG = '3PdTyWyJR2qXKgBdzFMJzFaiCjUpk1G9hh2gS4zKzcsnYr7iUqMeVxjGtvN4bhyXzj9BujpRbMK7iPtzAiiYJzmE';
+const DEVNET_USDC = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU';
+const DEVNET_EURC = 'HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr';
+// The app's own history source (wallet/history.ts historySourceFor → the
+// engine's provider over its HTTP transport), with fetch replaying the
+// recorded devnet answers of 2026-11-08 (no network).
+async function appHistoryOf(owner, mints) {
+  const realFetch = globalThis.fetch;
+  const asked = [];
+  globalThis.fetch = async (_url, init) => {
+    const { id, method, params } = JSON.parse(init.body);
+    asked.push([method, params[0]]);
+    let result;
+    if (method === 'getSignaturesForAddress') result = TOKEN_ACCOUNT_FIXTURE.signatures[params[0]] ?? [];
+    else if (method === 'getTransaction') result = TOKEN_ACCOUNT_FIXTURE.transactions[params[0]] ?? HISTORY_FIXTURE.transactions[params[0]] ?? null;
+    else throw new Error(`unexpected ${method}`);
+    return new Response(JSON.stringify({ jsonrpc: '2.0', id, result }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const source = HISTORY.historySourceFor('solana-jsonrpc', 'https://devnet.invalid', null, undefined, undefined, mints);
+    const page = await source.provider.getHistory(owner);
+    return { page, asked };
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+{
+  const gap = await appHistoryOf(ACCOUNT_2, undefined);
+  const fixed = await appHistoryOf(ACCOUNT_2, [DEVNET_USDC, DEVNET_EURC]);
+  check('the history gap as found: without the tracked mints Account 2\'s Activity misses the incoming 1 USDC (4abaH…), as on the emulator',
+    !gap.page.entries.some((e) => e.id === INCOMING_SIG) && gap.asked.filter(([m]) => m === 'getSignaturesForAddress').length === 1);
+  const row = fixed.page.entries.find((e) => e.id === INCOMING_SIG);
+  const symbols = SOLACT.solanaTokenSymbols(DEVNET, []);
+  check('with the tracked mints the app\'s source lists it, from Account 2\'s USDC token account, and it reads "Received 1 USDC from EK5j…rYPv"',
+    row !== undefined && fixed.asked.some(([m, a]) => m === 'getSignaturesForAddress' && a === 'FfqpujQvP1pjUEthwcdHSqmwrYVUteNrDdNJLe9Qeedc') &&
+      SOLACT.solanaActivitySentence(SOLACT.labelSolanaEntry(row, symbols), { hidden: false, ...DEVNET_NATIVE, companion: false }) === 'Received 1 USDC from EK5j…rYPv' &&
+      fixed.page.entries.length === 3 && new Set(fixed.page.entries.map((e) => e.id)).size === 3);
+  const useHistorySource = readFileSync(resolve(HERE, '../src/wallet/useHistory.ts'), 'utf8');
+  const wiredOk = (src) =>
+    src.includes("endpoint.network.kind === 'solana-jsonrpc'\n      ? (await listSolanaTokens(endpoint.network.chainId).catch(() => [])).map((t) => t.assetId.reference)") &&
+    /evmTokenLogs,\n\s*solanaTokenMints,\n\s*\),/.test(src);
+  check('useHistory reads the tracked tokens of the network the endpoint serves and hands their mints to the source (source)', wiredOk(useHistorySource));
+  check('…mutant caught: the mints not handed over (the gap again)', !wiredOk(useHistorySource.replace(/evmTokenLogs,\n(\s*)solanaTokenMints,\n/, 'evmTokenLogs,\n')));
+  // Finding E: the 0.05 SOL funding row.
+  const funding = await solanaHistoryProvider(async (method) =>
+    method === 'getSignaturesForAddress'
+      ? [{ signature: FUNDING_SIG, slot: 519736028, err: null, blockTime: 1794072707, confirmationStatus: 'finalized' }]
+      : TOKEN_ACCOUNT_FIXTURE.transactions[FUNDING_SIG],
+  ).getHistory(ACCOUNT_1);
+  const fundingRow = funding.entries[0];
+  check('finding E: the recorded "+0.05 test SOL" row now reads "Received 0.05 test SOL from 6TgS…455t" (and is masked under Hide amounts)',
+    SOLACT.solanaActivitySentence(fundingRow, { hidden: false, ...DEVNET_NATIVE, companion: false }) === 'Received 0.05 test SOL from 6TgS…455t' &&
+      SOLACT.solanaActivitySentence(fundingRow, { hidden: true, ...DEVNET_NATIVE, companion: false }) === 'Received •••• test SOL from 6TgS…455t');
+  const { counterparty: _drop, ...noParty } = fundingRow;
+  check('…a native row without a counterparty keeps no sentence; the rent row (companion) keeps its own sentence',
+    SOLACT.solanaActivitySentence(noParty, { hidden: false, ...DEVNET_NATIVE, companion: false }) === null &&
+      SOLACT.solanaActivitySentence({ ...fundingRow, direction: 'out', amount: 1_488_440n }, { hidden: false, ...DEVNET_NATIVE, companion: true }).startsWith('In the same transaction, 0.00148844 test SOL also left this account'));
+  const M5 = await solactMutant('    if (entry.counterparty === undefined) return null;\n    const party', '    return null;\n    const party');
+  const ok5 = M5.solanaActivitySentence(fundingRow, { hidden: false, ...DEVNET_NATIVE, companion: false }) !== 'Received 0.05 test SOL from 6TgS…455t';
+  solactCaught += ok5 ? 1 : 0;
+  check('mutant caught: a native row with a known counterparty left without its sentence', ok5);
+  // Finding C: the Manage row's details as one element, read before Send and Remove.
+  const label = SPL.splManageRowSpokenLabel({ symbol: 'USDC', name: 'USD Coin', decimals: 6, mint: DEVNET_USDC, balanceLine: 'Balance: 18 USDC', balanceHidden: false });
+  check('finding C: the Manage row speaks its lines as one element, the balance last (exact), "Balance hidden" under Hide amounts, the error line, nothing before the read',
+    label === `USDC, USD Coin · 6 decimals. Mint ${DEVNET_USDC}. Balance: 18 USDC.` &&
+      SPL.splManageRowSpokenLabel({ symbol: 'USDC', name: 'USD Coin', decimals: 6, mint: DEVNET_USDC, balanceLine: 'Balance: •••• USDC', balanceHidden: true }) === `USDC, USD Coin · 6 decimals. Mint ${DEVNET_USDC}. Balance hidden.` &&
+      SPL.splManageRowSpokenLabel({ symbol: 'USDC', name: 'USD Coin', decimals: 6, mint: DEVNET_USDC, balanceLine: 'Balance: could not be read just now.', balanceHidden: false }) === `USDC, USD Coin · 6 decimals. Mint ${DEVNET_USDC}. Balance: could not be read just now.` &&
+      SPL.splManageRowSpokenLabel({ symbol: 'EURC', name: 'EURC', decimals: 6, mint: DEVNET_EURC, balanceLine: null, balanceHidden: false }) === `EURC, EURC · 6 decimals. Mint ${DEVNET_EURC}.`);
+  const manage = readFileSync(resolve(HERE, '../src/screens/SolanaTokensScreen.tsx'), 'utf8');
+  const groupOk = (src) => {
+    const info = src.indexOf('                style={styles.tokenInfo}\n                accessible\n                accessibilityLabel={splManageRowSpokenLabel({');
+    const buttons = src.indexOf('<View style={styles.rowButtons}>');
+    return info > 0 && buttons > info && src.includes('balanceHidden: hideAmounts && rowState?.status === \'ok\',');
+  };
+  check('…the screen: the details column is one accessible element with that label, before the buttons in the tree (source)', groupOk(manage));
+  check('…mutant caught: the details as separate texts again (Send read before the balance)',
+    !groupOk(manage.replace('                style={styles.tokenInfo}\n                accessible\n', '                style={styles.tokenInfo}\n')));
+}
+check(`solana-activity.ts with the p24-solfix2 mutant: all caught (${solactCaught} of ${solactMutants})`, solactMutants >= 4 && solactCaught === solactMutants);
+
+// ---------------------------------------------------------------------------
 console.log('check-spl-tokens: mutants of wallet/spl-tokens.ts are caught');
 // ---------------------------------------------------------------------------
 const SOURCE = readFileSync(SPL_PATH, 'utf8');

@@ -23,6 +23,7 @@ import {
   solanaNetworkLabel,
   splSendGate,
   splManageBalanceLine,
+  splManageRowSpokenLabel,
   splSendLinkShown,
   splTokensFeeSentence,
   tokenProgramLabel,
@@ -212,7 +213,19 @@ export function SolanaTokensScreen({ navigation }: Props) {
             const balanceLine = splManageBalanceLine(rowState, token.symbol, hideAmounts);
             return (
             <View key={formatAssetId(token.assetId)} style={[styles.tokenRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
-              <View style={styles.tokenInfo}>
+              {/* One element for the screen reader, read before Send and Remove (pass p24-solfix2 finding C). */}
+              <View
+                style={styles.tokenInfo}
+                accessible
+                accessibilityLabel={splManageRowSpokenLabel({
+                  symbol: token.symbol,
+                  name: token.name,
+                  decimals: token.decimals,
+                  mint: token.assetId.reference,
+                  balanceLine,
+                  balanceHidden: hideAmounts && rowState?.status === 'ok',
+                })}
+              >
                 <Text style={[styles.tokenSymbol, { color: theme.text }]}>{token.symbol}</Text>
                 <Text style={[styles.tokenName, { color: theme.textMuted }]} numberOfLines={1}>
                   {token.name} · {token.decimals} decimals

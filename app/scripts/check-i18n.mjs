@@ -286,6 +286,8 @@ const RECHECK_FIX_NEW = ['home.solanaTokens.feeDevnet'];
 // sentences for token transfers (finding 2) are new.
 const UNBLOCK_FIX_NEW = ['home.solanaToken.send', 'home.solanaToken.send.hint', 'activity.solana.sent', 'activity.solana.sentUnnamed',
   'activity.solana.received', 'activity.solana.receivedUnnamed', 'activity.solana.unknownToken', 'activity.solana.nativeOut', 'activity.solana.nativeIn'];
+// Pass p24-solfix2 finding A: an Activity row speaks its fee; under Hide amounts "fee hidden".
+const SOLHIST_NEW = ['activity.row.feeHidden'];
 {
   const p = fixtureProblems(en, FIXTURE);
   check(`every English entry is the text the app showed at ${FIXTURE.base} (${Object.keys(FIXTURE.literal).length} literals, ${Object.keys(FIXTURE.template).length} templates by their static parts, ${Object.keys(FIXTURE.composite).length} composites) or listed as new (${FIXTURE.new.length})`,
@@ -304,13 +306,14 @@ const UNBLOCK_FIX_NEW = ['home.solanaToken.send', 'home.solanaToken.send.hint', 
   const BROADCAST_OPEN_NEW = ['broadcast.open.title', 'broadcast.tx.open', 'broadcast.tx.openUnlisted', 'broadcast.userop.open',
     'broadcast.userop.openUnlisted', 'broadcast.open'];
   check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the Solana token-send readiness row, the wallet handle\'s, the six open-outcome broadcast sentences, the co-signer card\'s numbered Scan label, the eight period words of the hygiene slice, the four Bridge lines of pass p23-mint, the five lines of the p23-build fixes, the three Bridge lines of pass p23-bridge-recheck and the three navigation-bar lines of pass p23-navbar and the three iOS-pass lines (two iOS reminder notes, the "an" scanner sentence) and the five lines of the Solana-pass fix slice (the Solana devnet banner, the Solana token-fee line, the Solana devnet readiness line, two Max-lowering sentences) and the two smart-account Max-lowering sentences of the trim slice and the devnet form of the Solana token-fee line (pass p24-recheck) and the nine lines of the p24-unblock fixes (the Solana token Send link and its hint, seven Solana Activity sentences)',
-    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || SPL_TOKENS_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id) || NAVBAR_FIX_NEW.includes(id) || IOS_FIX_NEW.includes(id) || SOLANA_FIX_NEW.includes(id) || AA_TRIM_NEW.includes(id) || RECHECK_FIX_NEW.includes(id) || UNBLOCK_FIX_NEW.includes(id)) &&
+    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || SPL_TOKENS_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id) || NAVBAR_FIX_NEW.includes(id) || IOS_FIX_NEW.includes(id) || SOLANA_FIX_NEW.includes(id) || AA_TRIM_NEW.includes(id) || RECHECK_FIX_NEW.includes(id) || UNBLOCK_FIX_NEW.includes(id) || SOLHIST_NEW.includes(id)) &&
       BUILD_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && BRIDGE_RECHECK_NEW.every((id) => FIXTURE.new.includes(id)) &&
       LOCK_KIND_NEW.every((id) => FIXTURE.new.includes(id)) && COLD_AA_NEW.every((id) => FIXTURE.new.includes(id)) && SPL_TOKENS_NEW.every((id) => FIXTURE.new.includes(id)) &&
       BROADCAST_OPEN_NEW.every((id) => FIXTURE.new.includes(id)) && THIRD_PASS_NEW.every((id) => FIXTURE.new.includes(id)) && PERIOD_NEW.every((id) => FIXTURE.new.includes(id)) &&
       BRIDGE_MINT_NEW.every((id) => FIXTURE.new.includes(id)) && NAVBAR_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && IOS_FIX_NEW.every((id) => FIXTURE.new.includes(id)) &&
       SOLANA_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && AA_TRIM_NEW.every((id) => FIXTURE.new.includes(id)) &&
-      RECHECK_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && UNBLOCK_FIX_NEW.every((id) => FIXTURE.new.includes(id)));
+      RECHECK_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && UNBLOCK_FIX_NEW.every((id) => FIXTURE.new.includes(id)) &&
+      SOLHIST_NEW.every((id) => FIXTURE.new.includes(id)));
   check('the changed entries are exactly the transaction-notes line (reworded for the records backup), the watch-only notice (reworded for the off-line signer), the bridge readiness reason (CCTP sent, phase 23), the records-backup note (smart-account recovery records, pass p23-build) the three CCTP time sentences (the measured spread, pass p23-bridge-recheck) and the inbox intro and empty line (what is listed, phase 24 item 4) and the inbox PIN note and the two inbox link hints (the same rewording, the Solana-pass fix slice), each with its reason',
     JSON.stringify(Object.keys(FIXTURE.changed ?? {})) === JSON.stringify(['activity.note.privacy', 'notice.watchOnly', 'readiness.bridge.reason', 'recordsBackup.what', ...CCTP_TIME_CHANGED, ...INBOX_WORDING_CHANGED, ...INBOX_NOTES_CHANGED]) &&
       en['activity.note.privacy'] === 'Notes are kept on this phone and are not sent anywhere. They are deleted when the wallet is wiped. A records backup (Settings → Records backup) includes them, and your recovery phrase restores them from it. Hide amounts does not hide them.');
@@ -1924,6 +1927,26 @@ function caught(name, wasCaught) {
       I.translateFrom({ en, es }, 'es', 'home.solanaToken.send', { symbol: 'USDC', network: 'Solana devnet' }) === 'Enviar USDC en Solana devnet');
   caughtP('p24-unblock: an Activity sentence changed by one character', !tablesOk({ ...en, 'activity.solana.sent': 'Sent {amount} {asset} to {to}.' }, es));
   caughtP('p24-unblock: a Spanish Activity sentence that dropped its placeholder', !tablesOk(en, { ...es, 'activity.solana.received': 'Recibiste {amount} {asset}' }));
+}
+{
+  // Pass p24-solfix2 finding A: the row's spoken fee, and the native Solana
+  // rows' sentences (finding E), which reuse activity.solana.sent / received
+  // with the network's coin as the asset.
+  const A11Y = await import('../src/a11y.ts');
+  const feeOk = (e, sp) => e['activity.row.feeHidden'] === 'fee hidden' && sp['activity.row.feeHidden'] === 'comisión oculta';
+  check('p24-solfix2: the new "fee hidden" line, English and Spanish (exact); the spoken fee in Spanish uses the existing "comisión"', feeOk(en, es) &&
+    (() => {
+      I.setActiveLanguage('es');
+      try {
+        return A11Y.activityRowSpokenFee({ fee: '0.000005', symbol: 'SOL de prueba', hidden: false }) === 'comisión 0.000005 SOL de prueba' &&
+          A11Y.activityRowSpokenFee({ fee: '0.000005', symbol: 'x', hidden: true }) === 'comisión oculta';
+      } finally {
+        I.setActiveLanguage('en');
+      }
+    })());
+  caughtP('p24-solfix2: the "fee hidden" line changed by one character', !feeOk({ ...en, 'activity.row.feeHidden': 'fee hidden.' }, es));
+  check('p24-solfix2 finding E: a native row\'s sentence is the token sentence with the network\'s coin (exact)',
+    I.t('activity.solana.received', { amount: '0.05', asset: 'test SOL', from: '6TgS…455t' }) === 'Received 0.05 test SOL from 6TgS…455t');
 }
 // Table mutants: the same checks, run on broken copies of the tables.
 {

@@ -2039,4 +2039,5 @@ export const en = {
   'activity.solana.unknownToken': 'of the token with mint {mint}',
   'activity.solana.nativeOut': 'In the same transaction, {amount} {symbol} also left this account besides the network fee (a token transfer can pay rent for the recipient’s new token account)',
   'activity.solana.nativeIn': 'In the same transaction, {amount} {symbol} also arrived in this account',
+  'activity.row.feeHidden': 'fee hidden',
 } as const;

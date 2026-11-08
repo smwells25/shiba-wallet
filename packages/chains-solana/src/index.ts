@@ -42,7 +42,14 @@ export type {
   RawAccount,
   SignatureStatus,
 } from './rpc.js';
-export { isValidSolanaAddress, solanaHistoryProvider, solanaTokenMoves } from './history.js';
+export {
+  SOLANA_HISTORY_MAX_FOLLOWED_MINTS,
+  SOLANA_HISTORY_MAX_SIGNATURE_REQUESTS,
+  isValidSolanaAddress,
+  solanaFollowedTokenAccounts,
+  solanaHistoryProvider,
+  solanaTokenMoves,
+} from './history.js';
 export type { SolanaHistoryOptions, SolanaTokenMove } from './history.js';
 export {
   EXT,

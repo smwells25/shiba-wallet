@@ -179,6 +179,12 @@ const NO_BLOCKBOOK_NOTE =
  * honestly unavailable, because the regular RPC endpoint cannot serve it.
  * `headers` is only meaningful for 'blockbook' endpoints: the configured
  * API key as the api-key header, resolved by config/networks.ts.
+ * `solanaTokenMints` (pass p24-solfix2) is only meaningful for Solana: the
+ * mints of the network's tracked tokens, whose associated token accounts the
+ * engine's provider lists too (an incoming token transfer into an existing
+ * token account does not name the wallet address, so the wallet's own
+ * signatures miss it); absent or empty, the provider lists the address
+ * alone, exactly as before.
  */
 export function historySourceFor(
   kind: NetworkKind,
@@ -186,6 +192,7 @@ export function historySourceFor(
   evmIndexerUrl: string | null = null,
   headers?: Record<string, string>,
   evmTokenLogs?: { walletAddress: string; tokens: TrackedTokenRef[] },
+  solanaTokenMints?: readonly string[],
 ): HistorySource {
   switch (kind) {
     case 'evm-jsonrpc':
@@ -230,6 +237,7 @@ export function historySourceFor(
         status: 'available',
         provider: solanaHistoryProvider(solanaHttpTransport(url), {
           enrichLimit: SOLANA_ENRICH_LIMIT,
+          ...(solanaTokenMints && solanaTokenMints.length > 0 ? { followTokenMints: solanaTokenMints } : {}),
         }),
       };
   }

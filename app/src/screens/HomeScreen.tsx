@@ -38,7 +38,7 @@ import { COLD_SIGN_HOME_LINK, COLD_SIGN_LINK_HINT } from '../wallet/cold-signing
 import { httpTransport } from '@shiba-wallet/chains-evm';
 import { MULTISIG_DEPOSIT_ROW_LABEL, readMultisigFunds } from '../wallet/multisig';
 import { getEndpoint } from '../config/networks';
-import { SOLANA_DEVNET_CAIP2 } from '../config/defaults';
+import { SOLANA_DEVNET_CAIP2, SOLANA_DEVNET_NETWORK } from '../config/defaults';
 import { OfflineNotice } from '../wallet/connectivity';
 import { usePrefs } from '../wallet/PrefsContext';
 import { maskAmount } from '../config/prefs';
@@ -781,8 +781,9 @@ export function HomeScreen({ navigation }: Props) {
             : cardLink('send', 'Send ↗', () =>
                 navigation.navigate('Send', { chainId: item.chainId }),
                 // The coin as this network names it ("test ETH" on a test
-                // network; pass p20d finding 6).
-                sendLinkHint(isEvm ? evmChain.displaySymbol : item.symbol),
+                // network; pass p20d finding 6), and "test SOL" on the Solana
+                // card while Solana devnet is on (pass p24-solfix2 finding D).
+                sendLinkHint(isEvm ? evmChain.displaySymbol : solanaDevnetLine ? SOLANA_DEVNET_NETWORK.symbol : item.symbol),
               )}
           {cardLink('activity', 'Activity', () =>
             navigation.navigate('Activity', { chainId: item.chainId }),
