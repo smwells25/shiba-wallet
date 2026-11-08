@@ -17621,3 +17621,123 @@ arrive; 6 last. Subagents on Opus.
       bootloader versions are pending from the Chairperson. Dispatched: the
       emulator pass (bundler re-save, the smart-account Max re-check, the
       SPL send leg) and an engine slice pinning EURC on devnet.
+- [x] EMULATOR PASS p24-unblock — THE BUNDLER RE-SAVED ON ALL FOUR NETWORKS,
+      THE SMART-ACCOUNT MAX EXACT, AND THE FIRST LIVE SOLANA TOKEN TRANSFERS
+      THROUGH THE WALLET'S OWN TOKEN LAYER (2026-11-08 04:05–05:07 UTC; Expo
+      Go on emulator 37.1.11 under -gpu swangle, Metro moved to wt-app at
+      b2bda0b (code 7f89feb; npm 710 / node 745 on 8081, 1,955 modules); the
+      REAL wallet's Account 1; 3 prompts — "Unlock Shiba Wallet", "Approve
+      sending 1 USDC", "Approve sending 1 EURC" — each read from the prompt
+      window; isKeyguardShowing read false before any input; no repository
+      file edited; the report step by step in the previous session's
+      scratchpad p24-unblock-pass/REPORT.md, every dump masked, the four
+      0600 URL files deleted with rm -P). STEP 1 — THE BUNDLER RE-SAVE: the
+      Chairperson's ZeroDev project URL typed through the ADBKeyboard
+      broadcast from 0600 files (the field compared to the file inside a
+      script, never printed) and "Verify & save" tapped once on each of
+      Ethereum, Base, Arbitrum and OP Sepolia → "Verified ✓ — the bundler
+      reported chain id <id> (<network>) and eth_supportedEntryPoints includes
+      EntryPoint v0.7 (checked 2026-11-07)" (the phone's local date) and "ready
+      · Kernel v3.3 (ERC-7579)" on all four; the old rows had carried the
+      stale project (checked 2026-10-04 / 11-04 / 10-09 / 10-11). STEP 2 — THE
+      SMART-ACCOUNT MAX (b7bd8df / b2819c9) SEEN LIVE ON ETHEREUM SEPOLIA: the
+      p24-recheck 403 line is gone from the Send form; Max → 0.012487384119996734
+      test ETH with the Review's amount UNCHANGED, max fee 0.000834836311445604
+      = 2,310,000,004 wei × 361,401 gas, TOTAL (WORST CASE) 0.013322220431442338
+      = the Kernel's balance to the wei (13,322,220,431,442,338 − Max =
+      834,836,311,445,604), NO trim sentence; with the USDC fee ON (Pimlico)
+      Max → the FULL ETH balance 0.013322220431442338 with "NETWORK FEE (PAID
+      IN USDC) up to 4.152742 USDC", the rate "1 test ETH = 2459.157162 USDC,
+      set by Pimlico's service…", the 25% headroom sentence, the approval box
+      "…replacing an earlier approval of 3.610225 USDC…", "Bundler gas
+      estimate passed with Pimlico's paymaster terms.", no trim sentence;
+      both backed out — the Kernel (13,322,220,431,442,338 wei + deposit
+      488,176,956,367,101) and Account 1 (nonce 54) IDENTICAL on publicnode
+      and 0xrpc.io before and after. OBSERVATION: the Kernel holds 24,298,753
+      USDC base units, 20 USDC more than the p23-handle record — the source
+      not traced (most likely a Chairperson top-up; asked). STEP 3 — THE
+      DEVNET SPL SEND LEG: devnet ON → Home "Solana devnet: test SOL, no
+      value" / "0.05 test SOL", the USDC row "Balance 20 USDC" with "Send USDC
+      ↗" now shown (the 7f89feb rule), the devnet fee sentence; Manage Solana
+      tokens with the devnet banner; EURC tracked by mint
+      (HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr: "SPL Token · 6 decimals
+      (from the mint)", the freeze-authority sentence naming
+      DuYQKfdunafuUqS7h6gugadrAiprxwtwBZFZLAMk4A99, no transfer-fee line —
+      correct for a classic mint; the Track prompt exact) → Home "EURC,
+      Solana devnet token. Balance 20 EURC"; Account 2's devnet address
+      9WMgKdmRJBZy8WQ6Q9T6VjJN4wyT9jQenDvfvLFe471n (m/44'/501'/1'/0') read from
+      "Receive test SOL" with the devnet banner and "Solana devnet" (the
+      7f89feb Receive fix seen live), 0 lamports and no token accounts on two
+      RPCs. SEND 1 USDC Account 1 → Account 2: the Review "Send USDC on Solana
+      devnet" — fee "5000 lamports (0.000005 test SOL)", "Rent for the
+      recipient's new token account (paid by you) 1488440 lamports (0.00148844
+      test SOL)", "Total SOL leaving your account 1493440 lamports (0.00149344
+      test SOL)", the mint, "SPL Token", the sender's token account
+      5X7QtYVV9MRtCayZqo5fpv7MRALTo1DqQtuu4Wk4YUhi, the recipient's
+      "FfqpujQvP1pjUEthwcdHSqmwrYVUteNrDdNJLe9Qeedc (created by this
+      transaction)", the freeze-authority and rent sentences — both associated
+      addresses equal to an independent @solana/spl-token derivation and the
+      rent equal to getMinimumBalanceForRentExemption(165) = 1,488,440 on both
+      RPCs (devnet's rent is no longer the classic 2,039,280; the app reads it
+      from the node); ONE prompt "Approve sending 1 USDC" → "Sent ✓" /
+      signature 3vPay79jwsm4PkEb9hBsKSKeMuRyVwWGAJUH3cUaLVRrtCbSXNjA5LDW961cV6di65aoREu7YYNW312QEA3zjFXV
+      / "The sending endpoint reports the transaction confirmed." / "Read
+      again on solana-devnet.api.onfinality.io: the transaction is there
+      (finalized)."; ON-CHAIN, identical on api.devnet.solana.com and
+      onfinality: slot 519907325 (04:55:07 UTC), err null, fee 5,000,
+      instruction 1 spl-associated-token-account createIdempotent (the
+      recipient's account, payer Account 1), instruction 2 spl-token
+      transferChecked 1,000,000 at 6 decimals; Account 1 lamports 50,000,000 →
+      48,506,560 (= −5,000 − 1,488,440, the review's total exactly), the new
+      account 1,488,440, USDC 20,000,000 → 19,000,000, Account 2's new account
+      1,000,000. SEND 1 EURC the same way: the recipient's account
+      H64rT5SUGgaE81ButXjtxvCpbBZMPyQavgCyK8dENrWK (= the derivation), ONE
+      prompt "Approve sending 1 EURC", signature
+      2C9aCLXNnk1oYWRYQshq21b3JjEXpTGzHZTFoJYbkf8MrTYiRNE5UnNuCZvrY1GNoLGRS6k9g5iwejett5jhP5pg,
+      slot 519908397 (04:59:23 UTC), err null, createIdempotent then
+      transferChecked 1,000,000; Account 1 lamports → 47,013,120 (reconciled:
+      50,000,000 − 2 × 1,493,440), EURC 20,000,000 → 19,000,000, Account 2's
+      new EURC account 1,000,000. THESE ARE THE FIRST LIVE SOLANA TOKEN
+      TRANSFERS THROUGH THE WALLET'S TOKEN LAYER, the create-recipient-account
+      path included (FEATURE 43 → Proven live at the item-6 refresh). Devnet
+      OFF → Home "0 SOL", the USDC row "USD Coin · Solana token" with no Send
+      link, no EURC row (the devnet list is separate), the mainnet fee
+      sentence. FINDINGS (fix slice dispatched): (1) BUG — Home's SOL balance
+      is NOT refreshed after a Solana token send: the USDC row updated at
+      once ("Balance 19 USDC") while the SOL row stayed "0.05 test SOL" for
+      over 2 minutes and a trip to Activity, until a pull-to-refresh
+      ("0.048506 test SOL"); the same after the EURC send (on-chain
+      0.04701312) — the token send spends SOL (fee + rent); (2) BUG — Solana
+      Activity does not describe a token transfer: the USDC send reads "Sent
+      / −0.001488 test SOL / fee 0.000005 test SOL" (only the rent, no "1
+      USDC", no recipient) and the Chairperson's 20 USDC and 20 EURC deposits
+      read "Self / 0 test SOL" (an incoming token transfer misdescribed as a
+      self-transfer); (3) copy — Manage Solana tokens' intro still says
+      "Network fees for a token send are paid in SOL." on devnet; (4) copy —
+      the token-send form's intro and the Review row say "paid in SOL" while
+      the values read "test SOL" on devnet; (5) TWO HOME LINKS SHARE THE LABEL
+      "Send USDC" (the Sepolia ERC-20 row and the Solana devnet row; "Send
+      EURC" likewise) with no network in the spoken label — the driver's first
+      tap opened the EVM one; the token screens' titles "Send USDC" too; (6)
+      the EURC read-back and row read "EURC · 6 decimals" because the
+      on-chain name equals the symbol (harmless), and the read-back shows no
+      balance; (7) Home shows only the Ethereum banner while the Solana rows
+      read devnet (Home is not on the devnet banner's screen list — by
+      design, noted); (8) Manage Solana tokens lists tracked tokens without
+      their balances; (9) the Settings "checked" dates are the phone's local
+      date; accessibility: the Review speaks the full 44-character Solana
+      addresses and the success view the 88-character signature (the
+      confirm-screen rule, not a regression; TalkBack not re-run). KNOWN
+      GAPS seen: no Max and no note field on the token send; the Inbox does
+      not list it (as its intro says). UNVERIFIED: the smart-account send
+      itself (backed out by instruction); TalkBack on the Solana screens;
+      Account 2's Activity rows; dark mode. END STATE: Home, Ethereum
+      Sepolia, Account 1, light mode, devnet OFF (EURC kept on the devnet
+      list), both Send-form switches off, protection OFF (no SECURE window),
+      IME ADBKeyboard, TalkBack never enabled, Metro npm 710 / node 745 at
+      b2bda0b on 8081 with only that reverse, qemu 86708 (PRI 55) with
+      caffeinate 86986, the window in front. FUNDS: Ethereum Sepolia
+      unchanged on every account; Solana devnet Account 1 47,013,120 lamports
+      / 19 USDC / 19 EURC, Account 2 0 lamports with 1 USDC and 1 EURC in its
+      new associated accounts (1,488,440 lamports of rent each, paid by
+      Account 1).
