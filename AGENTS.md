@@ -18146,3 +18146,91 @@ arrive; 6 last. Subagents on Opus.
       off, /sdcard/Download empty; Metro 84768 / 84790 at 2d6e498 with only
       `adb reverse tcp:8081`; qemu 86708 (PRI 55) with caffeinate 86986, the
       window in front; the main checkout clean.
+- [x] Pass p24-solhist findings FIXED — MASKED AMOUNTS SPOKEN AS HIDDEN, THE MINT
+      AND THE HEADER ADDRESS READ ONCE, SMART-ACCOUNT PENDING CARDS SETTLED BY
+      THE POLL (commit acb84eb; 9 files, +404 / −34, no new file;
+      check-activity 321 (was 310), check-pending 332 (322), check-spl-tokens
+      153 (149); offline runner ALL GREEN in the CTO's isolated worktree on
+      HEAD 543d807 with --skip-bundle: engine 1,349, app 11,215 across 66
+      suites, lint 0/0, tsc clean; checkout 0 / apply 0 / 9 files; the staged
+      patch id a58c2da8…6a67 equal to the verified worktree's and the agent's;
+      the pre-commit scan clean (the agent did not run the scan itself
+      because it reads .dev-wallet); ten hand mutants on the real files
+      caught; the CTO read the pending-transactions.ts and
+      PendingTransactions.tsx hunks; not seen on a device). (1) CAUSE: Hide
+      amounts replaces an amount with exactly '••••' (prefs.ts 201–202
+      maskAmount) and the Solana and EVM sentence builders embed it
+      (solana-activity.ts 87 / 100, activity-sentences.ts 725 / 1068), which
+      ActivityScreen passed into the row label unchanged — TalkBack read "4
+      Bullet"; FIX: a11y.ts AMOUNT_MASK (pinned equal to maskAmount's output)
+      and spokenMaskedText replacing each mask with "(amount hidden)" built
+      from the existing id activity.amountHidden (Spanish "importe oculto"; no
+      new id; the parentheses the builder's choice, accepted);
+      activityRowSpokenLead speaks the sentence and the rent row's sentence
+      through it, ActivityScreen wraps the whole row label, Home's Solana
+      token lines ("Also •••• USDC held outside…") get a spoken label the same
+      way; the visible mask and every unmasked label unchanged; STILL
+      SPEAKING BULLETS (follow-ups): the balance-change preview, approvals,
+      typed-data summaries, spending-limit lines, portfolio and P&L. (2)
+      CAUSE, established: <Text selectable> maps to TextView.setTextIsSelectable
+      (RN 0.86.3 ReactTextViewManager.kt 294–296), which makes the view
+      focusable, clickable and long-clickable (AOSP android14-release
+      TextView.java 8687–8697, fetched 2026-11-08), and a clickable node is
+      its own TalkBack stop (RN's copy of the rule, ReactAccessibilityDelegate.kt
+      878–898) — hence the mint read twice; "Actions available" is TalkBack's
+      template_hint_menu_type_high_verbosity with the "Actions" menu
+      (google/talkback 229212fd strings_compositor.xml 735, strings.xml 1668,
+      NodeMenuRuleProcessor 148–177, RuleAction 58–62) and WHY the grouped
+      View qualifies could not be established from code; FIX: the mint Text
+      keeps selectable and stays visible but is importantForAccessibility
+      "no" + accessibilityElementsHidden (the p20d Staking-row fix, seen to
+      remove the second stop and "Actions available" in p21a); TRADE-OFF
+      (the CTO's call, left as built): a TalkBack user cannot reach the
+      selectable mint to copy it — an explicit "Copy mint address"
+      accessibility action would restore that (and would then announce a
+      real action); not built. (3) From the sources: TalkBack builds "Press
+      select to activate" from template_hint_clickable + value_press_select
+      (strings_compositor.xml 329 / 331) only for a node with isClickable()
+      or ACTION_CLICK (ClickableHint.java 145–148 / 197–216,
+      AccessibilityNodeInfoUtils.java 1264–1268); `accessible` sets only
+      isFocusable (ReactViewManager.kt 95–98), no click listener without the
+      focusable prop (377–396), AOSP adds ACTION_CLICK only to a clickable
+      enabled view (View.java 10784) — so the inert row had no click action
+      (the dump agrees: clickable=false) and the pass's saved transcripts
+      hold no "Press select" line; the real clickable node on that screen
+      was the HEADER ADDRESS, a <Text selectable>, after which the pass also
+      heard the hint; FIX: the address's short spoken form on a plain
+      accessible View around it, the selectable Text hidden from screen
+      readers (visible and selectable, spoken once, focusable not clickable),
+      plus a source pin that the inert row and its content carry no
+      selectable text, press handler, role, action or focusable prop;
+      UNVERIFIED: TalkBack 14.2's own hint code and whether the hint was
+      really the row's (confirm by focusing an inert row with TalkBack's log
+      at VERBOSE and looking for an EVENT_SPEAK_HINT line after its focus
+      event). (4) CAUSE: createPendingSectionRefresher stopped early with no
+      EOA nonce group and only ever asked the node, so a smart-account
+      record left the registry only through "Check status"; FIX (about 120
+      source lines, no new storage shape — under the 150-line limit, so
+      built): the refresher takes an optional bundler reader; the section
+      passes the bundler configured NOW (getAaConfig(chain).bundlerUrl read at
+      each re-read, never stored — the same bundler "Check status" asks); at
+      most PENDING_USEROP_CHECKS_PER_REFRESH = 3 operations per re-read (a
+      judgement: at most six bundler requests per 15 s), oldest first and in
+      turn, through the same checkUserOperation — included (success or
+      reverted) → forgetUserOperation exactly as "Check status" does and the
+      card shows "Included in transaction 0x…" once more; still in the
+      bundler or no record → only the status drawn, the 10-minute "most
+      likely dropped" sentence and the "Send again" rules unchanged; a
+      bundler error → the record and its shown status untouched; no bundler
+      configured → no request; a node reader unavailable → the cards keep
+      their earlier statuses; EOA behaviour unchanged; the two p23-handle
+      operations included on 2026-10-27 should settle on the first Activity
+      focus after this lands (unverified). Two existing pins moved in place
+      (check-activity's p21a header-address regex; check-pending's p21g
+      old-step-order mutant anchors), their mutants kept. OPEN: explicit
+      "Copy" accessibility actions for the mint and the header address (a
+      decision); ZeroDev's answer to eth_getUserOperationByHash for
+      long-included operations untested. UNVERIFIED (emulator re-check
+      dispatched): the spoken "(amount hidden)"; the mint and the address
+      read once with no "Actions available" and no "Press select to
+      activate"; the two stale cards settling on the poll.
