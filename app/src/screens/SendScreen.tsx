@@ -198,6 +198,7 @@ import { loadPasskeyNative } from '../wallet/passkey-native';
 import {
   createPasskeyBundle,
   makePasskeyAssert,
+  maxPasskeySendDetails,
   preparePasskeyCalls,
   sendPasskeyCalls,
   type PasskeyBundle,
@@ -1059,10 +1060,10 @@ export function SendScreen({ route, navigation }: Props) {
             });
             if (max <= 0n) throw new Error(`The smart account's ${token.symbol} balance is zero.`);
           } else {
-            const probe = await preparePasskeyCalls(pbundle, [
-              { to: validation.normalized, value: 0n, data: new Uint8Array(0) },
-            ]);
-            max = probe.senderBalance > probe.fee ? probe.senderBalance - probe.fee : 0n;
+            // A 1-wei probe to the real recipient, falling back to value 0
+            // only when that fails (passkeys.ts maxPasskeySendDetails). The
+            // passkey quote has no Max trim, so the reservation is not kept.
+            max = (await maxPasskeySendDetails(pbundle, validation.normalized)).amount;
             if (max <= 0n) throw new Error('The smart account balance cannot cover the network fee.');
           }
           setAmountText(exact(max, decimals));

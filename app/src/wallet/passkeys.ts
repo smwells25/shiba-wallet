@@ -48,8 +48,10 @@ import {
   type AaSendQuote,
   type AaTokenSpend,
   type AaTokenTransfer,
+  type MaxAaReservation,
   AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
   AA_ESTIMATE_RETRIES,
+  AA_MAX_PROBE_VALUE_WEI,
   MULTISIG_CONFIG_BUNDLE_REFUSAL,
 } from './aa.ts';
 import { utf8Decode } from './erc20.ts';
@@ -1472,6 +1474,41 @@ export async function preparePasskeyCalls(
     );
   }
   return { ...base, verificationGasLimit, preVerificationGas, fee, total: base.amount + fee, passkey: true };
+}
+
+/**
+ * The largest native amount the passkey can send from its smart account to
+ * `to`: the balance minus the worst-case fee of a passkey-signed 1-wei
+ * transfer to that recipient, with the reservation it made, in the shape of
+ * aa.ts maxAaSendDetails. The probe carries a NON-ZERO value
+ * (AA_MAX_PROBE_VALUE_WEI) because the account moves the amount with an
+ * inner CALL that costs more with a value than without (the sources are
+ * with AA_MAX_PROBE_VALUE_WEI in ./aa.ts), so a zero-value probe reserved
+ * too little and the Max amount then failed preparePasskeyCalls' balance
+ * check at Review. If the 1-wei probe fails (an account holding nothing, or
+ * nothing beyond the fee), it is retried with value 0 exactly as before, so
+ * the refusal a user reads is unchanged. Returns amount 0n when the fee
+ * takes the whole balance. A passkey bundle is never sponsored
+ * (createPasskeyBundle), so there is no sponsored branch, and the passkey
+ * path has no Max trim at Review (preparePasskeyCalls takes no fromMax), so
+ * the reservation is reported, not consumed.
+ */
+export async function maxPasskeySendDetails(
+  bundle: PasskeyBundle,
+  to: string,
+): Promise<{ amount: bigint; reserved: MaxAaReservation }> {
+  const transfer = (value: bigint) => [{ to, value, data: new Uint8Array(0) }];
+  let probe: AaSendQuote;
+  try {
+    probe = await preparePasskeyCalls(bundle, transfer(AA_MAX_PROBE_VALUE_WEI));
+  } catch {
+    probe = await preparePasskeyCalls(bundle, transfer(0n));
+  }
+  const gasTotal = probe.callGasLimit + probe.verificationGasLimit + probe.preVerificationGas;
+  return {
+    amount: probe.senderBalance > probe.fee ? probe.senderBalance - probe.fee : 0n,
+    reserved: { gasTotal, maxFeePerGas: probe.maxFeePerGas, fee: probe.fee },
+  };
 }
 
 /**

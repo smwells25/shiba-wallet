@@ -39,7 +39,9 @@
 // so the fake node serves exactly the code the engine verifies on-chain.
 
 import { createHash, createPublicKey, generateKeyPairSync, randomBytes, sign as nodeSign, verify as nodeVerify } from 'node:crypto';
-import { readFileSync, readdirSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { evmKeyProvider, mnemonicToSeed } from '@shiba-wallet/core';
 import {
   ENTRYPOINT_V07,
@@ -63,7 +65,7 @@ import { ethers } from 'ethers';
 // independent verifier next to Node's crypto.
 import { p256 } from '../../node_modules/@noble/curves/nist.js';
 import { keccak_256 } from '../../node_modules/@noble/hashes/sha3.js';
-import { AA_DEPOSIT_TOPUP_VERIFICATION_GAS, AA_QUOTE_ALREADY_USED, AaFeeRoseError, addAaOperationSentListener, createAaClient, sendAa } from '../src/wallet/aa.ts';
+import { AA_DEPOSIT_TOPUP_VERIFICATION_GAS, AA_MAX_PROBE_VALUE_WEI, AA_QUOTE_ALREADY_USED, AaFeeRoseError, addAaOperationSentListener, createAaClient, sendAa } from '../src/wallet/aa.ts';
 import { PASSKEY_RP_ID, PASSKEY_RP_ID_PLACEHOLDER } from '../src/config/passkey.ts';
 import {
   PASSKEYS_KEY,
@@ -93,6 +95,7 @@ import {
   isConfiguredRpId,
   loadPasskeys,
   makePasskeyAssert,
+  maxPasskeySendDetails,
   passkeyGate,
   passkeyRecordForOwner,
   passkeyTestCalls,
@@ -803,6 +806,138 @@ console.log('check-passkeys: passkey-signed operation (the owner key is never us
   check('an owner-signed quote cannot be sent through the passkey path', /not prepared for the passkey/.test((await caught(() => sendPasskeyCalls(pbundle, { ...quote, passkey: undefined })))?.message ?? ''));
   check('createPasskeyBundle refuses a record from another chain', /another network/.test((() => { try { createPasskeyBundle({ ...bundle, chainId: 1n }, record, async () => null); return ''; } catch (e) { return e.message; } })()));
   check('createPasskeyBundle refuses a record that is not installed', /not installed/.test((() => { try { createPasskeyBundle(bundle, { ...record, localStatus: 'failed' }, async () => null); return ''; } catch (e) { return e.message; } })()));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-passkeys: the passkey Max probes with a non-zero value');
+// ---------------------------------------------------------------------------
+// Phase 24 follow-up (the leftover of the Max-estimate slices b7bd8df and
+// b2819c9): the Send screen's passkey Max now goes through
+// maxPasskeySendDetails, which prices a 1-wei transfer to the real
+// recipient (aa.ts AA_MAX_PROBE_VALUE_WEI) and falls back to value 0 only
+// when that fails. The Kernel account moves the amount with an inner CALL
+// that costs more with a value (CALL_VALUE: 9,000 before Glamsterdam, 11,300
+// after; the sources are with AA_MAX_PROBE_VALUE_WEI in aa.ts). This fake
+// bundler does the same: callGasLimit is 11,300 lower when the call's value
+// is 0. The value word is read back from Kernel execute(bytes32,bytes)
+// (0xe9ae5c53) calldata at bytes 120–152 (selector, mode, offset, length,
+// the 20-byte target), as check-aa's value-aware bundler does. The passkey
+// quote has NO Max trim (preparePasskeyCalls takes no fromMax), so a probe
+// that reserved too little made the Max amount fail preparePasskeyCalls'
+// own balance check at Review.
+{
+  const { auth } = shared;
+  auth.mode = 'normal';
+  const CALL_VALUE_GAS = 11_300n;
+  const EST = { cgl: 100_000n, vgl: 200_000n, pvg: 50_000n };
+  const MAX_TO = '0x000000000000000000000000000000000000dEaD';
+  const valueOfKernelExecute = (hex) => {
+    if (!hex.startsWith('0xe9ae5c53')) throw new Error(`value-aware bundler: unexpected callData ${hex.slice(0, 10)}`);
+    return BigInt('0x' + hex.slice(2 + 2 * 120, 2 + 2 * 152));
+  };
+  const estimates = [];
+  // refuseValue: the bundler refuses to estimate a non-zero value (the
+  // fallback case); everything except the estimate is the hashing bundler's.
+  const valueAwareBundler = ({ refuseValue = false } = {}) => {
+    const base = hashingBundler();
+    return async (method, params) => {
+      if (method !== 'eth_estimateUserOperationGas') return base(method, params);
+      const value = valueOfKernelExecute(params[0].callData);
+      estimates.push(value);
+      if (refuseValue && value !== 0n) throw new Error('RPC error -32500: estimate refused for a value (test bundler)');
+      const cgl = value === 0n ? EST.cgl - CALL_VALUE_GAS : EST.cgl;
+      return { callGasLimit: '0x' + cgl.toString(16), verificationGasLimit: '0x' + EST.vgl.toString(16), preVerificationGas: '0x' + EST.pvg.toString(16) };
+    };
+  };
+  const withBalance = (balance) => async (method, params) =>
+    method === 'eth_getBalance' ? '0x' + balance.toString(16) : node(method, params);
+  const passkeyBundleWith = (balance, bundlerOpts) =>
+    createPasskeyBundle(kernelBundle(withBalance(balance), valueAwareBundler(bundlerOpts)), record, makePasskeyAssert(auth, record));
+  const transfer = (value) => [{ to: MAX_TO, value, data: new Uint8Array(0) }];
+
+  const BAL = 10n ** 16n;
+  // The fees the passkey quote reserves for a 1-wei and a zero-value
+  // transfer, read from preparePasskeyCalls itself (padding and the deposit
+  // top-up headroom included); they differ by exactly the CALL value charge.
+  estimates.length = 0;
+  const nonZeroQuote = await preparePasskeyCalls(passkeyBundleWith(BAL), transfer(1n));
+  const zeroQuote = await preparePasskeyCalls(passkeyBundleWith(BAL), transfer(0n));
+  const nonZeroFee = nonZeroQuote.fee;
+  const zeroFee = zeroQuote.fee;
+  check('fixture: the value-aware bundler prices a 1-wei transfer 11,300 call gas above a zero-value one, at one max fee per gas',
+    nonZeroQuote.maxFeePerGas === zeroQuote.maxFeePerGas && nonZeroFee - zeroFee === CALL_VALUE_GAS * nonZeroQuote.maxFeePerGas &&
+      nonZeroQuote.callGasLimit - zeroQuote.callGasLimit === CALL_VALUE_GAS && estimates.join(',') === '1,0',
+    `${nonZeroFee} / ${zeroFee}`);
+
+  estimates.length = 0;
+  const details = await maxPasskeySendDetails(passkeyBundleWith(BAL), MAX_TO);
+  check('the passkey Max asks the bundler once, for a 1-wei transfer (AA_MAX_PROBE_VALUE_WEI)',
+    AA_MAX_PROBE_VALUE_WEI === 1n && estimates.length === 1 && estimates[0] === 1n, estimates.join(','));
+  check('…and reserves the NON-ZERO fee: reserved.fee = the 1-wei passkey quote\'s fee = gasTotal × maxFeePerGas',
+    details.reserved.fee === nonZeroFee && details.reserved.maxFeePerGas === nonZeroQuote.maxFeePerGas &&
+      details.reserved.gasTotal === nonZeroQuote.callGasLimit + nonZeroQuote.verificationGasLimit + nonZeroQuote.preVerificationGas &&
+      details.reserved.fee === details.reserved.gasTotal * details.reserved.maxFeePerGas,
+    `${details.reserved.fee} vs ${nonZeroFee}`);
+  check('…so Max = balance − the non-zero fee', details.amount === BAL - nonZeroFee, `${details.amount}`);
+  const review = await preparePasskeyCalls(passkeyBundleWith(BAL), transfer(details.amount)).catch((e) => e);
+  check('at Review the Max amount passes preparePasskeyCalls\' balance check and fills the balance exactly (amount + fee = balance)',
+    !(review instanceof Error) && review.amount === details.amount && review.fee === nonZeroFee && review.total === BAL, review instanceof Error ? review.message : `${review.total}`);
+
+  // The fallback: the bundler refuses the 1-wei estimate, so the zero-value
+  // probe prices the Max, exactly as before.
+  estimates.length = 0;
+  const fallback = await maxPasskeySendDetails(passkeyBundleWith(BAL, { refuseValue: true }), MAX_TO).catch((e) => e);
+  check('fallback: when the 1-wei estimate fails, the zero-value probe is asked next (two estimates: 1, then 0) and prices the Max',
+    !(fallback instanceof Error) && estimates.join(',') === '1,0' && fallback.amount === BAL - zeroFee && fallback.reserved.fee === zeroFee,
+    fallback instanceof Error ? fallback.message : `${estimates.join(',')} / ${fallback.amount}`);
+
+  // No ETH beyond the fee: a balance equal to the zero-value fee cannot move
+  // 1 wei beside the 1-wei fee, so the probe falls back and Max is 0 (the
+  // screen then says the balance cannot cover the network fee).
+  estimates.length = 0;
+  const atFee = await maxPasskeySendDetails(passkeyBundleWith(zeroFee), MAX_TO).catch((e) => e);
+  check('a balance equal to the zero-value fee: the 1-wei probe is refused, the fallback runs, and Max is 0',
+    !(atFee instanceof Error) && atFee.amount === 0n && estimates.join(',') === '1,0',
+    atFee instanceof Error ? atFee.message : `${atFee.amount} / ${estimates.join(',')}`);
+  // 0 ETH: no positive Max either way; the refusal is the one the old
+  // zero-value probe gave (prepareAaCalls' funding check, before any
+  // bundler call).
+  estimates.length = 0;
+  const emptyMax = await caught(() => maxPasskeySendDetails(passkeyBundleWith(0n), MAX_TO));
+  const emptyOld = await caught(() => preparePasskeyCalls(passkeyBundleWith(0n), transfer(0n)));
+  check('0 ETH: Max gives no amount, with the same refusal as the old zero-value probe, and the bundler is never asked',
+    emptyMax && emptyOld && emptyMax.message === emptyOld.message && estimates.length === 0, `${emptyMax?.message} / ${estimates.join(',')}`);
+
+  // MUTANT (the old zero-value probe restored in passkeys.ts): Max reserves
+  // 11,300 gas too little, and with no trim on the passkey path the Max
+  // amount is refused at Review.
+  const MUTANT_DIR = join(dirname(fileURLToPath(import.meta.url)), `.mutants-passkeys-${process.pid}`);
+  process.on('exit', () => rmSync(MUTANT_DIR, { recursive: true, force: true }));
+  const passkeysPath = new URL('../src/wallet/passkeys.ts', import.meta.url);
+  const passkeysSource = readFileSync(passkeysPath, 'utf8');
+  const probeAnchor = '    probe = await preparePasskeyCalls(bundle, transfer(AA_MAX_PROBE_VALUE_WEI));';
+  if (!passkeysSource.includes(probeAnchor)) throw new Error('mutation anchor not found: the passkey Max probe');
+  const originalDir = dirname(fileURLToPath(passkeysPath));
+  const mutantSource = passkeysSource
+    .replace(probeAnchor, '    probe = await preparePasskeyCalls(bundle, transfer(0n));')
+    .replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolve(originalDir, spec)).href}'`);
+  mkdirSync(MUTANT_DIR, { recursive: true });
+  const mutantFile = join(MUTANT_DIR, 'm1-passkeys.ts');
+  writeFileSync(mutantFile, mutantSource);
+  const zeroProbe = await import(pathToFileURL(mutantFile).href);
+  estimates.length = 0;
+  const oldDetails = await zeroProbe.maxPasskeySendDetails(passkeyBundleWith(BAL), MAX_TO);
+  const oldReview = await caught(() => preparePasskeyCalls(passkeyBundleWith(BAL), transfer(oldDetails.amount)));
+  check('MUTANT (the zero-value passkey Max probe) is caught: it reserves the zero-value fee, and the Max amount is then refused at Review for insufficient funds',
+    estimates[0] === 0n && oldDetails.reserved.fee === zeroFee && oldDetails.amount === BAL - zeroFee && /Insufficient funds/.test(oldReview?.message ?? ''),
+    `${oldDetails.amount} / ${oldReview?.message}`);
+
+  // SendScreen wiring (source): the passkey Max goes through
+  // maxPasskeySendDetails; the zero-value passkey probe is gone.
+  const sendSrc = readFileSync(new URL('../src/screens/SendScreen.tsx', import.meta.url), 'utf8');
+  check('SendScreen: the passkey Max calls maxPasskeySendDetails(pbundle, validation.normalized) and no zero-value preparePasskeyCalls probe remains',
+    sendSrc.includes('max = (await maxPasskeySendDetails(pbundle, validation.normalized)).amount;') &&
+      !/preparePasskeyCalls\(pbundle, \[\s*\{ to: validation\.normalized, value: 0n/.test(sendSrc));
 }
 
 // ---------------------------------------------------------------------------
