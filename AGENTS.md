@@ -18459,6 +18459,80 @@ arrive; 6 last. Subagents on Opus.
       AppleLanguages value; the flow after the two words are typed; this
       build's OpenSSL checksum. A fix slice for check 2 is dispatched.
 
+- [x] Pass p24-ios2 check 2 FIXED — iOS PASSWORD AUTOFILL KEPT OFF THE
+      BACKUP-WORD AND PASSPHRASE FIELDS (commit 84deacd; 5 files, +80 / −12 —
+      app/src/screens/SettingsScreen.tsx, app/src/components/LockGate.tsx,
+      app/scripts/check-duress.mjs 222 (was 219; three new in-suite
+      mutants), docs/FEATURE_UNIVERSE.md rows 52 / 80 / 91,
+      docs/MAINNET_READINESS.md section 4; offline runner ALL GREEN in the
+      CTO's isolated worktree on HEAD d88df49 with --skip-bundle: engine
+      1,349, app 11,218 across 66 suites, lint 0/0, tsc clean; checkout 0 /
+      apply 0 / 5 files; the staged patch id f63986e0…2e63 equal to the
+      worktree's and the agent's; the pre-commit scan clean; three hand
+      mutants on the real files caught; the docs-pinning suites
+      check-readiness 229, check-screen-protection 87, check-devmode 476,
+      check-bridge 430 and check-multisig 435 unchanged; seen in the iOS
+      26.5 Simulator, not on a phone). THE CAUSE, from Apple's "About the
+      Password AutoFill workflow" and React Native 0.86.3's installed
+      sources: "If you haven't tagged the input field, the system uses
+      heuristics to identify the view's type", and the app declares an
+      associated domain (the passkey placeholder), for which Apple says the
+      system suggests a strong password on new-password fields; React Native
+      maps textContentType "none" to an EMPTY content type
+      (RCTTextInputUtils.mm 188–189; the old architecture's
+      RCTBaseTextInputView.mm 277 the same), so "none" leaves the field
+      untagged despite TextInput.d.ts 217's "To disable autofill, set
+      textContentType to `none`", and two adjacent secure fields read as
+      "new password + confirm". THE FIX: the two backup-word fields and the
+      lock PassphraseField are tagged textContentType "oneTimeCode"
+      (RCTTextInputUtils.mm 216 → UITextContentTypeOneTimeCode, one of the
+      four field kinds Apple's Password AutoFill handles) with secureTextEntry
+      KEPT, so the words stay masked and cannot be copied; dropping secure
+      entry also stopped the sheet but showed the words in clear (rejected);
+      the passphrase field gets the same tag because with "none" it showed
+      iOS's "Passwords" bar in Settings and on the lock screen, and
+      DURESS_WALLET.md section 8.2.8 keeps password managers away from the
+      lock secret on purpose. Apple documents NO value that switches the
+      password suggestion off — that oneTimeCode stops it is a Simulator
+      observation, stated in both code comments; the only thing iOS may
+      still offer above such a field is an SMS security code. SEEN (device
+      shiba-ios4, iPhone 17, the existing Debug dev client at d88df49 with
+      Metro 8083 — no rebuild; a throwaway wallet wiped afterwards, its phrase
+      only in a 0700 folder and deleted with rm -P): at d88df49 the sheet
+      appeared as in p24-ios2, and a control run with the old props under
+      the final test conditions showed it again; with the fix, four runs —
+      the first field took focus, the software keyboard came up, no sheet
+      and no Passwords bar, typed letters as dots, the second field raised
+      none either; wrong words → "Those words do not match your recovery
+      phrase. Check your written backup; nothing was changed."; Cancel →
+      "Nothing was changed."; the passphrase field: no Passwords bar in
+      Settings, after a background lock and on a cold launch; "Wrong
+      passphrase. Try again." then the right one unlocked. DRIVING NOTES:
+      Metro under CI=1 does NOT watch files ("Metro is running in CI mode,
+      reloads are disabled") — every edit needs a Metro restart with --clear
+      and a check of the served bundle; the Simulator's "Connect Hardware
+      Keyboard" hides the software keyboard and with it the sheet after
+      AppleScript keystrokes, so it was unticked for every counted run and
+      ticked again at the end. SLIP, recorded: the agent's secret scan, run
+      from the worktree on the five files, found and read the main
+      checkout's .dev-wallet by itself ("30 .dev-wallet value(s) checked");
+      no value printed, the result clean — the "never read .dev-wallet"
+      rule broken for that one command (the scanner needs the file by
+      design; the rule is about agents, who should let the CTO's commit run
+      it). DOCS: row 52 (the sheet found in p24-ios2, fixed and seen in
+      p24-iosfix2; a real iPhone untested), row 80 (shibawallet://inbox
+      worked again in p24-ios2), row 91 ("verified offline only" → "En uso
+      ahora: Español." seen under "System" in p24-ios2), MAINNET_READINESS
+      section 4 (the language, scanner, notes and link fixes seen in
+      p24-ios2; the sheet fixed in p24-iosfix2). FOLLOW-UPS: ImportKeyScreen
+      .tsx lines 153 and 159 carry the same secure + "none" pair and will
+      most likely show the Passwords bar on iOS (untested); DURESS_WALLET.md
+      lines 1557 and 1687 still list textContentType "none"; the worktree
+      wt-ios2 at d88df49 still holds this slice's edits uncommitted beside
+      its prebuild edits. UNVERIFIED: a real iPhone; iOS with a hardware
+      keyboard attached; VoiceOver; an actual SMS code offered above these
+      fields.
+
 ## Phase 24 status (2026-11-08)
 
 Items 0, 1, 3, 4 and 6, and item 5's Stage 2, are landed and pushed; item 2
