@@ -17792,8 +17792,10 @@ arrive; 6 last. Subagents on Opus.
       place; offline runner ALL GREEN in the CTO's isolated worktree on HEAD
       4308a1c with --skip-bundle: app 11,166 across 66 suites, lint 0/0, tsc
       clean; checkout 0 / apply 0 / 19 modified + 2 new files; the staged
-      patch id 80228643…6aef equal to the verified worktree's and the
-      agent's; the pre-commit scan clean; thirteen hand mutants on the real
+      patch id 80228643…6aef equal to the agent's patch file (the verify
+      worktree's own `git diff` printed another id only because it omitted
+      the two untracked new files; the same file was applied there, rc 0);
+      the pre-commit scan clean; thirteen hand mutants on the real
       files caught (H4, the fee dropped when only tokens move, survived at
       first and got its own engine test); the CTO read the history.ts,
       types.ts, spl-tokens.ts, notes.ts and a11y.ts hunks; not seen on a
@@ -17884,3 +17886,90 @@ arrive; 6 last. Subagents on Opus.
       Activity rows (the 3vPay… send, the rent row, the two deposits) and
       their TalkBack labels; the longer link and title layout; the Manage
       balance line; the Spanish lengths (a native reviewer on hold).
+- [x] EMULATOR PASS p24-solfix2 — THE FIX SLICE 56d095d SEEN LIVE, ALL SEVEN
+      CHECKS PASS; ONE HISTORY GAP FOUND ON THE RECIPIENT'S SIDE (2026-11-08
+      ~18:00–18:50 UTC; Expo Go on emulator 37.1.11 under -gpu swangle, Metro
+      moved to wt-app at a3cd2a5 (code 56d095d; the engine rebuilt inside it;
+      npm 43960 / node 43982 on 8081, 1,956 modules); the REAL wallet's
+      Account 1; 2 prompts — "Unlock Shiba Wallet" and "Approve sending 1
+      USDC" (18:30:57 UTC) — each read from the prompt window; isKeyguardShowing
+      read false before any input; no repository file edited; no EVM
+      transaction, the dev EOA not used; every balance on two RPCs before and
+      after; the report step by step in the previous session's scratchpad
+      p24-solfix2-pass/REPORT.md, dumps redacted). (1) Home with devnet on:
+      "Balance 0.047013 test SOL"; the Solana token links "Send USDC on Solana
+      devnet ↗" / "Send EURC on Solana devnet ↗" (content description "Send
+      USDC on Solana devnet"; TalkBack hint "Sends USDC on Solana devnet");
+      the Sepolia ERC-20 links unchanged ("Send ↗", description "Send USDC").
+      (2) Manage Solana tokens: "…Network fees for a token send are paid in
+      test SOL. This is Solana devnet: its tokens have no value."; the rows
+      "Balance: 19 USDC" / "Balance: 19 EURC", under Hide amounts "Balance:
+      •••• USDC" (spoken "Balance hidden"). (3) THE SEND, 1 USDC Account 1 →
+      Account 2 (whose associated account exists): the title "Send USDC on
+      Solana devnet", the intro "…The network fee is paid in test SOL; …",
+      the Review "Network fee (paid in test SOL) 5000 lamports (0.000005 test
+      SOL)", NO rent row, "Total test SOL leaving your account 5000 lamports
+      (0.000005 test SOL)", the recipient's account
+      FfqpujQvP1pjUEthwcdHSqmwrYVUteNrDdNJLe9Qeedc without "(created by this
+      transaction)"; ONE prompt → "Sent ✓"; signature
+      4abaH22978MmD5yX8PE32kLoRFQrZtAD1j147fkxJ5E241iTQ9M1hgZAouhHGhpXprZTw595eVXQf6pBkUZh442f,
+      slot 520111842 (18:31:10 UTC), err null, fee 5,000, ONE instruction
+      (transferChecked 1,000,000 at 6 decimals, no createIdempotent), on both
+      RPCs; Account 1 lamports 47,013,120 → 47,008,120, USDC 19,000,000 →
+      18,000,000; Account 2's USDC account 1,000,000 → 2,000,000. (4) THE SOL
+      ROW REFRESHES BY ITSELF — the first Home dump after Done (about 4 s;
+      a dump takes ~3 s) already read "Balance 0.047008 test SOL" and
+      "Balance 18 USDC", unchanged through 75 s, no pull-to-refresh. (5)
+      ACTIVITY, Account 1, newest first: "Sent 1 USDC to 9WMg…471n" (−1
+      USDC, "fee 0.000005 test SOL", no rent row); "Sent 1 EURC to 9WMg…471n"
+      + the rent row "In the same transaction, 0.00148844 test SOL also left
+      this account besides the network fee (a token transfer can pay rent
+      for the recipient's new token account)" (−0.001488 test SOL); the
+      earlier USDC send the same way; "Received 20 EURC from H3sj…V79w" and
+      "Received 20 USDC from H3sj…V79w" (the old "Self / 0 test SOL" rows
+      gone); "Received transaction, +0.05 test SOL"; "End of history.";
+      Account 2's side (0 prompts each way): "Received 1 EURC from
+      EK5j…rYPv" and "Received 1 USDC from EK5j…rYPv" (the two
+      account-creating transfers) — BUT TODAY'S INCOMING 1 USDC (4abaH…) IS
+      MISSING, after a pull-to-refresh too, while Home shows 2 USDC; CAUSE,
+      verified on both RPCs: that transaction's account keys do not include
+      Account 2's WALLET address — getSignaturesForAddress on the wallet
+      returns only the two transactions that created its token accounts,
+      while the same call on the USDC token account FfqpujQvP1pjUEthwcdHSqmwrYVUteNrDdNJLe9Qeedc
+      returns 4abaH… and 3vPay… — so the Solana history misses EVERY incoming
+      token transfer into a token account that already exists (fix slice
+      dispatched: the provider also lists the signatures of the address's
+      token accounts and merges the streams). (6) TALKBACK (level written in
+      place 6 → 2 and back; TalkBack rewrote its file while on, inode 74376 →
+      74381, owner and SELinux context unchanged): Home "Send USDC on Solana
+      devnet. Button. Sends USDC on Solana devnet" and the test-SOL fee
+      sentence; Manage's balance lines and Send buttons; Activity "Sent 1
+      USDC to 9WMg…471n. Sent transaction, −1 USDC, 9 min ago. disabled",
+      "Same transaction as the row above. Sent transaction, −0.001488 test
+      SOL, 13 h ago. disabled", "Received 20 USDC from H3sj…V79w. Received
+      transaction, +20 USDC, 14 h ago. disabled". (7) devnet OFF → "Balance 0
+      SOL", "USDC, USD Coin · Solana token. Balance 0 USDC" with no Send
+      link, the mainnet fee sentence. FINDINGS (fix slice dispatched with
+      the history gap): (A) the rent sentence and every "fee 0.000005 test
+      SOL" line are visible but never spoken; (B) every devnet Activity row
+      ends "disabled" because the row is a button for an explorer link and
+      devnet has none; (C) on Manage Solana tokens each Send button is spoken
+      before its "Balance:" line; (D) the devnet SOL card's Send hint says
+      "Sends SOL", not "test SOL"; (E) the "+0.05 test SOL" row has no
+      sentence and no counterparty; (F) Account 2's Home offers both Send
+      links while it holds 0 SOL for the fee (the Review refuses — noted);
+      (G) OBSERVATION — Account 1's Sepolia USDC reads 59.465902, 20 more
+      than the record's 39.465902, untraced (with the Kernel's untraced +20
+      USDC of pass p24-unblock: most likely the Chairperson's faucet
+      requests — asked). FUNDS after (two RPCs): Sepolia unchanged, nonce 54;
+      devnet Account 1 47,008,120 lamports / 18 USDC / 19 EURC, Account 2 0
+      lamports / 2 USDC / 1 EURC — reconciled to the base unit. FEATURE 43:
+      both halves (the engine and the app) are now proven live through the
+      app, including the fixed Activity rows. UNVERIFIED: the exact second
+      the SOL row changed (inside the first 4 s); the SOL card's amount under
+      Hide amounts; iOS; Spanish. END STATE: Home, Ethereum Sepolia, Account
+      1, devnet off (EURC kept on the devnet list), Hide amounts off,
+      TalkBack off, IME ADBKeyboard, protection off (no SECURE window), night
+      mode off; Metro 43960 / 43982 at a3cd2a5 with only `adb reverse
+      tcp:8081`; qemu 86708 (PRI 55) with caffeinate 86986, the window in
+      front.
