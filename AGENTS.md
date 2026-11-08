@@ -18234,3 +18234,62 @@ arrive; 6 last. Subagents on Opus.
       dispatched): the spoken "(amount hidden)"; the mint and the address
       read once with no "Actions available" and no "Press select to
       activate"; the two stale cards settling on the poll.
+- [x] EMULATOR PASS p24-a11y — THE acb84eb SLICE SEEN LIVE, ALL THREE CHECKS
+      PASS, NOTHING TO FIX (2026-11-08 ~20:15–20:40 UTC; read-only; Expo Go on
+      emulator 37.1.11 under -gpu swangle, Metro moved to wt-app at 9dfd216
+      (the engine rebuilt inside it; npm 19547 / node 19581 on 8081, 1,956
+      modules); the REAL wallet; ONE prompt, "Unlock Shiba Wallet" at 20:19:30
+      UTC, read from the prompt window; isKeyguardShowing read false before
+      any input; nothing sent, no repository file edited; the report step by
+      step in the previous session's scratchpad p24-a11y-pass/REPORT.md with
+      the TalkBack transcripts, a hint-to-node matcher and two screenshots).
+      (1) THE STALE SMART-ACCOUNT CARDS SETTLE BY THE POLL: Ethereum Sepolia
+      Activity opened at 20:19:53 UTC, "Check status" never tapped; the first
+      dump (1 s after the tap) already read "Smart-account operation
+      0xcead…17c7." / "Included in transaction 0x7754…c211." and
+      "Smart-account operation 0x0491…5333." / "Included in transaction
+      0xf436…8d43." (both bundle hashes equal to the p23-handle record; the
+      no-replacement paragraph gone once a card reads Included); from the
+      dump at 20:20:11 (18 s after the tap) no "Pending on this phone"
+      section at all; still none after leaving and reopening Activity (three
+      dumps to 20:21:53); logcat held no bundler, user-operation, ZeroDev or
+      /api/v3/ line. (2) TALKBACK at VERBOSE (level 6 → 2 → 6 in place, inode
+      74381, owner and SELinux context kept; TalkBack rewrote its own file
+      twice while toggled): (a) with devnet and Hide amounts on, "Sent
+      (amount hidden) USDC to 9WMg…471n. Sent transaction, amount hidden, fee
+      hidden, 1 h ago", the rent row "Same transaction as the row above. In
+      the same transaction, (amount hidden) test SOL also left this account
+      besides the network fee (…). Sent transaction, amount hidden, fee
+      hidden, 15 h ago", the funding row "Received (amount hidden) test SOL
+      from 6TgS…455t…" — "Bullet" count 0, the visible mask unchanged; (b)
+      TalkBack's own log attributes "Press select to activate" to the node
+      being focused, logged before that node's text; matched by node id,
+      every inert row and the header address got an EMPTY hint and every
+      "Press select to activate" belonged to a real button (Export activity,
+      Add note, Send …, Remove …); 8 s of focus on a row and on the header
+      address spoke nothing more; the header address is one stop,
+      "EK5jKr…rYPv", the full address still visible — WHICH CORRECTS pass
+      p24-solhist's finding 3: the hint was almost certainly the next
+      button's, wrongly attributed to the row (for the header address at
+      2d6e498 less certain, since that Text was itself clickable then); (c)
+      Manage Solana tokens: each row ONE stop "USDC, USD Coin · 6 decimals.
+      Mint 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU. Balance: 18 USDC."
+      followed directly by "Send USDC on Solana devnet. Button. Sends USDC
+      on Solana devnet" and "Remove USDC from tracked tokens. Button", no
+      separate mint stop, "Actions available" count 0 in the VERBOSE log, the
+      mint still visible on screen (EURC the same). (3) devnet OFF: "Balance
+      0 SOL", the USDC row "USD Coin · Solana token. Balance 0 USDC" with no
+      Send link. OBSERVATIONS (no defect in the slice): on Solana MAINNET the
+      SOL card still offers "Send ↗" at 0 SOL (unchanged, pre-existing); on
+      devnet the 15 h EURC and USDC send rows carry no fee in their spoken
+      label while their rent rows below say "fee hidden" — BY DESIGN: when
+      lamports other than the fee moved, the fee rides on the native (rent)
+      entry, not on the token entry (the 56d095d rule). UNVERIFIED: the exact
+      second each card changed (dumps take 4–5 s); ZeroDev's answer itself
+      (the on-screen result is the evidence); real touch and audio; iOS;
+      Spanish. END STATE: Home, Ethereum Sepolia, Account 1 showing "ENS name:
+      qzv7hk2wmt.eth", devnet OFF (EURC kept on the devnet list), Hide
+      amounts off, TalkBack off (level 6), IME ADBKeyboard, protection off (no
+      SECURE window), night mode off, /sdcard/Download empty; Metro 19547 /
+      19581 at 9dfd216 with only `adb reverse tcp:8081`; qemu 86708 (PRI 55)
+      with caffeinate 86986, the window in front; the main checkout clean.
