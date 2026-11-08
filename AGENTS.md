@@ -17973,3 +17973,103 @@ arrive; 6 last. Subagents on Opus.
       mode off; Metro 43960 / 43982 at a3cd2a5 with only `adb reverse
       tcp:8081`; qemu 86708 (PRI 55) with caffeinate 86986, the window in
       front.
+- [x] Pass p24-solfix2 findings FIXED — THE SOLANA HISTORY FOLLOWS THE TRACKED
+      TOKENS' ASSOCIATED ACCOUNTS, AND THE ROWS ARE SPOKEN IN FULL (commit
+      CODEHASH; 19 files, +1,270 / −89, one new fixture
+      packages/chains-solana/test/fixtures/devnet-token-account-history-
+      2026-11-08.json; engine 1,340 → 1,349 (chains-solana 90 → 99),
+      check-activity 310 (was 302), check-home 116 (114), check-i18n 199
+      (196), check-spl-tokens 149 (138); offline runner ALL GREEN in the
+      CTO's isolated worktree on HEAD 2354638 with --skip-bundle: app 11,190
+      across 66 suites, lint 0/0, tsc clean; checkout 0 / apply 0 / 18
+      modified + 1 new file; the staged patch id 41678d49…5cad equal to the
+      agent's patch file (the verify worktree's own `git diff` omits the
+      untracked fixture, so its printed id differs; the same file applied
+      there, rc 0); the pre-commit scan clean; 18 hand mutants on the real
+      files caught (H8–H17 re-run on a clean engine build after a first run
+      against a build still carrying H7); the CTO read the history.ts hunk;
+      not seen on a device). THE CAUSE, from the documentation:
+      getSignaturesForAddress "Returns confirmed transaction signatures for
+      transactions that reference the supplied address in `accountKeys`,
+      newest first" (solana-foundation/solana-com at 31f66e08,
+      getsignaturesforaddress.mdx lines 11–12, read 2026-11-08 because
+      solana.com rate-limits; `limit`, `before`, the result order and
+      fields from lines 168–198 / 226–275, cited in the module comment); a
+      transfer into an existing token account references only that account,
+      never the owner's wallet — re-read on both devnet RPCs at ~19:00 UTC
+      (slot 520119093): Account 2's wallet lists only 2C9a… and 3vPay…, its
+      USDC account Ffqp…eedc lists 4abaH… and 3vPay…, the two Token-2022
+      associated accounts are empty, and the engine's own derivation gives
+      exactly Ffqp…eedc. THE FIX (history.ts, additive): option
+      followTokenMints — for each distinct valid mint, at most
+      SOLANA_HISTORY_MAX_FOLLOWED_MINTS = 4 (a judgement, stated), the
+      provider derives the owner's associated token account under BOTH the
+      classic program and Token-2022 with no request (a tracked record does
+      not store the program; an account that never existed answers an empty
+      list once and is done; non-associated accounts are not followed — a
+      send never uses them); one getSignaturesForAddress per stream with
+      more pages, merged under the EVM merged feed's rule
+      (smart-account-history.ts): a signature is listed only when its slot
+      is STRICTLY above the highest frontier among streams that still have
+      more (strict, not the brief's "at or above" — a page boundary can
+      split a slot and the same transaction can sit in two streams; mutant H2
+      proves it), ordered by slot then blockTime then stream (the wallet
+      first), de-duplicated by signature, the page ending at a slot boundary
+      so no slot is split, the streams at the bound asked again while nothing
+      is listable within SOLANA_HISTORY_MAX_SIGNATURE_REQUESTS = 18 requests
+      (beyond it the signatures AT the bound are listed too, the only case
+      a transaction could appear twice — stated); the CURSOR with no followed
+      accounts is exactly the old bare signature, else JSON {"v":1,"s":
+      [[address, lastListed | null, done 0 | 1], …]} with the wallet first; a
+      bare cursor continues the wallet's stream alone (a session that
+      started without followed accounts); a followed account for a mint no
+      longer tracked is dropped, anything malformed refused "Unrecognized
+      history cursor"; ENRICHMENT: when the wallet is not among the static
+      keys the owner-attributed token entries are returned with no fee —
+      pinned against the live 4abaH… answer (in, 1,000,000 base units,
+      contract = the USDC mint, counterparty EK5j…; the app reads "Received
+      1 USDC from EK5j…rYPv"); Account 1's side unchanged; with
+      followTokenMints absent or empty the old code path runs and the request
+      log, pages and cursor are pinned identical (bar finding E's
+      counterparty key); a 30-round random stress test of the merge in the
+      suite. APP: useHistory.ts reads listSolanaTokens(endpoint.network.
+      chainId) and passes the mints through a new optional argument of
+      historySourceFor; with devnet USDC and EURC tracked the first page
+      makes 5 signature requests instead of 1. FINDINGS A–E: (A)
+      activityRowSpokenLead takes an optional sentenceAbove — a second row of
+      the same transaction with its own sentence (the rent row) speaks "Same
+      transaction as the row above. <its sentence>."; activityRowSpokenFee
+      speaks "fee 0.000005 test SOL" (or "fee hidden" under Hide amounts —
+      new id activity.row.feeHidden, Spanish "comisión oculta") after the
+      amount on every row carrying a fee, Bitcoin rows too; (B) Pressable
+      passes disabled on as an accessibilityState (RN 0.86.3 Pressable.js
+      227–236, 257), so a row with no explorer link is a plain accessible
+      View with the same label and no role or state — Dogecoin rows the
+      same; (C) the Solana tokens screen's details column is one accessible
+      element (splManageRowSpokenLabel: "USDC, USD Coin · 6 decimals. Mint
+      <full>. Balance: 18 USDC." / "Balance hidden") — the tree already had
+      the balance before the buttons, TalkBack's position ordering an
+      inference; (D) the devnet SOL card's hint "Sends test SOL"
+      (SOLANA_DEVNET_NETWORK.symbol); (E) a native entry names its
+      counterparty when exactly ONE other static account key changed by the
+      opposite amount (the fee separated for account 0; not for a token
+      transfer's rent row; lookup-table addresses have no key in the json
+      encoding, so nothing is guessed) → "Received 0.05 test SOL from
+      6TgS…455t" through the existing sentence ids; SIDE EFFECTS beyond the
+      brief, accepted: the CSV counterparty column fills for such rows, and
+      Solana mainnet profit-and-loss now counts these transfers instead of
+      reporting the no-counterparty gap (correct — the gap existed only for
+      want of a counterparty). (F) NOT BUILT, recorded: Account 2's Home
+      offers "Send USDC on Solana devnet" with 0 SOL for the fee; the Review
+      refuses with the engine's sentence (tokenTransfer.ts 361), which says
+      "SOL" even on devnet; the builder proposes a line under the Solana
+      token rows when SOL is 0 ("This account holds no test SOL for the
+      network fee, so a token send would be refused at Review.") — the next
+      SPL slice. UNVERIFIED (emulator re-check dispatched): the merged rows
+      on Account 2's side; the TalkBack labels (fee, the rent row's
+      sentence, no "disabled", the grouped Manage row, the SOL hint); the
+      native counterparty on the +0.05 row; a fifth tracked mint silently
+      not followed; whether accounts reached only through lookup tables
+      appear in getSignaturesForAddress (not relied on); the 18-request
+      budget against public rate limits. The builder once ran the live-only
+      check-history.mjs by hand (read-only public requests).
