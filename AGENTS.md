@@ -18073,3 +18073,76 @@ arrive; 6 last. Subagents on Opus.
       appear in getSignaturesForAddress (not relied on); the 18-request
       budget against public rate limits. The builder once ran the live-only
       check-history.mjs by hand (read-only public requests).
+- [x] EMULATOR PASS p24-solhist — THE HISTORY-GAP SLICE 67daf2a SEEN LIVE,
+      ALL FIVE CHECKS PASS (2026-11-08 19:15–~19:50 UTC; read-only; Expo Go on
+      emulator 37.1.11 under -gpu swangle, Metro moved to wt-app at 2d6e498
+      (the engine rebuilt inside it, its dist carrying followTokenMints; npm
+      84768 / node 84790 on 8081, 1,956 modules); the REAL wallet; ONE prompt,
+      "Unlock Shiba Wallet" at 19:24:03 UTC, read from the prompt window, the
+      four account switches none; isKeyguardShowing read false before any
+      input; nothing sent, no repository file edited; both accounts' devnet
+      balances equal on two RPCs before and after — Account 1 47,008,120
+      lamports / 18 USDC / 19 EURC, Account 2 0 lamports / 2 USDC / 1 EURC;
+      the report step by step in the previous session's scratchpad
+      p24-solhist-pass/REPORT.md). (1) devnet ON: the Solana card's Send link
+      spoken "Send. Button. Sends test SOL" (finding D fixed). (2) ACCOUNT
+      2's DEVNET ACTIVITY (loaded in about 6 s): "Received 1 USDC from
+      EK5j…rYPv. Received transaction, +1 USDC, 1 h ago" — THE 4abaH…
+      TRANSFER THAT WAS MISSING, now first, with no fee line (Account 2 paid
+      none) — above "Received 1 EURC from EK5j…rYPv" and "Received 1 USDC
+      from EK5j…rYPv" (14 h ago), "End of history."; identical after a pull
+      gesture (whether the refresh started was not caught); a tap on a row
+      does nothing and the containers are no longer clickable. (3) ACCOUNT
+      1's DEVNET ACTIVITY (first rows about 7.2 s after the tap, a coarse
+      dump-polling figure; the request count not observed): the p24-solfix2
+      rows with "fee 0.000005 test SOL" and the full rent sentence now inside
+      the descriptions, the two deposits, and the funding row "Received 0.05
+      test SOL from 6TgS…455t. Received transaction, +0.05 test SOL, 7 Nov
+      2026" (finding E), "End of history.". (4) TALKBACK (level 6 → 2 → 6 in
+      place, inode 74381 and the SELinux context kept): (a) "Sent 1 USDC to
+      9WMg…471n. Sent transaction, −1 USDC, fee 0.000005 test SOL, 1 h ago" —
+      the fee spoken before the time, no "disabled" (findings A and B); (b)
+      "Same transaction as the row above. In the same transaction, 0.00148844
+      test SOL also left this account besides the network fee (a token
+      transfer can pay rent for the recipient's new token account). Sent
+      transaction, −0.001488 test SOL, fee 0.000005 test SOL, 14 h ago"; (c)
+      "Received 20 USDC from H3sj…V79w. Received transaction, +20 USDC, 15 h
+      ago"; (d) the funding row with its sentence; Alt+Enter on the rent row
+      spoke nothing and did nothing; under Hide amounts the descriptions
+      carry "amount hidden" and "fee hidden" and Home's SOL figure reads
+      "Balance hidden" (the p24-solfix2 unverified point closed); Manage
+      Solana tokens: one element "USDC, USD Coin · 6 decimals. Mint
+      4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU. Balance: 18 USDC." read
+      before Send and Remove, EURC the same (finding C). (5) devnet OFF:
+      "Balance 0 SOL", "USD Coin · Solana token. Balance 0 USDC" with no Send
+      link; the Ethereum Sepolia Activity unchanged ("Received 20 USDC from
+      0x319d…460f… 4 Nov 2026", "Received 20 USDC from 0x3c33…752d… smart
+      account", "Received 0.01 test ETH from 0xdB56…7898…"). FINDINGS (a
+      small slice dispatched for 1–3 and 6): (1) under Hide amounts a masked
+      figure INSIDE a sentence is spoken "4 Bullet" ("Sent 4 Bullet USDC
+      to…", "…4 Bullet test SOL also left…"); (2) on Manage Solana tokens
+      the mint line is also its own stop right after the grouped element, so
+      each 44-character mint is read twice, and the grouped element announces
+      "Actions available" (not traced); (3) TalkBack still says "Press select
+      to activate" after focusing an inert devnet Activity row although the
+      dump shows it not clickable and activation does nothing (cause not
+      established); (4) finding F of p24-solfix2 stays open (Account 2's
+      token Send links offered with 0 SOL for the fee; its own SOL Send is
+      hidden at 0) — the Chairperson's call on the proposed sentence; (5)
+      THE UNTRACED +20 USDC ON ACCOUNT 1 is the 4 Nov row "Received 20 USDC
+      from 0x319d…460f" and the Kernel's is "Received 20 USDC from
+      0x3c33…752d" — most likely Circle's faucet (an inference; the
+      Chairperson asked); (6) Ethereum Sepolia's "Pending on this phone"
+      still lists the two p23-handle smart-account operations 0x0491…5333
+      and 0xcead…17c7, included on 2026-10-27 — a smart-account record is
+      settled only by its "Check status" button, never by the poll (read-only
+      pass, not tapped); (7) driving slip: a uiautomator dump reset
+      TalkBack's focus and a planned activation hit "Navigate up" (one
+      harmless return to Home). UNVERIFIED: the pull-to-refresh start; the
+      5-request first page; a fifth tracked mint; real touch gestures and
+      audio; iOS; Spanish. END STATE: Home, Ethereum Sepolia, Account 1,
+      devnet off (EURC kept on the devnet list), Hide amounts off, TalkBack
+      off, IME ADBKeyboard, protection off (no SECURE window), night mode
+      off, /sdcard/Download empty; Metro 84768 / 84790 at 2d6e498 with only
+      `adb reverse tcp:8081`; qemu 86708 (PRI 55) with caffeinate 86986, the
+      window in front; the main checkout clean.
