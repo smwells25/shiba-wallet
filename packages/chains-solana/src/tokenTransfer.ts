@@ -125,8 +125,10 @@ export interface KnownSolanaToken {
 }
 
 /**
- * Mints named in issuer documentation, each read on devnet on 2026-11-07
- * (owner program and decimals agree with the table):
+ * Mints named in issuer documentation. The devnet USDC and PYUSD mints were
+ * read on devnet on 2026-11-07 and both EURC mints on their own cluster on
+ * 2026-11-08 (UTC); in each read the owner program and decimals agree with
+ * the table:
  *
  * - USDC on devnet 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU: Circle's
  *   "USDC contract addresses" page
@@ -139,8 +141,26 @@ export interface KnownSolanaToken {
  * - USDC on mainnet EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v: Circle's
  *   same page, row "Solana" (also the CAIP-19 namespace document's example).
  *   NOT read on-chain by this slice.
+ * - EURC on devnet AND on mainnet, HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr:
+ *   Circle's "EURC contract addresses" page
+ *   (https://developers.circle.com/stablecoins/eurc-contract-addresses,
+ *   fetched 2026-11-08 04:09 UTC) lists THE SAME ADDRESS in its "Solana"
+ *   (mainnet) row and its "Solana Devnet" row. They are two separate
+ *   accounts, one on each cluster, that happen to share an address: read with
+ *   getAccountInfo (jsonParsed, finalized) on 2026-11-08 04:09 UTC, both are
+ *   initialized mints owned by the classic SPL Token program
+ *   TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA, 82 bytes, 6 decimals, but
+ *   with different mint and freeze authorities and different supplies
+ *   (devnet at slot 519895981 on api.devnet.solana.com, mainnet at slot
+ *   466775624 on api.mainnet-beta.solana.com). Because the address is the
+ *   same, a table entry must always be read together with its network: the
+ *   look-alike rule below already matches on the network first. Neither
+ *   mint's name or symbol was read on-chain (no Metaplex record was fetched);
+ *   "EURC" is the symbol and name Circle's page uses, and the same the
+ *   wallet's EVM table uses for Circle's EURC.
  *
- * Used only to flag look-alikes; never to fill in decimals.
+ * Used only to flag look-alikes and as the name of a mint with no on-chain
+ * metadata; never to fill in decimals.
  */
 export const KNOWN_SOLANA_TOKENS: readonly KnownSolanaToken[] = Object.freeze([
   {
@@ -169,6 +189,24 @@ export const KNOWN_SOLANA_TOKENS: readonly KnownSolanaToken[] = Object.freeze([
     decimals: 6,
     program: 'spl-token',
     source: 'Circle, USDC contract addresses (Solana), fetched 2026-11-07; not read on-chain',
+  },
+  {
+    caip2: SOLANA_DEVNET_CAIP2,
+    mint: 'HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr',
+    symbol: 'EURC',
+    name: 'EURC',
+    decimals: 6,
+    program: 'spl-token',
+    source: 'Circle, EURC contract addresses (Solana Devnet), fetched 2026-11-08; read on devnet 2026-11-08',
+  },
+  {
+    caip2: SOLANA_MAINNET_CAIP2,
+    mint: 'HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr',
+    symbol: 'EURC',
+    name: 'EURC',
+    decimals: 6,
+    program: 'spl-token',
+    source: 'Circle, EURC contract addresses (Solana), fetched 2026-11-08; read on mainnet 2026-11-08',
   },
 ]);
 

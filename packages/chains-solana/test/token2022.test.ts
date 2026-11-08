@@ -46,6 +46,7 @@ import {
   type ParsedMint,
 } from '../src/tokenExtensions.js';
 import {
+  KNOWN_SOLANA_TOKENS,
   SOLANA_DEVNET_CAIP2,
   SOLANA_MAINNET_CAIP2,
   SPL_QUOTE_SENTENCES,
@@ -435,6 +436,40 @@ describe('CAIP-19 ids and look-alikes', () => {
     expect(findSolanaLookAlike(SOLANA_MAINNET_CAIP2, fake, 'PYUSD')).toBeNull();
     expect(lookAlikeSentence('USDC', USDC_DEV)).toBe(
       `This token calls itself USDC, but it is not the USDC mint this wallet knows (${USDC_DEV}). Anyone can create a token with any name and symbol; only the mint address identifies it.`,
+    );
+  });
+  it('knows Circle\'s EURC on devnet and on mainnet at the one address Circle lists for both', () => {
+    // Circle's "EURC contract addresses" page (fetched 2026-11-08) gives
+    // HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr in both its "Solana" and
+    // its "Solana Devnet" rows; both mints were read on their own cluster the
+    // same day: classic SPL Token, 6 decimals (tokenTransfer.ts records the
+    // reads). The entries are pinned field by field so a dropped or mistyped
+    // entry fails here.
+    const EURC = 'HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr';
+    const eurc = KNOWN_SOLANA_TOKENS.filter((t) => t.symbol === 'EURC');
+    expect(eurc.map(({ source: _source, ...rest }) => rest)).toEqual([
+      { caip2: SOLANA_DEVNET_CAIP2, mint: EURC, symbol: 'EURC', name: 'EURC', decimals: 6, program: 'spl-token' },
+      { caip2: SOLANA_MAINNET_CAIP2, mint: EURC, symbol: 'EURC', name: 'EURC', decimals: 6, program: 'spl-token' },
+    ]);
+    expect(base58.decode(EURC)).toHaveLength(32);
+    expect(eurc.every((t) => t.source.startsWith('Circle, EURC contract addresses'))).toBe(true);
+    // The earlier entries are unchanged and nothing else was added.
+    expect(KNOWN_SOLANA_TOKENS.map((t) => `${t.caip2}/${t.symbol}/${t.mint}`)).toEqual([
+      `${SOLANA_DEVNET_CAIP2}/USDC/${USDC_DEV}`,
+      `${SOLANA_DEVNET_CAIP2}/PYUSD/${PYUSD_DEV}`,
+      `${SOLANA_MAINNET_CAIP2}/USDC/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`,
+      `${SOLANA_DEVNET_CAIP2}/EURC/${EURC}`,
+      `${SOLANA_MAINNET_CAIP2}/EURC/${EURC}`,
+    ]);
+    // Another mint calling itself EURC is flagged on either network; the real
+    // mint is not, on either network.
+    const fake = base58.encode(new Uint8Array(32).fill(4));
+    expect(findSolanaLookAlike(SOLANA_DEVNET_CAIP2, fake, 'eurc')).toMatchObject({ caip2: SOLANA_DEVNET_CAIP2, mint: EURC, symbol: 'EURC' });
+    expect(findSolanaLookAlike(SOLANA_MAINNET_CAIP2, fake, 'EURC')?.mint).toBe(EURC);
+    expect(findSolanaLookAlike(SOLANA_DEVNET_CAIP2, EURC, 'EURC')).toBeNull();
+    expect(findSolanaLookAlike(SOLANA_MAINNET_CAIP2, EURC, 'EURC')).toBeNull();
+    expect(formatAssetId(solanaTokenAssetId(SOLANA_DEVNET_CAIP2, EURC))).toBe(
+      'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1/token:HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr',
     );
   });
   it('formats base units exactly', () => {

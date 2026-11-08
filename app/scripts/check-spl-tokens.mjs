@@ -78,6 +78,9 @@ const FIXTURE = JSON.parse(
 );
 const USDC = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU';
 const PYUSD = 'CXk2AMBfi3TwaEL2468s6zP8xq9NxTXjp9gjMgzeUynM';
+// Circle's EURC: the one address Circle's "EURC contract addresses" page
+// gives for both Solana (mainnet) and Solana Devnet (fetched 2026-11-08).
+const EURC = 'HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr';
 const SPL_TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
 const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 const DEVNET = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1';
@@ -358,6 +361,47 @@ console.log('check-spl-tokens: reading a mint and the Track prompt');
   const tracked2 = SPL.trackedAssetFor(pyusd, 'PYUSD', '');
   check('the tracked asset: CAIP-19 token namespace, the mint’s decimals, a missing name becomes the symbol',
     formatAssetId(tracked2.assetId) === `${DEVNET}/token:${PYUSD}` && tracked2.decimals === 6 && tracked2.name === 'PYUSD');
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-spl-tokens: Circle’s EURC, known on devnet and on mainnet');
+// ---------------------------------------------------------------------------
+// The engine's KNOWN_SOLANA_TOKENS is the app's known-token table
+// (lookAlikeReferences and previewMint read it), so EURC is offered the way
+// devnet PYUSD is: a known name for Track and a look-alike reference, never
+// tracked by default. Both mints were read on 2026-11-08 (classic SPL Token,
+// 6 decimals); the mint here is a synthetic one of that shape, not the
+// recorded bytes, because no EURC account is in the recorded fixture.
+{
+  const eurcEntries = KNOWN_SOLANA_TOKENS.filter((t) => t.mint === EURC);
+  const entryOk = (caip2) => {
+    const e = eurcEntries.find((t) => t.caip2 === caip2);
+    return !!e && e.symbol === 'EURC' && e.name === 'EURC' && e.decimals === 6 && e.program === 'spl-token' &&
+      e.source.startsWith('Circle, EURC contract addresses');
+  };
+  check('the known-token table holds Circle’s EURC on devnet AND on mainnet at the same mint: classic SPL Token, 6 decimals, symbol and name "EURC"',
+    eurcEntries.length === 2 && entryOk(DEVNET) && entryOk(SOLANA_MAINNET_CAIP2) && base58.decode(EURC).length === 32);
+  check('…and every earlier entry is still there, in order (devnet USDC, devnet PYUSD, mainnet USDC, then the two EURC entries)',
+    KNOWN_SOLANA_TOKENS.map((t) => `${t.caip2 === DEVNET ? 'devnet' : t.caip2 === SOLANA_MAINNET_CAIP2 ? 'mainnet' : t.caip2}/${t.symbol}/${t.mint}`).join() ===
+      [`devnet/USDC/${USDC}`, `devnet/PYUSD/${PYUSD}`, 'mainnet/USDC/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', `devnet/EURC/${EURC}`, `mainnet/EURC/${EURC}`].join());
+  const store = memoryStore();
+  check('EURC is known, not default-tracked: each network still starts with USDC only',
+    (await TOKENS.listSolanaTokens(DEVNET, store)).map((t) => t.symbol).join() === 'USDC' &&
+      (await TOKENS.listSolanaTokens(SOLANA_MAINNET_CAIP2, store)).map((t) => t.symbol).join() === 'USDC');
+  const chain = fakeChain({ extraAccounts: { [EURC]: { owner: SPL_TOKEN_PROGRAM, data: mintBytes({ decimals: 6, freeze: BOB.address }), lamports: 1n } } });
+  const eurc = await SPL.previewMint(chain.client, DEVNET, EURC, []);
+  check('devnet EURC read for Track: classic SPL Token, 6 decimals from the mint, plain, named "EURC" from the known-token table, no look-alike warning',
+    eurc.profile.program === 'spl-token' && eurc.decimals === 6 && eurc.sendRefusal === null && eurc.symbol === 'EURC' && eurc.name === 'EURC' &&
+      eurc.symbolSource === 'known' && eurc.lookAlike === null);
+  const onMainnet = await SPL.previewMint(chain.client, SOLANA_MAINNET_CAIP2, EURC, []);
+  check('the same mint read as a mainnet token is named "EURC" from the mainnet entry, with no look-alike warning',
+    onMainnet.symbol === 'EURC' && onMainnet.symbolSource === 'known' && onMainnet.lookAlike === null);
+  check('the Track prompt for devnet EURC names the full mint and the network, exact text',
+    SPL.trackPrompt(eurc, 'EURC').message ===
+      `Mint ${EURC} on Solana devnet. Anyone can create a token with any name and symbol; track it only if this is the mint you expect.`);
+  check('another mint calling itself EURC is flagged with the engine’s sentence on devnet and on mainnet',
+    SPL.lookAlikeFor(DEVNET, SYNTH.unknown.addr, 'eurc', []) === lookAlikeSentence('eurc', EURC) &&
+      SPL.lookAlikeFor(SOLANA_MAINNET_CAIP2, SYNTH.unknown.addr, 'EURC', []) === lookAlikeSentence('EURC', EURC));
 }
 
 // ---------------------------------------------------------------------------
