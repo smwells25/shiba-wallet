@@ -17781,3 +17781,106 @@ arrive; 6 last. Subagents on Opus.
       table entry the read-back names it from the table where the chain
       gives none. UNVERIFIED: the EURC mints' Metaplex metadata (not
       fetched); nothing on a device since the commit.
+- [x] Pass p24-unblock findings FIXED — SOLANA TOKEN TRANSFERS IN ACTIVITY,
+      THE SOL ROW REFRESHED, THE DEVNET COIN NAMED (commit 56d095d; 21 files,
+      +1,884 / −58, two new — app/src/wallet/solana-activity.ts and the
+      fixture packages/chains-solana/test/fixtures/devnet-token-history-
+      2026-11-08.json; engine 1,330 → 1,340 (chains-solana 80 → 90),
+      check-spl-tokens 138 (was 108; in-suite mutants 11 → 14 plus 3 on
+      solana-activity.ts), check-i18n 196 (192), check-home 114 (111),
+      check-notes 219 (216), check-activity 302 with one pin rewritten in
+      place; offline runner ALL GREEN in the CTO's isolated worktree on HEAD
+      4308a1c with --skip-bundle: app 11,166 across 66 suites, lint 0/0, tsc
+      clean; checkout 0 / apply 0 / 19 modified + 2 new files; the staged
+      patch id 80228643…6aef equal to the verified worktree's and the
+      agent's; the pre-commit scan clean; thirteen hand mutants on the real
+      files caught (H4, the fee dropped when only tokens move, survived at
+      first and got its own engine test); the CTO read the history.ts,
+      types.ts, spl-tokens.ts, notes.ts and a11y.ts hunks; not seen on a
+      device). (1) THE SOL ROW: runSplSend takes a required notifyAccepted
+      dependency called once right after the node accepts the transaction
+      (never on a cancelled prompt or a refused broadcast; a throwing
+      listener never affects the send); the screen passes send.ts
+      notifySendAccepted — the same signal sendSol and every EVM send give,
+      on which Home's createSendRefreshTracker reloads every native row on
+      focus; a source pin requires the screen to pass it. (2) ACTIVITY —
+      ENGINE (chains-solana history.ts, additive): the module comment cites
+      Solana's getTransaction documentation read 2026-11-08 from its source
+      (solana-foundation/solana-com at 31f66e08, apps/docs/content/docs/en/
+      rpc/http/gettransaction.mdx lines 312–317 and 351–366, because
+      solana.com answered HTTP 429) for meta.preTokenBalances /
+      postTokenBalances and their fields accountIndex, mint, owner ("may be
+      omitted"), uiTokenAmount {amount as a base-10 string, decimals};
+      solanaTokenMoves pairs the two arrays by accountIndex, sums per mint the
+      change of every token account whose RECORDED owner is the queried
+      address (a balance with no owner is never attributed; any malformed
+      element, an account whose mint / owner / decimals change between the
+      sides, or a mint reported with two decimals values leaves the answer
+      uninterpreted — nothing guessed); when no token balance of the address
+      changed the entry is EXACTLY the old one (toStrictEqual plus a
+      key-order check); otherwise one token entry per mint (direction,
+      assetAmount, assetDecimals, contract = the mint as reported, uid
+      <signature>:token:<mint>, counterparty when exactly one other owner
+      moved the opposite way) followed by the native entry only when
+      lamports other than the fee moved (uid <signature>:native, carrying the
+      fee); when no lamports moved the fee rides on the first token entry, so
+      a token transfer never reads "Self 0"; the enrichment returns an array
+      (additive). The fixture holds the raw devnet getTransaction answers
+      (encoding json, as the provider receives it; read about 17:49 UTC) for
+      the pass's two sends (slots 519908397 / 519907325) and the two faucet
+      deposits (slots 519894436 / 519894381, version-0 transactions with
+      empty lookup tables), 25.8 KB, no secrets. CORE: HistoryEntry.contract's
+      doc comment now covers both chains — EVM lowercase hex, Solana the
+      base-58 mint exactly as reported, never lowercased, compared only with
+      an identity of the same chain. APP (solana-activity.ts): symbols come
+      only from the wallet's own lists for that network — the tracked tokens
+      first, then KNOWN_SOLANA_TOKENS — never from a mint's on-chain claim; an
+      unknown mint shows as its shortened mint ("4zMM…ncDU"); sentences "Sent
+      1 USDC to 9WMg…471n", "Received 20 USDC from H3sj…V79w", the rent row
+      "In the same transaction, 0.00148844 test SOL also left this account
+      besides the network fee (a token transfer can pay rent for the
+      recipient's new token account)", the unnamed forms ("…; the
+      transaction does not name one recipient / sender"), Hide amounts
+      masking every amount; ActivityScreen labels the rows and the CSV export
+      (notes.ts gains counterpartyOf per entry and tokenIdWord 'mint', so a
+      Solana row reads "USDC (mint …)"; EVM output byte-identical); the
+      amount column falls back to the shortened mint so a token amount never
+      shows "test SOL"; pinned against the fixture: both sends, both rent
+      rows, both deposits, the unknown-mint form, Hide amounts, the CSV rows.
+      (3) splTokensFeeSentence(network): "…paid in test SOL." on devnet
+      (splNativeSymbol pinned equal to the devnet network entry's own
+      symbol). (4) splSendFormIntro takes the network's coin; the Review rows
+      "Network fee (paid in {coin})" and "Total {coin} leaving your account"
+      (the second a consistency change beyond the brief, accepted; the
+      mainnet labels unchanged; the check that had pinned the inconsistent
+      devnet labels updated). (5) the Home Solana token row's link text AND
+      spoken label read "Send USDC on Solana devnet ↗", hint "Sends USDC on
+      Solana devnet" (a11y.ts solanaTokenSendLinkText / Hint; the visible
+      text changed too so it matches the speech — accepted); the Ethereum
+      token row's pinned strings unchanged; the Solana tokens screen's Send
+      button speaks the same; the token-send screen's title "Send USDC on
+      Solana devnet" (splSendScreenTitle; no suite pinned the old title).
+      (8) the Solana tokens screen shows "Balance: 19 USDC" per row from the
+      same useSplTokens row Home reads, "Balance: •••• USDC" (spoken
+      "Balance hidden") under Hide amounts, "Balance: could not be read just
+      now." on a read error, nothing before the first read. STRINGS: nine new
+      ids (home.solanaToken.send / .hint, activity.solana.sent /
+      sentUnnamed / received / receivedUnnamed / unknownToken / nativeOut /
+      nativeIn) with Spanish drafts on the fixture's "new" list
+      (check-i18n UNBLOCK_FIX_NEW); the SPL screens' own English constants
+      follow those screens' existing literal pattern; no migrated English
+      entry changed. NOT DONE: optional finding 6 (no balance on the mint
+      read-back). DESIGN LIMITS (stated): a transaction moving several mints
+      gives several token entries with the native entry and the fee on the
+      first only; a node omitting owner leaves that balance unattributed and
+      the row may fall back to the old native-only form; for a version-0
+      transaction accountIndex may point into the lookup-table addresses —
+      the token logic never resolves indices to addresses, and the old native
+      lookup still searches the static keys only, as before; Solana mainnet
+      profit-and-loss now leaves token entries out of the SOL figures
+      (counted in its other-tokens note; check-pnl unchanged at 138).
+      UNVERIFIED (emulator re-check dispatched): the SOL row reloading on
+      focus after a token send incl. the 15-second follow-up; the new
+      Activity rows (the 3vPay… send, the rent row, the two deposits) and
+      their TalkBack labels; the longer link and title layout; the Manage
+      balance line; the Spanish lengths (a native reviewer on hold).
