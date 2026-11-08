@@ -1808,6 +1808,37 @@ function AppPinSection({ scrollTo }: { scrollTo?: (y: number) => void }) {
           </Text>
           {step.positions.map((p, i) => {
             const f = fieldLabel(`backup-word-${i}`, t('settings.appLock.wordCaption', { n: p + 1 }));
+            // Keeping these two fields out of iOS's password manager (pass
+            // p24-ios2 check 2; fixed and seen in the iOS 26.5 Simulator in
+            // pass p24-iosfix2). Apple's "About the Password AutoFill
+            // workflow" (developer.apple.com/documentation/security, read
+            // 2026-11-08): "If you haven't tagged the input field, the system
+            // uses heuristics to identify the view's type", and for new
+            // passwords "The system suggests a strong, unique password in apps
+            // that have an associated domain" — this app declares one
+            // (app.json associatedDomains, the passkey placeholder). React
+            // Native 0.86.3 maps textContentType "none" to an EMPTY content
+            // type, i.e. an untagged field (React/Fabric/Mounting/
+            // ComponentViews/TextInput/RCTTextInputUtils.mm 188–189; applied
+            // in RCTTextInputComponentView.mm 266–267, and in the old
+            // architecture's RCTBaseTextInputView.mm 269–277), so two
+            // adjacent secure fields were read as "new password + confirm"
+            // and iOS showed "Use Strong Password?" in place of the keyboard
+            // — "none" did not disable it despite TextInput.d.ts 217 ("To
+            // disable autofill, set textContentType to `none`"). The fix
+            // TAGS the fields as UITextContentType.oneTimeCode ("A property
+            // that defines the content in a text input area as a one-time
+            // code"; RCTTextInputUtils.mm 216 maps "oneTimeCode" to
+            // UITextContentTypeOneTimeCode), one of the four kinds Apple lists
+            // Password AutoFill as supporting (user names, existing
+            // passwords, new passwords, security codes), which takes the
+            // fields out of the password heuristics: in the Simulator the
+            // keyboard came up with no sheet and no Passwords bar, while
+            // "none" with the same props showed the sheet. Secure entry stays,
+            // so the words are still masked and cannot be copied (Apple,
+            // UITextInputTraits.isSecureTextEntry). Only a security code from
+            // an SMS could be offered above the keyboard, which nobody types
+            // as a recovery word. On a real iPhone this is unverified.
             return (
               <View key={`w-${p}`} style={styles.endpointEditor}>
                 <Text {...f.label} style={[styles.hint, { color: theme.textMuted }]}>{f.text}</Text>
@@ -1821,7 +1852,7 @@ function AppPinSection({ scrollTo }: { scrollTo?: (y: number) => void }) {
                   autoComplete="off"
                   spellCheck={false}
                   importantForAutofill="no"
-                  textContentType="none"
+                  textContentType="oneTimeCode"
                   secureTextEntry
                   style={[styles.endpointInput, { backgroundColor: theme.card, borderColor: theme.controlBorder, color: theme.text }]}
                 />

@@ -459,7 +459,8 @@ export const PIN_COUNTDOWN_TICK_MS = 1000;
  *    ReactTextInputManager.kt:687–699), autoCorrect={false} (:744),
  *    spellCheck={false} (:211), autoComplete="off" (:668, the value
  *    'off' at :737), importantForAutofill="no" (:391), textContentType=
- *    "none" (:269), autoCapitalize="none" (:588), contextMenuHidden (:794,
+ *    "oneTimeCode" (:269; see below), autoCapitalize="none" (:588),
+ *    contextMenuHidden (:794,
  *    no paste menu; a keyboard's own clipboard strip may still insert text
  *    — unverified), maxLength (:827) only as a typing guard set generously
  *    (256), because whether React Native counts it in UTF-16 units or code
@@ -469,6 +470,22 @@ export const PIN_COUNTDOWN_TICK_MS = 1000;
  *    appears nowhere in its Android text-input sources), so none is set:
  *    whether a keyboard learns from a password field is the keyboard's
  *    choice.
+ *  - iOS Password AutoFill (pass p24-iosfix2, iOS 26.5 Simulator): with
+ *    textContentType "none" iOS showed its "Passwords" bar over this field
+ *    (in Settings and on the lock screen), because React Native 0.86.3 maps
+ *    "none" to an empty content type (React/Fabric/Mounting/ComponentViews/
+ *    TextInput/RCTTextInputUtils.mm 188–189), i.e. an untagged field, and
+ *    Apple's "About the Password AutoFill workflow" says: "If you haven't
+ *    tagged the input field, the system uses heuristics to identify the
+ *    view's type". Tagging it UITextContentType.oneTimeCode (mapped at
+ *    RCTTextInputUtils.mm 216) removed the bar there while secure entry
+ *    kept the text masked. A passphrase is not a one-time code; the tag is
+ *    used because DURESS_WALLET.md section 8.2.8 keeps password managers
+ *    away from the lock secret on purpose (a saved copy, or autofill
+ *    offering the real passphrase under coercion, would defeat the lock),
+ *    and the Settings advice promises it. The same reasoning and sources
+ *    are on the backup-word fields in SettingsScreen.tsx. Unverified on a
+ *    real iPhone.
  *  - No "Show" toggle: section 8.2.8 lists shoulder-surfing as a cost and
  *    designs no way to show the text, and a shown field is no longer a
  *    password field for the keyboard.
@@ -559,7 +576,7 @@ export function PassphraseField({
         spellCheck={false}
         autoComplete="off"
         importantForAutofill="no"
-        textContentType="none"
+        textContentType="oneTimeCode"
         autoCapitalize="none"
         contextMenuHidden
         maxLength={256}

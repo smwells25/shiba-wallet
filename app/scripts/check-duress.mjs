@@ -1347,7 +1347,7 @@ async function version1(pin) {
 /** The LockGate / Settings / WalletContext sources of the passphrase path. */
 function passphraseSources(gate, settings, ctx) {
   const field = gate.slice(gate.indexOf('export function PassphraseField('), gate.indexOf('const styles = StyleSheet.create('));
-  const props = ['secureTextEntry\n', 'autoCorrect={false}', 'spellCheck={false}', 'autoComplete="off"', 'importantForAutofill="no"', 'textContentType="none"', 'autoCapitalize="none"', 'contextMenuHidden\n', 'maxLength={256}'];
+  const props = ['secureTextEntry\n', 'autoCorrect={false}', 'spellCheck={false}', 'autoComplete="off"', 'importantForAutofill="no"', 'textContentType="oneTimeCode"', 'autoCapitalize="none"', 'contextMenuHidden\n', 'maxLength={256}'];
   return {
     props: props.every((p) => field.includes(p)),
     capture: field.includes("usePreventScreenCapture('pin-pad');"),
@@ -1512,7 +1512,7 @@ function passphraseSources(gate, settings, ctx) {
     duressMod.effectivePrefs.length === 2 && /export function effectivePrefs\(\s*prefs: \{[^}]*\},\s*appPinOn: boolean,\s*\)/.test(read('wallet/duress.ts')));
 
   const src = passphraseSources(read('components/LockGate.tsx'), read('screens/SettingsScreen.tsx'), read('wallet/WalletContext.tsx'));
-  check('PassphraseField: secure entry, autocorrect / spell-check / autocomplete / autofill / content type off, no capitalisation, no context menu, a typing guard (source scan)',
+  check('PassphraseField: secure entry, autocorrect / spell-check / autocomplete / autofill off, the content type oneTimeCode (out of iOS Password AutoFill), no capitalisation, no context menu, a typing guard (source scan)',
     src.props, JSON.stringify(src));
   check('…capture blocked with the pad\'s key, the text cleared BEFORE the check, no Show toggle, named by its visible prompt',
     src.capture && src.clearedFirst && src.noShowToggle && src.named, JSON.stringify(src));
@@ -1823,9 +1823,29 @@ try {
     const m = await mutant('duress.ts', '      act.scrollTo(sectionY + y);\n', '      act.scrollTo(y);\n');
     check('mutant caught: the scroll ignores the section\'s own offset (lands near the top of the screen)', run(m) !== want);
     const fieldBlock = settings.slice(settings.indexOf("const f = fieldLabel(`backup-word-${i}`"), settings.indexOf('<Button title="Check" onPress={submitBackupWords}'));
-    check('the backup-word fields set textContentType="none" (RN 0.86.3 TextInput.d.ts: "To disable autofill, set textContentType to `none`"), as the lock\'s passphrase field does, beside secure entry and autofill off',
-      fieldBlock.includes('textContentType="none"') && fieldBlock.includes('secureTextEntry') && fieldBlock.includes('importantForAutofill="no"') && fieldBlock.includes('autoComplete="off"') &&
-        read('components/LockGate.tsx').includes('textContentType="none"'));
+    // Pass p24-iosfix2: textContentType "none" is an EMPTY content type in RN
+    // 0.86.3 (RCTTextInputUtils.mm 188-189), so iOS's Password AutoFill
+    // heuristics treated the two secure fields as "new password + confirm"
+    // and showed "Use Strong Password?" in place of the keyboard (pass
+    // p24-ios2 check 2). Tagged UITextContentType.oneTimeCode (mapped at
+    // RCTTextInputUtils.mm 216) the sheet and the Passwords bar were gone in
+    // the iOS 26.5 Simulator while secure entry still masked the words.
+    const backupFieldsKeptFromPasswords = (block, gate) =>
+      block.includes('textContentType="oneTimeCode"') && !block.includes('textContentType="none"') &&
+      /\n\s*secureTextEntry\n/.test(block) && !/secureTextEntry=\{/.test(block) &&
+      block.includes('importantForAutofill="no"') && block.includes('autoComplete="off"') &&
+      block.includes('autoCorrect={false}') && block.includes('spellCheck={false}') &&
+      gate.includes('textContentType="oneTimeCode"') && !gate.includes('        textContentType="none"\n');
+    const gateSrc = read('components/LockGate.tsx');
+    check('the backup-word fields are tagged textContentType="oneTimeCode" with secure entry kept (iOS showed "Use Strong Password?" for "none"), beside autofill, autocorrect and spell-check off, and the lock\'s passphrase field carries the same tag',
+      backupFieldsKeptFromPasswords(fieldBlock, gateSrc));
+    check('mutant caught: the backup-word fields back on textContentType="none" (the strong-password sheet of pass p24-ios2)',
+      !backupFieldsKeptFromPasswords(fieldBlock.replace('textContentType="oneTimeCode"', 'textContentType="none"'), gateSrc));
+    check('mutant caught: the backup-word fields lose secure entry (the words would show in clear)',
+      !backupFieldsKeptFromPasswords(fieldBlock.replace(/\n(\s*)secureTextEntry\n/, '\n'), gateSrc));
+    check('mutant caught: the lock\'s passphrase field back on textContentType="none" (iOS\'s Passwords bar over the lock screen)',
+      !backupFieldsKeptFromPasswords(fieldBlock, gateSrc.replace('        textContentType="oneTimeCode"\n', '        textContentType="none"\n')) &&
+        !passphraseSources(gateSrc.replace('        textContentType="oneTimeCode"\n', '        textContentType="none"\n'), settings, read('wallet/WalletContext.tsx')).props);
   }
 } finally {
   rmSync(MUTANT_DIR, { recursive: true, force: true });
