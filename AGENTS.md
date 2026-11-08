@@ -17741,3 +17741,43 @@ arrive; 6 last. Subagents on Opus.
       / 19 USDC / 19 EURC, Account 2 0 lamports with 1 USDC and 1 EURC in its
       new associated accounts (1,488,440 lamports of rent each, paid by
       Account 1).
+- [x] Circle's EURC known on Solana devnet and mainnet (commit f383a57; 3
+      files, +120 / −3 — packages/chains-solana/src/tokenTransfer.ts,
+      test/token2022.test.ts, app/scripts/check-spl-tokens.mjs; engine 1,329
+      → 1,330 (chains-solana 79 → 80), check-spl-tokens 108 (was 101);
+      offline runner ALL GREEN in the CTO's isolated worktree on HEAD b2bda0b
+      with --skip-bundle: app 11,126 across 66 suites, lint 0/0, tsc clean;
+      checkout 0 / apply 0 / 3 files; the staged patch id e0dac565…e369 equal
+      to the verified worktree's and the patch file's; the pre-commit scan
+      clean; the agent's own runner run in its worktree was also ALL GREEN
+      with the same counts; built by the agent the previous session
+      dispatched, recorded by the CTO after the session cut). THE FACT:
+      Circle's "EURC contract addresses" page (fetched 2026-11-08 04:09 UTC)
+      lists the ONE address HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr in
+      both its "Solana" (mainnet) and "Solana Devnet" rows; the CTO re-read
+      the agent's two saved getAccountInfo answers — on devnet (slot
+      519895981) and mainnet (slot 466775624) both are initialized mints
+      owned by the classic SPL Token program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA,
+      82 bytes, 6 decimals, with DIFFERENT mint and freeze authorities and
+      supplies (two separate accounts that share an address, one per
+      cluster) — so a table entry is always read together with its network,
+      which findSolanaLookAlike already does. KNOWN_SOLANA_TOKENS gains two
+      entries (devnet EURC, mainnet EURC) after the three existing ones,
+      each sourced ("Circle, EURC contract addresses (…), fetched 2026-11-08;
+      read on … 2026-11-08"); the doc comment now says the table also names
+      a mint with no on-chain metadata (as devnet PYUSD's reading did);
+      neither EURC mint's own metadata was read (no Metaplex record fetched)
+      — "EURC" is Circle's page's symbol and the wallet's EVM table's. NOT
+      DEFAULT-TRACKED: each network's list still starts with USDC only
+      (pinned); EURC is offered as a known name at Track and as a look-alike
+      reference on both networks. PINS: the two entries field by field, the
+      table's exact order, the mint decoding to 32 bytes, the devnet
+      read-for-Track ("EURC" from the table, symbolSource known, no
+      look-alike, the exact Track prompt), the same mint read as a mainnet
+      token, a fake "eurc" flagged on devnet and on mainnet with the engine's
+      sentence, the CAIP-19 id. NOTE: the emulator pass p24-unblock tracked
+      the same mint through "Read the mint" BEFORE this slice landed, so its
+      row read "EURC · 6 decimals" from the chain's own metadata; with this
+      table entry the read-back names it from the table where the chain
+      gives none. UNVERIFIED: the EURC mints' Metaplex metadata (not
+      fetched); nothing on a device since the commit.
