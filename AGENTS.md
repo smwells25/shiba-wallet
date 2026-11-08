@@ -17433,3 +17433,82 @@ arrive; 6 last. Subagents on Opus.
       (7b422a8), the smart account (b7bd8df), the USDC-fee ERC-7677 path
       (b2819c9) and the passkey owner — probes with a non-zero value; the
       cold-signing screens reuse the regular and smart-account helpers.
+- [x] EMULATOR PASS p24-recheck — TODAY'S SOLANA AND MAX SLICES SEEN LIVE;
+      THE ZEROD​EV PROJECT NOW REFUSES THIS MACHINE (2026-11-07 23:48 –
+      2026-11-08 00:21 UTC; Expo Go on emulator 37.1.11 under -gpu swangle,
+      Metro moved to wt-app at 1864def (node 77105 on 8081, the engine
+      rebuilt inside it, 1,933 modules); the REAL wallet's Account 1; 1
+      prompt (Unlock); nothing sent anywhere; no repository file edited; no
+      .dev-wallet value printed; the report step by step in the scratchpad
+      p24-recheck/REPORT.md). USDC: Account 1's devnet address
+      EK5jKrBRwvQXXsSERGN6jEoYaofE2PNiZWQoaCLtrYPv still has NO USDC token
+      account on either RPC (slots 519830585 / 519830587) and 50,000,000
+      lamports — the send leg NOT POSSIBLE, waiting on the faucet request.
+      PASSED, exact texts: devnet ON → the Settings note; the spl-tokens
+      readiness row's new line "Solana token sends work on Solana devnet,
+      which the "Use Solana devnet" switch under Settings → Developer turns
+      on, separately from the Ethereum test network." under the row and
+      after the shared hint; Home's card "Solana devnet: test SOL, no value"
+      / "0.05 test SOL"; the USDC row with NO "Send USDC ↗" at a 0 balance;
+      the fee sentence "The network fee for a Solana token send is paid in
+      SOL (test SOL on devnet), not in the token."; the devnet banner
+      "TESTNET — Solana devnet is on. Amounts are test SOL and devnet
+      tokens, not real funds." beside the app-wide Sepolia banner on Manage
+      Solana tokens ("Solana tokens · Solana devnet"), Receive SOL, the SOL
+      send form ("Solana devnet · TESTNET · from Account 1 (EK5jKrBRwv…)")
+      and Solana Activity ("Solana devnet activity", header "Solana devnet ·
+      TESTNET · Account 1", the row "Received / +0.05 test SOL / 6 h ago");
+      devnet PYUSD's read-back and Track prompt carrying "Transfer fee: 0
+      basis points (0 PYUSD max) — shown again on every send." (tracked and
+      removed again); devnet OFF → the Off note, the row "USD Coin · Solana
+      token" with no devnet line; THE REGULAR-ACCOUNT MAX (7b422a8): Max
+      0.011746233817894128 test ETH to Account 2, Review's AMOUNT unchanged,
+      MAX NETWORK FEE 0.00000000000063 (0.00000003 gwei × 21,000), TOTAL
+      (WORST CASE) = BALANCE 0.011746233818524128, the own-account risk line,
+      "Pre-flight simulation passed (eth_call)." and NO TRIM SENTENCE (on
+      screen and under TalkBack) — backed out, nothing sent; the Inbox intro
+      word for word as dfb5eba (the empty line not reachable: 3 unread price
+      alerts); TalkBack: the token row "USDC, USD Coin · Solana devnet token.
+      Balance 0 USDC" with no button, the fee sentence, "Manage Solana
+      tokens. Button. Opens the list of tracked Solana tokens", "Inbox (3
+      unread). Button. Reminders, alerts, requests from connected apps that
+      the wallet sent, speed-ups and cancellations", the Max review in order
+      with no trim sentence. NOT POSSIBLE — THE SMART-ACCOUNT MAX
+      (b2819c9): with "Send from smart account" on, the form read "The
+      bundler saved for Ethereum Sepolia did not offer Pimlico's token
+      paymaster for USDC: RPC HTTP error 403 for eth_chainId" and Max showed
+      "Could not reach the network endpoint. Check your connection." plus
+      "RPC HTTP error 403 for eth_estimateUserOperationGas"; CAUSE, read
+      from the host with the project id read inside the shell and never
+      printed: rpc.zerodev.app/api/v3/<project>/chain/11155111 and /84532
+      both answer HTTP 403 {"error":"Access denied: Neither IP nor domain is
+      on the allowlist."} — THE ZEROD​EV PROJECT NOW REFUSES THIS MACHINE,
+      so every smart-account path through the bundler (sends, sessions,
+      multisig, handles, cold smart-account signing, bridges from the
+      Kernel) is blocked until the project's allowlist admits it (that the
+      device's saved bundler is the same project is an inference; the
+      Chairperson's decision — the dashboard's allowlist, or a new project
+      id). ALSO NOTED: Account 1's Sepolia balance is 0.011746 test ETH
+      against 0.001746 in the 2026-10-27 record — a 0.01 ETH top-up this
+      pass did not trace (the CTO's records show none; asked). FINDINGS (fix
+      slice dispatched for 2–6): (1) the 403 above; (2) the 403 is described
+      as "Could not reach the network endpoint. Check your connection." and
+      the Pimlico line shows the raw "RPC HTTP error 403 for eth_chainId" —
+      an access refusal needs its own sentence; (3) Manage Solana tokens
+      still offers Send for USDC at a 0 balance while Home hides it; (4)
+      Receive SOL's network line reads "Solana" with devnet on (the banner
+      is right); (5) the SOL send form's amount label "Amount (SOL)" on
+      devnet (the known gap); (6) with devnet OFF the fee sentence still
+      says "(test SOL on devnet)" under mainnet rows; (7) the Review speaks
+      the From and To addresses in full with "Actions available" on each
+      row label — the confirm-screen rule, noted. UNVERIFIED: the SPL send
+      leg; the smart-account Max (blocked); the Inbox empty line; the
+      banner's colours and Spanish. Slips: Max tapped twice (same value);
+      a lost first tap after closing the keyboard; keyevent 111 did not
+      close the ADB keyboard (one BACK hid it); the dump filter dropped the
+      recipient field (read from a screenshot). END STATE: Home, Account 1,
+      Ethereum Sepolia, devnet OFF, PYUSD not tracked, the smart-account
+      switch off, Hide amounts off; TalkBack off (level 6); IME
+      ADBKeyboard; protection off; Metro node 77105 at 1864def on 8081 with
+      only that reverse; qemu 86708 (PRI 55) with caffeinate 86986, the
+      window in front.
