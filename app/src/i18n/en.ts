@@ -2029,4 +2029,14 @@ export const en = {
   'period.hours': '{count} hours',
   'period.day': '{count} day',
   'period.days': '{count} days',
+  // ---- Phase 24 (pass p24-unblock fixes): the Solana token Send link naming its network (a11y.ts), and Solana Activity rows for token transfers (wallet/solana-activity.ts) ----
+  'home.solanaToken.send': 'Send {symbol} on {network}',
+  'home.solanaToken.send.hint': 'Sends {symbol} on {network}',
+  'activity.solana.sent': 'Sent {amount} {asset} to {to}',
+  'activity.solana.sentUnnamed': 'Sent {amount} {asset}; the transaction does not name one recipient',
+  'activity.solana.received': 'Received {amount} {asset} from {from}',
+  'activity.solana.receivedUnnamed': 'Received {amount} {asset}; the transaction does not name one sender',
+  'activity.solana.unknownToken': 'of the token with mint {mint}',
+  'activity.solana.nativeOut': 'In the same transaction, {amount} {symbol} also left this account besides the network fee (a token transfer can pay rent for the recipient’s new token account)',
+  'activity.solana.nativeIn': 'In the same transaction, {amount} {symbol} also arrived in this account',
 } as const;

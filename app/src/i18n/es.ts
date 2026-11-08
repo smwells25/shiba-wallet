@@ -2030,4 +2030,14 @@ export const es: Readonly<Partial<Record<StringId, string>>> = {
   'period.hours': '{count} horas',
   'period.day': '{count} día',
   'period.days': '{count} días',
+  // ---- Phase 24 (pass p24-unblock fixes): the Solana token Send link naming its network (a11y.ts), and Solana Activity rows for token transfers (wallet/solana-activity.ts) ----
+  'home.solanaToken.send': 'Enviar {symbol} en {network}',
+  'home.solanaToken.send.hint': 'Envía {symbol} en {network}',
+  'activity.solana.sent': 'Enviaste {amount} {asset} a {to}',
+  'activity.solana.sentUnnamed': 'Enviaste {amount} {asset}; la transacción no indica un único destinatario',
+  'activity.solana.received': 'Recibiste {amount} {asset} de {from}',
+  'activity.solana.receivedUnnamed': 'Recibiste {amount} {asset}; la transacción no indica un único remitente',
+  'activity.solana.unknownToken': 'del token con mint {mint}',
+  'activity.solana.nativeOut': 'En la misma transacción también salieron {amount} {symbol} de esta cuenta, además de la comisión de red (una transferencia de tokens puede pagar el alquiler de la nueva cuenta de token del destinatario)',
+  'activity.solana.nativeIn': 'En la misma transacción también llegaron {amount} {symbol} a esta cuenta',
 };

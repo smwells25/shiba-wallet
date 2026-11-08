@@ -256,6 +256,23 @@ export function sendLinkHint(displaySymbol: string): string {
 }
 
 /**
+ * The Send link of a Solana token row on Home (and its button on the Solana
+ * tokens screen), naming the network (pass p24-unblock finding 5: the
+ * Ethereum token row and the Solana token row both read "Send USDC", so a
+ * screen reader — and the pass's driver — could not tell which network a
+ * link sends on). `networkLabel` is the network's own name
+ * (spl-tokens.ts solanaNetworkLabel: "Solana" or "Solana devnet").
+ */
+export function solanaTokenSendLinkText(symbol: string, networkLabel: string): string {
+  return t('home.solanaToken.send', { symbol, network: networkLabel });
+}
+
+/** The hint of that link: "Sends USDC on Solana devnet". */
+export function solanaTokenSendLinkHint(symbol: string, networkLabel: string): string {
+  return t('home.solanaToken.send.hint', { symbol, network: networkLabel });
+}
+
+/**
  * iOS ONLY since pass p21e (finding B2c): on Android the switcher's polite
  * live region already speaks the line when it appears on open (the sizes
  * are reset on open, so it always appears after the first measurement), and

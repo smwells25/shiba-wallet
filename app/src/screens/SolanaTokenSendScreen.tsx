@@ -11,7 +11,7 @@ import { describeNetworkError, TechnicalDetail } from '../wallet/connectivity';
 import { requireLocalAuth } from '../wallet/biometric';
 import { useTheme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
-import { SOLANA_CHAIN_ID } from '../wallet/send';
+import { SOLANA_CHAIN_ID, notifySendAccepted } from '../wallet/send';
 import { SolanaDevnetBanner } from '../components/SolanaDevnetBanner';
 import { listSolanaTokens } from '../wallet/tokens';
 import {
@@ -22,6 +22,8 @@ import {
   solanaClient,
   solanaNetworkLabel,
   splConfirmRows,
+  splSendFormIntro,
+  splSendScreenTitle,
   splOutcomeLines,
   splSendGate,
   type SplSendOutcome,
@@ -76,7 +78,7 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
   }, [route.params.assetId]);
 
   useEffect(() => {
-    navigation.setOptions({ title: token ? `Send ${token.symbol}` : 'Send token' });
+    navigation.setOptions({ title: token ? splSendScreenTitle(token.symbol, token.assetId.chainId) : 'Send token' });
   }, [navigation, token]);
 
   if (endpoint === undefined || token === undefined) {
@@ -150,6 +152,7 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
           signWith,
           client: solanaClient(quote.url),
           second: secondUrl ? { url: secondUrl, client: solanaClient(secondUrl) } : null,
+          notifyAccepted: notifySendAccepted,
         },
         quote,
       );
@@ -224,9 +227,7 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
     <ScrollView key="spl-send-form" style={screenStyle(theme)} contentContainerStyle={styles.content}>
       <SolanaDevnetBanner chainId={SOLANA_CHAIN_ID} />
       <Text style={[styles.hint, { color: theme.textMuted }]}>
-        Sends {token.symbol} (mint {token.assetId.reference}) on {label} from your associated token account. The network
-        fee is paid in SOL; if the recipient does not hold this token yet, this transaction also creates their token
-        account and you pay its rent. Review shows every figure before anything is signed.
+        {splSendFormIntro(token.symbol, token.assetId.reference, label, endpoint.network.symbol)}
       </Text>
       <Text {...fieldLabel('spl-recipient', 'Recipient (Solana address)').label} style={[styles.hint, { color: theme.textMuted }]}>
         {fieldLabel('spl-recipient', 'Recipient (Solana address)').text}

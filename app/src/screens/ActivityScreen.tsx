@@ -42,6 +42,13 @@ import {
   transactionsWithTokenAmounts,
 } from '../wallet/history';
 import { EVM_CHAIN_ID, SOLANA_CHAIN_ID } from '../wallet/send';
+import {
+  isSolanaTokenCompanion,
+  labelSolanaEntry,
+  solanaActivitySentence,
+  solanaRowAsset,
+  solanaTokenSymbols,
+} from '../wallet/solana-activity';
 import { useHistory } from '../wallet/useHistory';
 import { usePrefs } from '../wallet/PrefsContext';
 import { useWallet } from '../wallet/WalletContext';
@@ -69,7 +76,7 @@ import {
 import { involvesSmartAccount, isSmartAccountEntry, smartAccountHistoryNote } from '../wallet/smart-account-history';
 import { LOAD_MORE_RETRY_FOOTER } from '../wallet/history-controller';
 import { listContacts, type Contact } from '../wallet/contacts';
-import { listTokens } from '../wallet/tokens';
+import { listSolanaTokens, listTokens } from '../wallet/tokens';
 import { getAaConfig } from '../wallet/aa';
 import { ownMultisigAddresses } from '../wallet/multisig';
 import { stakingContractAt } from '../wallet/risk';
@@ -149,6 +156,7 @@ function EntryRow({
   unavailable = false,
   replacementLine = null,
   sameAsAbove = false,
+  assetFallback = null,
 }: {
   entry: HistoryEntry;
   chainId: string;
@@ -203,6 +211,13 @@ function EntryRow({
    * repeating the transaction's sentence (pass p20c finding 12).
    */
   sameAsAbove?: boolean;
+  /**
+   * What the amount column names next to a token amount whose entry carries
+   * no symbol: on the Solana slot the token entry's shortened mint
+   * (wallet/solana-activity.ts solanaRowAsset), so a token amount never reads
+   * as the native coin (pass p24-unblock finding 2). null elsewhere.
+   */
+  assetFallback?: string | null;
 }) {
   // Localisation (phase 22 item 6): the row's own words follow the language.
   const { t, tx, localize } = useI18n();
@@ -220,7 +235,7 @@ function EntryRow({
   // render it in the TOKEN's units — the chain's native decimals never
   // touch non-native amounts. Otherwise fall back to the native amount
   // or an em-dash.
-  const rowSymbol = entry.assetSymbol ?? symbol;
+  const rowSymbol = entry.assetSymbol ?? assetFallback ?? symbol;
   // No sign in front of an amount of exactly zero: never "−0" (phase 19 item 4).
   const sign = amountSign(entry);
   // formatBalanceDisplay, not formatUnits: a non-zero dust amount reads
@@ -741,6 +756,30 @@ export function ActivityScreen({ navigation, route }: Props) {
     };
   }, [smartCandidate, smartKey, smartOwner, smartOwnerIndex, evmChain.caip2]);
   const smartReady = !smartCandidate || (historySmart !== null && historySmart.key === smartKey);
+  // The Solana slot's token rows (pass p24-unblock finding 2): the engine
+  // reports a token transfer by its mint; the symbol comes only from this
+  // wallet's own lists for the network serving the slot (the tracked
+  // tokens, then the engine's known tokens), read on every focus.
+  const isSolanaSlot = chainId === SOLANA_CHAIN_ID;
+  const solanaNetwork = solanaDevnetSlot ? SOLANA_DEVNET_CAIP2 : SOLANA_CHAIN_ID;
+  const [solanaSymbols, setSolanaSymbols] = useState<{ network: string; symbols: Map<string, string> } | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      if (!isSolanaSlot) return undefined;
+      let cancelled = false;
+      listSolanaTokens(solanaNetwork)
+        .catch(() => [])
+        .then((tracked) => {
+          if (!cancelled) setSolanaSymbols({ network: solanaNetwork, symbols: solanaTokenSymbols(solanaNetwork, tracked) });
+        });
+      return () => {
+        cancelled = true;
+      };
+    }, [isSolanaSlot, solanaNetwork]),
+  );
+  // Until the tracked list is read, the engine's known tokens alone.
+  const shownSolanaSymbols =
+    solanaSymbols !== null && solanaSymbols.network === solanaNetwork ? solanaSymbols.symbols : solanaTokenSymbols(solanaNetwork, []);
   const historySmartAccount = smartCandidate && smartReady && historySmart ? historySmart.address : null;
   const { state, refreshing, reload, loadMore } = useHistory(chainId, account?.address ?? '', {
     smartAccount: historySmartAccount,
@@ -800,6 +839,18 @@ export function ActivityScreen({ navigation, route }: Props) {
   // transaction's sentence; a row still waiting for it says it is loading.
   const activeIsMultisig = activeAccount?.multisig === true;
   const rowTextFor = (entry: HistoryEntry): { sentence: string | null; loading: boolean; unavailable: boolean } => {
+    if (isSolanaSlot && state.status === 'ok') {
+      return {
+        sentence: solanaActivitySentence(entry, {
+          hidden: hideAmounts,
+          nativeSymbol: network?.symbol ?? '',
+          nativeDecimals: network?.decimals ?? 9,
+          companion: isSolanaTokenCompanion(entry, state.entries),
+        }),
+        loading: false,
+        unavailable: false,
+      };
+    }
     if (!isEvmSlot) return { sentence: null, loading: false, unavailable: false };
     return activityRowText({
       entryPoint: entryPointRowSentence(entry, {
@@ -985,12 +1036,19 @@ export function ActivityScreen({ navigation, route }: Props) {
       networkLabel,
       // Each row with its decoded receipt's status, as on screen ("Received
       // (failed)" with no amount for a reverted incoming transfer).
-      entries: isEvmSlot ? loadedEntries.map((e) => entryWithReceiptStatus(e, sentences.lookup(e.id))) : loadedEntries,
+      entries: isEvmSlot
+        ? loadedEntries.map((e) => entryWithReceiptStatus(e, sentences.lookup(e.id)))
+        : isSolanaSlot
+          ? loadedEntries.map((e) => labelSolanaEntry(e, shownSolanaSymbols))
+          : loadedEntries,
       nativeSymbol: symbol,
       nativeDecimals: network.decimals,
       notes: noteIndex,
       explorerUrlFor: (id) => explorerTxUrl(explorerChainId, id, evmChain.explorerTxBase),
       counterpartyFor: (id) => (isEvmSlot ? sentences.lookup(id)?.description.counterparty ?? null : null),
+      // Solana: the provider's own counterparty per entry (token entries
+      // only; a native entry's counterparty is not known).
+      ...(isSolanaSlot ? { counterpartyOf: (e: HistoryEntry) => (e.contract !== undefined ? e.counterparty ?? null : null), tokenIdWord: 'mint' as const } : {}),
       userOpHashesFor: (id) => (isEvmSlot ? userOpHashesFor(id) : []),
     });
     shareTextFile({
@@ -1101,7 +1159,11 @@ export function ActivityScreen({ navigation, route }: Props) {
         renderItem={({ item: listed, index }) => {
           // The row with its decoded receipt's status (a reverted
           // transaction moved nothing).
-          const item = isEvmSlot ? entryWithReceiptStatus(listed, sentences.lookup(listed.id)) : listed;
+          const item = isEvmSlot
+            ? entryWithReceiptStatus(listed, sentences.lookup(listed.id))
+            : isSolanaSlot
+              ? labelSolanaEntry(listed, shownSolanaSymbols)
+              : listed;
           const rowText = rowTextFor(item);
           return (
           <EntryRow
@@ -1116,6 +1178,7 @@ export function ActivityScreen({ navigation, route }: Props) {
             unavailable={rowText.unavailable}
             replacementLine={isEvmSlot && account ? replacementRowLine(pendingRecords, evmChain.caip2, item.id, account.address) : null}
             sameAsAbove={index > 0 && state.entries[index - 1]?.id === listed.id}
+            assetFallback={isSolanaSlot ? solanaRowAsset(item) : null}
             noAmount={hidesZeroNativeAmount(item, tokenTxIds, sentences.lookup(item.id)?.description)}
             note={noteFor(item.id)}
             onEditNote={

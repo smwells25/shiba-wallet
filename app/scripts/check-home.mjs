@@ -553,6 +553,24 @@ console.log('Home: one spoken element per token row, the Hide amounts switch, li
   check('…Home: the chain card\'s Send link takes the profile\'s displaySymbol on the EVM card; token rows their own symbol; no hint is built from a hard-coded "Sends ${…}" (source)', hintOk(home));
   check('…mutant caught: the old hint from the chain row\'s symbol',
     !hintOk(home.replace('sendLinkHint(isEvm ? evmChain.displaySymbol : item.symbol),', '`Sends ${item.symbol}`,')));
+  // Pass p24-unblock finding 5: the Ethereum token row and the Solana token row both read "Send USDC" (label and
+  // hint "Sends USDC"), so neither a screen reader nor the pass's driver could tell the networks apart. The Solana
+  // row's link now names its network; the EVM row's pinned label and hint are unchanged.
+  const { solanaTokenSendLinkText, solanaTokenSendLinkHint } = await import('../src/a11y.ts');
+  const solanaLink =
+    "          accessibilityLabel={solanaTokenSendLinkText(token.symbol, networkLabel)}\n" +
+    "          accessibilityHint={solanaTokenSendLinkHint(token.symbol, networkLabel)}\n" +
+    "          onPress={onSend}\n          hitSlop={8}\n        >\n" +
+    "          <Text style={[styles.manageTokens, { color: theme.accent }]}>{solanaTokenSendLinkText(token.symbol, networkLabel)} ↗</Text>";
+  const evmLink = "accessibilityLabel={t('home.token.send', { symbol: token.symbol })}";
+  const linkOk = (src) => src.includes(solanaLink) && !src.includes('accessibilityLabel={`Send ${token.symbol}`}') && src.includes(evmLink) && src.includes(': sendLinkHint(token.symbol),');
+  check('p24-unblock finding 5: the Solana token row\'s Send link names its network in its text, label and hint ("Send USDC on Solana devnet ↗", "Sends USDC on Solana devnet"); the Ethereum token row keeps its pinned "Send USDC" (source and exact)',
+    linkOk(home) && solanaTokenSendLinkText('USDC', 'Solana devnet') === 'Send USDC on Solana devnet' &&
+      solanaTokenSendLinkHint('USDC', 'Solana devnet') === 'Sends USDC on Solana devnet' && solanaTokenSendLinkText('USDC', 'Solana') === 'Send USDC on Solana');
+  check('…mutant caught: the old Solana label "Send ${token.symbol}" restored',
+    !linkOk(home.replace('accessibilityLabel={solanaTokenSendLinkText(token.symbol, networkLabel)}', 'accessibilityLabel={`Send ${token.symbol}`}')));
+  check('…mutant caught: the Solana hint back to sendLinkHint (no network)',
+    !linkOk(home.replace('accessibilityHint={solanaTokenSendLinkHint(token.symbol, networkLabel)}', 'accessibilityHint={sendLinkHint(token.symbol)}')));
 }
 
 // ---------------------------------------------------------------------------

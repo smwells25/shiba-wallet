@@ -588,6 +588,17 @@ export interface ActivityExportInput {
   counterpartyFor?: (txid: string) => string | null;
   /** UserOperation hashes a transaction is known to carry (decoded rows). */
   userOpHashesFor?: (txid: string) => readonly string[];
+  /**
+   * The counterparty of one entry, preferred over counterpartyFor when
+   * given (the Solana slot: the provider reports it per token entry, and a
+   * transaction's native row and token row have different counterparties).
+   */
+  counterpartyOf?: (entry: HistoryEntry) => string | null;
+  /**
+   * The word for a token's identity in the asset cell: "contract" on EVM
+   * networks (the default), "mint" on Solana.
+   */
+  tokenIdWord?: 'contract' | 'mint';
 }
 
 /**
@@ -597,9 +608,9 @@ export interface ActivityExportInput {
  * any contract. An entry without a contract keeps the symbol alone, exactly
  * as before the field existed.
  */
-export function tokenAssetCell(symbol: string, contract: string | undefined): string {
+export function tokenAssetCell(symbol: string, contract: string | undefined, word: 'contract' | 'mint' = 'contract'): string {
   if (contract === undefined) return symbol;
-  return symbol === '' ? `contract ${contract}` : `${symbol} (contract ${contract})`;
+  return symbol === '' ? `${word} ${contract}` : `${symbol} (${word} ${contract})`;
 }
 
 /** The data rows (without the header), one per loaded entry, in order. */
@@ -614,11 +625,11 @@ export function activityExportRows(input: ActivityExportInput): string[][] {
     const nothingReceived = entry.failed === true && entry.direction === 'in';
     if (entry.assetAmount !== undefined && entry.assetDecimals !== undefined) {
       amount = formatUnits(entry.assetAmount, entry.assetDecimals, entry.assetDecimals);
-      asset = tokenAssetCell(entry.assetSymbol ?? '', entry.contract);
+      asset = tokenAssetCell(entry.assetSymbol ?? '', entry.contract, input.tokenIdWord);
     } else if (entry.assetSymbol !== undefined || entry.contract !== undefined) {
       // A token movement whose exact amount the provider did not supply:
       // the asset is named and the amount left empty rather than guessed.
-      asset = tokenAssetCell(entry.assetSymbol ?? '', entry.contract);
+      asset = tokenAssetCell(entry.assetSymbol ?? '', entry.contract, input.tokenIdWord);
     } else if (entry.amount !== undefined) {
       amount = formatUnits(entry.amount, input.nativeDecimals, input.nativeDecimals);
       asset = input.nativeSymbol;
@@ -636,7 +647,7 @@ export function activityExportRows(input: ActivityExportInput): string[][] {
       asset,
       fee,
       fee === '' ? '' : input.nativeSymbol,
-      input.counterpartyFor?.(entry.id) ?? '',
+      (input.counterpartyOf ? input.counterpartyOf(entry) : input.counterpartyFor?.(entry.id)) ?? '',
       entry.id,
       input.explorerUrlFor(entry.id) ?? '',
       note?.text ?? '',

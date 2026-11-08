@@ -35,7 +35,8 @@ import {
   type TransferFeeConfig,
 } from '@shiba-wallet/chains-solana';
 import { isFeatureAllowed, readinessReason } from '../config/readiness.ts';
-import { parseUnits } from './balances.ts';
+import { formatBalanceDisplay, parseUnits } from './balances.ts';
+import { maskAmount } from '../config/prefs.ts';
 
 /**
  * The Solana slot's id: the mainnet CAIP-2 id the accounts, routes and
@@ -54,6 +55,47 @@ export const SOLANA_SLOT_CHAIN_ID = SOLANA_MAINNET_CAIP2;
  */
 export function solanaDevnetBannerShown(slotChainId: string | undefined, solanaDevnet: boolean): boolean {
   return solanaDevnet === true && slotChainId === SOLANA_SLOT_CHAIN_ID;
+}
+
+/**
+ * The coin a Solana token send's network fee and rent are paid in, as the
+ * screens name it on that network (pass p24-unblock findings 3 and 4): "test
+ * SOL" on Solana devnet (config/defaults.ts SOLANA_DEVNET_NETWORK.symbol, the
+ * symbol every devnet amount already shows), "SOL" otherwise.
+ */
+export function splNativeSymbol(caip2: string | null): string {
+  return caip2 === SOLANA_DEVNET_CAIP2 ? 'test SOL' : 'SOL';
+}
+
+/** The Solana tokens screen's fee sentence, in the coin of the network in use. */
+export function splTokensFeeSentence(caip2: string | null): string {
+  return `Network fees for a token send are paid in ${splNativeSymbol(caip2)}.`;
+}
+
+/** The token-send form's opening sentence, in the coin of the network in use. */
+export function splSendFormIntro(symbol: string, mint: string, networkLabel: string, nativeSymbol: string): string {
+  return (
+    `Sends ${symbol} (mint ${mint}) on ${networkLabel} from your associated token account. The network ` +
+    `fee is paid in ${nativeSymbol}; if the recipient does not hold this token yet, this transaction also creates their token ` +
+    'account and you pay its rent. Review shows every figure before anything is signed.'
+  );
+}
+
+/** The token-send screen's title: the token and the network (pass p24-unblock finding 5: "Send USDC" also titles the Ethereum token send). */
+export function splSendScreenTitle(symbol: string, caip2: string): string {
+  return `Send ${symbol} on ${solanaNetworkLabel(caip2)}`;
+}
+
+/**
+ * The balance line of a tracked token on the Solana tokens screen (pass
+ * p24-unblock finding 8), read exactly as Home reads it (useSplTokens: the
+ * associated token account, the one a send uses), masked by Hide amounts
+ * like Home's rows; null before the balance is read.
+ */
+export function splManageBalanceLine(state: SplRowState | undefined, symbol: string, hidden: boolean): string | null {
+  if (state === undefined) return null;
+  if (state.status === 'error') return 'Balance: could not be read just now.';
+  return `Balance: ${maskAmount(formatBalanceDisplay(state.associated, state.decimals), hidden)} ${symbol}`;
 }
 
 /** The network's name as the screens say it. */
@@ -433,11 +475,11 @@ export function splConfirmRows(q: SplSendQuote, nativeSymbol: string): ConfirmRo
     rows.push({ label: 'Issuer’s transfer fee (withheld from the amount)', value: `${formatBaseUnits(quote.transferFee, quote.decimals)} ${q.symbol}` });
     rows.push({ label: 'Recipient receives', value: `${formatBaseUnits(quote.recipientReceives, quote.decimals)} ${q.symbol}` });
   }
-  rows.push({ label: 'Network fee (paid in SOL)', value: lamportsText(quote.networkFeeLamports, nativeSymbol) });
+  rows.push({ label: `Network fee (paid in ${nativeSymbol})`, value: lamportsText(quote.networkFeeLamports, nativeSymbol) });
   if (quote.createsDestination) {
     rows.push({ label: 'Rent for the recipient’s new token account (paid by you)', value: lamportsText(quote.rentLamports, nativeSymbol) });
   }
-  rows.push({ label: 'Total SOL leaving your account', value: lamportsText(quote.networkFeeLamports + quote.rentLamports, nativeSymbol) });
+  rows.push({ label: `Total ${nativeSymbol} leaving your account`, value: lamportsText(quote.networkFeeLamports + quote.rentLamports, nativeSymbol) });
   rows.push({ label: 'Mint', value: quote.mint });
   rows.push({ label: 'Token program', value: tokenProgramLabel(quote.program) });
   rows.push({ label: 'Your token account', value: quote.sourceAccount });
@@ -480,6 +522,16 @@ export interface SplSendDeps {
   client: SolanaRpcClient;
   /** A client for the second endpoint (secondReadUrl), or null. */
   second: { url: string; client: SolanaRpcClient } | null;
+  /**
+   * Called once, right after the node accepted the transaction (send.ts
+   * notifySendAccepted in the app — the signal sendSol and every EVM send
+   * give): Home then reloads its native rows when it regains focus, so the
+   * Solana row shows the SOL the token send spent on its fee and on any new
+   * token account's rent (pass p24-unblock finding 1: the SOL row stayed at
+   * the old balance until a pull-to-refresh). Never called for a send that
+   * was cancelled or refused.
+   */
+  notifyAccepted: () => void;
   /** How long to wait for confirmation on the sending endpoint (default 60 s). */
   confirmTimeoutMs?: number;
   sleep?: (ms: number) => Promise<void>;
@@ -516,6 +568,13 @@ export async function runSplSend(deps: SplSendDeps, q: SplSendQuote): Promise<Sp
     const signed = signTransaction(message, [{ publicKey: signer.publicKey, sign: (bytes) => signer.sign(bytes) }]);
     return deps.client.sendTransaction(signed.wireBytes);
   });
+  // The broadcast was accepted: balances may have moved (best effort: a
+  // failing listener never affects the send that was already made).
+  try {
+    deps.notifyAccepted();
+  } catch {
+    // Listeners only refresh displays.
+  }
   let primary: SplSendOutcome['primary'];
   try {
     await deps.client.confirmTransaction(signature, {

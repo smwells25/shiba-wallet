@@ -2155,8 +2155,9 @@ reset();
     oldRow[2] === 'Received (smart account)' && oldRow[3] === '0.003', oldRow);
   const screen = readFileSync(join(here, '..', 'src', 'screens', 'ActivityScreen.tsx'), 'utf8');
   check('the screen applies the decoded status to every row and to the export, and a failed incoming row shows its title and no amount (source)',
-    screen.includes('const item = isEvmSlot ? entryWithReceiptStatus(listed, sentences.lookup(listed.id)) : listed;') &&
-      screen.includes('entries: isEvmSlot ? loadedEntries.map((e) => entryWithReceiptStatus(e, sentences.lookup(e.id))) : loadedEntries,') &&
+    // Since the p24-unblock fixes the non-EVM branch labels Solana rows (wallet/solana-activity.ts); the EVM branch is unchanged.
+    screen.includes('const item = isEvmSlot\n            ? entryWithReceiptStatus(listed, sentences.lookup(listed.id))\n            : isSolanaSlot') &&
+      screen.includes('entries: isEvmSlot\n        ? loadedEntries.map((e) => entryWithReceiptStatus(e, sentences.lookup(e.id)))\n        : isSolanaSlot') &&
       screen.includes('const title = failedIncoming ? FAILED_INCOMING_TITLE : directionLabel(entry.direction);') &&
       screen.includes('const showAmount = !noAmount && !failedIncoming;') &&
       screen.includes('{!showAmount ? null : ('));

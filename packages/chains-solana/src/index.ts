@@ -42,8 +42,8 @@ export type {
   RawAccount,
   SignatureStatus,
 } from './rpc.js';
-export { isValidSolanaAddress, solanaHistoryProvider } from './history.js';
-export type { SolanaHistoryOptions } from './history.js';
+export { isValidSolanaAddress, solanaHistoryProvider, solanaTokenMoves } from './history.js';
+export type { SolanaHistoryOptions, SolanaTokenMove } from './history.js';
 export {
   EXT,
   MAX_FEE_BASIS_POINTS,

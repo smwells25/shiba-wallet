@@ -10,6 +10,7 @@ import { NoEndpointError, getEndpoint, withEndpoint } from '../config/networks';
 import { OfflineNotice, TechnicalDetail, describeNetworkError } from '../wallet/connectivity';
 import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
+import { solanaTokenSendLinkHint, solanaTokenSendLinkText } from '../a11y';
 import { useWallet } from '../wallet/WalletContext';
 import { useSplTokens } from '../wallet/useSplTokens';
 import { SolanaDevnetBanner } from '../components/SolanaDevnetBanner';
@@ -21,7 +22,9 @@ import {
   solanaClient,
   solanaNetworkLabel,
   splSendGate,
+  splManageBalanceLine,
   splSendLinkShown,
+  splTokensFeeSentence,
   tokenProgramLabel,
   splTransferFeeLine,
   trackPrompt,
@@ -47,7 +50,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'SolanaTokens'>;
 export function SolanaTokensScreen({ navigation }: Props) {
   const theme = useTheme();
   const fieldLabel = useFieldLabels();
-  const { solanaDevnet } = usePrefs();
+  const { solanaDevnet, hideAmounts } = usePrefs();
   const { accounts, activeAccount } = useWallet();
   const [network, setNetwork] = useState<string | null>(null);
   const [tokens, setTokens] = useState<FungibleAsset[]>([]);
@@ -196,14 +199,18 @@ export function SolanaTokensScreen({ navigation }: Props) {
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           SPL Token and Token-2022 balances shown on Home under the Solana row. Solana mainnet and Solana devnet
           keep separate lists. The balance shown is the one in your associated token account, the account a send
-          uses. Network fees for a token send are paid in SOL.
+          uses. {splTokensFeeSentence(network)}
           {solanaDevnet ? ' This is Solana devnet: its tokens have no value.' : ''}
         </Text>
         {sendRefusal ? <WarningBox>{sendRefusal}</WarningBox> : null}
         {tokens.length === 0 ? (
           <Text style={[styles.hint, { color: theme.textMuted }]}>No tokens tracked. Add one below.</Text>
         ) : (
-          tokens.map((token) => (
+          tokens.map((token) => {
+            // The balance as Home reads it (useSplTokens), only once it belongs to the network listed here.
+            const rowState = balances.network === network ? balances.rows[formatAssetId(token.assetId)] : undefined;
+            const balanceLine = splManageBalanceLine(rowState, token.symbol, hideAmounts);
+            return (
             <View key={formatAssetId(token.assetId)} style={[styles.tokenRow, { backgroundColor: theme.card, borderColor: theme.border }]}>
               <View style={styles.tokenInfo}>
                 <Text style={[styles.tokenSymbol, { color: theme.text }]}>{token.symbol}</Text>
@@ -213,15 +220,18 @@ export function SolanaTokensScreen({ navigation }: Props) {
                 <Text selectable style={[styles.tokenAddress, { color: theme.textMuted }]}>
                   Mint {token.assetId.reference}
                 </Text>
+                {balanceLine !== null ? (
+                  <Text style={[styles.tokenName, { color: theme.text }]} accessibilityLabel={hideAmounts && rowState?.status === 'ok' ? 'Balance hidden' : undefined}>
+                    {balanceLine}
+                  </Text>
+                ) : null}
               </View>
               <View style={styles.rowButtons}>
-                {splSendLinkShown(
-                  balances.network === network ? balances.rows[formatAssetId(token.assetId)] : undefined,
-                  sendRefusal === null,
-                ) ? (
+                {splSendLinkShown(rowState, sendRefusal === null) ? (
                   <Button
                     title="Send"
-                    accessibilityLabel={`Send ${token.symbol}`}
+                    accessibilityLabel={solanaTokenSendLinkText(token.symbol, solanaNetworkLabel(token.assetId.chainId))}
+                    accessibilityHint={solanaTokenSendLinkHint(token.symbol, solanaNetworkLabel(token.assetId.chainId))}
                     onPress={() => navigation.navigate('SolanaTokenSend', { assetId: formatAssetId(token.assetId) })}
                     style={styles.rowButton}
                   />
@@ -235,7 +245,8 @@ export function SolanaTokensScreen({ navigation }: Props) {
                 />
               </View>
             </View>
-          ))
+            );
+          })
         )}
       </View>
 

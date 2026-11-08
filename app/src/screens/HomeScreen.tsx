@@ -22,7 +22,7 @@ import { CHAINS } from '../wallet/chains';
 import { IMPORTED_KEY_NO_CHAIN, MULTISIG_NO_CHAIN, WATCH_ONLY_NO_CHAIN } from '../wallet/account-ids';
 import { useTheme } from '../theme';
 import { textOnFill } from '../theme-palette';
-import { sendLinkHint, spokenLinkText, tokenRowSpokenLabel } from '../a11y';
+import { sendLinkHint, solanaTokenSendLinkHint, solanaTokenSendLinkText, spokenLinkText, tokenRowSpokenLabel } from '../a11y';
 import { EVM_CHAIN_ID, SOLANA_CHAIN_ID, addSendAcceptedListener } from '../wallet/send';
 import { addAaSentListener } from '../wallet/aa';
 import { createSendRefreshTracker, reloadNowAndLater } from '../wallet/home-refresh';
@@ -424,12 +424,12 @@ function SolanaTokenRow({
       {sendable ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Send ${token.symbol}`}
-          accessibilityHint={sendLinkHint(token.symbol)}
+          accessibilityLabel={solanaTokenSendLinkText(token.symbol, networkLabel)}
+          accessibilityHint={solanaTokenSendLinkHint(token.symbol, networkLabel)}
           onPress={onSend}
           hitSlop={8}
         >
-          <Text style={[styles.manageTokens, { color: theme.accent }]}>Send {token.symbol} ↗</Text>
+          <Text style={[styles.manageTokens, { color: theme.accent }]}>{solanaTokenSendLinkText(token.symbol, networkLabel)} ↗</Text>
         </Pressable>
       ) : null}
     </View>

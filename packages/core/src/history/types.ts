@@ -56,12 +56,16 @@ export interface HistoryEntry {
    */
   counterparty?: string;
   /**
-   * The contract of the token this entry moved, as a lowercase 0x-prefixed
-   * 40-hex-digit address (the providers' convention for addresses they
-   * report, as for `counterparty`): the indexer's rawContract.address for an
-   * erc20 / erc721 / erc1155 transfer, or the emitting address of the
-   * Transfer log in the EVM logs fallback. Unlike `assetSymbol`, which any
-   * contract can claim for itself, this identifies the token. Absent for
+   * The identity of the token this entry moved — the field every consumer
+   * must match on, because `assetSymbol` can be claimed by any token.
+   * EVM: the token's contract as a lowercase 0x-prefixed 40-hex-digit
+   * address (the providers' convention for addresses they report, as for
+   * `counterparty`): the indexer's rawContract.address for an erc20 / erc721
+   * / erc1155 transfer, or the emitting address of the Transfer log in the
+   * EVM logs fallback. Solana: the token's MINT exactly as the node reported
+   * it, base-58 — base-58 is case-sensitive, so it is never lowercased (the
+   * Solana history provider, from meta.preTokenBalances / postTokenBalances).
+   * Compare it only with an identity of the same chain. Absent for
    * native-unit entries and whenever the provider does not know it (entries
    * built before the field existed have none); a consumer that needs to know
    * WHICH token moved must treat an absent contract as unknown, never as a

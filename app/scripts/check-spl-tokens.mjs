@@ -50,6 +50,8 @@ const HISTORY = await import('../src/wallet/history.ts');
 const READINESS = await import('../src/config/readiness.ts');
 const { STORE_KEYS } = await import('../src/wallet/store-keys.ts');
 
+const MUTANT_DIR_EARLY = join(dirname(fileURLToPath(import.meta.url)), `.mutants-solana-activity-${process.pid}`);
+process.on('exit', () => rmSync(MUTANT_DIR_EARLY, { recursive: true, force: true }));
 let passed = 0;
 let failed = 0;
 function check(name, condition, detail = '') {
@@ -520,9 +522,9 @@ console.log('check-spl-tokens: the confirm rows and the one-prompt send');
     `From: ${ALICE.address}`,
     `To: ${BOB.address}`,
     'Amount: 1.5 USDC',
-    'Network fee (paid in SOL): 5000 lamports (0.000005 test SOL)',
+    'Network fee (paid in test SOL): 5000 lamports (0.000005 test SOL)',
     'Rent for the recipient’s new token account (paid by you): 2039280 lamports (0.00203928 test SOL)',
-    'Total SOL leaving your account: 2044280 lamports (0.00204428 test SOL)',
+    'Total test SOL leaving your account: 2044280 lamports (0.00204428 test SOL)',
     `Mint: ${USDC}`,
     'Token program: SPL Token',
     `Your token account: ${ata(ALICE.address, USDC, 'spl-token')}`,
@@ -660,9 +662,10 @@ console.log('check-spl-tokens: the fixes of pass p24-recheck (Send at 0 on Manag
   const read = (rel) => readFileSync(resolve(HERE, rel), 'utf8');
   // Finding 3: Manage Solana tokens offered Send for USDC at a 0 balance while Home hid it.
   const tokensScreen = read('../src/screens/SolanaTokensScreen.tsx');
-  const gate = "{splSendLinkShown(\n                  balances.network === network ? balances.rows[formatAssetId(token.assetId)] : undefined,\n                  sendRefusal === null,\n                ) ? (";
+  const gate = '{splSendLinkShown(rowState, sendRefusal === null) ? (';
+  const rowStateLine = 'const rowState = balances.network === network ? balances.rows[formatAssetId(token.assetId)] : undefined;';
   const tokensSendOk = (src) =>
-    src.includes(gate) && !src.includes('{sendRefusal === null ? (') &&
+    src.includes(gate) && src.includes(rowStateLine) && !src.includes('{sendRefusal === null ? (') &&
     src.includes('const balances = useSplTokens(solanaOwner, solanaDevnet);') &&
     src.includes("const solanaOwner = noKey ? undefined : accounts.find((a) => a.chainId === SOLANA_SLOT_CHAIN_ID)?.address;") &&
     src.includes('const noKey = activeAccount?.watchOnly === true || activeAccount?.multisig === true;') &&
@@ -675,7 +678,7 @@ console.log('check-spl-tokens: the fixes of pass p24-recheck (Send at 0 on Manag
   check('…mutant caught: Send gated by the readiness alone again (the p24-recheck finding)',
     !tokensSendOk(tokensScreen.replace(gate, '{sendRefusal === null ? (')));
   check('…mutant caught: rows of another network used for this list',
-    !tokensSendOk(tokensScreen.replace('balances.network === network ? balances.rows[formatAssetId(token.assetId)] : undefined', 'balances.rows[formatAssetId(token.assetId)]')));
+    !tokensSendOk(tokensScreen.replace(rowStateLine, 'const rowState = balances.rows[formatAssetId(token.assetId)];')));
 
   // Finding 4: Receive SOL's network line read "Solana" on devnet.
   const receive = read('../src/screens/ReceiveScreen.tsx');
@@ -710,6 +713,205 @@ console.log('check-spl-tokens: the fixes of pass p24-recheck (Send at 0 on Manag
   check('Home: the Solana token-fee line takes the devnet form only for a devnet list',
     home.includes("{t(network === SOLANA_DEVNET_ROW_CAIP2 ? 'home.solanaTokens.feeDevnet' : 'home.solanaTokens.fee')}"));
 }
+
+// ---------------------------------------------------------------------------
+console.log('check-spl-tokens: the fixes of pass p24-unblock (SOL refreshed after a token send, token rows in Activity, the fee coin, the Send link, balances on Manage)');
+// ---------------------------------------------------------------------------
+const SEND_MOD = await import('../src/wallet/send.ts');
+const SOLACT_PATH = resolve(HERE, '../src/wallet/solana-activity.ts');
+const SOLACT = await import(pathToFileURL(SOLACT_PATH).href);
+const NOTES = await import('../src/wallet/notes.ts');
+const { solanaHistoryProvider } = await import('@shiba-wallet/chains-solana');
+const HISTORY_FIXTURE = JSON.parse(
+  readFileSync(resolve(HERE, '../../packages/chains-solana/test/fixtures/devnet-token-history-2026-11-08.json'), 'utf8'),
+);
+const ACCOUNT_1 = HISTORY_FIXTURE.owner;
+const ACCOUNT_2 = '9WMgKdmRJBZy8WQ6Q9T6VjJN4wyT9jQenDvfvLFe471n';
+const SEND_USDC_SIG = '3vPay79jwsm4PkEb9hBsKSKeMuRyVwWGAJUH3cUaLVRrtCbSXNjA5LDW961cV6di65aoREu7YYNW312QEA3zjFXV';
+const recordedHistory = async () =>
+  (
+    await solanaHistoryProvider(async (method, params) => {
+      if (method === 'getSignaturesForAddress') return HISTORY_FIXTURE.signatures.slice(0, 4);
+      if (method === 'getTransaction') return HISTORY_FIXTURE.transactions[params[0]] ?? null;
+      throw new Error(`unexpected ${method}`);
+    }).getHistory(ACCOUNT_1)
+  ).entries;
+const DEVNET_NATIVE = { nativeSymbol: 'test SOL', nativeDecimals: 9 };
+{
+  // Finding 1: the SOL row stayed at its old balance after a token send.
+  const chain = fakeChain();
+  const q = await quoteOn(chain);
+  let notified = 0;
+  let sentWhenNotified = -1;
+  let homeHeard = 0;
+  const off = SEND_MOD.addSendAcceptedListener(() => {
+    homeHeard += 1;
+  });
+  await SPL.runSplSend(
+    {
+      requireAuth: async () => ({ ok: true }),
+      signWith: async (_c, _a, fn) => fn(ALICE),
+      client: chain.client,
+      second: null,
+      sleep: async () => {},
+      notifyAccepted: () => {
+        notified += 1;
+        sentWhenNotified = chain.sent.length;
+        SEND_MOD.notifySendAccepted();
+      },
+    },
+    q,
+  );
+  off();
+  check('finding 1: an accepted token send tells Home once, after the node took the transaction (send.ts notifySendAccepted, the signal the SOL send gives), so Home reloads its SOL row on focus',
+    notified === 1 && sentWhenNotified === 1 && homeHeard === 1);
+  let cancelledNotified = 0;
+  const c2 = fakeChain();
+  const q2 = await quoteOn(c2);
+  await rejection(() =>
+    SPL.runSplSend({ requireAuth: async () => ({ ok: false, message: 'no' }), signWith: async (_c, _a, fn) => fn(ALICE), client: c2.client, second: null, notifyAccepted: () => (cancelledNotified += 1) }, q2));
+  let refusedNotified = 0;
+  const c3 = fakeChain();
+  const q3 = await quoteOn(c3);
+  await rejection(() =>
+    SPL.runSplSend({ requireAuth: async () => ({ ok: true }), signWith: async () => { throw new Error('node refused'); }, client: c3.client, second: null, notifyAccepted: () => (refusedNotified += 1) }, q3));
+  check('…not for a cancelled device check nor a refused broadcast', cancelledNotified === 0 && refusedNotified === 0);
+  const screen = readFileSync(resolve(HERE, '../src/screens/SolanaTokenSendScreen.tsx'), 'utf8');
+  check('…the send screen passes send.ts notifySendAccepted (the listener Home subscribes to)',
+    screen.includes("import { SOLANA_CHAIN_ID, notifySendAccepted } from '../wallet/send';") && screen.includes('notifyAccepted: notifySendAccepted,'));
+  const home = readFileSync(resolve(HERE, '../src/screens/HomeScreen.tsx'), 'utf8');
+  check('…and Home marks its rows stale on that signal (addSendAcceptedListener), reloading every native row on focus',
+    home.includes('createSendRefreshTracker([addSendAcceptedListener, addAaSentListener])') &&
+      home.includes('for (const account of accounts) void refreshOne(account.chainId);'));
+}
+{
+  // Finding 2: Solana Activity rows for token transfers, from the recorded devnet answers.
+  const entries = await recordedHistory();
+  const symbols = SOLACT.solanaTokenSymbols(DEVNET, (await TOKENS.listSolanaTokens(DEVNET, memoryStore())));
+  const labelled = entries.map((e) => SOLACT.labelSolanaEntry(e, symbols));
+  const say = (e, hidden = false) =>
+    SOLACT.solanaActivitySentence(e, { hidden, ...DEVNET_NATIVE, companion: SOLACT.isSolanaTokenCompanion(e, labelled) });
+  const sentences = labelled.map((e) => say(e));
+  check('finding 2: the outgoing 1 USDC send reads as sent, with the amount, the symbol (devnet USDC from the wallet’s list) and the recipient (exact)',
+    sentences[2] === 'Sent 1 USDC to 9WMg…471n' && labelled[2].direction === 'out' && labelled[2].assetSymbol === 'USDC' && SOLACT.solanaRowAsset(labelled[2]) === 'USDC',
+    JSON.stringify(sentences));
+  check('…its rent row (the same transaction, listed after it) says what those lamports are, besides the fee (exact)',
+    sentences[3] === 'In the same transaction, 0.00148844 test SOL also left this account besides the network fee (a token transfer can pay rent for the recipient’s new token account)' &&
+      labelled[3].id === SEND_USDC_SIG && labelled[3].amount === 1_488_440n && labelled[3].fee === 5000n);
+  check('…the 1 EURC send likewise (EURC known on devnet since f383a57)', sentences[0] === 'Sent 1 EURC to 9WMg…471n');
+  check('…the faucet deposits read as received from the sender, never "Self 0" (exact)',
+    sentences[4] === 'Received 20 EURC from H3sj…V79w' && sentences[5] === 'Received 20 USDC from H3sj…V79w' &&
+      !labelled.some((e) => e.direction === 'self'));
+  check('…Hide amounts masks the token amount and the rent like the row’s own amount',
+    say(labelled[2], true) === 'Sent •••• USDC to 9WMg…471n' && say(labelled[3], true).startsWith('In the same transaction, •••• test SOL also left'));
+  check('…a mint the wallet does not know is named by its shortened mint, never by a symbol, in the sentence and in the amount column',
+    SOLACT.solanaActivitySentence(entries[2], { hidden: false, ...DEVNET_NATIVE, companion: false }) === 'Sent 1 of the token with mint 4zMM…ncDU to 9WMg…471n' &&
+      SOLACT.solanaRowAsset(entries[2]) === '4zMM…ncDU' && SOLACT.labelSolanaEntry(entries[2], new Map()).assetSymbol === undefined);
+  check('…a plain SOL entry and a native entry with no token beside it get no sentence (their own row says enough)',
+    SOLACT.solanaActivitySentence({ id: 'x', timestamp: 1, confirmed: true, direction: 'in', amount: 5n }, { hidden: false, ...DEVNET_NATIVE, companion: false }) === null &&
+      SOLACT.solanaRowAsset({ id: 'x', timestamp: 1, confirmed: true, direction: 'in', amount: 5n }) === null);
+  check('…symbols come only from this network’s lists: devnet’s labels never include mainnet’s USDC mint, and a tracked token wins over the known table',
+    !symbols.has('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v') && symbols.get(EURC) === 'EURC' &&
+      SOLACT.solanaTokenSymbols(DEVNET, [SPL.trackedAssetFor({ caip2: DEVNET, mint: EURC, decimals: 6 }, 'MYEUR', 'Mine')]).get(EURC) === 'MYEUR');
+  const rows = NOTES.activityExportRows({
+    network: SOLANA_MAINNET_CAIP2,
+    networkLabel: 'Solana devnet',
+    entries: labelled,
+    nativeSymbol: 'test SOL',
+    nativeDecimals: 9,
+    notes: NOTES.indexNotes([]),
+    explorerUrlFor: () => null,
+    counterpartyOf: (e) => (e.contract !== undefined ? e.counterparty ?? null : null),
+    tokenIdWord: 'mint',
+  });
+  check('…the CSV export: the token row names the mint (not "contract"), the exact amount and the full recipient; the rent row is test SOL with no counterparty',
+    rows[2][2] === 'Sent' && rows[2][3] === '1' && rows[2][4] === 'USDC (mint 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU)' && rows[2][7] === ACCOUNT_2 &&
+      rows[3][3] === '0.00148844' && rows[3][4] === 'test SOL' && rows[3][5] === '0.000005' && rows[3][7] === '' &&
+      rows[5][2] === 'Received' && rows[5][3] === '20' && rows[5][7] === 'H3sjyipQtXAJkvWNkXhDgped7k323kAba8QMwCLcV79w',
+    JSON.stringify(rows.map((r) => r.slice(2, 8))));
+  const activity = readFileSync(resolve(HERE, '../src/screens/ActivityScreen.tsx'), 'utf8');
+  const activityOk = (src) =>
+    src.includes('? labelSolanaEntry(listed, shownSolanaSymbols)') &&
+    src.includes('? loadedEntries.map((e) => labelSolanaEntry(e, shownSolanaSymbols))') &&
+    src.includes('assetFallback={isSolanaSlot ? solanaRowAsset(item) : null}') &&
+    src.includes('const rowSymbol = entry.assetSymbol ?? assetFallback ?? symbol;') &&
+    src.includes('companion: isSolanaTokenCompanion(entry, state.entries),') &&
+    src.includes("tokenIdWord: 'mint' as const") &&
+    src.includes('keyExtractor={(entry) => entry.uid ?? entry.id}');
+  check('…Activity labels Solana rows (and the export) from the wallet’s lists, shows the token amount with its symbol or mint, and keys rows by uid', activityOk(activity));
+  check('…mutant caught: a token amount shown with the native coin’s symbol again',
+    !activityOk(activity.replace('const rowSymbol = entry.assetSymbol ?? assetFallback ?? symbol;', 'const rowSymbol = entry.assetSymbol ?? symbol;')));
+}
+{
+  // Findings 3 and 4: the fee coin on devnet is "test SOL" on Manage Solana tokens and on the token-send form and Review.
+  check('findings 3 and 4: the fee coin follows the network (exact): "test SOL" on devnet — the devnet network entry’s own symbol — "SOL" on mainnet',
+    SPL.splNativeSymbol(DEVNET) === 'test SOL' && SPL.splNativeSymbol(DEVNET) === DEFAULTS.SOLANA_DEVNET_NETWORK.symbol &&
+      SPL.splNativeSymbol(SOLANA_MAINNET_CAIP2) === 'SOL' && SPL.splNativeSymbol(null) === 'SOL' &&
+      SPL.splTokensFeeSentence(DEVNET) === 'Network fees for a token send are paid in test SOL.' &&
+      SPL.splTokensFeeSentence(SOLANA_MAINNET_CAIP2) === 'Network fees for a token send are paid in SOL.');
+  check('…the send form’s opening sentence (exact, devnet)',
+    SPL.splSendFormIntro('USDC', USDC, 'Solana devnet', 'test SOL') ===
+      `Sends USDC (mint ${USDC}) on Solana devnet from your associated token account. The network fee is paid in test SOL; if the recipient does not hold this token yet, this transaction also creates their token account and you pay its rent. Review shows every figure before anything is signed.`);
+  const q = await quoteOn(fakeChain());
+  const mainnetRows = SPL.splConfirmRows(q, 'SOL').map((r) => r.label);
+  check('…the Review rows name the coin the values are in: "Network fee (paid in test SOL)" and "Total test SOL leaving your account" on devnet; the mainnet labels unchanged',
+    mainnetRows.includes('Network fee (paid in SOL)') && mainnetRows.includes('Total SOL leaving your account'));
+  const tokensScreen = readFileSync(resolve(HERE, '../src/screens/SolanaTokensScreen.tsx'), 'utf8');
+  const sendScreen = readFileSync(resolve(HERE, '../src/screens/SolanaTokenSendScreen.tsx'), 'utf8');
+  check('…the screens use them: Manage Solana tokens’ intro, the send form and its Review (the endpoint’s network symbol), no fixed "paid in SOL"',
+    tokensScreen.includes('uses. {splTokensFeeSentence(network)}') && !tokensScreen.includes('paid in SOL.') &&
+      sendScreen.includes('{splSendFormIntro(token.symbol, token.assetId.reference, label, endpoint.network.symbol)}') &&
+      sendScreen.includes('splConfirmRows(quote, endpoint.network.symbol)') && !/fee is paid in SOL/.test(sendScreen));
+  // Finding 5: the token-send screen's title names the network.
+  check('finding 5: the token-send screen’s title names the network (exact) and the screen uses it',
+    SPL.splSendScreenTitle('USDC', DEVNET) === 'Send USDC on Solana devnet' && SPL.splSendScreenTitle('USDC', SOLANA_MAINNET_CAIP2) === 'Send USDC on Solana' &&
+      sendScreen.includes('splSendScreenTitle(token.symbol, token.assetId.chainId)'));
+  // Finding 8: Manage Solana tokens shows each row's balance, as Home reads it, masked by Hide amounts.
+  const okRow = { status: 'ok', associated: 19_000_000n, outside: 0n, outsideAccounts: 0, decimals: 6, sendRefusal: null, decimalsChanged: false, networkChainId: DEVNET };
+  check('finding 8: the balance line on Manage Solana tokens (exact): the associated account’s balance, masked by Hide amounts; a read error says so; nothing before the read',
+    SPL.splManageBalanceLine(okRow, 'USDC', false) === 'Balance: 19 USDC' && SPL.splManageBalanceLine(okRow, 'USDC', true) === 'Balance: •••• USDC' &&
+      SPL.splManageBalanceLine({ status: 'error', message: 'x' }, 'USDC', false) === 'Balance: could not be read just now.' &&
+      SPL.splManageBalanceLine(undefined, 'USDC', false) === null);
+  check('…the screen draws it from the row Home’s hook read for the network listed, with the Hide amounts preference',
+    tokensScreen.includes('const balanceLine = splManageBalanceLine(rowState, token.symbol, hideAmounts);') &&
+      tokensScreen.includes('const { solanaDevnet, hideAmounts } = usePrefs();') && tokensScreen.includes('{balanceLine}'));
+  check('…its Send button speaks the token and the network (pass p24-unblock finding 5)',
+    tokensScreen.includes('accessibilityLabel={solanaTokenSendLinkText(token.symbol, solanaNetworkLabel(token.assetId.chainId))}') &&
+      tokensScreen.includes('accessibilityHint={solanaTokenSendLinkHint(token.symbol, solanaNetworkLabel(token.assetId.chainId))}'));
+}
+// Mutants of wallet/solana-activity.ts (a copy with one change, imported with its relative imports pinned).
+const SOLACT_SOURCE = readFileSync(SOLACT_PATH, 'utf8');
+let solactMutants = 0;
+let solactCaught = 0;
+async function solactMutant(from, to) {
+  if (!SOLACT_SOURCE.includes(from)) throw new Error(`mutation anchor not found: ${from}`);
+  const rewritten = SOLACT_SOURCE.replace(from, to).replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolve(dirname(SOLACT_PATH), spec)).href}'`);
+  mkdirSync(MUTANT_DIR_EARLY, { recursive: true });
+  solactMutants += 1;
+  const file = join(MUTANT_DIR_EARLY, `a${solactMutants}-solana-activity.ts`);
+  writeFileSync(file, rewritten);
+  return import(pathToFileURL(file).href);
+}
+{
+  const entries = await recordedHistory();
+  // A1: the known tokens of every network used (a mainnet mint would be labelled on devnet).
+  const M1 = await solactMutant('    if (known.caip2 === caip2 && !map.has(known.mint)) map.set(known.mint, known.symbol);', '    if (!map.has(known.mint)) map.set(known.mint, known.symbol);');
+  const ok1 = M1.solanaTokenSymbols(DEVNET, []).has('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+  solactCaught += ok1 ? 1 : 0;
+  check('mutant caught: labels taken from another network’s known tokens', ok1);
+  // A2: the recipient dropped from an outgoing token sentence.
+  const M2 = await solactMutant("        ? t('activity.solana.sent', { amount, asset, to: party })", "        ? t('activity.solana.sentUnnamed', { amount, asset })");
+  const labelled = entries.map((e) => M2.labelSolanaEntry(e, M2.solanaTokenSymbols(DEVNET, [])));
+  const ok2 = M2.solanaActivitySentence(labelled[2], { hidden: false, ...DEVNET_NATIVE, companion: false }) !== 'Sent 1 USDC to 9WMg…471n';
+  solactCaught += ok2 ? 1 : 0;
+  check('mutant caught: an outgoing token sentence that does not name the recipient', ok2);
+  // A3: Hide amounts ignored in the token sentence.
+  const M3 = await solactMutant('    const amount = maskAmount(formatUnits(entry.assetAmount, entry.assetDecimals, entry.assetDecimals), options.hidden);', '    const amount = formatUnits(entry.assetAmount, entry.assetDecimals, entry.assetDecimals);');
+  const ok3 = M3.solanaActivitySentence(M3.labelSolanaEntry(entries[2], M3.solanaTokenSymbols(DEVNET, [])), { hidden: true, ...DEVNET_NATIVE, companion: false }).includes(' 1 USDC');
+  solactCaught += ok3 ? 1 : 0;
+  check('mutant caught: a token amount shown under Hide amounts', ok3);
+}
+check(`solana-activity.ts: at least three mutants, all caught (${solactCaught} of ${solactMutants})`, solactMutants >= 3 && solactCaught === solactMutants);
 
 // ---------------------------------------------------------------------------
 console.log('check-spl-tokens: mutants of wallet/spl-tokens.ts are caught');
@@ -820,6 +1022,32 @@ let caught = 0;
   const ok = M.solanaDevnetBannerShown(SOLANA_MAINNET_CAIP2, false);
   caught += ok ? 1 : 0;
   check('mutant caught: a devnet banner on Solana mainnet', ok);
+}
+{
+  // M12 (pass p24-unblock finding 1): Home is not told after an accepted token send.
+  const M = await mutant('  try {\n    deps.notifyAccepted();\n  } catch {', '  try {\n  } catch {');
+  const c = fakeChain();
+  const q = await quoteOn(c);
+  let n = 0;
+  await M.runSplSend({ requireAuth: async () => ({ ok: true }), signWith: async (_c, _a, fn) => fn(ALICE), client: c.client, second: null, sleep: async () => {}, notifyAccepted: () => (n += 1) }, q);
+  const ok = n === 0 && c.sent.length === 1;
+  caught += ok ? 1 : 0;
+  check('mutant caught: a token send that leaves Home’s SOL row stale (no accepted-send signal)', ok);
+}
+{
+  // M13 (finding 4): the Review's fee row says "SOL" while its values say "test SOL".
+  const M = await mutant("  rows.push({ label: `Network fee (paid in ${nativeSymbol})`,", "  rows.push({ label: 'Network fee (paid in SOL)',");
+  const q = await quoteOn(fakeChain());
+  const ok = M.splConfirmRows(q, 'test SOL').some((r) => r.label === 'Network fee (paid in SOL)');
+  caught += ok ? 1 : 0;
+  check('mutant caught: "Network fee (paid in SOL)" over test SOL values on devnet', ok);
+}
+{
+  // M14 (finding 8): the Manage balance shown under Hide amounts.
+  const M = await mutant('  return `Balance: ${maskAmount(formatBalanceDisplay(state.associated, state.decimals), hidden)} ${symbol}`;', '  return `Balance: ${formatBalanceDisplay(state.associated, state.decimals)} ${symbol}`;');
+  const ok = M.splManageBalanceLine({ status: 'ok', associated: 19_000_000n, outside: 0n, outsideAccounts: 0, decimals: 6, sendRefusal: null, decimalsChanged: false, networkChainId: DEVNET }, 'USDC', true) === 'Balance: 19 USDC';
+  caught += ok ? 1 : 0;
+  check('mutant caught: a Manage Solana tokens balance visible under Hide amounts', ok);
 }
 check(`at least six mutants, all caught (${caught} of ${mutants})`, mutants >= 6 && caught === mutants);
 

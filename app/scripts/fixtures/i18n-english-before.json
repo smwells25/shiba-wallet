@@ -12960,7 +12960,16 @@
   "send.maxAdjustmentGas",
   "send.maxAdjustmentBalance",
   "aa.maxAdjustmentGas",
-  "aa.maxAdjustmentBalance"
+  "aa.maxAdjustmentBalance",
+  "home.solanaToken.send",
+  "home.solanaToken.send.hint",
+  "activity.solana.sent",
+  "activity.solana.sentUnnamed",
+  "activity.solana.received",
+  "activity.solana.receivedUnnamed",
+  "activity.solana.unknownToken",
+  "activity.solana.nativeOut",
+  "activity.solana.nativeIn"
  ],
  "changed": {
   "activity.note.privacy": {

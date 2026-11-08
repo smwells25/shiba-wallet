@@ -718,9 +718,35 @@ async function importMutant(from, to) {
   check('mutant (old-shaped token rows changed by the contract rule) is caught', rows7[1][4] !== 'USDC');
 
   // 8. The contract left out of the asset cell.
-  const m8 = await importMutant("  return symbol === '' ? `contract ${contract}` : `${symbol} (contract ${contract})`;", '  return symbol;');
+  const m8 = await importMutant("  return symbol === '' ? `${word} ${contract}` : `${symbol} (${word} ${contract})`;", '  return symbol;');
   const rows8 = m8.activityExportRows({ ...(await exportFixture(m8)), entries: [{ id: TX_A, timestamp: 1, confirmed: true, direction: 'in', assetSymbol: 'USDC', assetAmount: 1n, assetDecimals: 6, contract: '0x' + 'ab'.repeat(20) }] });
   check('mutant (the contract dropped from the asset cell) is caught', rows8[0][4] === 'USDC');
+
+  // 9 and 10 (pass p24-unblock finding 2): a Solana token row names its MINT, and the per-entry counterparty wins.
+  const solanaInput = (m) => ({
+    network: 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',
+    networkLabel: 'Solana devnet',
+    entries: [
+      { id: 'sig1', uid: 'sig1:token:M', timestamp: 1, confirmed: true, direction: 'out', assetSymbol: 'USDC', assetAmount: 1_000_000n, assetDecimals: 6, contract: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU', counterparty: '9WMgKdmRJBZy8WQ6Q9T6VjJN4wyT9jQenDvfvLFe471n' },
+      { id: 'sig1', uid: 'sig1:native', timestamp: 1, confirmed: true, direction: 'out', amount: 1_488_440n, fee: 5000n },
+    ],
+    nativeSymbol: 'test SOL',
+    nativeDecimals: 9,
+    notes: m.indexNotes([]),
+    explorerUrlFor: () => null,
+    counterpartyFor: () => 'from-the-transaction-id',
+    counterpartyOf: (e) => (e.contract !== undefined ? e.counterparty ?? null : null),
+    tokenIdWord: 'mint',
+  });
+  const solRows = notes.activityExportRows(solanaInput(notes));
+  check('p24-unblock: a Solana token row names its mint (not "contract") and takes the entry\'s own counterparty; its rent row has none',
+    solRows[0][4] === 'USDC (mint 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU)' && solRows[0][7] === '9WMgKdmRJBZy8WQ6Q9T6VjJN4wyT9jQenDvfvLFe471n' &&
+      solRows[1][4] === 'test SOL' && solRows[1][7] === '' && notes.tokenAssetCell('', 'M1', 'mint') === 'mint M1' &&
+      notes.tokenAssetCell('USDC', '0xab') === 'USDC (contract 0xab)');
+  const m9 = await importMutant("      (input.counterpartyOf ? input.counterpartyOf(entry) : input.counterpartyFor?.(entry.id)) ?? '',", "      input.counterpartyFor?.(entry.id) ?? '',");
+  check('mutant (the per-entry counterparty ignored) is caught', m9.activityExportRows(solanaInput(m9))[0][7] === 'from-the-transaction-id');
+  const m10 = await importMutant("export function tokenAssetCell(symbol: string, contract: string | undefined, word: 'contract' | 'mint' = 'contract'): string {", "export function tokenAssetCell(symbol: string, contract: string | undefined, _word: 'contract' | 'mint' = 'contract', word = 'contract'): string {");
+  check('mutant (the mint called a contract) is caught', m10.activityExportRows(solanaInput(m10))[0][4].includes('(contract '));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
