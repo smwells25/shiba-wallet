@@ -17390,3 +17390,46 @@ arrive; 6 last. Subagents on Opus.
       TalkBack, the Spanish drafts. Slips: the worktree's .ready marker
       deleted and recreated; one check first labelled MUTANT without a
       loaded mutant, relabelled.
+- [x] The passkey Max probe (commit 6959de9; 3 files, +179 / −6;
+      check-passkeys 148 (was 138); offline runner ALL GREEN in the CTO's
+      isolated worktree on HEAD 1864def with --skip-bundle: engine 1,329,
+      app 11,083 across 66 suites, lint 0/0, tsc clean; checkout 0 / apply 0
+      / 3 files; the staged patch id 74182ee4…7d35 equal to the verified
+      tree's and the agent's; the pre-commit scan clean; three hand mutants
+      and the in-suite mutant caught; not seen on a device). THE LAST MAX
+      PATH: passkeys.ts preparePasskeyCalls (~1451) calls prepareAaCalls
+      with no fromMax and no maxReserved and throws its own "Insufficient
+      funds…" when amount + padded fee > balance, so THE PASSKEY PATH HAS NO
+      TRIM and no maxAdjustment sentence — only the probe changed; new
+      maxPasskeySendDetails(bundle, to) (passkeys.ts 1479–1512) prices a
+      1-wei transfer (AA_MAX_PROBE_VALUE_WEI) to the real recipient first,
+      retries at value 0 on any error, and returns {amount = balance −
+      probe.fee, reserved {gasTotal, maxFeePerGas, fee}} (the reservation
+      reported, not consumed); SendScreen 1063–1066 uses it in place of the
+      zero-value preparePasskeyCalls probe (the token branch and the error
+      sentences unchanged); a passkey bundle is never sponsored
+      (createPasskeyBundle sets sponsored false). PINS (check-passkeys
+      812–942, a value-aware fake bundler reading the Kernel execute value
+      word, 11,300 less call gas at value 0): the 1-wei fee above the
+      zero-value one by exactly 11,300 × maxFeePerGas; one estimate at
+      value 1; the reservation = the 1-wei quote's fee = gasTotal ×
+      maxFeePerGas; Max = balance − the non-zero fee and Review's total =
+      the balance exactly; the fallback (estimates 1 then 0); a balance
+      equal to the zero-value fee → the fallback and Max 0; 0 ETH → refused
+      with the same message as before and no bundler call (a 0-ETH account
+      throws at prepareAaCalls' funding pre-check, as the old probe did);
+      the in-suite mutant (the zero probe restored → Max refused at Review
+      with "Insufficient funds"); a source pin that SendScreen calls
+      maxPasskeySendDetails and no zero-value passkey probe remains.
+      INHERITED EDGE (stated, unchanged, shared with maxAaSendDetails): a
+      balance between the zero-value fee and 1 wei plus the non-zero fee
+      gets the fallback's small positive Max, which Review then refuses
+      (no trim on this path). UNVERIFIED: a live bundler's estimate
+      difference for a passkey operation; a device. Slips: the before
+      runner's lint and tsc steps may have seen the edits (the after run is
+      the clean one); a stray copy outside the scratchpad deleted at once;
+      a no-op sed; the first hand-mutant runs crashed instead of failing
+      (calls wrapped). WITH THIS, EVERY MAX PATH — the regular account
+      (7b422a8), the smart account (b7bd8df), the USDC-fee ERC-7677 path
+      (b2819c9) and the passkey owner — probes with a non-zero value; the
+      cold-signing screens reuse the regular and smart-account helpers.
