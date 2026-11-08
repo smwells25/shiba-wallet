@@ -17512,3 +17512,63 @@ arrive; 6 last. Subagents on Opus.
       ADBKeyboard; protection off; Metro node 77105 at 1864def on 8081 with
       only that reverse; qemu 86708 (PRI 55) with caffeinate 86986, the
       window in front.
+- [x] Pass p24-recheck findings FIXED — an access refusal is not a connection
+      failure (commit 7f89feb; 18 files, +464 / −24; check-aa 429 (was
+      423), check-failover 166 (156), check-i18n 192 (190), check-spl-tokens
+      101 (92), check-token-send 88 (85), check-token-gas 264 (258),
+      check-multisig 435 with two pins changed in place; offline runner ALL
+      GREEN in the CTO's isolated worktree on HEAD 5d77355 with
+      --skip-bundle: engine 1,329, app 11,119 across 66 suites, lint 0/0,
+      tsc clean; checkout 0 / apply 0 / 18 files; the staged patch id
+      d491f849…8867 equal to the verified tree's and the agent's; the
+      pre-commit scan clean; eight hand mutants and nine in-suite mutants
+      caught; no engine file touched; not seen on a device). (2) THE
+      CLASSIFIER (endpoint-probe.ts): ENDPOINT_ACCESS_REFUSED_TITLE "The
+      endpoint refused this app's access."; endpointAccessRefusalStatus
+      matches the engine's "RPC HTTP error 401|403 for <method>" wording
+      (packages/chains-evm/src/rpc.ts httpTransport line 156 for reads, 188
+      for a broadcast — a 4xx there is a definite refusal; the Solana rpc.ts
+      uses the same wording); the 403 sentence "The network endpoint
+      answered HTTP 403 (access denied) instead of serving the request: the
+      service does not allow this app, address or network to use it.
+      Nothing was sent. Check the endpoint's settings (for a ZeroDev
+      project, its allowlist) or save another endpoint in Settings." and a
+      401 form ("…did not accept this app's credentials, such as a key in
+      the endpoint's address…"); the technical line through
+      sanitizeEndpointMessage; applied in describeSendError before the
+      endpoint-failure branch (a 503 still reads "Could not reach…",
+      pinned), in describeAaError right after the broadcast-outcome mapping
+      (so Sessions, Bridge, Staking, Swap, WalletConnect and the Send Max
+      path reach it), and in token-gas.ts tokenGasCheckAccessRefusal, which
+      names the endpoint that refused ("…Pimlico's token paymaster for USDC
+      was not checked: the bundler saved for Ethereum Sepolia refused the
+      request…", the Circle check naming the network endpoint); FAILOVER
+      DECISION, unchanged and now pinned: isEndpointFailure already counts
+      401 and 403 as endpoint failures (400 stays an answer) — a default
+      that refuses is followed by the next default once, while a user
+      override and the user-saved bundler never fail over, so the ZeroDev
+      403 surfaces with the new wording. (3) SolanaTokensScreen reads the
+      row balances as Home does (useSplTokens, reload on focus and after a
+      track or remove) and shows Send only through splSendLinkShown —
+      hidden at 0, before the read, on a read error, a refused class or
+      changed decimals. (4) ReceiveScreen: solanaDevnetSlot → "Solana
+      devnet" / "test SOL" in the network line, the title "Receive test
+      SOL" and "Only send test SOL on the Solana devnet network…". (5)
+      SendScreen: solanaDevnetSend from the endpoint's chain → the symbol
+      "test SOL" in the amount label, every confirm row, the prompt title
+      and the error titles, the screen title "Send test SOL" (the success
+      view shows no symbol). (6) home.solanaTokens.fee "The network fee for
+      a Solana token send is paid in SOL, not in the token." and the new
+      home.solanaTokens.feeDevnet "…paid in test SOL…", chosen by the
+      network the listed tokens belong to; DEVIATION accepted: the fee id
+      is on the fixture's "new" list, where a "changed" record is refused,
+      so it was reworded in place and its English and Spanish pinned
+      exactly. LEFT (follow-ups): describeNetworkFailure for reads and
+      sessions.ts isTransportFailure still read a 403 as "Could not
+      reach…"; the access strings are English constants, not table
+      entries; Receive's RequestAmountCard says "Solana" / "SOL" on devnet
+      (a Solana Pay URI names no cluster — a design question); Manage
+      Solana tokens' own hint says "paid in SOL" on devnet. UNVERIFIED
+      (device): the new wording on Send, Max and the USDC-fee line, the
+      Send link appearing once a balance is read, Receive and Send on devnet
+      under TalkBack, the Spanish drafts.
