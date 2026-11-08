@@ -67,6 +67,7 @@ import { formatUnits } from './balances.ts';
 import { assertFeatureAllowed, eip155Caip2, isFeatureAllowed, readinessRefusal } from '../config/readiness.ts';
 import { EVM_PROFILES, evmProfileByCaip2 } from '../config/evm-chain.ts';
 import { suggestFeesRetryingOnce } from './fee-read.ts';
+import { describeEndpointAccessRefusal } from '../config/endpoint-probe.ts';
 import { t } from '../i18n/index.ts';
 
 /**
@@ -778,13 +779,33 @@ export async function checkTokenGasPaymaster(
     const problems = circlePaymasterProblems(state, { token: pm.token });
     result = problems.length === 0 ? { ok: true, state } : { ok: false, reason: `${TOKEN_GAS_UNAVAILABLE_TITLE} ${problems.join(' ')}` };
   } catch (e) {
+    const label = evmProfileByCaip2(chainCaip2)?.label ?? chainCaip2;
     return {
       ok: false,
-      reason: `Circle’s paymaster could not be checked on this endpoint: ${e instanceof Error ? e.message : String(e)}`,
+      reason:
+        tokenGasCheckAccessRefusal(e, 'Circle’s paymaster', `the network endpoint for ${label}`) ??
+        `Circle’s paymaster could not be checked on this endpoint: ${e instanceof Error ? e.message : String(e)}`,
     };
   }
   checkCache.set(key, { at: now(), result });
   return result;
+}
+
+/**
+ * The check's line when an endpoint refused this app's access (HTTP 401 or
+ * 403; pass p24-recheck finding 2): the shared title and sentence
+ * (../config/endpoint-probe.ts describeEndpointAccessRefusal) naming which
+ * endpoint refused, with the endpoint's text as the technical line, instead
+ * of "… did not offer …: RPC HTTP error 403 for eth_chainId". Null for any
+ * other error, which keeps its own wording.
+ */
+export function tokenGasCheckAccessRefusal(error: unknown, paymasterName: string, refusedBy: string): string | null {
+  const refused = describeEndpointAccessRefusal(error);
+  if (!refused) return null;
+  return (
+    `${refused.title} ${paymasterName} for ${TOKEN_GAS_SYMBOL} was not checked: ${refusedBy} refused the request. ` +
+    `${refused.detail}\n\nTechnical detail: ${refused.technical}`
+  );
 }
 
 /** A placeholder sender for the bundler probe (the stub answer does not depend on it). */
@@ -824,20 +845,26 @@ async function checkErc7677TokenGas(
   const node = transportFor(nodeUrl);
   const bundler = transportFor(bundlerUrl);
   let result: TokenGasCheck;
+  // Which endpoint the current request goes to, so an access refusal names
+  // the one that refused (both are first asked eth_chainId).
+  let asking: 'node' | 'bundler' = 'node';
   try {
     const chainId = await new NodeClient(node).chainId();
     if (eip155Caip2(chainId) !== chainCaip2) {
       return { ok: false, reason: `The endpoint serves chain id ${chainId}, not ${chainCaip2}, so ${name} was not checked.` };
     }
+    asking = 'bundler';
     const bundlerChain = BigInt((await bundler('eth_chainId', [])) as string);
     if (bundlerChain !== chainId) {
       return { ok: false, reason: `The saved bundler serves chain id ${bundlerChain}, not ${chainId}, so ${name} was not asked.` };
     }
+    asking = 'node';
     const paymaster = await readPimlicoPaymasterState(node, source.paymaster);
     const problems = pimlicoPaymasterProblems(paymaster);
     if (problems.length > 0) {
       result = { ok: false, reason: `${tokenGasUnavailableTitle(name)} ${problems.join(' ')}` };
     } else {
+      asking = 'bundler';
       const transport = createErc7677TokenPaymasterTransport({
         upstream: bundler,
         chainId,
@@ -868,7 +895,9 @@ async function checkErc7677TokenGas(
   } catch (e) {
     return {
       ok: false,
-      reason: `The bundler saved for ${label} did not offer ${name} for ${TOKEN_GAS_SYMBOL}: ${e instanceof Error ? e.message : String(e)}`,
+      reason:
+        tokenGasCheckAccessRefusal(e, name, asking === 'bundler' ? `the bundler saved for ${label}` : `the network endpoint for ${label}`) ??
+        `The bundler saved for ${label} did not offer ${name} for ${TOKEN_GAS_SYMBOL}: ${e instanceof Error ? e.message : String(e)}`,
     };
   }
   checkCache.set(key, { at: now(), result });

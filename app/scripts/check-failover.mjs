@@ -992,5 +992,79 @@ console.log('endpoint error text (F4, F9):');
   }
 }
 
+// ---------------------------------------------------------------------------
+// Pass p24-recheck finding 2: an endpoint that refused this app's access
+// (HTTP 401 / 403) is not "could not reach". ZeroDev's bundler answered 403
+// {"error":"Access denied: Neither IP nor domain is on the allowlist."}.
+// THE FAILOVER RULE IS UNCHANGED: 401 and 403 still count as endpoint
+// failures, so a DEFAULT endpoint that refuses is left for the next default
+// (another public node may serve this app), while an override (and a
+// user-saved bundler, never run through the failover) is never failed over.
+// ---------------------------------------------------------------------------
+{
+  console.log('\nAn endpoint that refused this app’s access (pass p24-recheck finding 2):');
+  const { httpTransport } = await import('@shiba-wallet/chains-evm');
+  const { describeEndpointAccessRefusal, endpointAccessRefusalStatus, ENDPOINT_ACCESS_REFUSED_TITLE } = await import('../src/config/endpoint-probe.ts');
+  const refusedBy = async (status, method) =>
+    httpTransport('https://refusing.example/rpc', async () => ({ ok: false, status, json: async () => ({}) }))(method, []).then(
+      () => null,
+      (e) => e,
+    );
+  const e403 = await refusedBy(403, 'eth_chainId');
+  const e401 = await refusedBy(401, 'eth_getBalance');
+  check('the failover rule is kept: the engine’s HTTP 403 and 401 are still endpoint failures (a default fails over)',
+    isEndpointFailure(e403) === true && isEndpointFailure(e401) === true);
+  {
+    const { log, deps } = harness(target('https://b.example'));
+    const outcome = await runWithEndpointFailover(target('https://a.example'), async (ep) => {
+      log.attempts.push(ep.url);
+      if (ep.url === 'https://a.example') throw e403;
+      return 'served';
+    }, deps);
+    check('…a DEFAULT endpoint answering 403 is reported and the next default is asked once',
+      outcome.value === 'served' && outcome.switched === true && log.reports.length === 1 && log.attempts.join(',') === 'https://a.example,https://b.example');
+  }
+  {
+    const { log, deps } = harness(target('https://b.example'));
+    const error = await rejects(runWithEndpointFailover(target('https://my-node.example', { isOverride: true, defaultChoice: undefined }), async (ep) => {
+      log.attempts.push(ep.url);
+      throw e403;
+    }, deps));
+    check('…an OVERRIDE answering 403 is never failed over: its refusal surfaces, unreported',
+      error === e403 && log.attempts.length === 1 && log.reports.length === 0 && log.reResolves === 0);
+  }
+  check('endpointAccessRefusalStatus reads only the engine’s 401 and 403 wording',
+    endpointAccessRefusalStatus(e403) === 403 && endpointAccessRefusalStatus(e401) === 401 &&
+      endpointAccessRefusalStatus(new Error('RPC HTTP error 404 for eth_chainId')) === null &&
+      endpointAccessRefusalStatus(new Error('RPC HTTP error 400 for eth_call')) === null &&
+      endpointAccessRefusalStatus(new Error('RPC error -32000: forbidden (eth_call)')) === null &&
+      endpointAccessRefusalStatus(null) === null && endpointAccessRefusalStatus({ message: 'RPC HTTP error 403 for eth_call' }) === null);
+  const sent403 = describeSendError(e403, 'ETH');
+  check('describeSendError: an HTTP 403 gets the access title and sentence and the technical line, not "Could not reach" (exact)',
+    sent403.title === "The endpoint refused this app's access." && sent403.title === ENDPOINT_ACCESS_REFUSED_TITLE &&
+      sent403.detail === "The network endpoint answered HTTP 403 (access denied) instead of serving the request: the service does not allow this app, address or network to use it. Nothing was sent. Check the endpoint's settings (for a ZeroDev project, its allowlist) or save another endpoint in Settings." &&
+      sent403.technical === 'RPC HTTP error 403 for eth_chainId.', JSON.stringify(sent403));
+  check('…an HTTP 401 gets the credentials sentence (exact)',
+    describeSendError(e401, 'ETH').detail === "The network endpoint answered HTTP 401 (unauthorized) instead of serving the request: the service did not accept this app's credentials, such as a key in the endpoint's address. Nothing was sent. Check the endpoint's settings or save another endpoint in Settings.");
+  check('…the quote title is kept by retitleQuoteFailure (it is not the generic one)', retitleQuoteFailure(sent403).title === ENDPOINT_ACCESS_REFUSED_TITLE);
+  check('…describeEndpointAccessRefusal agrees with describeSendError', JSON.stringify(describeEndpointAccessRefusal(e403)) === JSON.stringify(sent403));
+  const sendSrc = readFileSync(new URL('../src/wallet/send.ts', import.meta.url), 'utf8');
+  const branch = '  const accessRefused = describeEndpointAccessRefusal(error);\n  if (accessRefused) return accessRefused;\n';
+  check('mutation anchor present (the access branch in describeSendError)', sendSrc.includes(branch));
+  const mDir = join(dirname(fileURLToPath(import.meta.url)), `.mutants-failover-access-${process.pid}`);
+  mkdirSync(mDir, { recursive: true });
+  try {
+    const sendDir = dirname(fileURLToPath(new URL('../src/wallet/send.ts', import.meta.url)));
+    const rewritten = sendSrc.replace(branch, '').replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(join(sendDir, spec)).href}'`);
+    const mFile = join(mDir, 'send.ts');
+    writeFileSync(mFile, rewritten);
+    const m = await import(pathToFileURL(mFile).href);
+    check('M-a1 caught: without the branch an access refusal reads "Could not reach the network endpoint. Check your connection." again',
+      m.describeSendError(e403, 'ETH').title === 'Could not reach the network endpoint. Check your connection.');
+  } finally {
+    rmSync(mDir, { recursive: true, force: true });
+  }
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

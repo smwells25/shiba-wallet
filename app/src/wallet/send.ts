@@ -49,7 +49,7 @@ import { base58, base64 } from '@scure/base';
 // balances.ts imports nothing from this module, so the graph stays a DAG.
 import { parseUnits } from './balances.ts';
 // Type-free helper only; endpoint-probe.ts has no React Native imports.
-import { endpointHost, isEndpointFailure, sanitizeEndpointMessage } from '../config/endpoint-probe.ts';
+import { describeEndpointAccessRefusal, endpointHost, isEndpointFailure, sanitizeEndpointMessage } from '../config/endpoint-probe.ts';
 // Pure data with no imports (see its file comment), so no cycle.
 import { evmProfileByCaip2 } from '../config/evm-chain.ts';
 import { isRetryableFeeReadError, suggestFeesRetryingOnce } from './fee-read.ts';
@@ -2436,6 +2436,12 @@ export function describeSendError(
     const rehearsal = options.minimumFeeRehearsal ? ` ${TX_UNDERPRICED_REHEARSAL_NOTE}` : '';
     return { title: TX_UNDERPRICED_TITLE, detail: `${TX_UNDERPRICED_SENTENCE}${rehearsal}\n\nTechnical detail: ${detail}` };
   }
+  // An endpoint that answered HTTP 401 or 403 was reached and refused this
+  // app (pass p24-recheck finding 2): never "Could not reach … Check your
+  // connection". It still counts as an endpoint failure for the failover of a
+  // DEFAULT endpoint (isEndpointFailure), which runs before this wording.
+  const accessRefused = describeEndpointAccessRefusal(error);
+  if (accessRefused) return accessRefused;
   if (isEndpointFailure(error)) {
     // Transport-level failure (no answer, refused, rate limited): say so
     // plainly instead of implying the transaction itself was rejected.

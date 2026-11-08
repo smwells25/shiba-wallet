@@ -12955,6 +12955,7 @@
   "send.scan.rationaleAn",
   "banner.solanaDevnet",
   "home.solanaTokens.fee",
+  "home.solanaTokens.feeDevnet",
   "readiness.solanaDevnet",
   "send.maxAdjustmentGas",
   "send.maxAdjustmentBalance",

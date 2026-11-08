@@ -25,7 +25,8 @@ import {
 import { evmProfileByCaip2 } from '../config/evm-chain';
 import { useTheme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
-import { EVM_CHAIN_ID } from '../wallet/send';
+import { EVM_CHAIN_ID, SOLANA_CHAIN_ID } from '../wallet/send';
+import { SOLANA_DEVNET_NETWORK } from '../config/defaults';
 import { useAccountDelegation } from '../wallet/useDelegation';
 import { delegationLabelSuffix } from '../wallet/delegation';
 import { useRecoveryInfo } from '../wallet/useRecoveryInfo';
@@ -71,7 +72,7 @@ export function ReceiveScreen({ route, navigation }: Props) {
   const evmOwnAddress = route.params.chainId === EVM_CHAIN_ID && !noKey ? (account?.address ?? null) : null;
   const [copied, setCopied] = useState(false);
   const [smartCopied, setSmartCopied] = useState(false);
-  const { evmChain } = usePrefs();
+  const { evmChain, solanaDevnet } = usePrefs();
   // The ENS primary name of the EVM address (phase 23 item 6; mainnet and
   // Ethereum Sepolia only), re-read whenever this screen gains focus.
   const evmNameLine = usePrimaryNameLine(route.params.chainId === EVM_CHAIN_ID ? (account?.address ?? null) : null, evmChain.caip2);
@@ -127,8 +128,13 @@ export function ReceiveScreen({ route, navigation }: Props) {
   // "ETH" would tell the user to send mainnet ETH to a Sepolia address
   // (phase 18 item 3 emulator finding 7b, seen on a multisig's Receive).
   const isEvmSlot = route.params.chainId === EVM_CHAIN_ID;
-  const networkName = account ? (isEvmSlot ? evmChain.label : account.name) : '';
-  const coinSymbol = account ? (isEvmSlot ? evmChain.displaySymbol : account.symbol) : '';
+  // The Solana slot while "Use Solana devnet" is on (phase 24 item 1) is
+  // named after the devnet network entry ("Solana devnet", "test SOL"), as
+  // Solana Activity names it, not the key provider's "Solana" / "SOL" (pass
+  // p24-recheck finding 4: the banner said devnet, the line said "Solana").
+  const solanaDevnetSlot = route.params.chainId === SOLANA_CHAIN_ID && solanaDevnet;
+  const networkName = account ? (isEvmSlot ? evmChain.label : solanaDevnetSlot ? SOLANA_DEVNET_NETWORK.label : account.name) : '';
+  const coinSymbol = account ? (isEvmSlot ? evmChain.displaySymbol : solanaDevnetSlot ? SOLANA_DEVNET_NETWORK.symbol : account.symbol) : '';
 
   useEffect(() => {
     navigation.setOptions({

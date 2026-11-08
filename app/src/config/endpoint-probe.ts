@@ -924,6 +924,78 @@ export function sanitizeEndpointMessage(raw: string, code?: number): string {
   return text;
 }
 
+// ---------------------------------------------------------------------------
+// An endpoint that refused this app's access (pass p24-recheck finding 2)
+// ---------------------------------------------------------------------------
+
+/**
+ * The title for a JSON-RPC endpoint (a node or a bundler) that answered HTTP
+ * 401 or 403 instead of serving the request. Pass p24-recheck saw ZeroDev's
+ * bundler answer HTTP 403 {"error":"Access denied: Neither IP nor domain is
+ * on the allowlist."} and the wallet call it "Could not reach the network
+ * endpoint. Check your connection." — but the endpoint WAS reached; it
+ * refused. The engine transports word such an answer "RPC HTTP error <status>
+ * for <method>" (packages/chains-evm/src/rpc.ts httpTransport, also for
+ * broadcasts: a 4xx is thrown as a plain Error there, never as an open
+ * outcome; packages/chains-solana/src/rpc.ts the same), which is what
+ * endpointAccessRefusalStatus reads.
+ *
+ * FAILOVER is unchanged: isEndpointFailure still counts 401 and 403, because
+ * on the default list another candidate may well serve this app (a public
+ * node that blocks a region, a method or a client), and runWithEndpointFailover
+ * only ever moves away from a DEFAULT endpoint — a user override and a
+ * user-saved bundler are never failed over, so for those the refusal is shown
+ * with this wording instead.
+ */
+export const ENDPOINT_ACCESS_REFUSED_TITLE = "The endpoint refused this app's access.";
+
+/**
+ * 401 or 403 when `error` carries an engine transport's "RPC HTTP error 401 /
+ * 403 for <method>" message, else null. Nothing else is read: other statuses
+ * keep their own wording (describeSendError, describeEndpointHttpAnswer).
+ */
+export function endpointAccessRefusalStatus(error: unknown): 401 | 403 | null {
+  if (error === null || error === undefined) return null;
+  const raw = error instanceof Error ? error.message : typeof error === 'string' ? error : null;
+  if (raw === null) return null;
+  const match = /\bRPC HTTP error (401|403) for [A-Za-z0-9_]+\b/.exec(raw);
+  return match ? (Number(match[1]) as 401 | 403) : null;
+}
+
+/** The plain sentence for an access refusal (403 the access-denied form, 401 the credentials form). */
+export function endpointAccessRefusedSentence(status: 401 | 403): string {
+  if (status === 401) {
+    return (
+      'The network endpoint answered HTTP 401 (unauthorized) instead of serving the request: the service did not ' +
+      "accept this app's credentials, such as a key in the endpoint's address. Nothing was sent. Check the " +
+      "endpoint's settings or save another endpoint in Settings."
+    );
+  }
+  return (
+    'The network endpoint answered HTTP 403 (access denied) instead of serving the request: the service does not ' +
+    'allow this app, address or network to use it. Nothing was sent. Check the endpoint\'s settings (for a ZeroDev ' +
+    'project, its allowlist) or save another endpoint in Settings.'
+  );
+}
+
+/**
+ * The whole description of an access refusal — the title, the plain sentence
+ * and the cleaned original text for the technical line
+ * (sanitizeEndpointMessage) — or null when `error` is not one.
+ */
+export function describeEndpointAccessRefusal(
+  error: unknown,
+): { title: string; detail: string; technical: string } | null {
+  const status = endpointAccessRefusalStatus(error);
+  if (status === null) return null;
+  const raw = error instanceof Error ? error.message : String(error);
+  return {
+    title: ENDPOINT_ACCESS_REFUSED_TITLE,
+    detail: endpointAccessRefusedSentence(status),
+    technical: sanitizeEndpointMessage(raw),
+  };
+}
+
 /** The plain sentence shown when a request got no answer at all. */
 export const NO_ANSWER_SENTENCE =
   'The request got no answer from the network endpoint. This usually means the phone has no ' +

@@ -1320,7 +1320,8 @@ export const es: Readonly<Partial<Record<StringId, string>>> = {
   'home.multisig.otherNetwork': '{label} está registrada en {recordNetwork}, y la pantalla Firma múltiple solo prepara sus operaciones allí. La red activa aquí es {activeNetwork}; envía a esta dirección solo en {recordNetwork}.',
   'home.footer.tokenFee': 'La comisión de red de un envío de tokens se paga normalmente en {native}, no en el token.',
   'home.footer.tokenFeeUsdc': '{base} En {network}, un envío desde la cuenta inteligente puede pagarla en {token} cuando la pantalla Enviar ofrece esa opción.',
-  'home.solanaTokens.fee': 'La comisión de red de un envío de tokens de Solana se paga en SOL (SOL de prueba en devnet), no en el token.',
+  'home.solanaTokens.fee': 'La comisión de red de un envío de tokens de Solana se paga en SOL, no en el token.',
+  'home.solanaTokens.feeDevnet': 'La comisión de red de un envío de tokens de Solana se paga en SOL de prueba, no en el token.',
   // ---- Phase 23 item 8 (third pass): Bridge — the screen (screens/BridgeScreen.tsx) ----
   'bridge.title': 'Puente (redes de prueba)',
   'bridge.networkNotChanged': 'No se cambió la red',

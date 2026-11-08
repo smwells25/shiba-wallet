@@ -18,7 +18,7 @@ import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
 import { Button, ImportedKeyNotice, WarningBox, screenStyle, switchColors, useFieldLabels } from '../components';
 import { SolanaDevnetBanner } from '../components/SolanaDevnetBanner';
-import { SOLANA_DEVNET_CAIP2 } from '../config/defaults';
+import { SOLANA_DEVNET_CAIP2, SOLANA_DEVNET_NETWORK } from '../config/defaults';
 import { T } from '../i18n/T';
 import { localize, t, tx } from '../i18n/index';
 import { sendScanRationale } from '../i18n/article';
@@ -414,16 +414,20 @@ export function SendScreen({ route, navigation }: Props) {
   // a Max figure from one fee mode is never trimmed by the other.
   const lastTokenGasMax = useRef<LastMaxResult | null>(null);
 
+  // The coin of a SOL send on Solana devnet is the devnet network entry's
+  // "test SOL" (pass p24-recheck finding 5: the form said "Amount (SOL)"),
+  // read from the network the endpoint serves, as the TESTNET line is.
+  const solanaDevnetSend = endpoint?.network.chainId === SOLANA_DEVNET_CAIP2;
   useEffect(() => {
     const title = token
       ? t('home.token.send', { symbol: token.symbol })
       : nftMode
         ? tx('Send NFT')
         : account
-          ? t('home.token.send', { symbol: account.symbol })
+          ? t('home.token.send', { symbol: solanaDevnetSend ? SOLANA_DEVNET_NETWORK.symbol : account.symbol })
           : tx('Send');
     navigation.setOptions({ title });
-  }, [navigation, account, token, nftMode, language]);
+  }, [navigation, account, token, nftMode, language, solanaDevnetSend]);
 
   // Token mode: resolve the CAIP-19 id against the ACTIVE chain's tracked
   // list (tokens are per chain since phase 13 item 1). The store is the
@@ -836,7 +840,9 @@ export function SendScreen({ route, navigation }: Props) {
   const decimals = token ? token.decimals : network?.decimals ?? 8;
   // EVM native amounts are labeled per the active profile ("test ETH" on
   // Sepolia) so a test send can never read like a real one.
-  const symbol = token ? token.symbol : isEvmKind ? evmChain.displaySymbol : account.symbol;
+  // On Solana devnet the coin is "test SOL" (solanaDevnetSend above), in the
+  // amount label, every confirm row and the device prompt.
+  const symbol = token ? token.symbol : isEvmKind ? evmChain.displaySymbol : solanaDevnetSend ? SOLANA_DEVNET_NETWORK.symbol : account.symbol;
   // The form's visible labels, tied to their fields for screen readers
   // (pass p20c finding 1; components.tsx useFieldLabels).
   const recipientField = field(

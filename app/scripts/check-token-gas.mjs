@@ -1192,6 +1192,53 @@ console.log('check-token-gas: the ERC-7677 source (Pimlico’s ERC-20 paymaster 
     const fc = await tg.checkTokenGasPaymaster(NODE_URL, SEPOLIA, { acceptsErc7677: true, bundlerUrl: BUNDLER_URL, transportFor: (u) => (u.includes('bundler') ? foreign : node) });
     check('a bundler naming another paymaster: refused, with the wallet’s reason', fc.ok === false && /did not offer Pimlico’s token paymaster/.test(fc.reason) && /not 0x7777/.test(fc.reason), fc.reason);
     tg.forgetTokenGasChecks();
+
+    // Pass p24-recheck finding 2: an endpoint that answered HTTP 401 or 403
+    // refused this app's access; the check says so (and which endpoint), never
+    // "did not offer …: RPC HTTP error 403 for eth_chainId". The refusing
+    // transport is the engine's own httpTransport over a fake fetch, so the
+    // wording read is the engine's.
+    const refusing = (status) =>
+      engine.httpTransport('https://refusing.example/rpc', async () => ({ ok: false, status, json: async () => ({}) }));
+    const ACCESS_403 =
+      'The network endpoint answered HTTP 403 (access denied) instead of serving the request: the service does not allow this app, address or network to use it. Nothing was sent. Check the endpoint\'s settings (for a ZeroDev project, its allowlist) or save another endpoint in Settings.';
+    tg.forgetTokenGasChecks();
+    const bundler403 = await tg.checkTokenGasPaymaster(NODE_URL, SEPOLIA, { acceptsErc7677: true, bundlerUrl: BUNDLER_URL, transportFor: (u) => (u.includes('bundler') ? refusing(403) : node) });
+    check('access refusal (p24-recheck 2): a bundler answering HTTP 403 — the access title and sentence, naming the bundler, the technical line kept (exact)',
+      bundler403.ok === false &&
+        bundler403.reason === "The endpoint refused this app's access. Pimlico’s token paymaster for USDC was not checked: the bundler saved for Ethereum Sepolia refused the request. " +
+          `${ACCESS_403}\n\nTechnical detail: RPC HTTP error 403 for eth_chainId.` &&
+        !/did not offer|Could not reach/.test(bundler403.reason), bundler403.reason);
+    tg.forgetTokenGasChecks();
+    const node403Bundler = pimBundler(node);
+    const node403 = await tg.checkTokenGasPaymaster(NODE_URL, SEPOLIA, { acceptsErc7677: true, bundlerUrl: BUNDLER_URL, transportFor: (u) => (u.includes('bundler') ? node403Bundler : refusing(403)) });
+    check('…a node answering HTTP 403 is named as the network endpoint, and the bundler is never asked',
+      node403.ok === false && node403.reason.startsWith("The endpoint refused this app's access. Pimlico’s token paymaster for USDC was not checked: the network endpoint for Ethereum Sepolia refused the request. ") &&
+        node403Bundler.calls.length === 0, node403.reason);
+    tg.forgetTokenGasChecks();
+    const bundler401 = await tg.checkTokenGasPaymaster(NODE_URL, SEPOLIA, { acceptsErc7677: true, bundlerUrl: BUNDLER_URL, transportFor: (u) => (u.includes('bundler') ? refusing(401) : node) });
+    check('…HTTP 401: the credentials form of the sentence',
+      bundler401.ok === false && bundler401.reason.includes('The network endpoint answered HTTP 401 (unauthorized) instead of serving the request: the service did not accept this app\'s credentials') &&
+        bundler401.reason.endsWith('Technical detail: RPC HTTP error 401 for eth_chainId.'), bundler401.reason);
+    tg.forgetTokenGasChecks();
+    const bundler503 = await tg.checkTokenGasPaymaster(NODE_URL, SEPOLIA, { acceptsErc7677: true, bundlerUrl: BUNDLER_URL, transportFor: (u) => (u.includes('bundler') ? refusing(503) : node) });
+    check('…any other status keeps the old sentence (HTTP 503 is not an access refusal)',
+      bundler503.ok === false && bundler503.reason === 'The bundler saved for Ethereum Sepolia did not offer Pimlico’s token paymaster for USDC: RPC HTTP error 503 for eth_chainId', bundler503.reason);
+    tg.forgetTokenGasChecks();
+    const circle403 = await tg.checkTokenGasPaymaster(NODE_URL, 'eip155:84532', { transportFor: () => refusing(403) });
+    check('…Circle’s check on Base Sepolia: a node answering HTTP 403 gets the access wording too',
+      circle403.ok === false && circle403.reason === "The endpoint refused this app's access. Circle’s paymaster for USDC was not checked: the network endpoint for Base Sepolia refused the request. " +
+        `${ACCESS_403}\n\nTechnical detail: RPC HTTP error 403 for eth_chainId.`, circle403.reason);
+    tg.forgetTokenGasChecks();
+    const tgText = readFileSync(new URL('../src/wallet/token-gas.ts', import.meta.url), 'utf8');
+    const accessCall = "        tokenGasCheckAccessRefusal(e, name, asking === 'bundler' ? `the bundler saved for ${label}` : `the network endpoint for ${label}`) ??\n";
+    if (!tgText.includes(accessCall)) throw new Error('mutation anchor not found (the ERC-7677 access refusal)');
+    const noAccess = await importMutantTg('src/wallet/token-gas.ts', tgText.replace(accessCall, ''));
+    noAccess.forgetTokenGasChecks();
+    const m403 = await noAccess.checkTokenGasPaymaster(NODE_URL, SEPOLIA, { acceptsErc7677: true, bundlerUrl: BUNDLER_URL, transportFor: (u) => (u.includes('bundler') ? refusing(403) : node) });
+    check('MUTANT caught: without the access branch the check shows the raw "did not offer …: RPC HTTP error 403" again',
+      m403.ok === false && m403.reason !== bundler403.reason && /did not offer .*RPC HTTP error 403/.test(m403.reason), m403.reason);
+    noAccess.forgetTokenGasChecks();
   }
 
   // The quote: estimated before the gate, the exact approval first, the bound recomputed independently.

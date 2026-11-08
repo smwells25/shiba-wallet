@@ -2952,5 +2952,44 @@ await (async () => {
     JSON.stringify(aa.AA_ENDPOINT_FIELDS) === JSON.stringify(['bundlerUrl', 'bundlerVerifiedAt', 'bundlerChainIdVerified', 'accountType', 'factory', 'factoryImplementation', 'kernelMetaFactory', 'kernelValidator', 'kernelAccountId', 'factoryVerifiedAt', 'paymasterUrl', 'paymasterContext', 'paymasterVerifiedAt']));
 })();
 
+// Pass p24-recheck finding 2: a bundler (or node) that answered HTTP 401 or
+// 403 refused this app's access. ZeroDev answered HTTP 403 {"error":"Access
+// denied: Neither IP nor domain is on the allowlist."}, and Max on the smart
+// account said "Could not reach the network endpoint. Check your connection."
+// The error is made by the engine's own httpTransport over a fake fetch.
+await (async () => {
+  console.log('\nAn endpoint that refused this app’s access (pass p24-recheck finding 2):');
+  const { httpTransport } = await import('@shiba-wallet/chains-evm');
+  const refusedBy = async (status, method) =>
+    httpTransport('https://refusing.example/rpc', async () => ({ ok: false, status, json: async () => ({}) }))(method, []).then(
+      () => null,
+      (e) => e,
+    );
+  const e403 = await refusedBy(403, 'eth_estimateUserOperationGas');
+  check('the engine words the answer "RPC HTTP error 403 for eth_estimateUserOperationGas"', e403?.message === 'RPC HTTP error 403 for eth_estimateUserOperationGas');
+  const d = describeAaError(e403, { accountType: 'kernel-v3.3', deployed: null, bundlerUrl: 'https://rpc.zerodev.app/api/v3/x/chain/11155111' });
+  check('describeAaError: the access title and sentence with the technical line, never "Could not reach" (exact)',
+    d?.title === "The endpoint refused this app's access." &&
+      d?.detail ===
+        "The network endpoint answered HTTP 403 (access denied) instead of serving the request: the service does not allow this app, address or network to use it. Nothing was sent. Check the endpoint's settings (for a ZeroDev project, its allowlist) or save another endpoint in Settings." +
+          '\n\nTechnical detail: RPC HTTP error 403 for eth_estimateUserOperationGas.' &&
+      !/Could not reach|Check your connection/.test(`${d?.title} ${d?.detail}`), JSON.stringify(d));
+  const d401 = describeAaError(await refusedBy(401, 'eth_chainId'), { accountType: 'kernel-v3.3', deployed: true });
+  check('…HTTP 401: the same title, the credentials sentence',
+    d401?.title === "The endpoint refused this app's access." && d401.detail.startsWith('The network endpoint answered HTTP 401 (unauthorized) instead of serving the request:'));
+  check('…every other status is left to the other describers (HTTP 503, HTTP 400, a JSON-RPC error)',
+    describeAaError(await refusedBy(503, 'eth_estimateUserOperationGas'), { accountType: 'kernel-v3.3', deployed: true }) === null &&
+      describeAaError(await refusedBy(400, 'eth_estimateUserOperationGas'), { accountType: 'kernel-v3.3', deployed: true }) === null &&
+      describeAaError(new Error('RPC error -32602: invalid params (eth_estimateUserOperationGas)'), { accountType: 'kernel-v3.3', deployed: true }) === null);
+  check('…a 503 still reads as unreachable on the send path (only 401 and 403 changed)',
+    describeSendError(await refusedBy(503, 'eth_estimateUserOperationGas'), 'test ETH').title === 'Could not reach the network endpoint. Check your connection.');
+  const aaSource = readFileSync(new URL('../src/wallet/aa.ts', import.meta.url), 'utf8');
+  const branch = '  const accessRefused = describeEndpointAccessRefusal(error);\n  if (accessRefused) {\n';
+  if (!aaSource.includes(branch)) throw new Error('mutation anchor not found (the access branch in describeAaError)');
+  const m = await importMutant('src/wallet/aa.ts', aaSource.replace(branch, '  const accessRefused = null;\n  if (accessRefused) {\n'));
+  check('MUTANT caught: without the branch describeAaError gives no access title (the Max error fell to "Could not reach" in the pass)',
+    m.describeAaError(e403, { accountType: 'kernel-v3.3', deployed: null })?.title !== "The endpoint refused this app's access.");
+})();
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

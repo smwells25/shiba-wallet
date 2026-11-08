@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useFocusEffect } from '@react-navigation/native';
 import { formatAssetId } from '@shiba-wallet/core';
 import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
@@ -9,6 +10,8 @@ import { NoEndpointError, getEndpoint, withEndpoint } from '../config/networks';
 import { OfflineNotice, TechnicalDetail, describeNetworkError } from '../wallet/connectivity';
 import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
+import { useWallet } from '../wallet/WalletContext';
+import { useSplTokens } from '../wallet/useSplTokens';
 import { SolanaDevnetBanner } from '../components/SolanaDevnetBanner';
 import { addSolanaToken, listSolanaTokens, removeSolanaToken } from '../wallet/tokens';
 import { cleanTokenText, TOKEN_NAME_MAX, TOKEN_SYMBOL_MAX } from '../wallet/token-discovery';
@@ -18,6 +21,7 @@ import {
   solanaClient,
   solanaNetworkLabel,
   splSendGate,
+  splSendLinkShown,
   tokenProgramLabel,
   splTransferFeeLine,
   trackPrompt,
@@ -44,6 +48,7 @@ export function SolanaTokensScreen({ navigation }: Props) {
   const theme = useTheme();
   const fieldLabel = useFieldLabels();
   const { solanaDevnet } = usePrefs();
+  const { accounts, activeAccount } = useWallet();
   const [network, setNetwork] = useState<string | null>(null);
   const [tokens, setTokens] = useState<FungibleAsset[]>([]);
   const [mintText, setMintText] = useState('');
@@ -75,6 +80,27 @@ export function SolanaTokensScreen({ navigation }: Props) {
       cancelled = true;
     };
   }, [version, solanaDevnet]);
+
+  // Each row's balance, read exactly as Home reads it (useSplTokens: the
+  // associated token account through the slot's endpoint), so Send is offered
+  // by the same rule as Home's "Send <SYM>" link (spl-tokens.ts
+  // splSendLinkShown): hidden at a 0 balance, before the balance is read, on a
+  // read error, a refused class or changed decimals (pass p24-recheck
+  // finding 3: this screen offered Send for USDC at 0 while Home hid it). A
+  // watch-only or multisig account has no Solana key here, so nothing is read.
+  const noKey = activeAccount?.watchOnly === true || activeAccount?.multisig === true;
+  const solanaOwner = noKey ? undefined : accounts.find((a) => a.chainId === SOLANA_SLOT_CHAIN_ID)?.address;
+  const balances = useSplTokens(solanaOwner, solanaDevnet);
+  const reloadBalances = balances.reload;
+  useFocusEffect(
+    useCallback(() => {
+      void reloadBalances();
+    }, [reloadBalances]),
+  );
+  // …and again after a token is tracked or removed here (version).
+  useEffect(() => {
+    if (version > 0) void reloadBalances();
+  }, [version, reloadBalances]);
 
   const label = network ? solanaNetworkLabel(network) : 'Solana';
   useEffect(() => {
@@ -189,7 +215,10 @@ export function SolanaTokensScreen({ navigation }: Props) {
                 </Text>
               </View>
               <View style={styles.rowButtons}>
-                {sendRefusal === null ? (
+                {splSendLinkShown(
+                  balances.network === network ? balances.rows[formatAssetId(token.assetId)] : undefined,
+                  sendRefusal === null,
+                ) ? (
                   <Button
                     title="Send"
                     accessibilityLabel={`Send ${token.symbol}`}

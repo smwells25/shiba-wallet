@@ -861,5 +861,45 @@ console.log('fee coin passed by every caller (source):');
   check('MUTANT (two views sharing one key) is caught', new Set(keysOf(duplicate)).size !== keysOf(duplicate).length);
 }
 
+// Pass p24-recheck finding 2: a token-send quote against an endpoint that
+// answered HTTP 403 says the endpoint refused this app's access — not "Could
+// not reach the network endpoint. Check your connection." — and keeps the
+// endpoint's text as the technical line.
+{
+  console.log('\nA token send through an endpoint that refused this app’s access (pass p24-recheck finding 2):');
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: false, status: 403, json: async () => ({}) });
+  let refused;
+  try {
+    refused = await prepareErc20Send({ url: URL, from: FROM, to: TO, contract: CONTRACT, amount: 1000000n, symbol: SYMBOL, decimals: DECIMALS, chainCaip2: 'eip155:11155111' }).then(
+      () => null,
+      (e) => e,
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  const described = retitleQuoteFailure(describeSendError(refused, 'USDC', 'test ETH'));
+  check('the quote is refused with the engine’s "RPC HTTP error 403 for …" text', /^RPC HTTP error 403 for eth_[A-Za-z]+$/.test(refused?.message ?? ''), refused?.message);
+  check('describeSendError: "The endpoint refused this app\'s access." with the access sentence and the technical line, never a USDC or ETH shortfall title',
+    described.title === "The endpoint refused this app's access." &&
+      described.detail.startsWith('The network endpoint answered HTTP 403 (access denied) instead of serving the request:') &&
+      described.technical === `${refused?.message}.` && !/Could not reach|Not enough/.test(described.title), JSON.stringify(described));
+  const sendSrc = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../src/wallet/send.ts'), 'utf8');
+  const branch = '  const accessRefused = describeEndpointAccessRefusal(error);\n  if (accessRefused) return accessRefused;\n';
+  if (!sendSrc.includes(branch)) throw new Error('mutation anchor not found (the access branch in describeSendError)');
+  const mDir = join(dirname(fileURLToPath(import.meta.url)), `.mutants-token-send-access-${process.pid}`);
+  mkdirSync(mDir, { recursive: true });
+  try {
+    const sendDir = resolve(dirname(fileURLToPath(import.meta.url)), '../src/wallet');
+    const mFile = join(mDir, 'send.ts');
+    writeFileSync(mFile, sendSrc.replace(branch, '').replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolve(sendDir, spec)).href}'`));
+    const m = await import(pathToFileURL(mFile).href);
+    check('MUTANT (no access branch) is caught: the token send would read "Could not reach the network endpoint. Check your connection."',
+      m.describeSendError(refused, 'USDC', 'test ETH').title === 'Could not reach the network endpoint. Check your connection.');
+  } finally {
+    rmSync(mDir, { recursive: true, force: true });
+  }
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

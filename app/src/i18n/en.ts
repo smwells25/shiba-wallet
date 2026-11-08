@@ -1319,7 +1319,8 @@ export const en = {
   'home.multisig.otherNetwork': '{label} is recorded on {recordNetwork}, and the Multisig screen builds its operations only there. The active network here is {activeNetwork}; send to this address only on {recordNetwork}.',
   'home.footer.tokenFee': 'The network fee for a token send is normally paid in {native}, not in the token.',
   'home.footer.tokenFeeUsdc': '{base} On {network}, a smart-account send can pay it in {token} instead when the Send screen offers that choice.',
-  'home.solanaTokens.fee': 'The network fee for a Solana token send is paid in SOL (test SOL on devnet), not in the token.',
+  'home.solanaTokens.fee': 'The network fee for a Solana token send is paid in SOL, not in the token.',
+  'home.solanaTokens.feeDevnet': 'The network fee for a Solana token send is paid in test SOL, not in the token.',
   // ---- Phase 23 item 8 (third pass): Bridge — the screen (screens/BridgeScreen.tsx) ----
   'bridge.title': 'Bridge (test networks)',
   'bridge.networkNotChanged': 'The network was not changed',

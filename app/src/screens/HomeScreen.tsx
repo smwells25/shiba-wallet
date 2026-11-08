@@ -906,9 +906,13 @@ export function HomeScreen({ navigation }: Props) {
               <Text style={[styles.manageTokens, { color: theme.textMuted }]}>{splSkippedLine(splTokens.skipped)}</Text>
             ) : null}
             {/* The fee of a Solana token send is SOL, not the Ethereum coin the
-                footer's token-fee sentence names (pass p24-solana finding 3). */}
+                footer's token-fee sentence names (pass p24-solana finding 3);
+                on Solana devnet it is test SOL, and only there does the
+                sentence say so (pass p24-recheck finding 6). */}
             {tokensHere.length > 0 ? (
-              <Text style={[styles.manageTokens, { color: theme.textMuted }]}>{t('home.solanaTokens.fee')}</Text>
+              <Text style={[styles.manageTokens, { color: theme.textMuted }]}>
+                {t(network === SOLANA_DEVNET_ROW_CAIP2 ? 'home.solanaTokens.feeDevnet' : 'home.solanaTokens.fee')}
+              </Text>
             ) : null}
             <Pressable
               accessibilityRole="button"

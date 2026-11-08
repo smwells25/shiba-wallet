@@ -64,6 +64,7 @@ import { formatUnits } from './balances.ts';
 import type { KeyValueStore } from './tokens.ts';
 import { isMultisigAccountId, smartAccountSaltFor } from './account-ids.ts';
 import { assertSecureEndpointUrl } from '../config/endpoint-url.ts';
+import { describeEndpointAccessRefusal } from '../config/endpoint-probe.ts';
 import {
   assertWalletDelegate,
   invalidateAccountDelegation,
@@ -4874,6 +4875,14 @@ export function describeAaError(
   // unknown, never worded as "not sent".
   const outcome = describeBroadcastOutcome(error);
   if (outcome) return { title: outcome.title, detail: outcome.detail };
+  // A bundler or node that answered HTTP 401 or 403 refused this app's access
+  // (pass p24-recheck finding 2: ZeroDev's allowlist): its own title and
+  // sentence, never the send path's "Could not reach the network endpoint.
+  // Check your connection.", with the endpoint's text as the technical line.
+  const accessRefused = describeEndpointAccessRefusal(error);
+  if (accessRefused) {
+    return { title: accessRefused.title, detail: `${accessRefused.detail}\n\nTechnical detail: ${accessRefused.technical}` };
+  }
   const detail = error instanceof Error ? error.message : String(error);
   if (error instanceof AaFundingError) return { title: error.title, detail };
   if (error instanceof AaFeeRoseError) return { title: aaFeeRoseTitle(error), detail };

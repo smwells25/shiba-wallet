@@ -1667,8 +1667,9 @@ console.log('check-multisig: the multisig as an account in the switcher (phase 1
   }
   // Item 3 emulator finding 7b: Receive said "Ethereum" / "Only send ETH on the Ethereum network" on Sepolia.
   const receiveNetworkOk = (src) =>
-    src.includes('const networkName = account ? (isEvmSlot ? evmChain.label : account.name) : \'\';') &&
-    src.includes('const coinSymbol = account ? (isEvmSlot ? evmChain.displaySymbol : account.symbol) : \'\';') &&
+    // Pass p24-recheck finding 4: the Solana slot on devnet takes the devnet network entry's label and coin.
+    src.includes('const networkName = account ? (isEvmSlot ? evmChain.label : solanaDevnetSlot ? SOLANA_DEVNET_NETWORK.label : account.name) : \'\';') &&
+    src.includes('const coinSymbol = account ? (isEvmSlot ? evmChain.displaySymbol : solanaDevnetSlot ? SOLANA_DEVNET_NETWORK.symbol : account.symbol) : \'\';') &&
     src.includes('<Text style={[styles.chainName, { color: theme.text }]}>{networkName}</Text>') &&
     // Phase 22 item 6: the sentence is the string-table template 'Only send {symbol} on the {network} network to this address. …'.
     src.includes("{t('receive.onlySend', { symbol: coinSymbol, network: networkName })}") &&

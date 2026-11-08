@@ -280,6 +280,8 @@ const INBOX_NOTES_CHANGED = ['inbox.pinNote', 'settings.openInbox.hint', 'home.l
 // Phase 24, the smart-account trim slice: the smart-account Max's two sentences for a lowering the fee did not cause
 // (more gas than Max reserved; a lower balance), the smart-account forms of the two send.* sentences above.
 const AA_TRIM_NEW = ['aa.maxAdjustmentGas', 'aa.maxAdjustmentBalance'];
+// Pass p24-recheck finding 6: the Solana token-fee line's devnet form is new (the mainnet form keeps the id and says SOL only).
+const RECHECK_FIX_NEW = ['home.solanaTokens.feeDevnet'];
 {
   const p = fixtureProblems(en, FIXTURE);
   check(`every English entry is the text the app showed at ${FIXTURE.base} (${Object.keys(FIXTURE.literal).length} literals, ${Object.keys(FIXTURE.template).length} templates by their static parts, ${Object.keys(FIXTURE.composite).length} composites) or listed as new (${FIXTURE.new.length})`,
@@ -297,13 +299,14 @@ const AA_TRIM_NEW = ['aa.maxAdjustmentGas', 'aa.maxAdjustmentBalance'];
   // broadcast sentences (an HTTP 5xx or a dropped connection, not a timeout).
   const BROADCAST_OPEN_NEW = ['broadcast.open.title', 'broadcast.tx.open', 'broadcast.tx.openUnlisted', 'broadcast.userop.open',
     'broadcast.userop.openUnlisted', 'broadcast.open'];
-  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the Solana token-send readiness row, the wallet handle\'s, the six open-outcome broadcast sentences, the co-signer card\'s numbered Scan label, the eight period words of the hygiene slice, the four Bridge lines of pass p23-mint, the five lines of the p23-build fixes, the three Bridge lines of pass p23-bridge-recheck and the three navigation-bar lines of pass p23-navbar and the three iOS-pass lines (two iOS reminder notes, the "an" scanner sentence) and the five lines of the Solana-pass fix slice (the Solana devnet banner, the Solana token-fee line, the Solana devnet readiness line, two Max-lowering sentences) and the two smart-account Max-lowering sentences of the trim slice',
-    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || SPL_TOKENS_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id) || NAVBAR_FIX_NEW.includes(id) || IOS_FIX_NEW.includes(id) || SOLANA_FIX_NEW.includes(id) || AA_TRIM_NEW.includes(id)) &&
+  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the Solana token-send readiness row, the wallet handle\'s, the six open-outcome broadcast sentences, the co-signer card\'s numbered Scan label, the eight period words of the hygiene slice, the four Bridge lines of pass p23-mint, the five lines of the p23-build fixes, the three Bridge lines of pass p23-bridge-recheck and the three navigation-bar lines of pass p23-navbar and the three iOS-pass lines (two iOS reminder notes, the "an" scanner sentence) and the five lines of the Solana-pass fix slice (the Solana devnet banner, the Solana token-fee line, the Solana devnet readiness line, two Max-lowering sentences) and the two smart-account Max-lowering sentences of the trim slice and the devnet form of the Solana token-fee line (pass p24-recheck)',
+    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || SPL_TOKENS_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id) || NAVBAR_FIX_NEW.includes(id) || IOS_FIX_NEW.includes(id) || SOLANA_FIX_NEW.includes(id) || AA_TRIM_NEW.includes(id) || RECHECK_FIX_NEW.includes(id)) &&
       BUILD_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && BRIDGE_RECHECK_NEW.every((id) => FIXTURE.new.includes(id)) &&
       LOCK_KIND_NEW.every((id) => FIXTURE.new.includes(id)) && COLD_AA_NEW.every((id) => FIXTURE.new.includes(id)) && SPL_TOKENS_NEW.every((id) => FIXTURE.new.includes(id)) &&
       BROADCAST_OPEN_NEW.every((id) => FIXTURE.new.includes(id)) && THIRD_PASS_NEW.every((id) => FIXTURE.new.includes(id)) && PERIOD_NEW.every((id) => FIXTURE.new.includes(id)) &&
       BRIDGE_MINT_NEW.every((id) => FIXTURE.new.includes(id)) && NAVBAR_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && IOS_FIX_NEW.every((id) => FIXTURE.new.includes(id)) &&
-      SOLANA_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && AA_TRIM_NEW.every((id) => FIXTURE.new.includes(id)));
+      SOLANA_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && AA_TRIM_NEW.every((id) => FIXTURE.new.includes(id)) &&
+      RECHECK_FIX_NEW.every((id) => FIXTURE.new.includes(id)));
   check('the changed entries are exactly the transaction-notes line (reworded for the records backup), the watch-only notice (reworded for the off-line signer), the bridge readiness reason (CCTP sent, phase 23), the records-backup note (smart-account recovery records, pass p23-build) the three CCTP time sentences (the measured spread, pass p23-bridge-recheck) and the inbox intro and empty line (what is listed, phase 24 item 4) and the inbox PIN note and the two inbox link hints (the same rewording, the Solana-pass fix slice), each with its reason',
     JSON.stringify(Object.keys(FIXTURE.changed ?? {})) === JSON.stringify(['activity.note.privacy', 'notice.watchOnly', 'readiness.bridge.reason', 'recordsBackup.what', ...CCTP_TIME_CHANGED, ...INBOX_WORDING_CHANGED, ...INBOX_NOTES_CHANGED]) &&
       en['activity.note.privacy'] === 'Notes are kept on this phone and are not sent anywhere. They are deleted when the wallet is wiped. A records backup (Settings → Records backup) includes them, and your recovery phrase restores them from it. Hide amounts does not hide them.');
@@ -1825,9 +1828,23 @@ function caught(name, wasCaught) {
     en['banner.solanaDevnet'] === 'TESTNET — Solana devnet is on. Amounts are test SOL and devnet tokens, not real funds.' &&
       BANNER.solanaDevnetBannerText() === en['banner.solanaDevnet'] &&
       I.translateFrom({ en, es }, 'es', 'banner.solanaDevnet') === es['banner.solanaDevnet'] && /devnet de Solana/.test(es['banner.solanaDevnet']));
-  check('Home: the Solana token-fee line (exact) is drawn under the Solana tokens, only when some are listed, through the table',
-    en['home.solanaTokens.fee'] === 'The network fee for a Solana token send is paid in SOL (test SOL on devnet), not in the token.' &&
-      read('src/screens/HomeScreen.tsx').includes("{tokensHere.length > 0 ? (\n              <Text style={[styles.manageTokens, { color: theme.textMuted }]}>{t('home.solanaTokens.fee')}</Text>"));
+  // Pass p24-recheck finding 6: the line said "(test SOL on devnet)" under mainnet rows too. Two forms now, chosen by
+  // the network the listed tokens belong to. The id is a "new" entry (SOLANA_FIX_NEW), so its rewording is checked
+  // here, not through the fixture's "changed" record (fixtureProblems allows "changed" only for migrated entries).
+  const homeFeeLine = "{tokensHere.length > 0 ? (\n              <Text style={[styles.manageTokens, { color: theme.textMuted }]}>\n                {t(network === SOLANA_DEVNET_ROW_CAIP2 ? 'home.solanaTokens.feeDevnet' : 'home.solanaTokens.fee')}\n              </Text>";
+  const feeTextsOk = (e, s) =>
+    e['home.solanaTokens.fee'] === 'The network fee for a Solana token send is paid in SOL, not in the token.' &&
+    e['home.solanaTokens.feeDevnet'] === 'The network fee for a Solana token send is paid in test SOL, not in the token.' &&
+    s['home.solanaTokens.fee'] === 'La comisión de red de un envío de tokens de Solana se paga en SOL, no en el token.' &&
+    s['home.solanaTokens.feeDevnet'] === 'La comisión de red de un envío de tokens de Solana se paga en SOL de prueba, no en el token.' &&
+    !/devnet/.test(e['home.solanaTokens.fee'] + s['home.solanaTokens.fee']);
+  check('Home: the Solana token-fee line (exact, two forms) is drawn under the Solana tokens, only when some are listed, through the table: test SOL on devnet, SOL otherwise, never "(test SOL on devnet)"',
+    feeTextsOk(en, es) && read('src/screens/HomeScreen.tsx').includes(homeFeeLine));
+  check('…mutant caught: the screen choosing the devnet form unconditionally',
+    !read('src/screens/HomeScreen.tsx').replace("network === SOLANA_DEVNET_ROW_CAIP2 ? 'home.solanaTokens.feeDevnet' : 'home.solanaTokens.fee'", "'home.solanaTokens.feeDevnet'").includes(homeFeeLine));
+  check('…mutant caught: the old one-sentence form restored for both languages (it named devnet under mainnet rows)',
+    !feeTextsOk({ ...en, 'home.solanaTokens.fee': 'The network fee for a Solana token send is paid in SOL (test SOL on devnet), not in the token.' }, es) &&
+      !feeTextsOk(en, { ...es, 'home.solanaTokens.fee': 'La comisión de red de un envío de tokens de Solana se paga en SOL (SOL de prueba en devnet), no en el token.' }));
   const spl = R.FEATURE_READINESS.find((f) => f.id === 'spl-tokens');
   check('readiness: the spl-tokens row gets the Solana devnet line (exact; it names the “Use Solana devnet” switch), no other row does, and the Settings hint below the list adds it after the shared hint',
     en['readiness.solanaDevnet'] === 'Solana token sends work on Solana devnet, which the “Use Solana devnet” switch under Settings → Developer turns on, separately from the Ethereum test network.' &&

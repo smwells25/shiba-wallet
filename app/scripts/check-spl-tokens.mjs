@@ -610,6 +610,64 @@ console.log('check-spl-tokens: the fixes of pass p24-solana (transfer fee, Send 
 }
 
 // ---------------------------------------------------------------------------
+console.log('check-spl-tokens: the fixes of pass p24-recheck (Send at 0 on Manage Solana tokens, Receive and the SOL send on devnet, the fee line)');
+// ---------------------------------------------------------------------------
+{
+  const read = (rel) => readFileSync(resolve(HERE, rel), 'utf8');
+  // Finding 3: Manage Solana tokens offered Send for USDC at a 0 balance while Home hid it.
+  const tokensScreen = read('../src/screens/SolanaTokensScreen.tsx');
+  const gate = "{splSendLinkShown(\n                  balances.network === network ? balances.rows[formatAssetId(token.assetId)] : undefined,\n                  sendRefusal === null,\n                ) ? (";
+  const tokensSendOk = (src) =>
+    src.includes(gate) && !src.includes('{sendRefusal === null ? (') &&
+    src.includes('const balances = useSplTokens(solanaOwner, solanaDevnet);') &&
+    src.includes("const solanaOwner = noKey ? undefined : accounts.find((a) => a.chainId === SOLANA_SLOT_CHAIN_ID)?.address;") &&
+    src.includes('const noKey = activeAccount?.watchOnly === true || activeAccount?.multisig === true;') &&
+    (src.match(/navigation\.navigate\('SolanaTokenSend'/g) ?? []).length === 1;
+  check('Manage Solana tokens: Send follows Home’s rule (splSendLinkShown on the row read like Home’s, for the network listed), so it is hidden at a 0 balance',
+    tokensSendOk(tokensScreen));
+  check('…the rule it relies on: at a 0 associated balance, before a read, and for a row of another network (undefined) Send is not offered',
+    !SPL.splSendLinkShown({ status: 'ok', associated: 0n, outside: 0n, outsideAccounts: 0, decimals: 6, sendRefusal: null, decimalsChanged: false, networkChainId: DEVNET }, true) &&
+      !SPL.splSendLinkShown(undefined, true));
+  check('…mutant caught: Send gated by the readiness alone again (the p24-recheck finding)',
+    !tokensSendOk(tokensScreen.replace(gate, '{sendRefusal === null ? (')));
+  check('…mutant caught: rows of another network used for this list',
+    !tokensSendOk(tokensScreen.replace('balances.network === network ? balances.rows[formatAssetId(token.assetId)] : undefined', 'balances.rows[formatAssetId(token.assetId)]')));
+
+  // Finding 4: Receive SOL's network line read "Solana" on devnet.
+  const receive = read('../src/screens/ReceiveScreen.tsx');
+  const receiveLines = [
+    'const solanaDevnetSlot = route.params.chainId === SOLANA_CHAIN_ID && solanaDevnet;',
+    "const networkName = account ? (isEvmSlot ? evmChain.label : solanaDevnetSlot ? SOLANA_DEVNET_NETWORK.label : account.name) : '';",
+    "const coinSymbol = account ? (isEvmSlot ? evmChain.displaySymbol : solanaDevnetSlot ? SOLANA_DEVNET_NETWORK.symbol : account.symbol) : '';",
+    '<Text style={[styles.chainName, { color: theme.text }]}>{networkName}</Text>',
+  ];
+  check('Receive on Solana devnet: the network line and the coin come from the devnet network entry ("Solana devnet", "test SOL"), as Activity’s',
+    receiveLines.every((l) => receive.includes(l)) && DEFAULTS.SOLANA_DEVNET_NETWORK.label === 'Solana devnet' && DEFAULTS.SOLANA_DEVNET_NETWORK.symbol === 'test SOL');
+  check('…mutant caught: the key provider’s "Solana" restored',
+    !receiveLines.every((l) => receive.replace('solanaDevnetSlot ? SOLANA_DEVNET_NETWORK.label : account.name', 'account.name').includes(l)));
+
+  // Finding 5: the SOL send form said "Amount (SOL)" on devnet.
+  const send = read('../src/screens/SendScreen.tsx');
+  const sendLines = [
+    'const solanaDevnetSend = endpoint?.network.chainId === SOLANA_DEVNET_CAIP2;',
+    'const symbol = token ? token.symbol : isEvmKind ? evmChain.displaySymbol : solanaDevnetSend ? SOLANA_DEVNET_NETWORK.symbol : account.symbol;',
+    "? t('home.token.send', { symbol: solanaDevnetSend ? SOLANA_DEVNET_NETWORK.symbol : account.symbol })",
+    ": t('send.field.amount', { symbol }),",
+  ];
+  check('the SOL send on devnet: the amount label, every confirm row, the prompt and the title use "test SOL" (the devnet network entry), read from the network the endpoint serves',
+    sendLines.every((l) => send.includes(l)) &&
+      (send.match(/value=\{`\$\{exact\(quote\.(amount|fee|total|balance), decimals\)\} \$\{symbol\}`\}/g) ?? []).length >= 4 &&
+      send.includes('sendApprovalPromptTitle(quote, symbol, decimals)'));
+  check('…mutant caught: the provider’s "SOL" restored in the amount symbol',
+    !sendLines.every((l) => send.replace('solanaDevnetSend ? SOLANA_DEVNET_NETWORK.symbol : account.symbol;', 'account.symbol;').includes(l)));
+
+  // Finding 6: the fee line said "(test SOL on devnet)" under mainnet rows; two forms now (exact texts in check-i18n).
+  const home = read('../src/screens/HomeScreen.tsx');
+  check('Home: the Solana token-fee line takes the devnet form only for a devnet list',
+    home.includes("{t(network === SOLANA_DEVNET_ROW_CAIP2 ? 'home.solanaTokens.feeDevnet' : 'home.solanaTokens.fee')}"));
+}
+
+// ---------------------------------------------------------------------------
 console.log('check-spl-tokens: mutants of wallet/spl-tokens.ts are caught');
 // ---------------------------------------------------------------------------
 const SOURCE = readFileSync(SPL_PATH, 'utf8');
