@@ -18930,6 +18930,71 @@ same time (one device driver); fixes after each pass; 6 last. Subagents
 on Opus.
 
 ## Phase 25 progress
+- [x] Item 2 — THE RISK OVERVIEW SCREEN (feature 99; commit 1753b3c; 20 files,
+      +1,553 / −9, three new — app/src/wallet/insights.ts,
+      screens/InsightsScreen.tsx, scripts/check-insights.mjs (100 checks, 13
+      in-suite mutants) registered in suites.mjs; check-watch-only 188 (was
+      187), check-cold-signing and check-multisig allow-list pins updated
+      (15 routes); offline runner ALL GREEN in the CTO's isolated worktree on
+      HEAD cfb9f39: engine 1,351, app 11,532 across 67 suites, lint 0/0, tsc
+      clean; the pre-commit scan clean; the agent's six hand mutants on the
+      real files caught; not seen on a device). THE MERGE: the agent's patch
+      (id f817439f…cb63, cut against 215f3e0) no longer applied on HEAD
+      because the gains slice 47b9193 had appended entries at the same
+      places in en.ts, es.ts, the i18n fixture's "new" list and check-i18n's
+      new-list rule — a FIRST VERIFY RUN WAS HOLLOW (the apply failed and the
+      runner ran on the Solana tree alone; caught because its counts were
+      the previous tree's: 66 suites, 11,431); the CTO rebased with `git
+      apply --3way`, resolved the four both-sides-appended conflicts by
+      keeping both sides (the fixture's last gains element gaining its
+      comma; check-i18n's rule merged into one line "… || GAINS_NEW.includes
+      (id) || insightsNew(id)" with both every() clauses), and ADDED the
+      wipe lines the agent had left out — forgetInsightSnapshots() in both
+      WalletContext wipe lists and in wipe-harness.mjs's WIPE_NON_STORE_CALLS
+      (the snapshots live in memory, no store) — so a wipe followed by a
+      re-import in the same process never shows an old reading; the
+      combined staged patch id 308bee91…85c3. RULE re-learned: a patch cut
+      against an older base must be re-applied on the current HEAD before
+      its runner result means anything — check the apply rc and the suite
+      count, not only "ALL GREEN". THE SCREEN (route Insights, title "Risk
+      overview"): eight sections in a fixed order, each with a "Source: …"
+      line — the network in use; where the value is (shares of the counted
+      net worth by asset and by network, exact fractions, a tenth of a
+      percent for display, a rounding note; test assets and unpriced assets
+      listed apart; watched addresses never in the shares) from the
+      Portfolio screen's last COMPLETE reading in this session; token
+      approvals (active count, unlimited count, unlimited first — the one
+      sort rule, stated; unconfirmed ones counted apart) from the Approvals
+      screen's last search; the recovery phrase's protection and the app
+      lock ("App lock: no app PIN or passphrase is on…"; the DURESS PIN IS
+      NEVER MENTIONED — a line about it would give the second wallet away);
+      transactions waiting (regular-account broadcasts not yet seen
+      included, those older than 10 minutes counted; a speed-up or
+      cancellation counts once with its nonce; resolved notices not
+      counted); endpoints as the session last saw them through the new
+      config/networks.ts peekEndpointHealth (storage plus the default
+      resolver's in-memory cache; a fake fetch in the suite proves zero
+      requests); accounts on this phone (watched, imported, multisig);
+      limits and alerts. SNAPSHOTS: recordPortfolioSnapshot /
+      recordApprovalsSnapshot are handed over by PortfolioScreen (a
+      complete reading only) and ApprovalsScreen, kept in memory keyed by
+      storage profile (the duress wallet never sees the primary's), at most
+      MAX_APPROVAL_SNAPSHOTS 8; opened from Settings before either screen
+      ran, the two sections read "not worked out / not checked in this
+      session" and offer "Open Portfolio" / "Open Approvals" only where that
+      account's route gate allows the screen. Honesty: a failed read says
+      "could not be read" and shows no figure; Hide amounts masks amounts,
+      values and shares ("Unlimited" stays visible as on Approvals), spoken
+      as "(amount hidden)" with short addresses; no attention markers or
+      colours. ENTRY POINTS: a "Risk overview" button on Portfolio and a row
+      after "Open the inbox" in Settings → Privacy; HomeScreen untouched (a
+      Home link is a follow-up, now that the Solana slice has landed there);
+      the route on both read-only allow lists. 78 ids under insights.* with
+      Spanish drafts (two titles reuse existing ids because check-i18n
+      refuses duplicate English). UNVERIFIED (emulator pass next): layout,
+      the Spanish lengths, TalkBack, dark mode, the focus re-read, the
+      hand-over timing in the running app, how often a real Portfolio
+      reading completes.
 - [x] Item 0 b–d — SOLANA TOKEN SENDS LISTED AS PENDING, THE SOL CARD AT 0,
       THE NAME FIELD'S TAG (commit cfb9f39; 11 files, +1,211 / −13, no new
       file; check-pending 366 (was 332), check-spl-tokens 207 (177; in-suite
