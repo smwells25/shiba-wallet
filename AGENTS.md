@@ -20092,3 +20092,76 @@ driver at a time, item 1's first; 6 last. Subagents on Opus.
       grace period or by a non-holder on-chain; a smart-account batch
       through a bundler (the app half's first live step); that Sourcify's
       "match" differs from "exact_match" only in metadata.
+- [x] Item 2, engine and script — SUPPLY USDC TO AAVE V3 ON ARBITRUM
+      SEPOLIA, PROVEN LIVE BY SCRIPT (commit below; 6 files, +2,142 / −2 —
+      new packages/chains-evm/src/lending.ts, test/lending.test.ts (38),
+      the fixture test/fixtures/lending-arbitrum-sepolia-2026-11-09.json
+      (the reads at one block and the live receipts' logs), new
+      scripts/testnet/lending-smoke.mjs, an export block in index.ts,
+      docs/LENDING_VAULTS.md section 10 with a dated status sentence and a
+      corrected section 9 bullet; verified as one tree with items 1 and 4
+      — see item 1's counts; the CTO re-read all three receipts and the dev
+      EOA's USDC and aToken balances on publicnode and sepolia-rollup,
+      identical; eight hand mutants caught). SOURCES: bgd-labs/
+      aave-address-book d4c2848e src/AaveV3ArbitrumSepolia.sol (the
+      provider 0xB25a…7076, the Pool 0xBfC9…2Eff, the data provider
+      0x1237…Fa01, the Pool implementation 0x8240…4c5B, USDC and its aToken
+      0x460b…1216 "aArbSepUSDC"); behaviour from the Sourcify-verified
+      deployed L2Pool revision 3 (IPool.sol supply 248 / withdraw 287, max
+      uint withdraws all 281; ValidationLogic validateSupply 66 /
+      validateWithdraw 96 — A FROZEN RESERVE STILL ALLOWS WITHDRAWALS;
+      SupplyLogic 124–126 / 139; Errors.sol numeric strings 26–29, 32, 51)
+      and aave-v3-origin 8305565a (the same signatures, custom errors — the
+      engine maps both); every pinned address read on two RPCs with Sourcify
+      "match" (USDC exact_match); the reserve active, not frozen, not
+      paused, cap 10,500,000 USDC, about 5.54M supplied, liquidity
+      855,827.58 USDC; the provider's owner 0xC08C…0005; the 0x1dF4…053D of
+      LENDING_VAULTS section 5.1 is Arbitrum Sepolia's WETH AND the OP
+      Sepolia provider's owner (one address, two contracts — recorded).
+      ENGINE: LENDING_DEPLOYMENTS (eip155:421614 only) / lendingDeploymentFor;
+      readReserveState (every pinned fact re-checked at one block incl. the
+      Pool implementation — a change throws LendingStateError with
+      sentences — then active / frozen / paused, the cap, the aToken supply
+      plus the treasury's accrued share at the index, liquidity, exact
+      bigint), readLendingPosition, quoteLendingSupply ([exact approve,
+      supply], onBehalfOf = the account only) and quoteLendingWithdraw
+      ([withdraw], to = the account only, 'all' = max uint) returning calls
+      or LENDING_REFUSALS (inactive, frozen for supply only, paused, zero,
+      above the balance, the cap naming the room left, another beneficiary
+      or recipient, no position, above the position, above the liquidity,
+      a wrong state), checkLendingCalls before signing (only [approve],
+      [supply], [approve, supply] with one amount, or [withdraw], every
+      word compared, no value), describeAaveError, decodeLendingReceipt,
+      selectors pinned against ethers (supply 0x617ba037, withdraw
+      0x69328dec). DRY RUN (eth_simulateV1 against the real Pool from the
+      dev EOA) ALL CHECKS PASSED: approve 55,437 / supply 217,287 / withdraw
+      186,993 gas, the aToken exactly 100,000 after the supply, allowance 0,
+      100,000 back; a supply to another beneficiary and a withdrawal to
+      another recipient are REFUSED BY THE ENGINE AND BY checkLendingCalls
+      WHILE AAVE ITSELF ACCEPTS BOTH (the other address received the
+      aTokens or the USDC) — the reason the engine fixes both; the reserve
+      configuration word at keccak256(abi.encode(USDC, 52)) overridden in
+      simulation: frozen → the supply quote refuses while a withdrawal is
+      allowed and the Pool reverts 28; paused → refused and 29; a cap of 1
+      USDC → refused and 51. LIVE (the dev EOA 0x16DA…C5C, 2026-11-09
+      ~23:00 UTC, nonce 8 → 11; the mnemonic in a 0600 file through
+      LENDING_MNEMONIC_FILE, deleted with rm -P; every receipt identical on
+      publicnode, sepolia-rollup and Pocket, gasUsedForL1 0): approve
+      exactly 0.1 USDC 0x19de7989c9d1a4169c939331ac6db65c9607acb75c8f91f31986990e7a612bcb
+      block 327690086, 55,437 gas at 20,000,000 wei; supply
+      0xd79ad98a149ed7ea143bc8fa18bb8148565652cda03c6cc4c79582652257d3e1
+      block 327690102, 217,287 gas (Supply user and beneficiary the dev
+      EOA, referral 0, collateral enabled; USDC 38,000,000 → 37,900,000,
+      aToken 0 → 100,000); withdraw everything
+      0x412bb48307c1eaff4c74cdbbb15b5fb2c4674e82b7cde8e5f12fe84d6b4148a9
+      block 327690168, 186,993 gas (Withdraw 100,000 to the dev EOA,
+      collateral disabled; USDC back to 38,000,000, aToken 0 — the CTO
+      re-read both); EXACTLY 0.1 USDC CAME BACK WITH NO INTEREST (about 4.3%
+      a year earns 0.0026 of a base unit in the 19 s held); ETH
+      21,880,961,341,470,001 → 21,871,761,352,008,001 wei = the three fees;
+      the worst-case fees 23,256,190,272,000 wei within the 0.002 ETH cap.
+      NOT VERIFIED: a smart-account batch through ZeroDev and anything in
+      the app; interest accrual and aToken rounding at other amounts; how
+      far the cap estimate sits from the Pool's figure at inclusion (the
+      eth_call pre-flight stays the final check); which commits Aave's
+      audits cover; who holds the provider owner's key; OP Sepolia.
