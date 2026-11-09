@@ -18930,6 +18930,94 @@ same time (one device driver); fixes after each pass; 6 last. Subagents
 on Opus.
 
 ## Phase 25 progress
+- [x] EMULATOR PASS p25-emu1 — MASKED SPEECH RE-CHECKED, THE SOLANA MAX AND
+      THE 0-SOL REFUSAL LIVE, THE NFT GALLERY WITH THE ENS NAME TOKEN; ONE
+      BUG (2026-11-09 03:57–~05:00 UTC, the driver cut once by the Opus
+      session limit right after recording the NFT Send form and resumed at
+      ~14:30 UTC for the housekeeping; Expo Go on emulator 37.1.11 under
+      -gpu swangle, Metro moved to wt-app at 3a854a4 with the engine rebuilt
+      inside it (npm 33133 / node 33224 on 8081, 1,956 modules); the REAL
+      wallet; 2 prompts — "Unlock Shiba Wallet" 03:57:25 UTC and "Approve
+      sending 0.5 USDC" 04:40:42 UTC, each read from the BiometricPrompt
+      window; isKeyguardShowing read before input; no repository file
+      edited; .dev-wallet never read; the report step by step in the session
+      scratchpad p25-emu1/REPORT.md with redacted dumps, TalkBack transcripts
+      and screenshots). PART A, masked speech under TalkBack (Hide amounts
+      on): "Bullet" NEVER SPOKEN; the Send confirm's preview row "You send
+      (amount hidden) test ETH" / "… USDC" (A1 — the recipient was the
+      wallet's own Kernel 0xD31c…D8FA because Account 2's full address is not
+      on record; nothing sent, Back); Staking rows "…: amount hidden";
+      Portfolio and P&L "hidden"; Approvals (no card in the searched range)
+      and Spending limits (no limit set; the pass was read-only) could not
+      be heard. FINDING 1 (a design question, the CTO's answer below): the
+      confirm's Row values — amount, max fee, total, balances — are NOT
+      masked by Hide amounts at all, on screen or in speech, so 0fbebc7's
+      Row-value helper and fiat sub-line had nothing masked there. PART B
+      (devnet on): B8 the spl-tokens readiness row reads the 0e3ffc3 text
+      exactly; B6 MAX filled exactly "18" (the associated balance, nothing
+      held back); the 0.5 USDC send to Account 2 — Review as designed (fee
+      5,000 lamports, no rent row, the recipient's existing account) → ONE
+      prompt → "Sent ✓" with the signature, "…confirmed.", "Read again on
+      solana-devnet.api.onfinality.io: … (finalized).", the note field;
+      signature 4ovncdCysbD5zmcRYczh5EC2TrdU7UKbahiDyTWS4bJvDcBcfyxmvLZxuYUtgiqFrnaUVTyvhEDrQwWLA4NWaRQa,
+      slot 520264665 (blockTime 1794199254), err null, fee 5,000, one
+      transferChecked of 500,000 at 6 decimals, identical on both devnet
+      RPCs; Account 1 47,008,120 → 47,003,120 lamports, USDC 18,000,000 →
+      17,500,000; Account 2's USDC 2,000,000 → 2,500,000; the note "p25 emu1
+      max note" typed and ONE tap on Done closed the keyboard and the view
+      (PASS) — BUT THE NOTE DOES NOT SHOW ON THE DEVNET ACTIVITY ROW ("Sent
+      0.5 USDC to 9WMg…471n … Add note"), after leaving and reopening too
+      (FAIL; finding 2): the send screen saves the note under quote.caip2 =
+      the DEVNET id (SolanaTokenSendScreen.tsx 195 / 233) while Activity
+      looks it up under the route's SOLANA_CHAIN_ID, the MAINNET id, even on
+      the devnet slot (ActivityScreen.tsx 742 / 925 / 962; the CSV file name
+      at 1113 names mainnet too) — so "Add note" on a devnet row would file
+      under mainnet as well; that the note was stored is an inference (Expo
+      Go's storage cannot be read); a fix slice is dispatched. B7 as Account
+      2 (0 SOL, 2.5 USDC): Review refused with exactly "Not enough test SOL
+      for this transfer: it needs 5000 lamports for the network fee and any
+      new account's rent, and the account holds 0 lamports.", 0 prompts —
+      the c781efa wording live. PART C, NFTs on Ethereum Sepolia (Account
+      1): the gallery loaded within about 8 s through the saved indexer —
+      "Ethereum Sepolia · TESTNET · Account 1", the regular-address note
+      (the Kernel's holdings excluded, said on screen; no smart-account
+      toggle, so xk9fdq4rvz.eth cannot appear), collection "Unnamed
+      collection (0xD4eB…A8B4)" / "ERC-1155 · 0xD4eB…A8B4 · 1 item", the tile
+      "qzv7hk2wmt.eth × 1" (label "qzv7hk2wmt.eth, 1 copies"), no spam flag;
+      the detail — "◇ SVG image not shown", "Token ID: 1071810017932617870
+      19947468798099945113213622994001304673526358454509684916224" (78
+      digits in full), the contract in full, "Standard: ERC-1155", "You
+      hold: 1", "Description: qzv7hk2wmt.eth, an ENS name.", the
+      plain-text note; the Send NFT form OPENED AND RECORDED ONLY (Review
+      never tapped, nothing sent): the safeTransferFrom sentence, the fee in
+      test ETH, "Smart-account sends are not available for NFTs yet…",
+      "Ownership is re-checked on-chain before you confirm.", Recipient,
+      "Amount (copies — you hold 1)" with Max — and NOTHING SAYS THAT THIS
+      TOKEN IS THE ENS NAME AND THAT SENDING IT HANDS OVER THE NAME (finding
+      3; a slice is dispatched that first reads the ENSv2 registry's
+      transfer semantics from source). OTHER FINDINGS: (4) Sepolia
+      publicnode answers pruned-history code 4444 for logs older than about
+      9,000 blocks and Activity's "search older" fallback then asks Pocket
+      for a 9,000-block window while Pocket allows 5,000, so that fallback
+      cannot succeed there (follow-up); (5) the tile reads "1 copies"
+      (plural for one); (6) Account 2's 0-SOL Send link was still offered
+      at 3a854a4 (fixed since in cfb9f39, not yet seen); (7) the readiness
+      reason's "three transfers … on 2026-11-08 UTC" is now one send behind
+      — a dated count goes stale with every send (reword without a count;
+      follow-up); (8) qemu was found demoted to PRI 4 and brought to the
+      front (the keep-front rule). CTO ANSWER TO FINDING 1: the confirm is
+      where the user approves exact figures, so its Row values stay
+      unmasked under Hide amounts by design; the preview row's mask is the
+      one that matters for a shoulder-surfer and it is spoken correctly;
+      recorded as a decision, no change. SLIPS: one tap hit the Tools bubble
+      (the dev menu opened and was closed, nothing changed); one Settings
+      seek ran past the tool's time limit in the background. END STATE:
+      Home, Account 1, Ethereum Sepolia, devnet OFF, Hide amounts OFF,
+      TalkBack OFF (level 6 in place, inode 74381, owner and context kept),
+      screen protection OFF, light mode, IME ADBKeyboard, Metro at 3a854a4
+      with only the 8081 reverse, the window in front. FUNDS (devnet):
+      Account 1 47,003,120 lamports / 17.5 USDC / 19 EURC; Account 2 0
+      lamports / 2.5 USDC / 1 EURC; Sepolia unchanged.
 - [x] Item 2 — THE RISK OVERVIEW SCREEN (feature 99; commit 1753b3c; 20 files,
       +1,553 / −9, three new — app/src/wallet/insights.ts,
       screens/InsightsScreen.tsx, scripts/check-insights.mjs (100 checks, 13
