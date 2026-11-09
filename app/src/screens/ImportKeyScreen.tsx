@@ -143,6 +143,24 @@ export function ImportKeyScreen({ navigation }: Props) {
         />
 
         <Text {...fieldLabel('key', 'Ethereum private key').label} style={[styles.label, { color: theme.text }]}>Ethereum private key</Text>
+        {/* Keeping this field out of iOS Password AutoFill (the follow-up of
+            pass p24-iosfix2, commit 84deacd; seen in the iOS 26.5 Simulator
+            only, not on a real iPhone). React Native 0.86.3 maps
+            textContentType "none" to an EMPTY content type, i.e. an
+            untagged field (React/Fabric/Mounting/ComponentViews/TextInput/
+            RCTTextInputUtils.mm 188–189), and Apple's "About the Password
+            AutoFill workflow" says: "If you haven't tagged the input field,
+            the system uses heuristics to identify the view's type" — so
+            with "none" iOS may treat this secure field as a password and
+            offer its Passwords bar or a strong-password sheet, inviting a
+            saved copy of a private key in a password manager. A private
+            key is NOT a one-time code: the field is tagged
+            UITextContentType.oneTimeCode (mapped at RCTTextInputUtils.mm
+            216) only because that tag takes it out of the password
+            heuristics, as it did for the backup-word and passphrase fields
+            (SettingsScreen.tsx, LockGate.tsx). Secure entry stays, so the
+            key is still masked; the only suggestion iOS could still offer
+            above the keyboard is a security code from an SMS. */}
         <TextInput
           {...fieldLabel('key', 'Ethereum private key').input}
           value={input}
@@ -156,7 +174,7 @@ export function ImportKeyScreen({ navigation }: Props) {
           autoComplete="off"
           importantForAutofill="no"
           spellCheck={false}
-          textContentType="none"
+          textContentType="oneTimeCode"
           placeholder="64 hexadecimal characters, with or without 0x"
           placeholderTextColor={theme.textMuted}
           accessibilityHint="Hidden while typing. Paste or scan the key; the address it controls appears below."

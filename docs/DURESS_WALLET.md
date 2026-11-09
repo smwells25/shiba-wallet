@@ -1546,7 +1546,7 @@ The passphrase view replaces the pad when the record's kind is `"phr"`: a
 prompt "Enter your passphrase", one single-line secure field, and an
 "Unlock" button (the keyboard's return key also submits). Its field uses
 the same input-hygiene props as the private-key import
-(`ImportKeyScreen.tsx` lines 153–159), each in the installed React Native
+(`ImportKeyScreen.tsx` lines 171–177), each in the installed React Native
 0.86.3 (`Libraries/Components/TextInput/TextInput.d.ts`):
 
 - `secureTextEntry` (line 951); on Android it sets the input type
@@ -1554,8 +1554,16 @@ the same input-hygiene props as the private-key import
   687–699);
 - `autoCorrect={false}` (line 744) and `spellCheck={false}` (line 211);
 - `autoComplete="off"` (line 668; the value at line 737),
-  `importantForAutofill="no"` (line 391) and `textContentType="none"`
-  (line 269);
+  `importantForAutofill="no"` (line 391) and `textContentType="oneTimeCode"`
+  (line 269). It was `"none"` until commit 84deacd: React Native maps
+  `"none"` to an empty content type (`RCTTextInputUtils.mm` lines 188–189),
+  so iOS treated the field as untagged and showed its "Passwords" bar over
+  it in the iOS 26.5 Simulator (pass p24-iosfix2); the one-time-code tag
+  (mapped at line 216) took it out of iOS Password AutoFill while secure
+  entry kept the text masked. A passphrase is not a one-time code; the tag
+  only keeps password managers away from the lock secret, as section 8.2.8
+  intends. The private-key field carries the same tag since the follow-up
+  slice p24-ioskey;
 - `autoCapitalize="none"` (line 588);
 - `contextMenuHidden` (line 794), so the field offers no paste menu;
 - `maxLength` (line 827) as a typing guard only: how React Native counts it
@@ -1684,8 +1692,12 @@ Each line is an invariant; the mutant after the dash must fail a check.
   mutant that never reads the phrase.
 - The field's props (`secureTextEntry`, `autoCorrect={false}`,
   `spellCheck={false}`, `autoComplete="off"`, `importantForAutofill="no"`,
-  `textContentType="none"`, `contextMenuHidden`) and the `'pin-pad'`
-  capture key are pinned by a source scan — a mutant that removes any one.
+  `textContentType="oneTimeCode"`, `autoCapitalize="none"`,
+  `contextMenuHidden`, `maxLength={256}`) and the `'pin-pad'` capture key
+  are pinned by a source scan — a mutant that removes any one, and one that
+  puts `textContentType="none"` back (the tag changed in commit 84deacd
+  because iOS showed its "Passwords" bar over an untagged secure field in
+  pass p24-iosfix2).
 - The field's state is cleared before the check runs — a mutant that keeps
   it.
 - `effectivePrefs` gives the same result for both kinds — a mutant keyed

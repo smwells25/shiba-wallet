@@ -1091,8 +1091,29 @@ console.log('check-key-import: honesty and input hygiene in the screens (source 
   const removeBody = acc.slice(acc.indexOf('const onRemoveImported'), acc.indexOf('const onRevealImported'));
   check('Remove: two confirmations that state the consequence come before the deletion', /removeImportedMessage\(/.test(removeBody) && /REMOVE_IMPORTED_CONFIRM_TITLE/.test(removeBody) && removeBody.indexOf('REMOVE_IMPORTED_CONFIRM_TITLE') < removeBody.indexOf('removeImportedAccount(account.index)'));
   const imp = src('screens/ImportKeyScreen.tsx');
-  check('key field: password field, no autocorrect, autocomplete, autofill or spell-check',
-    /secureTextEntry\n/.test(imp) && /autoCorrect=\{false\}/.test(imp) && /autoComplete="off"/.test(imp) && /importantForAutofill="no"/.test(imp) && /spellCheck=\{false\}/.test(imp) && /textContentType="none"/.test(imp));
+  // Pass p24-iosfix2 follow-up (commit 84deacd's reasoning): React Native
+  // 0.86.3 maps textContentType "none" to an EMPTY content type
+  // (RCTTextInputUtils.mm 188-189), an untagged field that iOS's Password
+  // AutoFill heuristics may treat as a password (the "Passwords" bar or the
+  // "Use Strong Password?" sheet seen on the backup-word fields in pass
+  // p24-ios2). Tagged UITextContentType.oneTimeCode (RCTTextInputUtils.mm
+  // 216) the field leaves those heuristics while secure entry keeps the key
+  // masked. A private key is not a one-time code; the tag is used only to
+  // keep a password manager away from it.
+  const keyFieldOf = (screen) => screen.slice(screen.indexOf("{...fieldLabel('key', 'Ethereum private key').input}"), screen.indexOf('<View style={styles.row}>'));
+  const keyFieldKeptFromPasswords = (screen) => {
+    const field = keyFieldOf(screen);
+    return field.length > 0 &&
+      /\n\s*secureTextEntry\n/.test(field) && !/secureTextEntry=\{/.test(field) &&
+      /autoCorrect=\{false\}/.test(field) && /autoComplete="off"/.test(field) && /importantForAutofill="no"/.test(field) && /spellCheck=\{false\}/.test(field) &&
+      field.includes('textContentType="oneTimeCode"') && !field.includes('textContentType="none"');
+  };
+  check('key field: password field, no autocorrect, autocomplete, autofill or spell-check, tagged textContentType="oneTimeCode" to stay out of iOS Password AutoFill',
+    keyFieldKeptFromPasswords(imp), keyFieldOf(imp).slice(0, 400));
+  check('mutant caught: the key field back on textContentType="none" (an untagged secure field iOS may offer to save in Passwords)',
+    !keyFieldKeptFromPasswords(imp.replace('          textContentType="oneTimeCode"\n', '          textContentType="none"\n')));
+  check('mutant caught: the key field loses secure entry (the key would show in clear)',
+    !keyFieldKeptFromPasswords(imp.replace(/\n(\s*)secureTextEntry\n/, '\n')));
   check('screenshots are blocked while the field holds text', /if \(!hasText\) return undefined;\s*preventScreenCaptureAsync\(CAPTURE_KEY\)/.test(imp));
   check('the key is cleared from state right after saving, and the clipboard warning is shown', /await importPrivateKey\(input, [^\n]*\);\s*\/\/[^\n]*\n\s*setInput\(''\);/.test(imp) && /IMPORT_KEY_CLIPBOARD_WARNING/.test(imp) && /Clipboard\.setStringAsync\(''\)/.test(imp));
   check('a scanned QR goes through the same validation (it only fills the field)', /onScanned=\{\(data\) => \{\s*setScanning\(false\);\s*setInput\(data\.trim\(\)\);/.test(imp) && /parsePrivateKeyInput\(input\)/.test(imp));
