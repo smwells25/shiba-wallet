@@ -18930,6 +18930,108 @@ same time (one device driver); fixes after each pass; 6 last. Subagents
 on Opus.
 
 ## Phase 25 progress
+- [x] Item 3 — A GAINS REPORT EXPORTED FROM THE PROFIT-AND-LOSS ENGINE
+      (feature 84, the report half; commit 47b9193; 9 files, +661 / −26, no
+      new file; check-pnl 189 (was 142), check-notes 227 (219), check-i18n
+      202 (199); offline runner ALL GREEN in the CTO's isolated worktree on
+      HEAD 3076cfa: checkout 0 / apply 0 / 9 files, the staged patch id
+      66a99c1b…eaf3 equal to the agent's, engine 1,351, app 11,355 across
+      66 suites, lint 0/0, tsc clean; the pre-commit scan clean; 13 in-suite
+      mutants and 8 hand mutants on the real files caught and restored
+      byte-identical; not seen on a device). ENGINE (pnl.ts, additive): an
+      ok result also carries counted[] — every purchase and sale with the
+      CoinGecko point used, its distance, its value and, for a sale, the
+      average cost before it, the cost sold and the realised figure — and
+      assumedFeesNote; a check pins that the result gained only those two
+      keys and every earlier figure is unchanged; PNL_ESTIMATE_NOTE,
+      pnlMethodNote and toleranceText exported with their text unchanged so
+      the file reuses the engine's own sentences. EXPORTER (notes.ts
+      gainsCsv): formats what the engine returned and recomputes nothing;
+      14 columns on every row; order — the column-name row FIRST (RFC
+      4180's header line; a departure from the CTO's brief, accepted), then
+      a report block (the estimate sentence "These figures are estimates for
+      your information, not tax or accounting records.", account, network,
+      asset with the contract, the average-cost method sentence, the price
+      source with its granularity, the history loaded, the time worked out,
+      a rounding-and-apostrophe note, the result), one row per counted
+      purchase or sale, the panel's own figure lines to the cent, one
+      text-only row per gap, then the notes; the activity CSV's quoting,
+      OWASP defusal and CRLF; the file shiba-gains_<caip2>_<asset>_<date>.csv
+      in its own directory gains-export, shared through the 60-second
+      delete-after-share helper with the activity export's MIME and UTI.
+      PANEL (PortfolioViews.tsx): "Export gains report (.csv)" and a note
+      once any result exists (figures or gaps only); Hide amounts does not
+      apply to the file and the note says so; ids pnl.export,
+      pnl.export.note, pnl.export.dialog, pnl.export.unavailable with
+      Spanish drafts. CTO DECISION on the agent's question: the defusal on
+      every cell turns a signed figure into text in a spreadsheet
+      ('+$1,633.33, '-500.00) exactly as the activity CSV's amounts already
+      are — kept for consistency; the report's Figures row states it.
+      Synthetic samples sample-native.csv.txt and sample-usdc.csv.txt in
+      the session scratchpad p25-gains. UNVERIFIED: the layout, the share
+      sheet, how spreadsheets read the file, TalkBack, dark mode, the
+      Spanish lengths.
+- [x] Item 5 — docs/ADDRESS_SCREENING.md AND docs/TOKEN_BOUND_ACCOUNTS.md,
+      RESEARCH ONLY (commit d5d8a99; two new files, 195 and 136 lines, about
+      4,075 and 3,104 words; verified in the CTO's isolated worktree on HEAD
+      3076cfa: apply 0 / 2 files, the staged patch id 821cca2f…7af7 equal
+      to the agent's, check-readiness 230, check-screen-protection 87,
+      check-devmode 476 green with the files present; the pre-commit scan
+      clean; the three 64-hex values in the files are the SHA-256 digests
+      of the downloaded SDN files and the ERC text — the CTO checked each
+      line; no sanctioned address appears in either file; every network call
+      read-only, 2026-11-09 03:54–04:10 UTC; no code). SCREENING (feature
+      86): the SDN file of 6 November 2026 carries 1,081 digital-currency
+      addresses on 113 of its 19,563 entries — 137 Ethereum-format under six
+      currency labels (127 distinct once lower-cased; 66 lower-case, 71
+      valid checksummed mixed case, so a match must lower-case both
+      sides), 534 Bitcoin, 4 Solana, 2 Dogecoin; OFAC calls its address
+      listings "not likely to be exhaustive"; OFAC's non-SDN list and the
+      UN list hold no addresses, the UK list has no address field (5 of
+      6,420 entries mention one in free text), the EU download answered
+      HTTP 500 (unverified); snapshots go stale both ways (the Tornado Cash
+      removal of 21 March 2025 dropped an entry carrying 90 Ethereum
+      addresses); the check would sit on the existing risk card (risk.ts;
+      the Bitcoin, Dogecoin and Solana confirms have no risk card today).
+      GO / NO-GO: a CONDITIONAL GO for a warn-only, off-by-default check
+      against a pinned extract of the SDN digital-currency field on the EVM
+      confirm screens' existing counterparties, exact matching, a dated
+      sentence, silence on a non-match — AFTER the Chairperson's and
+      counsel's answers to section 9 (whether to ship a list at all, which
+      jurisdictions, warn or block, default off, test networks); NO-GO for
+      blocking, for provider APIs, for the deprecated Chainalysis on-chain
+      oracle (no updates since 18 March 2026) and for parsing free-text
+      lists. TOKEN-BOUND ACCOUNTS (feature 45): the ERC-6551 registry's code
+      byte-identical on all six of the wallet's networks (two RPCs each),
+      Tokenbound's proxy and implementation present on all six although
+      its deployments page lists no test network, the deployed source equal
+      to their v0.3.1 tag; THE FINDING — the ENSv2 .eth registry is
+      ERC-1155 but implements ownerOf, and in a read-only simulation an
+      account bound to each of the wallet's names returned the right holder
+      (Account 1 for qzv7hk2wmt.eth, the Kernel for xk9fdq4rvz.eth) — and
+      why that is unsafe: the owner becomes the zero address when the names
+      expire on 2026-11-24, any role grant or revocation gives the name a
+      NEW token id so an account bound to the old one has no owner for
+      good, and Tokenbound guards against ownership cycles for ERC-721
+      only; a Kernel v3.3 cannot be the implementation but can be the
+      holder that controls one (reasoned). NO-GO for building now (the
+      standard still in Review, the only implementation read upgradeable by
+      a guardian address Tokenbound controls and on EntryPoint v0.6, the
+      wallet holding no ERC-721); a read-only "this NFT's account" line
+      could come later. COULD NOT VERIFY: the EU list's content; the closed
+      UK OFSI list; any OFAC checksum or signature for its exports (none
+      found; the files come through short-lived signed S3 URLs); the legal
+      effect of a warning in a non-custodial wallet; the provider APIs'
+      terms; that 0x2fe5…5d57 is Tokenbound's guardian and its owner a
+      Safe; any state-changing ERC-6551 call; who can grant roles on the
+      wallet's names and whether any wallet flow changes a token id; the
+      Zellic audit's contents; whether the wallet holds any ERC-721 (taken
+      from the record). Agent hygiene note: a redaction regex missed two
+      short tail fragments of public UK-listed addresses in one of its tool
+      outputs; they appear in no file. NOTED FOR THE RECORD (a new fact for
+      the wallet): the two names registered in pass p23-handle EXPIRE on
+      2026-11-24 with a 28-day grace period — a renewal, or the names'
+      loss, is a phase decision (the handle screen has no renew flow).
 - [x] Item 4 — docs/LENDING_VAULTS.md, LENDING AND YIELD VAULTS ON THE TEST
       NETWORKS, RESEARCH ONLY (commit c1aba7a; one new file, 234 lines, about
       5,900 words; verified in the CTO's isolated worktree on HEAD 215f3e0:
