@@ -2125,4 +2125,15 @@ export const es: Readonly<Partial<Record<StringId, string>>> = {
   'insights.link.endpoints': 'Abrir Puntos de conexión de red',
   'insights.link.limits': 'Abrir Límites de gasto',
   'insights.link.alerts': 'Abrir Alertas de precio',
+  // Phase 25 (pass p25-emu1): borrador; el token de un nombre ENS en el registro .eth de ENSv2.
+  'nft.ens.collection': 'Nombres ENS (registro .eth de ENSv2)',
+  'nft.ens.is': 'Este token es el nombre ENS {name} en {network}.',
+  'nft.ens.isUnchecked': 'Este token es un nombre .eth de ENS en {network}. Su nombre no se muestra aquí: el nombre que dio el indexador no se pudo comprobar con el ID del token.',
+  'nft.ens.handover': 'Enviarlo entrega el nombre al destinatario: recibe todos los derechos que esta cuenta tiene sobre él (cambiar su resolutor y su subregistro, dar esos derechos a otros y volver a transferirlo), y esta cuenta no conserva ninguno.',
+  'nft.ens.resolver': 'La transferencia no cambia el resolutor del nombre ni sus registros: el nombre sigue apuntando a donde dice su resolutor (para un nombre registrado en esta billetera, a esta cuenta, mediante el resolutor propio de esta cuenta) hasta que el destinatario ponga otro resolutor, y hasta entonces quien controle ese resolutor puede seguir cambiando a dónde apunta el nombre. Hasta entonces, la pantalla de inicio y la pantalla del alias de billetera también pueden seguir mostrándolo como el nombre ENS de esta cuenta.',
+  'nft.ens.expiry': 'El registro indica que el nombre caduca el {date}. La transferencia no cambia eso, y cualquiera puede renovar un nombre .eth pagando al registrador de ENS.',
+  'nft.ens.expired': 'El registro indica que este nombre caducó el {date}. Un nombre caducado no se puede transferir, así que este envío fallaría.',
+  'nft.ens.stale': 'El registro indica que este token ya no representa el nombre (ENSv2 da un token nuevo a un nombre cuando cambian sus derechos o se vuelve a registrar), así que este envío fallaría.',
+  'nft.ens.reading': 'Leyendo la caducidad del nombre en el registro…',
+  'nft.ens.unread': 'No se pudo leer ahora la caducidad del nombre en el registro.',
 };

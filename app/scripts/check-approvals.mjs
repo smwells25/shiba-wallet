@@ -1440,8 +1440,12 @@ console.log('pinned ENS contracts on the risk card (pass p23-handle finding 5):'
     REG === '0xf633e7FC17e2bbE0D0965D18ec1821dcB754a3d3' && FACTORY === '0xDa70306C98E97eCe36F997a21368e53298572991' &&
       REVERSE === '0xA0a1AbcDAe1a2a4A2EF8e9113Ff0e02DD81DC0C6' && SEP_USDC === CCTP_V2_TESTNET_USDC[11155111]);
   const all = pinnedEnsContracts();
-  check('three pinned ENS contracts, all on Ethereum Sepolia', all.length === 3 && all.every((c) => c.chain === SEPOLIA && c.operator === 'ENS') &&
-    all.map((c) => c.name).join() === 'ETHRegistrar,VerifiableFactory,ReverseRegistrar (ENSv1)');
+  // Phase 25 (pass p25-emu1): the ENSv2 .eth registry joins them — an NFT send of a name token goes to it.
+  const NAMES = ENS_V2_SEPOLIA.ethRegistry;
+  check('the engine table holds ENS’s ENSv2 .eth registry on Sepolia (an independent copy, docs/WALLET_HANDLES.md section 3.2)',
+    NAMES === '0xD4eBcbBdF463C9c45784603Db0dDD499BC44A8B4');
+  check('four pinned ENS contracts, all on Ethereum Sepolia', all.length === 4 && all.every((c) => c.chain === SEPOLIA && c.operator === 'ENS') &&
+    all.map((c) => c.name).join() === 'ETHRegistrar,VerifiableFactory,ReverseRegistrar (ENSv1),.eth registry');
   const lookAlike = (a) => (a.slice(0, -1) + (a.slice(-1).toLowerCase() === 'a' ? 'b' : 'a')).toLowerCase();
   check('ensContractAt: exact pair only (lower case matches; a look-alike, mainnet, Base Sepolia and a malformed address do not)',
     ensContractAt(SEPOLIA, REG)?.name === 'ETHRegistrar' && ensContractAt(SEPOLIA, REG.toLowerCase()) !== null && ensContractAt(SEPOLIA, lookAlike(REG)) === null &&
@@ -1511,6 +1515,31 @@ console.log('pinned ENS contracts on the risk card (pass p23-handle finding 5):'
     noCode.some((l) => l.type === 'no-code-recipient-with-calldata' && l.tone === 'warning') && !noCode.some((l) => /pinned by this wallet/.test(l.text)));
   node.codes[REG.toLowerCase()] = '0x6080604052';
 
+  // Phase 25 (pass p25-emu1): the NFT send of a name token (safeTransferFrom on the registry, the recipient as counterparty).
+  const NAMES_LINE = `This transaction goes to ENS’s .eth registry on Ethereum Sepolia (${NAMES}), pinned by this wallet from ENS’s published Sepolia deployments.`;
+  check('the .eth registry line (exact)', ensContractText(ensContractAt(SEPOLIA, NAMES)) === NAMES_LINE);
+  check('ensContractAt: the .eth registry on Sepolia only (a look-alike and mainnet are not it)',
+    ensContractAt(SEPOLIA, NAMES)?.name === '.eth registry' && ensContractAt(SEPOLIA, lookAlike(NAMES)) === null && ensContractAt(MAINNET, NAMES) === null);
+  check('the .eth registry is not a pinned SPENDER (an approval naming it gets no spender line)',
+    pinnedSpenderApprovalTarget(SEP_USDC, approveTo(NAMES, 1n), SEPOLIA, []) === null);
+  const NAME_TOKEN = 107181001793261787019947468798099945113213622994001304673526358454509684916224n;
+  const sendName = new Interface(['function safeTransferFrom(address from, address to, uint256 id, uint256 value, bytes data)'])
+    .encodeFunctionData('safeTransferFrom', [OWNER, DRAINER, NAME_TOKEN, 1n, '0x']);
+  node.codes[NAMES.toLowerCase()] = '0x6080604052';
+  node.deployedAt[NAMES.toLowerCase()] = HEAD - 150n;
+  node.codes[lookAlike(NAMES).toLowerCase()] = '0x6080604052';
+  node.deployedAt[lookAlike(NAMES).toLowerCase()] = HEAD - 150n;
+  const nameCard = await card(NAMES, sendName, { counterparty: DRAINER });
+  check('an NFT send of a name token: the card names ENS’s .eth registry, with no "goes to a contract" and no age line for it',
+    nameCard.some((l) => l.text === NAMES_LINE) && !nameCard.some((l) => l.text === `This transaction goes to a contract (${NAMES}).`) &&
+      !nameCard.some((l) => l.type === 'new-contract' || l.type === 'contract-age-unknown'), nameCard.map((l) => l.text).join(' | '));
+  check('…and the recipient is still searched for a first transfer (the pinned registry does not stop that search)',
+    calls.some((c) => c.method === 'eth_getLogs') && nameCard.some((l) => /^first-interaction/.test(l.type)), nameCard.map((l) => l.type).join(' | '));
+  const lookName = await card(lookAlike(NAMES), sendName, { counterparty: DRAINER });
+  check('control: the same send to a LOOK-ALIKE registry keeps the generic contract line and no pinned line',
+    lookName.some((l) => l.text === `This transaction goes to a contract (${lookAlike(NAMES)}).`) && !lookName.some((l) => /pinned by this wallet/.test(l.text)),
+    lookName.map((l) => l.text).join(' | '));
+
   const HERE = dirname(fileURLToPath(import.meta.url));
   const MUTANT_DIR = join(HERE, `.mutants-approvals-ens-${process.pid}`);
   process.on('exit', () => rmSync(MUTANT_DIR, { recursive: true, force: true }));
@@ -1537,6 +1566,14 @@ console.log('pinned ENS contracts on the risk card (pass p23-handle finding 5):'
   check('MUTANT (chain not compared for an ENS contract) is caught', mChain.ensContractAt(MAINNET, REG) !== null && ensContractAt(MAINNET, REG) === null);
   const mGuess = await importRiskMutant('  if (predicted.toLowerCase() !== lower) return null;', '');
   check('MUTANT (any address taken as the owner’s resolver) is caught', mGuess.ensContractAt(SEPOLIA, DRAINER, OWNER) !== null && ensContractAt(SEPOLIA, DRAINER, OWNER) === null);
+  const mNames = await importRiskMutant(
+    "    { chain: ENS_PINNED_CHAIN, address: ENS_V2_SEPOLIA.ethRegistry, operator: 'ENS', name: '.eth registry' },\n",
+    '',
+  );
+  calls = [];
+  const mNamesLines = mNames.computeRiskLines(await mNames.gatherRiskFacts({ transport, url: RPC, wallet: OWNER, to: NAMES, data: sendName, counterparty: DRAINER, chainCaip2: SEPOLIA, trackedTokens: sepKnown, loadOwnMultisigs: null }));
+  check('MUTANT (the .eth registry not pinned) is caught: the name-token send gets the generic contract line',
+    !mNamesLines.some((l) => l.text === NAMES_LINE) && mNamesLines.some((l) => l.text === `This transaction goes to a contract (${NAMES}).`));
   const mZero = await importRiskMutant('  if (approval.amount === 0n) {', '  if (false) {');
   calls = [];
   const mZeroLines = mZero.computeRiskLines(await mZero.gatherRiskFacts({ transport, url: RPC, wallet: OWNER, to: SEP_USDC, data: approveTo(REG, 0n), chainCaip2: SEPOLIA, trackedTokens: sepKnown, loadOwnMultisigs: null }));

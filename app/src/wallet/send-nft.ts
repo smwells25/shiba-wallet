@@ -1,5 +1,6 @@
 import type { DerivedAccount } from '@shiba-wallet/core';
 import {
+  ENS_V2_SEPOLIA,
   NodeClient,
   decodeAddress,
   decodeUint256,
@@ -7,6 +8,7 @@ import {
   encodeErc1155SafeTransferFrom,
   encodeErc721OwnerOf,
   encodeErc721SafeTransferFrom,
+  encodeFunctionCall,
   httpTransport as evmHttpTransport,
   simulateCall,
   toHex,
@@ -28,6 +30,9 @@ import {
   type SendResult,
 } from './send.ts';
 import { suggestFeesRetryingOnce } from './fee-read.ts';
+import { ensNameTokenLabel, isEnsNameRegistry } from './nfts.ts';
+import { evmProfileByCaip2 } from '../config/evm-chain.ts';
+import { t } from '../i18n/index.ts';
 
 /**
  * NFT send flow (phase 7 item 4): quoting and sign+broadcast for ERC-721
@@ -341,4 +346,106 @@ export function describeNftSendError(error: unknown, feeSymbol: string = 'ETH'):
     return { title: 'This NFT belongs to the other network mode.', detail };
   }
   return describeSendError(error, feeSymbol, feeSymbol);
+}
+
+// ---------------------------------------------------------------------------
+// ENS names held as NFTs (phase 25, emulator pass p25-emu1)
+// ---------------------------------------------------------------------------
+//
+// A token of ENS's ENSv2 .eth registry IS a .eth name (nfts.ts
+// isEnsNameRegistry). What sending it does, from contracts-v2 at 07e55a05
+// (contracts/src/registry/PermissionedRegistry.sol, read 2026-11-09) and a
+// read-only eth_simulateV1 of the deployed Sepolia registry the same day
+// (the p25-nftname report):
+//  - a transfer moves the single owner slot (erc1155/ERC1155Singleton.sol
+//    183–219) and ALL of the sender's roles on the name to the recipient
+//    (PermissionedRegistry 517–547 → EnhancedAccessControl._transferRoles
+//    236–252, callbacks off, so the token id does not change); a name
+//    registered through the ETHRegistrar carries the rights to set its
+//    resolver and subregistry, to grant those rights, and to transfer it
+//    (ETHRegistrar.sol 18–23). The sender keeps none of them;
+//  - the transfer writes nothing else: the resolver, the subregistry and
+//    the expiry stay as they were (Entry, 68–79). In the simulation the
+//    name still resolved to the sender, and the sender's primary name still
+//    read back, until the recipient set another resolver;
+//  - the expiry is read with getState (361–371); an expired name cannot be
+//    transferred (536–539 with 678–689), and a token whose id changed (a
+//    role change or a new registration regenerates it, 549–589) is no
+//    longer the name.
+
+/** What the .eth registry reports for a name token (getState of its id). */
+export interface EnsNameTokenState {
+  /** IPermissionedRegistry.Status: 0 AVAILABLE (expired or never registered), 1 RESERVED, 2 REGISTERED. */
+  status: 0 | 1 | 2;
+  /** Unix seconds at or after which the name is expired. */
+  expiry: bigint;
+  /** The name's CURRENT token id; differs from the token held when that one was regenerated. */
+  currentTokenId: bigint;
+}
+
+const ENS_NAME_REGISTRY_CHAIN_ID = ENS_V2_SEPOLIA.chainId;
+
+/**
+ * Reads getState(tokenId) from ENS's pinned .eth registry through
+ * `transport`, after checking the endpoint serves Ethereum Sepolia (the
+ * only network the registry is pinned on). Throws on another chain, a
+ * revert or a malformed answer; the screen then says the expiry could not
+ * be read rather than guessing it.
+ */
+export async function readEnsNameTokenState(transport: JsonRpcTransport, tokenId: bigint): Promise<EnsNameTokenState> {
+  const chainId = BigInt((await transport('eth_chainId', [])) as string);
+  if (chainId !== ENS_NAME_REGISTRY_CHAIN_ID) {
+    throw new Error(`The endpoint serves chain ${chainId.toString()}, not Ethereum Sepolia (${ENS_NAME_REGISTRY_CHAIN_ID.toString()}).`);
+  }
+  const data = encodeFunctionCall('getState(uint256)', [{ kind: 'uint256', value: tokenId }]);
+  const raw = await ethCall(transport, ENS_V2_SEPOLIA.ethRegistry, data);
+  if (typeof raw !== 'string' || !/^0x[0-9a-fA-F]{320}$/.test(raw)) throw new Error('getState returned an unexpected answer.');
+  const word = (i: number) => BigInt(`0x${raw.slice(2 + i * 64, 2 + (i + 1) * 64)}`);
+  const status = word(0);
+  if (status > 2n) throw new Error('getState returned an unknown status.');
+  return { status: Number(status) as 0 | 1 | 2, expiry: word(1), currentTokenId: word(3) };
+}
+
+/** A registry time as "2026-11-24 03:49:00 UTC" (the registry's clock, never this phone's). */
+export function formatEnsExpiry(seconds: bigint): string {
+  return `${new Date(Number(seconds) * 1000).toISOString().slice(0, 19).replace('T', ' ')} UTC`;
+}
+
+/** What the screen knows about a name token's registry state. */
+export type EnsNameTokenRead = { kind: 'reading' } | { kind: 'unread' } | { kind: 'read'; state: EnsNameTokenState };
+
+/**
+ * The warning shown on the NFT detail screen, the Send NFT form and the
+ * NFT send confirm for a token of ENS's pinned .eth registry on its own
+ * network: one string of paragraphs, or null for any other token (another
+ * contract, a look-alike address, or the registry's address on another
+ * network). The label is named only when the indexer's name hashes to the
+ * token id (nfts.ts ensNameTokenLabel); the expiry only when the registry
+ * answered — it is never assumed.
+ */
+export function ensNameTokenWarning(input: {
+  chainCaip2: string;
+  contract: string;
+  tokenId: bigint;
+  indexerName: string | null | undefined;
+  read: EnsNameTokenRead;
+}): string | null {
+  if (!isEnsNameRegistry(input.chainCaip2, input.contract)) return null;
+  const network = evmProfileByCaip2(input.chainCaip2)?.label ?? input.chainCaip2;
+  const label = ensNameTokenLabel(input.indexerName, input.tokenId);
+  const parts = [
+    label !== null ? t('nft.ens.is', { name: `${label}.eth`, network }) : t('nft.ens.isUnchecked', { network }),
+    t('nft.ens.handover'),
+    t('nft.ens.resolver'),
+  ];
+  const read = input.read;
+  if (read.kind === 'reading') parts.push(t('nft.ens.reading'));
+  else if (read.kind === 'unread') parts.push(t('nft.ens.unread'));
+  else if (read.state.currentTokenId !== input.tokenId || read.state.status === 1 || (read.state.status === 0 && read.state.expiry === 0n)) {
+    // Regenerated, re-registered, reserved or never registered: this token id no longer stands for an owned name.
+    parts.push(t('nft.ens.stale'));
+  }
+  else if (read.state.status === 0) parts.push(t('nft.ens.expired', { date: formatEnsExpiry(read.state.expiry) }));
+  else parts.push(t('nft.ens.expiry', { date: formatEnsExpiry(read.state.expiry) }));
+  return parts.join('\n\n');
 }

@@ -13052,7 +13052,17 @@
   "insights.link.activity",
   "insights.link.endpoints",
   "insights.link.limits",
-  "insights.link.alerts"
+  "insights.link.alerts",
+  "nft.ens.collection",
+  "nft.ens.is",
+  "nft.ens.isUnchecked",
+  "nft.ens.handover",
+  "nft.ens.resolver",
+  "nft.ens.expiry",
+  "nft.ens.expired",
+  "nft.ens.stale",
+  "nft.ens.reading",
+  "nft.ens.unread"
  ],
  "changed": {
   "activity.note.privacy": {

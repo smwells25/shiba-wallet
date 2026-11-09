@@ -670,8 +670,10 @@ export function bridgeContractAt(chainCaip2: string, address: string): PinnedBri
 
 /**
  * An ENS contract the wallet pins on Ethereum Sepolia (pass p23-handle
- * finding 5): the ETHRegistrar, the VerifiableFactory and the ENSv1
- * ReverseRegistrar from the engine's ENS_V2_SEPOLIA table
+ * finding 5): the ETHRegistrar, the VerifiableFactory, the ENSv1
+ * ReverseRegistrar and (phase 25, pass p25-emu1: the target of an NFT
+ * send of a name token) the ENSv2 .eth registry from the engine's
+ * ENS_V2_SEPOLIA table
  * (packages/chains-evm/src/ens-register.ts, contracts-v2 07e55a05, checked
  * on-chain on 2026-10-25), and the name owner's own resolver when the
  * caller passes that owner (GatherRiskOptions.ensResolverOwner).
@@ -683,8 +685,8 @@ export interface PinnedEnsContract {
   address: string;
   /** Who runs it, for the card ("ENS"). */
   operator: 'ENS';
-  /** What the contract is: "ETHRegistrar", "VerifiableFactory", "ReverseRegistrar (ENSv1)", or "resolver" for the owner's own. */
-  name: 'ETHRegistrar' | 'VerifiableFactory' | 'ReverseRegistrar (ENSv1)' | 'resolver';
+  /** What the contract is: "ETHRegistrar", "VerifiableFactory", "ReverseRegistrar (ENSv1)", ".eth registry", or "resolver" for the owner's own. */
+  name: 'ETHRegistrar' | 'VerifiableFactory' | 'ReverseRegistrar (ENSv1)' | '.eth registry' | 'resolver';
   /** Set only for the owner's own resolver: the owner its address was derived for (EIP-55). */
   resolverOwner?: string;
 }
@@ -698,6 +700,8 @@ export function pinnedEnsContracts(): PinnedEnsContract[] {
     { chain: ENS_PINNED_CHAIN, address: ENS_V2_SEPOLIA.ethRegistrar, operator: 'ENS', name: 'ETHRegistrar' },
     { chain: ENS_PINNED_CHAIN, address: ENS_V2_SEPOLIA.verifiableFactory, operator: 'ENS', name: 'VerifiableFactory' },
     { chain: ENS_PINNED_CHAIN, address: ENS_V2_SEPOLIA.v1ReverseRegistrar, operator: 'ENS', name: 'ReverseRegistrar (ENSv1)' },
+    // The ERC-1155 registry of the .eth names: an NFT send of a name token goes to it.
+    { chain: ENS_PINNED_CHAIN, address: ENS_V2_SEPOLIA.ethRegistry, operator: 'ENS', name: '.eth registry' },
   ];
 }
 

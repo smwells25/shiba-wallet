@@ -179,6 +179,7 @@ import {
 import { listContacts, matchRecipient, type Contact } from '../wallet/contacts';
 import { BalanceChangePreview } from '../components/BalanceChangePreview';
 import { RiskWarnings } from '../components/RiskWarnings';
+import { EnsNameTokenNotice } from '../components/EnsNameTokenNotice';
 import { SpendingPolicyNotice, spendingGateForQuote } from '../components/SpendingPolicyViews';
 import { useOwnEvmAddresses } from '../wallet/useOwnAddresses';
 import { findOwnAddress } from '../wallet/risk';
@@ -2273,6 +2274,14 @@ export function SendScreen({ route, navigation }: Props) {
         <Row label="Token ID" value={quote.tokenId.toString()} mono theme={theme} />
         <Row label="Contract" value={quote.contract} mono theme={theme} />
         <Row label="Standard" value={standardLabel(quote.standard)} theme={theme} />
+        {/* A token of ENS's pinned .eth registry IS a .eth name (pass p25-emu1). */}
+        <EnsNameTokenNotice
+          chainCaip2={nft?.chainId ?? evmChain.caip2}
+          contract={quote.contract}
+          tokenId={quote.tokenId}
+          indexerName={nftParams?.name}
+          url={confirmUrl}
+        />
         {quote.standard === 'erc1155' ? (
           <Row
             label="Copies to send"
@@ -2541,6 +2550,7 @@ export function SendScreen({ route, navigation }: Props) {
           <Text style={[styles.hint, { color: theme.textMuted }]}>
             {t('send.nft.intro', { network: evmChain.label, symbol: evmChain.displaySymbol })}
           </Text>
+          <EnsNameTokenNotice chainCaip2={nft.chainId} contract={nft.contract} tokenId={nft.tokenId} indexerName={nftParams.name} url={url} />
         </View>
       ) : null}
 

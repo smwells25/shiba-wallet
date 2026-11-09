@@ -2124,4 +2124,15 @@ export const en = {
   'insights.link.endpoints': 'Open Network endpoints',
   'insights.link.limits': 'Open Spending limits',
   'insights.link.alerts': 'Open Price alerts',
+  // Phase 25 (pass p25-emu1): a token of ENS's pinned ENSv2 .eth registry IS a name (the NFT gallery, detail and send).
+  'nft.ens.collection': 'ENS names (ENSv2 .eth registry)',
+  'nft.ens.is': 'This token is the ENS name {name} on {network}.',
+  'nft.ens.isUnchecked': 'This token is an ENS .eth name on {network}. Its name is not shown here: the name the indexer gave could not be checked against the token id.',
+  'nft.ens.handover': 'Sending it hands the name to the recipient: they get every right this account holds over it (to change its resolver and its subregistry, to give those rights to others, and to transfer it again), and this account keeps none of them.',
+  'nft.ens.resolver': 'The transfer does not change the name’s resolver or its records: the name keeps pointing where its resolver says (for a name registered in this wallet, at this account, through this account’s own resolver) until the recipient sets another resolver, and until then whoever controls that resolver can still change where the name points. Until then the Home screen and the Wallet handle screen may also keep showing it as this account’s ENS name.',
+  'nft.ens.expiry': 'The registry reports that the name expires on {date}. The transfer does not change that, and anyone can renew a .eth name by paying ENS’s registrar.',
+  'nft.ens.expired': 'The registry reports that this name expired on {date}. An expired name cannot be transferred, so this send would fail.',
+  'nft.ens.stale': 'The registry reports that this token no longer stands for the name (ENSv2 gives a name a new token when its rights change or it is registered again), so this send would fail.',
+  'nft.ens.reading': 'Reading the name’s expiry from the registry…',
+  'nft.ens.unread': 'The name’s expiry could not be read from the registry just now.',
 } as const;

@@ -10,6 +10,7 @@ import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { EVM_CHAIN_ID } from '../wallet/send';
 import { NftImage } from '../components/NftImage';
+import { EnsNameTokenNotice } from '../components/EnsNameTokenNotice';
 import {
   fetchNftMetadata,
   formatTokenId,
@@ -58,8 +59,8 @@ export function NftDetailScreen({ route, navigation }: Props) {
   const [metadataTry, setMetadataTry] = useState(0);
 
   useEffect(() => {
-    navigation.setOptions({ title: nft ? nftDisplayName(nft) : 'NFT' });
-  }, [navigation, nft]);
+    navigation.setOptions({ title: nft ? nftDisplayName(nft, evmChain.caip2) : 'NFT' });
+  }, [navigation, nft, evmChain.caip2]);
 
   useEffect(() => {
     if (!nft || !nft.metadataMissing || !nft.tokenUri) return;
@@ -93,14 +94,14 @@ export function NftDetailScreen({ route, navigation }: Props) {
   }
 
   const fetched = metadata?.ok ? metadata.fields : null;
-  const name = fetched?.name ?? sanitizeNftText(nft.name) ?? nftDisplayName(nft);
+  const name = fetched?.name ?? sanitizeNftText(nft.name) ?? nftDisplayName(nft, evmChain.caip2);
   const description = fetched?.description ?? sanitizeNftText(nft.description, 600);
   const explorer = nftExplorerUrl(evmChain.caip2, nft);
   const sendParams: NftSendParams = {
     assetId,
     standard: nft.standard,
-    name: nftDisplayName(nft),
-    collection: nftCollectionTitle(nft),
+    name: nftDisplayName(nft, evmChain.caip2),
+    collection: nftCollectionTitle(nft, evmChain.caip2),
     balance: nft.balance.toString(),
   };
 
@@ -121,8 +122,10 @@ export function NftDetailScreen({ route, navigation }: Props) {
           or addresses mentioned in them.
         </WarningBox>
       ) : null}
+      {/* A token of ENS's pinned .eth registry IS a .eth name (pass p25-emu1). */}
+      <EnsNameTokenNotice chainCaip2={evmChain.caip2} contract={nft.contract} tokenId={nft.tokenId} indexerName={nft.name} />
 
-      <Row label="Collection" value={nftCollectionTitle(nft)} theme={theme} />
+      <Row label="Collection" value={nftCollectionTitle(nft, evmChain.caip2)} theme={theme} />
       <Row label="Token ID" value={formatTokenId(nft.tokenId)} mono theme={theme} />
       <Row label="Contract" value={nft.contract} mono theme={theme} />
       <Row label="Standard" value={standardLabel(nft.standard)} theme={theme} />

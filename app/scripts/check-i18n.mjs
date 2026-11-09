@@ -292,6 +292,10 @@ const SOLHIST_NEW = ['activity.row.feeHidden'];
 const GAINS_NEW = ['pnl.export', 'pnl.export.note', 'pnl.export.dialog', 'pnl.export.unavailable'];
 // Phase 25 item 2 (feature 99): the risk overview's lines (wallet/insights.ts) are new, every one under "insights.".
 const insightsNew = (id) => id.startsWith('insights.');
+// Phase 25 (pass p25-emu1): a token of ENS's pinned ENSv2 .eth registry IS a .eth name — the gallery's collection title and the warning
+// on the NFT detail screen, the Send NFT form and the NFT send confirm (wallet/nfts.ts, wallet/send-nft.ts).
+const NFT_ENS_NEW = ['nft.ens.collection', 'nft.ens.is', 'nft.ens.isUnchecked', 'nft.ens.handover', 'nft.ens.resolver', 'nft.ens.expiry',
+  'nft.ens.expired', 'nft.ens.stale', 'nft.ens.reading', 'nft.ens.unread'];
 {
   const p = fixtureProblems(en, FIXTURE);
   check(`every English entry is the text the app showed at ${FIXTURE.base} (${Object.keys(FIXTURE.literal).length} literals, ${Object.keys(FIXTURE.template).length} templates by their static parts, ${Object.keys(FIXTURE.composite).length} composites) or listed as new (${FIXTURE.new.length})`,
@@ -309,8 +313,8 @@ const insightsNew = (id) => id.startsWith('insights.');
   // broadcast sentences (an HTTP 5xx or a dropped connection, not a timeout).
   const BROADCAST_OPEN_NEW = ['broadcast.open.title', 'broadcast.tx.open', 'broadcast.tx.openUnlisted', 'broadcast.userop.open',
     'broadcast.userop.openUnlisted', 'broadcast.open'];
-  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the Solana token-send readiness row, the wallet handle\'s, the six open-outcome broadcast sentences, the co-signer card\'s numbered Scan label, the eight period words of the hygiene slice, the four Bridge lines of pass p23-mint, the five lines of the p23-build fixes, the three Bridge lines of pass p23-bridge-recheck and the three navigation-bar lines of pass p23-navbar and the three iOS-pass lines (two iOS reminder notes, the "an" scanner sentence) and the five lines of the Solana-pass fix slice (the Solana devnet banner, the Solana token-fee line, the Solana devnet readiness line, two Max-lowering sentences) and the two smart-account Max-lowering sentences of the trim slice and the devnet form of the Solana token-fee line (pass p24-recheck) and the nine lines of the p24-unblock fixes (the Solana token Send link and its hint, seven Solana Activity sentences) and the hidden-fee word of an Activity row and the four gains-report lines of phase 25 item 3',
-    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || SPL_TOKENS_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id) || NAVBAR_FIX_NEW.includes(id) || IOS_FIX_NEW.includes(id) || SOLANA_FIX_NEW.includes(id) || AA_TRIM_NEW.includes(id) || RECHECK_FIX_NEW.includes(id) || UNBLOCK_FIX_NEW.includes(id) || SOLHIST_NEW.includes(id) || GAINS_NEW.includes(id) || insightsNew(id)) &&
+  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the Solana token-send readiness row, the wallet handle\'s, the six open-outcome broadcast sentences, the co-signer card\'s numbered Scan label, the eight period words of the hygiene slice, the four Bridge lines of pass p23-mint, the five lines of the p23-build fixes, the three Bridge lines of pass p23-bridge-recheck and the three navigation-bar lines of pass p23-navbar and the three iOS-pass lines (two iOS reminder notes, the "an" scanner sentence) and the five lines of the Solana-pass fix slice (the Solana devnet banner, the Solana token-fee line, the Solana devnet readiness line, two Max-lowering sentences) and the two smart-account Max-lowering sentences of the trim slice and the devnet form of the Solana token-fee line (pass p24-recheck) and the nine lines of the p24-unblock fixes (the Solana token Send link and its hint, seven Solana Activity sentences) and the hidden-fee word of an Activity row and the four gains-report lines of phase 25 item 3 and the ten ENS name-token lines of pass p25-emu1',
+    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || SPL_TOKENS_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id) || NAVBAR_FIX_NEW.includes(id) || IOS_FIX_NEW.includes(id) || SOLANA_FIX_NEW.includes(id) || AA_TRIM_NEW.includes(id) || RECHECK_FIX_NEW.includes(id) || UNBLOCK_FIX_NEW.includes(id) || SOLHIST_NEW.includes(id) || GAINS_NEW.includes(id) || NFT_ENS_NEW.includes(id) || insightsNew(id)) &&
       BUILD_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && BRIDGE_RECHECK_NEW.every((id) => FIXTURE.new.includes(id)) &&
       LOCK_KIND_NEW.every((id) => FIXTURE.new.includes(id)) && COLD_AA_NEW.every((id) => FIXTURE.new.includes(id)) && SPL_TOKENS_NEW.every((id) => FIXTURE.new.includes(id)) &&
       BROADCAST_OPEN_NEW.every((id) => FIXTURE.new.includes(id)) && THIRD_PASS_NEW.every((id) => FIXTURE.new.includes(id)) && PERIOD_NEW.every((id) => FIXTURE.new.includes(id)) &&
@@ -318,6 +322,7 @@ const insightsNew = (id) => id.startsWith('insights.');
       SOLANA_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && AA_TRIM_NEW.every((id) => FIXTURE.new.includes(id)) &&
       RECHECK_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && UNBLOCK_FIX_NEW.every((id) => FIXTURE.new.includes(id)) &&
       SOLHIST_NEW.every((id) => FIXTURE.new.includes(id)) && GAINS_NEW.every((id) => FIXTURE.new.includes(id)) &&
+      NFT_ENS_NEW.every((id) => FIXTURE.new.includes(id)) &&
       Object.keys(en).filter(insightsNew).length > 0 && Object.keys(en).filter(insightsNew).every((id) => FIXTURE.new.includes(id)));
   // Phase 25 item 3: the four gains-report lines, English and Spanish exact, no placeholders, and each one used by the panel.
   {
@@ -339,6 +344,41 @@ const insightsNew = (id) => id.startsWith('insights.');
       gainsOk(en, es) && GAINS_NEW.every((id) => panelSrc.includes(`t('${id}')`)));
     check('…mutant caught: a Spanish gains line missing', !gainsOk(en, { ...es, 'pnl.export.dialog': undefined }));
     check('…mutant caught: the English note changed by one character', !gainsOk({ ...en, 'pnl.export.note': en['pnl.export.note'].replace('Hide amounts', 'Hide amount') }, es));
+  }
+  // Phase 25 (pass p25-emu1): the ten ENS name-token lines, English and Spanish exact, the placeholders matching, and each one used
+  // by wallet/nfts.ts or wallet/send-nft.ts.
+  {
+    const WANT_EN = {
+      "nft.ens.collection": "ENS names (ENSv2 .eth registry)",
+      "nft.ens.is": "This token is the ENS name {name} on {network}.",
+      "nft.ens.isUnchecked": "This token is an ENS .eth name on {network}. Its name is not shown here: the name the indexer gave could not be checked against the token id.",
+      "nft.ens.handover": "Sending it hands the name to the recipient: they get every right this account holds over it (to change its resolver and its subregistry, to give those rights to others, and to transfer it again), and this account keeps none of them.",
+      "nft.ens.resolver": "The transfer does not change the name’s resolver or its records: the name keeps pointing where its resolver says (for a name registered in this wallet, at this account, through this account’s own resolver) until the recipient sets another resolver, and until then whoever controls that resolver can still change where the name points. Until then the Home screen and the Wallet handle screen may also keep showing it as this account’s ENS name.",
+      "nft.ens.expiry": "The registry reports that the name expires on {date}. The transfer does not change that, and anyone can renew a .eth name by paying ENS’s registrar.",
+      "nft.ens.expired": "The registry reports that this name expired on {date}. An expired name cannot be transferred, so this send would fail.",
+      "nft.ens.stale": "The registry reports that this token no longer stands for the name (ENSv2 gives a name a new token when its rights change or it is registered again), so this send would fail.",
+      "nft.ens.reading": "Reading the name’s expiry from the registry…",
+      "nft.ens.unread": "The name’s expiry could not be read from the registry just now.",
+    };
+    const WANT_ES = {
+      "nft.ens.collection": "Nombres ENS (registro .eth de ENSv2)",
+      "nft.ens.is": "Este token es el nombre ENS {name} en {network}.",
+      "nft.ens.isUnchecked": "Este token es un nombre .eth de ENS en {network}. Su nombre no se muestra aquí: el nombre que dio el indexador no se pudo comprobar con el ID del token.",
+      "nft.ens.handover": "Enviarlo entrega el nombre al destinatario: recibe todos los derechos que esta cuenta tiene sobre él (cambiar su resolutor y su subregistro, dar esos derechos a otros y volver a transferirlo), y esta cuenta no conserva ninguno.",
+      "nft.ens.resolver": "La transferencia no cambia el resolutor del nombre ni sus registros: el nombre sigue apuntando a donde dice su resolutor (para un nombre registrado en esta billetera, a esta cuenta, mediante el resolutor propio de esta cuenta) hasta que el destinatario ponga otro resolutor, y hasta entonces quien controle ese resolutor puede seguir cambiando a dónde apunta el nombre. Hasta entonces, la pantalla de inicio y la pantalla del alias de billetera también pueden seguir mostrándolo como el nombre ENS de esta cuenta.",
+      "nft.ens.expiry": "El registro indica que el nombre caduca el {date}. La transferencia no cambia eso, y cualquiera puede renovar un nombre .eth pagando al registrador de ENS.",
+      "nft.ens.expired": "El registro indica que este nombre caducó el {date}. Un nombre caducado no se puede transferir, así que este envío fallaría.",
+      "nft.ens.stale": "El registro indica que este token ya no representa el nombre (ENSv2 da un token nuevo a un nombre cuando cambian sus derechos o se vuelve a registrar), así que este envío fallaría.",
+      "nft.ens.reading": "Leyendo la caducidad del nombre en el registro…",
+      "nft.ens.unread": "No se pudo leer ahora la caducidad del nombre en el registro.",
+    };
+    const ph = (x) => (x.match(/\{[a-zA-Z]+\}/g) ?? []).sort().join();
+    const nftSrc = readFileSync(join(APP, 'src/wallet/nfts.ts'), 'utf8') + readFileSync(join(APP, 'src/wallet/send-nft.ts'), 'utf8');
+    const ensOk = (e, sp) => NFT_ENS_NEW.every((id) => e[id] === WANT_EN[id] && sp[id] === WANT_ES[id] && ph(e[id]) === ph(sp[id]));
+    check('pass p25-emu1: the ten ENS name-token lines, English and Spanish exact, placeholders matching, each used through t()',
+      ensOk(en, es) && NFT_ENS_NEW.every((id) => nftSrc.includes(`t('${id}'`)));
+    check('…mutant caught: a Spanish name-token line missing', !ensOk(en, { ...es, 'nft.ens.handover': undefined }));
+    check('…mutant caught: a placeholder dropped from a Spanish line', !ensOk(en, { ...es, 'nft.ens.is': es['nft.ens.is'].replace('{name}', 'el nombre') }));
   }
   check('the changed entries are exactly the transaction-notes line (reworded for the records backup), the watch-only notice (reworded for the off-line signer), the bridge readiness reason (CCTP sent, phase 23), the records-backup note (smart-account recovery records, pass p23-build) the three CCTP time sentences (the measured spread, pass p23-bridge-recheck) and the inbox intro and empty line (what is listed, phase 24 item 4) and the inbox PIN note and the two inbox link hints (the same rewording, the Solana-pass fix slice), each with its reason',
     JSON.stringify(Object.keys(FIXTURE.changed ?? {})) === JSON.stringify(['activity.note.privacy', 'notice.watchOnly', 'readiness.bridge.reason', 'recordsBackup.what', ...CCTP_TIME_CHANGED, ...INBOX_WORDING_CHANGED, ...INBOX_NOTES_CHANGED]) &&

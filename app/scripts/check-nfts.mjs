@@ -658,5 +658,145 @@ check('route asset id round-trips through core', nonFungibleTokenId(formatAssetI
   check('…mutant caught: the NFT detail row without the helper', !pin(send, detail.replace('{...maskedSpokenProps(value)}', '')));
 }
 
+// Phase 25 (pass p25-emu1): a token of ENS's pinned ENSv2 .eth registry IS a .eth name. The gallery titles its
+// collection "ENS names (ENSv2 .eth registry)", and the NFT detail screen, the Send NFT form and the NFT send confirm
+// show a warning that sending it hands the name over (wallet/nfts.ts, wallet/send-nft.ts, components/EnsNameTokenNotice.tsx).
+console.log('ENS name tokens (pass p25-emu1):');
+{
+  const { ENS_V2_SEPOLIA, encodeFunctionCall } = await import('@shiba-wallet/chains-evm');
+  const nftsMod = await import('../src/wallet/nfts.ts');
+  const sendMod = await import('../src/wallet/send-nft.ts');
+  const { isEnsNameRegistry, ensNameTokenLabel, nftCollectionTitle } = nftsMod;
+  const { ensNameTokenWarning, readEnsNameTokenState, formatEnsExpiry } = sendMod;
+  const SEP = 'eip155:11155111';
+  const REGISTRY = ENS_V2_SEPOLIA.ethRegistry;
+  // The wallet's live name token (Account 1's qzv7hk2wmt.eth, read on Sepolia 2026-11-09: ownerOf = Account 1, expiry 1795492140).
+  const TOKEN = 107181001793261787019947468798099945113213622994001304673526358454509684916224n;
+  const EXPIRY = 1795492140n;
+  const lookAlike = REGISTRY.slice(0, -1) + (REGISTRY.slice(-1) === '4' ? '5' : '4');
+  check('the pinned registry is the engine’s ENS_V2_SEPOLIA.ethRegistry (an independent copy of the address)', REGISTRY === '0xD4eBcbBdF463C9c45784603Db0dDD499BC44A8B4');
+  check('isEnsNameRegistry: the pinned registry on Ethereum Sepolia only (lower case yes; a look-alike, mainnet, Base Sepolia and a malformed address no)',
+    isEnsNameRegistry(SEP, REGISTRY) && isEnsNameRegistry(SEP, REGISTRY.toLowerCase()) && !isEnsNameRegistry(SEP, lookAlike) &&
+      !isEnsNameRegistry('eip155:1', REGISTRY) && !isEnsNameRegistry('eip155:84532', REGISTRY) && !isEnsNameRegistry(SEP, REGISTRY + '00'));
+  const base = { tokenId: TOKEN, standard: 'erc1155', balance: 1n, name: 'qzv7hk2wmt.eth', description: null, collectionName: null, contractName: null, contractSymbol: null, tokenUri: null, metadataMissing: false, media: {}, spam: null };
+  const COLLECTION = 'ENS names (ENSv2 .eth registry)';
+  check('the collection title of the pinned registry on its network is "ENS names (ENSv2 .eth registry)", whatever the indexer calls it',
+    nftCollectionTitle({ ...base, contract: REGISTRY }, SEP) === COLLECTION && nftCollectionTitle({ ...base, contract: REGISTRY, collectionName: 'Totally ENS' }, SEP) === COLLECTION);
+  check('…not for a look-alike, not on another network, and not without a network (the indexer’s title or "Unnamed collection")',
+    nftCollectionTitle({ ...base, contract: lookAlike }, SEP) === `Unnamed collection (${lookAlike.slice(0, 6)}…${lookAlike.slice(-4)})` &&
+      nftCollectionTitle({ ...base, contract: REGISTRY }, 'eip155:1') === 'Unnamed collection (0xD4eB…A8B4)' &&
+      nftCollectionTitle({ ...base, contract: REGISTRY }) === 'Unnamed collection (0xD4eB…A8B4)');
+  const grouped = groupNftsByCollection([{ ...base, contract: REGISTRY }, { ...base, contract: lookAlike }], SEP);
+  check('the gallery groups the pinned registry under its title, the look-alike under "Unnamed collection"',
+    grouped.find((g) => g.contract === REGISTRY)?.title === COLLECTION && grouped.find((g) => g.contract === lookAlike)?.title.startsWith('Unnamed collection'));
+  check('the label is shown only when the indexer’s name hashes to the token id (the live name; a version change keeps the label hash)',
+    ensNameTokenLabel('qzv7hk2wmt.eth', TOKEN) === 'qzv7hk2wmt' && ensNameTokenLabel('qzv7hk2wmt.eth', TOKEN + 7n) === 'qzv7hk2wmt');
+  check('…and refused otherwise: another name, no ".eth", two labels, an empty label, a zero-width character, no name',
+    ensNameTokenLabel('vitalik.eth', TOKEN) === null && ensNameTokenLabel('qzv7hk2wmt', TOKEN) === null && ensNameTokenLabel('a.qzv7hk2wmt.eth', TOKEN) === null &&
+      ensNameTokenLabel('.eth', TOKEN) === null && ensNameTokenLabel('qzv7hk2​wmt.eth', TOKEN) === null && ensNameTokenLabel(null, TOKEN) === null);
+  const P_IS = 'This token is the ENS name qzv7hk2wmt.eth on Ethereum Sepolia.';
+  const P_UNCHECKED = 'This token is an ENS .eth name on Ethereum Sepolia. Its name is not shown here: the name the indexer gave could not be checked against the token id.';
+  const P_HANDOVER = "Sending it hands the name to the recipient: they get every right this account holds over it (to change its resolver and its subregistry, to give those rights to others, and to transfer it again), and this account keeps none of them.";
+  const P_RESOLVER = "The transfer does not change the name’s resolver or its records: the name keeps pointing where its resolver says (for a name registered in this wallet, at this account, through this account’s own resolver) until the recipient sets another resolver, and until then whoever controls that resolver can still change where the name points. Until then the Home screen and the Wallet handle screen may also keep showing it as this account’s ENS name.";
+  const P_EXPIRY = 'The registry reports that the name expires on 2026-11-24 03:49:00 UTC. The transfer does not change that, and anyone can renew a .eth name by paying ENS’s registrar.';
+  const registered = { kind: 'read', state: { status: 2, expiry: EXPIRY, currentTokenId: TOKEN } };
+  const warn = (over) => ensNameTokenWarning({ chainCaip2: SEP, contract: REGISTRY, tokenId: TOKEN, indexerName: 'qzv7hk2wmt.eth', read: registered, ...over });
+  check('formatEnsExpiry reads the registry’s seconds as UTC', formatEnsExpiry(EXPIRY) === '2026-11-24 03:49:00 UTC');
+  check('the warning for the live token (exact): the name, the hand-over, the resolver and the expiry read from the registry',
+    warn({}) === [P_IS, P_HANDOVER, P_RESOLVER, P_EXPIRY].join('\n\n'), warn({}));
+  check('…with a name that does not hash to the token id: the unnamed first sentence, nothing else changes',
+    warn({ indexerName: 'vitalik.eth' }) === [P_UNCHECKED, P_HANDOVER, P_RESOLVER, P_EXPIRY].join('\n\n'));
+  check('…while the registry is being read, and when it could not be read: no date is shown or guessed',
+    warn({ read: { kind: 'reading' } }).endsWith('\n\nReading the name’s expiry from the registry…') &&
+      warn({ read: { kind: 'unread' } }).endsWith('\n\nThe name’s expiry could not be read from the registry just now.') &&
+      !/2026/.test(warn({ read: { kind: 'unread' } })));
+  check('…an expired name: "this send would fail" with the registry’s date',
+    warn({ read: { kind: 'read', state: { status: 0, expiry: EXPIRY, currentTokenId: TOKEN } } }).endsWith(
+      '\n\nThe registry reports that this name expired on 2026-11-24 03:49:00 UTC. An expired name cannot be transferred, so this send would fail.'));
+  const STALE = '\n\nThe registry reports that this token no longer stands for the name (ENSv2 gives a name a new token when its rights change or it is registered again), so this send would fail.';
+  check('…a token whose id changed, a reserved name or a never-registered one: "no longer stands for the name"',
+    warn({ read: { kind: 'read', state: { status: 2, expiry: EXPIRY, currentTokenId: TOKEN + 1n } } }).endsWith(STALE) &&
+      warn({ read: { kind: 'read', state: { status: 1, expiry: EXPIRY, currentTokenId: TOKEN } } }).endsWith(STALE) &&
+      warn({ read: { kind: 'read', state: { status: 0, expiry: 0n, currentTokenId: TOKEN } } }).endsWith(STALE));
+  check('no warning for a look-alike registry, the registry’s address on mainnet or Base Sepolia, or another collection',
+    warn({ contract: lookAlike }) === null && warn({ chainCaip2: 'eip155:1' }) === null && warn({ chainCaip2: 'eip155:84532' }) === null &&
+      warn({ contract: '0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85' }) === null);
+  // readEnsNameTokenState against a fake node: the request it makes and the answer it accepts.
+  const W = (n) => n.toString(16).padStart(64, '0');
+  let seen = [];
+  const fake = (chain, answer) => async (method, params) => {
+    seen.push({ method, params });
+    if (method === 'eth_chainId') return chain;
+    if (method === 'eth_call') return answer;
+    throw new Error(`unexpected ${method}`);
+  };
+  const GOOD = '0x' + W(2n) + W(EXPIRY) + W(BigInt('0x772eAA1d3BEf14C0BD5cee980b90dB3FC680F44F')) + W(TOKEN) + W(TOKEN);
+  const state = await readEnsNameTokenState(fake('0xaa36a7', GOOD), TOKEN);
+  const callReq = seen.find((c) => c.method === 'eth_call')?.params?.[0];
+  check('readEnsNameTokenState asks the pinned registry for getState(tokenId) and returns status, expiry and the current token id',
+    callReq?.to === REGISTRY && callReq?.data === '0x' + Buffer.from(encodeFunctionCall('getState(uint256)', [{ kind: 'uint256', value: TOKEN }])).toString('hex') &&
+      state.status === 2 && state.expiry === EXPIRY && state.currentTokenId === TOKEN);
+  await rejects('…refuses an endpoint on another chain (before any eth_call)', async () => { seen = []; return readEnsNameTokenState(fake('0x1', GOOD), TOKEN); }, /not Ethereum Sepolia/);
+  check('…(no eth_call was made on the wrong chain)', !seen.some((c) => c.method === 'eth_call'));
+  await rejects('…refuses a malformed answer', () => readEnsNameTokenState(fake('0xaa36a7', '0x' + W(2n)), TOKEN), /unexpected answer/);
+  await rejects('…refuses an unknown status', () => readEnsNameTokenState(fake('0xaa36a7', '0x' + W(3n) + GOOD.slice(66)), TOKEN), /unknown status/);
+  // The screens: where the notice and the pinned title are wired (source pins; the component is React).
+  const read = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
+  const detail = read('../src/screens/NftDetailScreen.tsx');
+  const gallery = read('../src/screens/NftsScreen.tsx');
+  const send = read('../src/screens/SendScreen.tsx');
+  const notice = read('../src/components/EnsNameTokenNotice.tsx');
+  const DETAIL_NOTICE = '<EnsNameTokenNotice chainCaip2={evmChain.caip2} contract={nft.contract} tokenId={nft.tokenId} indexerName={nft.name} />';
+  const FORM_NOTICE = '<EnsNameTokenNotice chainCaip2={nft.chainId} contract={nft.contract} tokenId={nft.tokenId} indexerName={nftParams.name} url={url} />';
+  const CONFIRM_NOTICE = /<EnsNameTokenNotice\s+chainCaip2=\{nft\?\.chainId \?\? evmChain\.caip2\}\s+contract=\{quote\.contract\}\s+tokenId=\{quote\.tokenId\}\s+indexerName=\{nftParams\?\.name\}\s+url=\{confirmUrl\}\s+\/>/;
+  const wired = (d, g, s) => d.includes(DETAIL_NOTICE) && d.includes('nftCollectionTitle(nft, evmChain.caip2)') && s.includes(FORM_NOTICE) && CONFIRM_NOTICE.test(s) &&
+    g.includes('groupNftsByCollection(state.nfts, evmChain.caip2)');
+  check('the notice is on the NFT detail screen, the Send NFT form and the NFT send confirm; the detail and the gallery pass the network for the title (source)',
+    wired(detail, gallery, send));
+  check('…mutant caught: the detail screen without the notice', !wired(detail.replace(DETAIL_NOTICE, ''), gallery, send));
+  check('…mutant caught: the gallery grouping without the network', !wired(detail, gallery.replace('groupNftsByCollection(state.nfts, evmChain.caip2)', 'groupNftsByCollection(state.nfts)'), send));
+  check('the component renders ensNameTokenWarning in a WarningBox and reads the expiry with readEnsNameTokenState (source)',
+    notice.includes('ensNameTokenWarning(') && notice.includes('readEnsNameTokenState(') && notice.includes('<WarningBox>{text}</WarningBox>'));
+  const hardCoded = [detail, gallery, send, notice, read('../src/wallet/nfts.ts'), read('../src/wallet/send-nft.ts')].some((src) => /d4ebcbbdf463c9c4/i.test(src));
+  check('no screen, component or wallet module hard-codes the registry’s address (they read the engine’s ENS_V2_SEPOLIA)', !hardCoded);
+  // Module mutants: a rewritten copy of the real file, its relative imports pointed at the originals.
+  const { mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+  const { dirname, join, resolve: resolvePath } = await import('node:path');
+  const { fileURLToPath, pathToFileURL } = await import('node:url');
+  const HERE = dirname(fileURLToPath(import.meta.url));
+  const MUTANT_DIR = join(HERE, `.mutants-nfts-ens-${process.pid}`);
+  process.on('exit', () => rmSync(MUTANT_DIR, { recursive: true, force: true }));
+  let n = 0;
+  const mutant = async (relPath, from, to) => {
+    const original = readFileSync(join(HERE, '..', relPath), 'utf8');
+    if (!original.includes(from)) throw new Error(`mutation anchor not found: ${from}`);
+    const dir = dirname(join(HERE, '..', relPath));
+    const rewritten = original.replace(from, to).replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolvePath(dir, spec)).href}'`);
+    mkdirSync(MUTANT_DIR, { recursive: true });
+    n += 1;
+    const file = join(MUTANT_DIR, `m${n}-${relPath.split('/').pop()}`);
+    writeFileSync(file, rewritten);
+    return import(pathToFileURL(file).href);
+  };
+  const mChain = await mutant('src/wallet/nfts.ts', '    chainCaip2 === ENS_NAME_REGISTRY_CHAIN &&\n', '');
+  check('MUTANT (the network not compared) is caught: the registry’s address on mainnet would be treated as the name registry',
+    mChain.isEnsNameRegistry('eip155:1', REGISTRY) && !isEnsNameRegistry('eip155:1', REGISTRY));
+  const mHash = await mutant('src/wallet/nfts.ts', '  return hash >> 32n === tokenId >> 32n ? label : null;', '  return label;');
+  check('MUTANT (the label not checked against the token id) is caught: an indexer naming the token "vitalik.eth" would be believed',
+    mHash.ensNameTokenLabel('vitalik.eth', TOKEN) === 'vitalik' && ensNameTokenLabel('vitalik.eth', TOKEN) === null);
+  const mTitle = await mutant('src/wallet/nfts.ts', "  if (chainCaip2 !== undefined && isEnsNameRegistry(chainCaip2, nft.contract)) return t('nft.ens.collection');\n", '');
+  check('MUTANT (the pinned collection title removed) is caught: the gallery says "Unnamed collection" again',
+    mTitle.nftCollectionTitle({ ...base, contract: REGISTRY }, SEP).startsWith('Unnamed collection') && nftCollectionTitle({ ...base, contract: REGISTRY }, SEP) === COLLECTION);
+  const mStale = await mutant('src/wallet/send-nft.ts', 'read.state.currentTokenId !== input.tokenId || ', '');
+  const staleRead = { kind: 'read', state: { status: 2, expiry: EXPIRY, currentTokenId: TOKEN + 1n } };
+  check('MUTANT (a regenerated token id not noticed) is caught: the warning would give an expiry for a token that no longer stands for the name',
+    !mStale.ensNameTokenWarning({ chainCaip2: SEP, contract: REGISTRY, tokenId: TOKEN, indexerName: 'qzv7hk2wmt.eth', read: staleRead }).endsWith(STALE) &&
+      warn({ read: staleRead }).endsWith(STALE));
+  const mGuess = await mutant('src/wallet/send-nft.ts', "  else if (read.kind === 'unread') parts.push(t('nft.ens.unread'));", "  else if (read.kind === 'unread') parts.push(t('nft.ens.expiry', { date: '2026-11-24 03:49:00 UTC' }));");
+  check('MUTANT (a guessed date when the registry could not be read) is caught',
+    /2026-11-24/.test(mGuess.ensNameTokenWarning({ chainCaip2: SEP, contract: REGISTRY, tokenId: TOKEN, indexerName: 'qzv7hk2wmt.eth', read: { kind: 'unread' } })) &&
+      !/2026-11-24/.test(warn({ read: { kind: 'unread' } })));
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

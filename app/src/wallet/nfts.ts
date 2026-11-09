@@ -1,6 +1,7 @@
 import { AsyncStorage, readStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
 import { base64 } from '@scure/base';
 import {
+  ENS_V2_SEPOLIA,
   alchemyNftOwnershipProvider,
   httpTransport,
   normalizeNftBaseUrl,
@@ -19,6 +20,9 @@ import { assertSecureEndpointUrl } from '../config/endpoint-url.ts';
 import type { TransportFactory } from './aa.ts';
 import { utf8Decode } from './erc20.ts';
 import { STRIPPED_NAME_CHARS } from './names.ts';
+import { keccak_256 } from '@noble/hashes/sha3.js';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
+import { t } from '../i18n/index.ts';
 
 /**
  * NFT gallery glue (phase 7 item 4): the NFT-indexer configuration store,
@@ -450,15 +454,68 @@ export function formatTokenId(tokenId: bigint): string {
   return tokenId.toString(10);
 }
 
-/** "Name", else "Collection #id", else "#id". */
-export function nftDisplayName(nft: OwnedNft): string {
+/**
+ * "Name", else "Collection #id", else "#id". `chainCaip2` (the network the
+ * NFT belongs to) lets the collection title name a contract the wallet pins
+ * (nftCollectionTitle); without it the title is the indexer's.
+ */
+export function nftDisplayName(nft: OwnedNft, chainCaip2?: string): string {
   const name = sanitizeNftText(nft.name);
   if (name) return name;
-  const collection = nftCollectionTitle(nft);
+  const collection = nftCollectionTitle(nft, chainCaip2);
   return `${collection} #${formatTokenId(nft.tokenId)}`;
 }
 
-export function nftCollectionTitle(nft: OwnedNft): string {
+// ---------------------------------------------------------------------------
+// ENS names held as NFTs (phase 25, emulator pass p25-emu1)
+// ---------------------------------------------------------------------------
+
+/** The one network whose ENSv2 .eth registry the wallet pins (Ethereum Sepolia). */
+const ENS_NAME_REGISTRY_CHAIN = `eip155:${ENS_V2_SEPOLIA.chainId.toString()}`;
+
+/**
+ * True when `contract` on `chainCaip2` is ENS's ENSv2 .eth registry as the
+ * engine pins it (packages/chains-evm/src/ens-register.ts ENS_V2_SEPOLIA.
+ * ethRegistry, contracts-v2 07e55a05, Sourcify exact match): every one of
+ * its ERC-1155 tokens IS a .eth name, and sending the token hands the name
+ * over. All 40 hex digits on that chain only; a look-alike address or the
+ * same address on another network is not the registry.
+ */
+export function isEnsNameRegistry(chainCaip2: string, contract: string): boolean {
+  return (
+    chainCaip2 === ENS_NAME_REGISTRY_CHAIN &&
+    /^0x[0-9a-fA-F]{40}$/.test(contract) &&
+    contract.toLowerCase() === ENS_V2_SEPOLIA.ethRegistry.toLowerCase()
+  );
+}
+
+/**
+ * The .eth label of a name token, taken from the indexer's token name
+ * ("label.eth") ONLY when it is bound to the token id: in ENSv2 a token id
+ * is keccak256(label) with its low 32 bits replaced by a version
+ * (contracts-v2 07e55a05 contracts/src/utils/LibLabel.sol 7–17,
+ * PermissionedRegistry.sol 692–694), so the high 224 bits of the label's
+ * hash must equal the token id's. A name that does not hash to the id, has
+ * more than one label, or is changed by the display sanitizer is not shown
+ * (null) — the indexer's text alone is never trusted as the name.
+ */
+export function ensNameTokenLabel(indexerName: string | null | undefined, tokenId: bigint): string | null {
+  if (typeof indexerName !== 'string' || !indexerName.endsWith('.eth')) return null;
+  const label = indexerName.slice(0, -'.eth'.length);
+  if (label === '' || label.includes('.')) return null;
+  if (sanitizeNftText(label, 255) !== label) return null;
+  const hash = BigInt(`0x${bytesToHex(keccak_256(utf8ToBytes(label)))}`);
+  return hash >> 32n === tokenId >> 32n ? label : null;
+}
+
+/**
+ * The collection's title: for ENS's pinned .eth registry on its network
+ * (isEnsNameRegistry) "ENS names (ENSv2 .eth registry)", whatever the
+ * indexer calls it; else the indexer's collection name, the contract's
+ * name, or "Unnamed collection (0x1234…abcd)".
+ */
+export function nftCollectionTitle(nft: OwnedNft, chainCaip2?: string): string {
+  if (chainCaip2 !== undefined && isEnsNameRegistry(chainCaip2, nft.contract)) return t('nft.ens.collection');
   return (
     sanitizeNftText(nft.collectionName) ??
     sanitizeNftText(nft.contractName) ??
@@ -484,14 +541,16 @@ export interface NftCollectionGroup {
  * Groups NFTs by contract. Spam-flagged collections sort last (the screen
  * hides them behind an explicit toggle); others sort by title, then
  * contract. Items sort by token id, compared as exact bigints.
+ * `chainCaip2` (the gallery's network) names a pinned collection
+ * (nftCollectionTitle); without it every title is the indexer's.
  */
-export function groupNftsByCollection(nfts: OwnedNft[]): NftCollectionGroup[] {
+export function groupNftsByCollection(nfts: OwnedNft[], chainCaip2?: string): NftCollectionGroup[] {
   const groups = new Map<string, NftCollectionGroup>();
   for (const nft of nfts) {
     const key = nft.contract.toLowerCase();
     let group = groups.get(key);
     if (!group) {
-      group = { key, contract: nft.contract, title: nftCollectionTitle(nft), spam: false, items: [] };
+      group = { key, contract: nft.contract, title: nftCollectionTitle(nft, chainCaip2), spam: false, items: [] };
       groups.set(key, group);
     }
     if (nft.spam === true) group.spam = true;

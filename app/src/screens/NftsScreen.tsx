@@ -205,8 +205,8 @@ export function NftsScreen({ navigation }: Props) {
   };
 
   const groups = useMemo(
-    () => (state.status === 'ok' ? groupNftsByCollection(state.nfts) : []),
-    [state],
+    () => (state.status === 'ok' ? groupNftsByCollection(state.nfts, evmChain.caip2) : []),
+    [state, evmChain.caip2],
   );
   const spamGroups = groups.filter((g) => g.spam);
   const spamItems = spamGroups.reduce((n, g) => n + g.items.length, 0);
@@ -334,8 +334,8 @@ export function NftsScreen({ navigation }: Props) {
               accessibilityRole="button"
               accessibilityLabel={
                 nft.standard === 'erc1155'
-                  ? `${nftDisplayName(nft)}, ${hideAmounts ? 'amount hidden' : `${nft.balance.toString()} copies`}`
-                  : nftDisplayName(nft)
+                  ? `${nftDisplayName(nft, evmChain.caip2)}, ${hideAmounts ? 'amount hidden' : `${nft.balance.toString()} copies`}`
+                  : nftDisplayName(nft, evmChain.caip2)
               }
               accessibilityHint="Opens the NFT details"
               onPress={() => navigation.navigate('NftDetail', { assetId })}
@@ -343,7 +343,7 @@ export function NftsScreen({ navigation }: Props) {
             >
               <NftImage chainId={evmChain.caip2} nft={nft} variant="thumb" style={styles.tileImage} />
               <Text style={[styles.tileName, { color: theme.text }]} numberOfLines={1}>
-                {nftDisplayName(nft)}
+                {nftDisplayName(nft, evmChain.caip2)}
               </Text>
               {nft.standard === 'erc1155' ? (
                 <Text style={[styles.tileMeta, { color: theme.textMuted }]}>
