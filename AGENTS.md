@@ -18846,7 +18846,7 @@ ADDENDUM (2026-11-08, later the same day): of the follow-ups above, these
 are now done and recorded in the entries just before this section — the
 dfb5eba iOS fixes seen in the Simulator (pass p24-ios2) with the one
 remaining sheet fixed (84deacd) and the import-key field tagged the same
-way ({h}); masked amounts spoken as "(amount hidden)" on every remaining
+way (0f58ef5); masked amounts spoken as "(amount hidden)" on every remaining
 screen (0fbebc7); the engine's not-enough-SOL refusal naming the devnet
 coin, Max and a private note on the Solana token send, T-93 on the
 spl-tokens readiness row and the mainnet USDC mint read once (c781efa); the
@@ -18930,6 +18930,117 @@ same time (one device driver); fixes after each pass; 6 last. Subagents
 on Opus.
 
 ## Phase 25 progress
+- [x] Item 6 — LEADERSHIP REFRESH (docs commit 2a94a9b; four documents, +97 /
+      −36 — FEATURE_UNIVERSE.md, THREAT_MODEL.md, DEMO.md and
+      MAINNET_READINESS.md; verified in the CTO's isolated worktree on HEAD
+      796d70d: apply 0 / 4 files, the staged patch id 8f4fbd34…ec16 equal to
+      the agent's, check-readiness 230, check-screen-protection 87,
+      check-devmode 476, check-bridge 430, check-multisig 435,
+      check-insights 123 and check-nfts 179 green on the patched tree, and
+      the eleven suites whose counts THREAT_MODEL 7.4 quotes each equal to
+      the record; the pre-commit scan clean; no 32-character hex run in the
+      diff). FEATURE_UNIVERSE section 15 (header dated 2026-11-09; the
+      record runs to pass p25-emu2 and 448fc2c): row 40 (the NFT gallery)
+      Built → Proven live, partial — the gallery and the detail seen through
+      the saved indexer with a REAL holding, Account 1's ERC-1155 name token
+      qzv7hk2wmt.eth, the collection title and the ENS box with the expiry
+      read from the registry (passes p25-emu1 and p25-emu2); limits stated:
+      one collection and one token, the regular account only, no image, no
+      ERC-721, "1 copy" verified offline, the name expiring 2026-11-24; row
+      41 (NFT actions) stays Built — the Send NFT form opened and the ENS box
+      seen on it, Review never tapped, nothing sent; row 39 stays Built (the
+      real token showed no spam flag, a flagged item still unseen); row 99
+      (the risk overview) Not started → Proven live, partial — THE FIRST
+      TIER 3 ROW PROVEN LIVE, by convention 2 (the screen makes no request of
+      its own and is built only from readings the wallet already makes) and
+      the row-96 / row-47 precedent, after pass p25-emu2 exercised all eight
+      sections with their source lines before and after an Approvals search,
+      the Settings entry, TalkBack and Hide amounts; partial because no share
+      of value was seen (no priced asset) and the waiting-count fix 448fc2c
+      and the Home link are verified offline only; row 84 (tax reporting) Not
+      started → Built, verified offline, partial — the gains report 47b9193,
+      only its button and file name seen live with gap-only data; rows 61
+      and 62 (lending, ERC-4626 vaults) → Designed with the one-paragraph
+      recommendation of docs/LENDING_VAULTS.md; row 86 (address screening)
+      → Designed (a conditional go for warn-only, off by default, after the
+      section 9 answers; a no-go for blocking, keyed APIs, an oracle or free
+      text); row 45 (token-bound accounts) → Designed (a no-go for now, the
+      guardian trust point stated); rows 12, 19, 43, 51, 75, 87, 92, 95 and
+      97 extended one sentence each from the record (the iOS key-field tag
+      0f58ef5, the Solana send's confirm sentence about limits, the Solana
+      Max / note / pending card and the undated readiness reason 3da568a, the
+      Pocket log-window fix, the expiry read live and T-94, the devnet note
+      fix 9e2aa98 seen in p25-emu2, masked speech heard in p25-emu1 with the
+      CTO's confirm-figures decision, the Solana pending card's rules, the
+      counted[] rows feeding the gains report); the summary paragraph gains a
+      phase 25 sentence. TALLY, recounted by the agent's script (which first
+      reproduced HEAD's 60 / 18 / 2 / 19) and by the page builder: PROVEN
+      LIVE 62 (T1 29, T2 32, T3 1), BUILT 18 (9 / 8 / 1), DESIGNED 6 (1 / 1 /
+      4), NOT STARTED 13 (1 / 3 / 9); the summary table and the one count
+      sentence agree. THREAT_MODEL: T-93 extended with the pending-card rules
+      (the record written before the broadcast, definite versus open
+      outcomes, the duplicate refusal within ten minutes, the poll and the
+      dropped state, no Speed up or Cancel by Solana's design), Max, the
+      devnet refusal, the mainnet USDC mint read, and the residuals (limits
+      not counted; the waiting, dropped and duplicate states offline only; an
+      older build would read a Solana record as damage) — Low / Medium (test
+      networks only) unchanged; T-91 gains the expiry note and a pointer to
+      T-94; T-79 the gains report in its mitigation and residual (an
+      estimate label, gaps as text, formula defusal, the 60-second deletion;
+      the file in clear and Hide amounts not applying); NEW ROWS, their
+      ratings proposed by the agent on the file's own scale and ACCEPTED BY
+      THE CTO: T-94 (sending an ENS name's ERC-1155 token) Low / Medium
+      (test networks only) — the box names the consequence on the detail,
+      the form and the confirm before any prompt, and only test-network
+      names exist; T-95 (the risk overview) Low / Medium — every line names
+      its source and session, failed reads are said, nothing is requested or
+      recommended, while misplaced confidence about approvals could cost
+      funds and the screen shows linkable facts to an onlooker; F-90 (the
+      waiting count), F-91 (the Pocket log window) and F-92 (the devnet note
+      key) Low, as the file rates display-only defects (F-69, F-70, F-83,
+      F-84); section 7.4 at 448fc2c — engine 1,351 (chains-solana 101), 67
+      suites / 11,667 checks (run on ec95d3d plus the slice), the new suite
+      check-insights. DEMO: "seven warnings"; warning 2 carries the rehearsal
+      status of steps 51–54 and names 3da568a and 448fc2c as unseen; NEW
+      WARNING 7 — the two names expire 2026-11-24 (the registry read in
+      p25-emu2), a 28-day grace period, NO RENEW FLOW in the wallet, so the
+      name line, the sub-name and step 54 must not be relied on after that
+      date unless the names are renewed outside the app; steps 51 (the risk
+      overview), 52 (the gains export, with the mainnet switch), 53 (the
+      Solana Max, note, pending card and the 0-SOL refusal) and 54 (the NFT
+      gallery and the ENS box; the send form opened, never sent); "What this
+      demo cannot show" extended. MAINNET_READINESS: the status line dated
+      2026-11-09; section 2's Solana bullet (the mainnet USDC mint read
+      2026-11-09; the token send on the pending list, still not counted
+      against limits); section 9 gains three bullets for lending and vaults,
+      address screening and token-bound accounts with their outcomes. THE
+      SHAREABLE PAGE rebuilt with .local/fu/build-fu.py from the version-27
+      base (kept as .local/fu/feature-universe.v27.html; 62 / 18 / 6 / 13
+      asserted in the tiles, the table and the header; a phase 25 sentence
+      added after the phase 24 one in the static summary paragraph; the scan:
+      one 40-hex run — the multisig address already in version 27 — no
+      64-hex run, no uuid, one inline script, one Google-Fonts stylesheet)
+      and PUBLISHED by the CTO as VERSION 28 of
+      https://claude.ai/artifact/JEfyMuPcMJ8YW5x3ZKitsw (version id
+      1794242572-ed72), after reading every line of the live version's saved
+      source, which was byte-identical to the version-27 base bar the host's
+      wrapper line. CTO ANSWERS to the agent's six open questions: (1) row
+      99 stays Proven live (partial) — a defect found live and fixed offline
+      has not held back a row before (rows 96 and 47), and the fix is named
+      as unseen; (2) whether an expired ENSv2 name stops RESOLVING is not
+      established by the record (only that the registry reports no owner at
+      expiry and the 28-day grace), so warning 7's "do not rely on" wording
+      stands; (3) the Settings → Privacy row's exact label for the risk
+      overview is not in the record and the step keeps its generic
+      description (a re-read on the emulator settles it); (4) the path to the
+      P&L chip likewise; (5) the five proposed ratings accepted as written
+      above; (6) .local/helpers/mkwt.sh still creates worktrees under the
+      first session's scratchpad folder (303b0f47…) — harmless, every
+      worktree of this phase lives there and the cleaner rule covers that
+      folder too; a housekeeping follow-up, not changed in this refresh.
+      Also corrected in this record commit: the phase 24 status addendum
+      carried an unreplaced "({h})" placeholder for the import-key field's
+      tag commit — now 0f58ef5.
 - [x] Pass p25-emu2 finding 8 FIXED — THE RISK OVERVIEW'S WAITING TRANSACTIONS
       NAMED BY NETWORK AND ACCOUNT (commit 448fc2c; 6 files, +308 / −54 —
       insights.ts, InsightsScreen.tsx, check-insights 123 (was 100; in-suite
@@ -19581,3 +19692,97 @@ on Opus.
       arguments; the BUSL-1.1 licence questions (counsel). DECISION FOR THE
       CHAIRPERSON: whether to build the Arbitrum Sepolia supply-and-withdraw
       slice (the dev EOA and both wallet accounts already hold USDC there).
+
+## Phase 25 status (2026-11-09)
+
+Items 0 b–d, 1 (the honesty half), 2, 3, 4, 5 and 6 are landed and pushed,
+with two emulator passes and three fix slices between them; item 0a ran as
+the first pass; item 1's ERC-1155 send of a name token was deliberately NOT
+sent — the Send NFT form was opened with its new ENS box and left (the
+confirm's box and risk line are verified offline). The shareable page is at
+version 28 (62 proven live, 18 built, 6 designed, 13 not started). PROVEN
+LIVE this phase, through the app's own screens on the emulator: the NFT
+gallery and detail with a real holding — Account 1's ERC-1155 name token
+qzv7hk2wmt.eth through the saved indexer, with the collection title and the
+ENS box reading the expiry from the registry (feature 40, partial; passes
+p25-emu1 and p25-emu2); the risk overview, all eight sections with their
+source lines before and after an Approvals search, through the Settings
+entry, under TalkBack and Hide amounts (feature 99, partial, the first Tier
+3 row proven live; pass p25-emu2); the gains export's button and file name
+with gap-only data (feature 84 stays Built, partial); the Solana token send
+finished — Max filling the associated balance exactly, a private note on
+the Sent view, the "Pending on this phone" card for a Solana send reaching
+its included state, the 0-SOL refusal naming test SOL, the SOL card hidden
+at 0, and a 0.5 USDC and a 0.1 EURC transfer between the wallet's two
+devnet accounts (passes p25-emu1 and p25-emu2); masked amounts spoken as
+"(amount hidden)" on the Send preview, Staking, Portfolio and P&L with
+"Bullet" never heard (pass p25-emu1); the devnet note fix seen (pass
+p25-emu2). Built and verified offline: the Solana pending record keyed by
+signature with its poll and duplicate refusal, the SOL card rule and the
+import screen's name-field tag (cfb9f39); the risk overview (1753b3c) and
+its waiting transactions named by network and account (448fc2c); the gains
+report from the profit-and-loss engine (47b9193); the ENS name-token notice
+on the NFT screens and the .eth registry on the risk card (e34a0e2); the
+devnet note key (9e2aa98); the log window the endpoint allows, the undated
+readiness reason, "1 copy", the registry's title on Approvals and the Home
+link to the risk overview (3da568a). Designed: lending and yield vaults on
+the test networks (docs/LENDING_VAULTS.md, c1aba7a), optional outbound
+address screening (docs/ADDRESS_SCREENING.md) and token-bound accounts
+(docs/TOKEN_BOUND_ACCOUNTS.md), both d5d8a99. Engine: 1,351 tests. App: 67
+offline suites, 11,667 checks at 448fc2c.
+
+Findings for the Chairperson this phase: the two ENS names the wallet
+holds, qzv7hk2wmt.eth and xk9fdq4rvz.eth, EXPIRE ON 2026-11-24 with a 28-day
+grace period, and the wallet has no renew flow — the name line on Home and
+Receive, the sub-name and DEMO step 54 stop being reliable then unless the
+names are renewed outside the app (T-94, DEMO warning 7); Pocket's Sepolia
+endpoint allows 5,000-block log windows while Activity's fallback asked for
+9,000, so that search could never succeed there (F-91, fixed); a Solana
+devnet note was filed under the mainnet id and never showed on its row
+(F-92, fixed); the risk overview counted waiting transactions wrongly
+(F-90, fixed); the confirm screen's exact figures stay unmasked under Hide
+amounts BY DECISION — the preview's mask is the one a shoulder-surfer sees,
+and the confirm is where exact figures are approved; a Solana token send is
+NOT counted by spending limits (the policy engine's scope accepts EVM chains
+only; the confirm says so); Aave v3 on Ethereum Sepolia is a no-go (its
+market there is a stale deployment) while a supply-and-withdraw slice on
+Arbitrum Sepolia is a go if decided, and ERC-4626 vaults are a no-go for
+now; OFAC's SDN list of 6 November 2026 carries 1,081 digital-currency
+addresses (137 Ethereum-format, 534 Bitcoin, 4 Solana, 2 Dogecoin) and OFAC
+calls its address listings "not likely to be exhaustive"; the ERC-6551
+registry has byte-identical code on all six of the wallet's networks and
+the ENSv2 .eth registry answers ownerOf, so an account bound to a name token
+would follow the token's holder — a trust point in the name's guardian that
+makes it unsafe to build on today; Account 2's Dogecoin card offers Send
+while saying it has no endpoint (pass p25-emu2 finding 9, open); the
+worktree helper still writes under the first session's scratchpad folder.
+
+Decisions and inputs still open: whether to build the Arbitrum Sepolia
+Aave v3 supply-and-withdraw slice (docs/LENDING_VAULTS.md sections 1 and 8;
+the dev EOA and both wallet accounts hold USDC there); the address-screening
+questions (docs/ADDRESS_SCREENING.md section 9) before any warn-only check;
+renewing the two ENS names before 2026-11-24, or letting them lapse (a
+renew flow is a slice of its own); the fifteen Tropic Square questions in
+docs/TROPIC_SQUARE.md section 12.1 and then Stage 3; phase 24 item 2's
+inputs (a release signing key, the audit firm, budget and C1 scope, the git
+tag); whether Home should say that a Solana token send needs test SOL when
+an account holds none (finding F of pass p24-solfix2); explicit "Copy"
+accessibility actions for the mint and the Activity header address; the
+answers in docs/DURESS_WALLET.md section 8.5; dropping stash@{0}; Homebrew's
+rust and ruby ahead of rustup; one glance at the emulator window under -gpu
+swangle. On hold by the Chairperson: a native Spanish reviewer, the fiat
+off-ramp provider, the disclosure decision.
+
+Follow-ups (no inputs): the entries of a removed account can never be
+cleared from the risk overview's waiting list (a design question recorded
+with 448fc2c); the Solana pending card's waiting and dropped states and its
+duplicate refusal, never seen live; a Solana scope in the policy engine so
+token sends count against limits; the "Account name" field's nickname tag
+on iOS, untested; a flagged spam NFT never seen; the gains report never
+seen with real figures (needs a priced holding on a main network); an
+ERC-1155 name-token send never sent; the Dogecoin card's Send with no
+endpoint; the Settings → Privacy label of the risk overview and the P&L
+chip's path re-read on the emulator for DEMO steps 51 and 52; the worktree
+helper's scratchpad path; a Token-2022 transfer and one with a non-zero
+transfer fee live; the readiness memo's Solana staged-path bullet, still a
+proposal.
