@@ -14,7 +14,7 @@ export type {
   CompileMessageParams,
   SolanaInstruction,
 } from './message.js';
-export { SYSTEM_PROGRAM_ID, systemTransfer } from './systemProgram.js';
+export { SYSTEM_PROGRAM_ID, systemCreateAccount, systemTransfer } from './systemProgram.js';
 export {
   MAX_SEED_LENGTH,
   MAX_SEEDS,
@@ -70,6 +70,7 @@ export {
   decodePausable,
   decodePermanentDelegate,
   decodeTokenMetadataExtension,
+  decodeTransferFeeAmount,
   decodeTransferFeeConfig,
   decodeTransferHook,
   findExtension,
@@ -118,3 +119,13 @@ export type {
   SolanaAssetNamespace,
   SplTokenTransferQuote,
 } from './tokenTransfer.js';
+export {
+  TOKEN_METADATA_INITIALIZE_DISCRIMINATOR,
+  initializeMetadataPointer,
+  initializeMint2,
+  initializeTokenMetadata,
+  initializeTransferFeeConfig,
+  mintLengthWithExtensions,
+  mintToChecked,
+  tokenMetadataLength,
+} from './tokenMintSetup.js';

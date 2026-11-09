@@ -410,6 +410,21 @@ export function decodeTransferFeeConfig(ext: TokenExtension): TransferFeeConfig 
   };
 }
 
+/**
+ * The TransferFeeAmount account extension (transfer_fee/mod.rs lines
+ * 176-181): the u64 withheld_amount, 8 bytes. A TransferCheckedWithFee adds
+ * the fee to the DESTINATION account's withheld_amount
+ * (program/src/processor.rs lines 581-592 at the same commit); the mint's
+ * withdraw-withheld authority can withdraw it, or anyone can harvest it to
+ * the mint (transfer_fee/instruction.rs lines 100-135).
+ */
+export function decodeTransferFeeAmount(ext: TokenExtension): { withheldAmount: bigint } {
+  if (ext.type !== EXT.TransferFeeAmount || ext.data.length !== 8) {
+    throw new Error('malformed TransferFeeAmount extension');
+  }
+  return { withheldAmount: readU64(ext.data, 0) };
+}
+
 /** MAX_FEE_BASIS_POINTS (transfer_fee/mod.rs line 26). */
 export const MAX_FEE_BASIS_POINTS = 10_000;
 

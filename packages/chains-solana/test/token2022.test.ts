@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { base58, base64 } from '@scure/base';
 import { formatAssetId, mnemonicToSeed, solanaKeyProvider } from '@shiba-wallet/core';
-import { PublicKey } from '@solana/web3.js';
+import { PublicKey, SystemProgram } from '@solana/web3.js';
+import * as spl from '@solana/spl-token';
 import {
   ExtensionType,
   TOKEN_2022_PROGRAM_ID as SPL_TOKEN_2022,
@@ -20,7 +21,13 @@ import {
   unpackAccount,
   unpackMint,
 } from '@solana/spl-token';
-import { unpack as unpackTokenMetadata } from '@solana/spl-token-metadata';
+import {
+  createInitializeInstruction as createTokenMetadataInitializeInstruction,
+  pack as packTokenMetadata,
+  unpack as unpackTokenMetadata,
+} from '@solana/spl-token-metadata';
+import { systemCreateAccount } from '../src/systemProgram.js';
+import * as setup from '../src/tokenMintSetup.js';
 import { SolanaRpcClient, type JsonRpcTransport } from '../src/rpc.js';
 import {
   createAssociatedTokenAccountIdempotent,
@@ -37,6 +44,7 @@ import {
   classifyMint,
   decodeMetaplexMetadata,
   decodeTokenMetadataExtension,
+  decodeTransferFeeAmount,
   decodeTransferFeeConfig,
   findExtension,
   parseMint,
@@ -714,5 +722,161 @@ describe('listOwnerTokenAccounts', () => {
       ['spl-token', MINT, 5_000_000n, true],
       ['token-2022', PYUSD_DEV, 42n, true],
     ]);
+  });
+});
+
+describe('lab mint set-up for the devnet fee mint (phase 26 item 3a)', () => {
+
+  const key = (n: number): Uint8Array => new Uint8Array(32).fill(n);
+  const asMetas = (ix: { keys: { pubkey: PublicKey; isSigner: boolean; isWritable: boolean }[] }) =>
+    ix.keys.map((k) => ({ pubkey: base58.encode(k.pubkey.toBytes()), isSigner: k.isSigner, isWritable: k.isWritable }));
+  const ours = (ix: { keys: { pubkey: Uint8Array; isSigner: boolean; isWritable: boolean }[] }) =>
+    ix.keys.map((k) => ({ pubkey: base58.encode(k.pubkey), isSigner: k.isSigner, isWritable: k.isWritable }));
+  const pk = (b: Uint8Array): PublicKey => new PublicKey(b);
+
+  it('CreateAccount equals web3.js SystemProgram.createAccount', () => {
+    const ix = systemCreateAccount({ from: key(1), newAccount: key(2), lamports: 4_000_000n, space: 448n, owner: TOKEN_2022_PROGRAM_ID });
+    const ref = SystemProgram.createAccount({ fromPubkey: pk(key(1)), newAccountPubkey: pk(key(2)), lamports: 4_000_000, space: 448, programId: SPL_TOKEN_2022 });
+    expect([...ix.data]).toEqual([...ref.data]);
+    expect(ix.data.length).toBe(52);
+    expect(ours(ix)).toEqual(asMetas(ref));
+    expect(base58.encode(ix.programId)).toBe(ref.programId.toBase58());
+  });
+
+  it('InitializeTransferFeeConfig equals spl-token, with and without authorities', () => {
+    for (const [a, b] of [[key(3), key(4)], [null, key(4)], [key(3), null], [null, null]] as const) {
+      const ix = setup.initializeTransferFeeConfig({ mint: key(5), transferFeeConfigAuthority: a, withdrawWithheldAuthority: b, basisPoints: 100, maximumFee: 1_000_000n });
+      const ref = spl.createInitializeTransferFeeConfigInstruction(pk(key(5)), a && pk(a), b && pk(b), 100, 1_000_000n, SPL_TOKEN_2022);
+      expect([...ix.data]).toEqual([...ref.data]);
+      expect(ours(ix)).toEqual(asMetas(ref));
+    }
+    expect(() => setup.initializeTransferFeeConfig({ mint: key(5), transferFeeConfigAuthority: null, withdrawWithheldAuthority: null, basisPoints: 10_001, maximumFee: 0n })).toThrow();
+  });
+
+  it('MetadataPointer Initialize equals spl-token', () => {
+    const ix = setup.initializeMetadataPointer({ mint: key(5), authority: key(3), metadataAddress: key(5) });
+    const ref = spl.createInitializeMetadataPointerInstruction(pk(key(5)), pk(key(3)), pk(key(5)), SPL_TOKEN_2022);
+    expect([...ix.data]).toEqual([...ref.data]);
+    expect(ix.data.length).toBe(66);
+    expect(ours(ix)).toEqual(asMetas(ref));
+  });
+
+  it('InitializeMint2 equals spl-token, with and without a freeze authority', () => {
+    for (const freeze of [null, key(7)]) {
+      const ix = setup.initializeMint2({ mint: key(5), decimals: 6, mintAuthority: key(3), freezeAuthority: freeze });
+      const ref = spl.createInitializeMint2Instruction(pk(key(5)), 6, pk(key(3)), freeze && pk(freeze), SPL_TOKEN_2022);
+      expect([...ix.data]).toEqual([...ref.data]);
+      expect(ours(ix)).toEqual(asMetas(ref));
+    }
+  });
+
+  it('MintToChecked equals spl-token', () => {
+    const ix = setup.mintToChecked({ mint: key(5), destination: key(8), authority: key(3), amount: 100_000_000n, decimals: 6 });
+    const ref = spl.createMintToCheckedInstruction(pk(key(5)), pk(key(8)), pk(key(3)), 100_000_000n, 6, [], SPL_TOKEN_2022);
+    expect([...ix.data]).toEqual([...ref.data]);
+    expect(ours(ix)).toEqual(asMetas(ref));
+  });
+
+  it('token-metadata Initialize equals @solana/spl-token-metadata, and its discriminator is the hash prefix', () => {
+    expect([...setup.TOKEN_METADATA_INITIALIZE_DISCRIMINATOR]).toEqual([210, 225, 30, 162, 88, 184, 77, 141]);
+    const ix = setup.initializeTokenMetadata({ mint: key(5), updateAuthority: key(3), mintAuthority: key(3), name: 'Shiba Fee Test', symbol: 'SFEE', uri: '' });
+    const ref = createTokenMetadataInitializeInstruction({ programId: SPL_TOKEN_2022, metadata: pk(key(5)), updateAuthority: pk(key(3)), mint: pk(key(5)), mintAuthority: pk(key(3)), name: 'Shiba Fee Test', symbol: 'SFEE', uri: '' });
+    expect([...ix.data]).toEqual([...ref.data]);
+    expect(ours(ix)).toEqual(asMetas(ref));
+  });
+
+  it('the TokenMetadata length and the mint lengths equal spl-token', () => {
+    const meta = { updateAuthority: pk(key(3)), mint: pk(key(5)), name: 'Shiba Fee Test', symbol: 'SFEE', uri: '', additionalMetadata: [] };
+    const metaLength = setup.tokenMetadataLength('Shiba Fee Test', 'SFEE', '');
+    expect(metaLength).toBe(packTokenMetadata(meta).length);
+    const fixed = [EXT.TransferFeeConfig, EXT.MetadataPointer];
+    expect(setup.mintLengthWithExtensions(fixed)).toBe(
+      spl.getMintLen([spl.ExtensionType.TransferFeeConfig, spl.ExtensionType.MetadataPointer]),
+    );
+    expect(setup.mintLengthWithExtensions(fixed, [metaLength])).toBe(
+      spl.getMintLen([spl.ExtensionType.TransferFeeConfig, spl.ExtensionType.MetadataPointer], {
+        [spl.ExtensionType.TokenMetadata]: metaLength,
+      }),
+    );
+    expect(setup.mintLengthWithExtensions([EXT.TransferFeeConfig])).toBe(278);
+  });
+
+  it('decodes TransferFeeAmount and refuses a wrong type or length', () => {
+    const ext = { type: EXT.TransferFeeAmount, name: 'TransferFeeAmount', data: Uint8Array.of(0x10, 0x27, 0, 0, 0, 0, 0, 0) };
+    expect(decodeTransferFeeAmount(ext).withheldAmount).toBe(10_000n);
+    // All eight bytes count: the largest u64.
+    expect(decodeTransferFeeAmount({ ...ext, data: new Uint8Array(8).fill(0xff) }).withheldAmount).toBe(2n ** 64n - 1n);
+    expect(() => decodeTransferFeeAmount({ ...ext, data: ext.data.slice(0, 7) })).toThrow();
+    expect(() => decodeTransferFeeAmount({ ...ext, type: EXT.TransferFeeConfig })).toThrow();
+  });
+});
+
+describe('the live devnet fee mint (phase 26 item 3a, fixtures/devnet-fee-mint-2026-11-09.json)', () => {
+  const FEE_FIXTURE = JSON.parse(
+    readFileSync(new URL('./fixtures/devnet-fee-mint-2026-11-09.json', import.meta.url), 'utf8'),
+  ) as {
+    mint: string;
+    roles: { devAta: string; account1Ata: string; account2Ata: string };
+    accounts: Record<string, { owner: string; lamports: number; dataBase64: string }>;
+  };
+  const DEV = '6TgSKzjg3SQSeqrDR95D7RNncYh63FPzRcDWX6T4455t';
+  const ACCOUNT_1 = 'EK5jKrBRwvQXXsSERGN6jEoYaofE2PNiZWQoaCLtrYPv';
+  const ACCOUNT_2 = '9WMgKdmRJBZy8WQ6Q9T6VjJN4wyT9jQenDvfvLFe471n';
+  const bytes = (address: string): Uint8Array => base64.decode(FEE_FIXTURE.accounts[address]!.dataBase64);
+  const info = (address: string) => ({
+    data: Buffer.from(bytes(address)),
+    owner: new PublicKey(FEE_FIXTURE.accounts[address]!.owner),
+    lamports: FEE_FIXTURE.accounts[address]!.lamports,
+    executable: false,
+  });
+  const mint = parseMint(bytes(FEE_FIXTURE.mint), 'token-2022');
+
+  it('parses as a fee-charging Token-2022 mint with the terms it was created with, as spl-token reads it', () => {
+    expect(mint.decimals).toBe(6);
+    expect(mint.mintAuthority).toBe(DEV);
+    expect(mint.freezeAuthority).toBeNull();
+    expect(mint.supply).toBe(110_000_000n);
+    const classification = classifyMint(mint);
+    expect(classification.transferClass).toBe('fee-charging');
+    expect(classification.refusal).toBeNull();
+    const fee = decodeTransferFeeConfig(findExtension(mint.extensions, EXT.TransferFeeConfig)!);
+    expect(fee.transferFeeConfigAuthority).toBe(DEV);
+    expect(fee.withdrawWithheldAuthority).toBe(DEV);
+    expect(fee.withheldAmount).toBe(0n);
+    expect(fee.newerTransferFee).toEqual({ epoch: 1204n, maximumFee: 1_000_000n, basisPoints: 100 });
+    expect(fee.olderTransferFee).toEqual(fee.newerTransferFee);
+    const ref = spl.unpackMint(new PublicKey(FEE_FIXTURE.mint), info(FEE_FIXTURE.mint), SPL_TOKEN_2022);
+    const refFee = getTransferFeeConfig(ref)!;
+    expect(refFee.newerTransferFee.transferFeeBasisPoints).toBe(100);
+    expect(refFee.newerTransferFee.maximumFee).toBe(1_000_000n);
+    expect(refFee.withdrawWithheldAuthority.toBase58()).toBe(DEV);
+    expect(getExtensionTypes(ref.tlvData)).toEqual(
+      mint.extensions.map((e) => e.type),
+    );
+    const meta = decodeTokenMetadataExtension(findExtension(mint.extensions, EXT.TokenMetadata)!);
+    expect([meta.mint, meta.name, meta.symbol, meta.uri]).toEqual([FEE_FIXTURE.mint, 'Shiba Fee Test', 'SFEE', '']);
+    expect(setup.mintLengthWithExtensions([EXT.TransferFeeConfig, EXT.MetadataPointer], [setup.tokenMetadataLength('Shiba Fee Test', 'SFEE', '')])).toBe(bytes(FEE_FIXTURE.mint).length);
+  });
+
+  it("the engine's fee for 1 token equals spl-token's and the chain's withheld amount", () => {
+    const fee = decodeTransferFeeConfig(findExtension(mint.extensions, EXT.TransferFeeConfig)!);
+    const engineFee = calculateTransferFee(transferFeeRateAt(fee, 1204n), 1_000_000n);
+    expect(engineFee).toBe(10_000n);
+    expect(engineFee).toBe(calculateFee(getTransferFeeConfig(spl.unpackMint(new PublicKey(FEE_FIXTURE.mint), info(FEE_FIXTURE.mint), SPL_TOKEN_2022))!.newerTransferFee, 1_000_000n));
+    for (const [address, owner, amount, withheld] of [
+      [FEE_FIXTURE.roles.devAta, DEV, 99_000_000n, 0n],
+      [FEE_FIXTURE.roles.account1Ata, ACCOUNT_1, 10_000_000n, 0n],
+      [FEE_FIXTURE.roles.account2Ata, ACCOUNT_2, 990_000n, 10_000n],
+    ] as const) {
+      const account = parseTokenAccount(bytes(address), 'token-2022');
+      expect([account.mint, account.owner, account.amount]).toEqual([FEE_FIXTURE.mint, owner, amount]);
+      expect(decodeTransferFeeAmount(findExtension(account.extensions, EXT.TransferFeeAmount)!).withheldAmount).toBe(withheld);
+      const ref = unpackAccount(new PublicKey(address), info(address), SPL_TOKEN_2022);
+      expect(spl.getTransferFeeAmount(ref)!.withheldAmount).toBe(withheld);
+      expect(bytes(address).length).toBe(associatedAccountLength(mint));
+      expect(
+        base58.encode(findAssociatedTokenAddress({ owner: base58.decode(owner), mint: base58.decode(FEE_FIXTURE.mint), tokenProgramId: TOKEN_2022_PROGRAM_ID }).address),
+      ).toBe(address);
+    }
   });
 });

@@ -19961,3 +19961,61 @@ driver at a time, item 1's first; 6 last. Subagents on Opus.
       UniSat address endpoints, whether any wallet address has ever
       received an inscription or Runes, and any audit of ord. FEATURE row
       42 → Designed at the item-6 refresh.
+- [x] Item 3a — A TOKEN-2022 MINT WITH A TRANSFER FEE ON SOLANA DEVNET, AND
+      THE WALLET'S TransferCheckedWithFee PATH PROVEN LIVE BY SCRIPT (commit
+      below; 8 files, +902 / −6 — new packages/chains-solana/src/
+      tokenMintSetup.ts (lab tooling the app does not use: the
+      InitializeTransferFeeConfig, MetadataPointer, InitializeMint2,
+      MintToChecked and TokenMetadata instruction builders and the size
+      helpers), systemCreateAccount in systemProgram.ts, decodeTransferFeeAmount
+      in tokenExtensions.ts (the engine had no decoder for the account
+      extension that holds the withheld fee), index.ts exports, 10 new tests
+      with the fixture test/fixtures/devnet-fee-mint-2026-11-09.json (the
+      raw bytes of the mint and three accounts), new
+      scripts/testnet/spl-fee-mint-smoke.mjs (dry run by default,
+      SPL_FEE_LIVE=1, a 0.1 SOL cap); engine 1,351 → 1,361 (chains-solana 101
+      → 111); offline runner ALL GREEN in the CTO's isolated worktree on HEAD
+      4bef635: checkout 0 / apply 0 / 8 files, the staged patch id
+      65615ac2…85ec equal to the file's and the agent's, the engine rebuilt,
+      app 11,667 across 67 suites, lint 0/0, tsc clean; the pre-commit scan
+      at the commit; 10 hand mutants caught — the decoder reading only the
+      low 32 bits survived first and got a largest-u64 test; SOURCES
+      token-2022 at 5170695d (transfer_fee/instruction.rs 24–37 / 206–245,
+      instruction.rs 858–892 / 1179–1187 / 1360–1380 / 1861–1888,
+      processor.rs 466–470 the FeeMismatch rule and 570–592 the fee withheld
+      in the RECIPIENT's account), token-metadata c1fe5e81, cross-checked
+      against @solana/spl-token 0.4.15, spl-token-metadata 0.1.6 and
+      web3.js). THE MINT 7iJCvReXQqTqj7grTPzo3ggibPrSp5jcfghnmADjnoEn
+      ("Shiba Fee Test" / SFEE, metadata in the mint, 6 decimals, a fee of
+      100 basis points capped at 1 SFEE per transfer, the dev devnet wallet
+      6TgSKzjg…455t holding every authority, NO freeze authority, 448 bytes
+      at exactly its rent 2,926,080 lamports, supply 110 SFEE) — a lab asset
+      with no value, NOT in KNOWN_SOLANA_TOKENS. LIVE (2026-11-09 ~22:56 UTC;
+      every signature re-read at confirmed and finalized on
+      api.devnet.solana.com and onfinality by the agent; the CTO re-read all
+      three on the public RPC and the first on onfinality, which then
+      rate-limited): create 4t8bFEH1…SjtE slot 520539352 fee 10,000; mint 100
+      SFEE to the dev wallet and 10 to Account 1's devnet address
+      EK5jKrBRwv…rYPv (both associated accounts created) 5HKqcwGk…gWxW slot
+      520539358; the send of 1 SFEE from the dev wallet to Account 2
+      (9WMgKdmR…471n, its account AWFgCuNf…yYKJ created) THROUGH
+      quoteSplTokenTransfer / TransferCheckedWithFee, the engine's bytes
+      unchanged, 3DXkbh6r…ntm1 slot 520539364 — the quote's fee 10,000 and
+      990,000 received; on chain Account 2 holds 990,000 with 10,000
+      WITHHELD in its account (read by the new decoder; the CTO re-read
+      990,000), the mint's withheld amount 0, spl-token's calculateFee
+      agreeing; balances reconciled to the base unit (dev SOL −7,670,480 =
+      fees 20,000 + the mint's rent + three 182-byte associated accounts at
+      1,574,800 each; dev 99,000,000 SFEE, Account 1 10,000,000 — re-read
+      by the CTO — Account 2 990,000 + 10,000 withheld = the supply). The
+      mnemonic went into one 0600 file, passed through SPL_MNEMONIC_FILE,
+      deleted with rm -P; the throwaway mint key lived in memory only and
+      holds no authority; the run record in the git-ignored
+      scripts/testnet/runs/. NOT VERIFIED: the in-app send (the emulator
+      pass: track the mint by address on Account 1, send 1 SFEE to Account
+      2 expecting "Issuer's transfer fee (withheld from the amount) 0.01
+      SFEE" / "Recipient receives 0.99 SFEE", no rent row, Account 2's
+      account 990,000 → 1,980,000 withheld 10,000 → 20,000); how Activity
+      words the withheld part; Withdraw / Harvest read, never called (the
+      0.01 SFEE stays withheld); SetTransferFee and the cap; a smart-account
+      sender; that devnet's program binary is exactly 5170695d.

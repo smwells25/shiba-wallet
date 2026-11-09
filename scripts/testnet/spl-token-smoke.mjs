@@ -18,7 +18,8 @@
  * quoted transfer only when the quote succeeds, with a hard cap of
  * 0.05 SOL on fee plus rent, then confirms it and re-reads the transaction
  * status on the second RPC. No airdrop, no mint creation: a live leg needs
- * the dev wallet to hold the token already.
+ * the dev wallet to hold the token already (spl-fee-mint-smoke.mjs creates a
+ * lab Token-2022 mint with a transfer fee and gives the dev wallet some).
  *
  * The dev mnemonic is read from the git-ignored .dev-wallet/mnemonic.txt
  * (or the file SPL_MNEMONIC_FILE names) and never printed; only public

@@ -3,8 +3,8 @@ import { concatBytes, u32ToLeBytes, u64ToLeBytes } from './encoding.js';
 import type { SolanaInstruction } from './message.js';
 
 /**
- * System Program instructions. Only Transfer is implemented for now; other
- * variants can be added the same way without touching the message layer.
+ * System Program instructions: Transfer and CreateAccount. Other variants
+ * can be added the same way without touching the message layer.
  */
 
 /**
@@ -60,5 +60,44 @@ export function systemTransfer(params: {
     ],
     // u32 LE instruction index (Transfer = 2) followed by u64 LE lamports.
     data: concatBytes(u32ToLeBytes(2), u64ToLeBytes(lamports)),
+  };
+}
+
+/**
+ * Builds a System Program CreateAccount instruction: a new account owned by
+ * `owner`, with `space` bytes of data and `lamports` moved from `from`.
+ *
+ * Encoding, from the same two sources as systemTransfer: CreateAccount is
+ * variant 0 of SystemInstruction, carrying `lamports: u64, space: u64,
+ * owner: Pubkey` (bincode: a u32 tag, then little-endian integers, then the
+ * 32 key bytes); the installed @solana/web3.js layout agrees
+ * (`Create: { index: 0, layout: struct([u32('instruction'),
+ * ns64('lamports'), ns64('space'), publicKey('programId')]) }`). 52 bytes
+ * in all. Accounts: [from, newAccount], both writable and both signing.
+ *
+ * Used only by the test-network scripts that create a lab token mint; the
+ * wallet itself never creates accounts this way.
+ */
+export function systemCreateAccount(params: {
+  /** 32-byte public key of the funding account; must sign. */
+  from: Uint8Array;
+  /** 32-byte public key of the account to create; must sign. */
+  newAccount: Uint8Array;
+  lamports: bigint;
+  /** Data length in bytes. */
+  space: bigint;
+  /** 32-byte id of the program that will own the account. */
+  owner: Uint8Array;
+}): SolanaInstruction {
+  const { from, newAccount, lamports, space, owner } = params;
+  if (lamports < 0n || space < 0n) throw new Error('lamports and space must be non-negative');
+  if (owner.length !== 32) throw new Error('the owner program id must be 32 bytes');
+  return {
+    programId: SYSTEM_PROGRAM_ID,
+    keys: [
+      { pubkey: from, isSigner: true, isWritable: true },
+      { pubkey: newAccount, isSigner: true, isWritable: true },
+    ],
+    data: concatBytes(u32ToLeBytes(0), u64ToLeBytes(lamports), u64ToLeBytes(space), owner),
   };
 }
