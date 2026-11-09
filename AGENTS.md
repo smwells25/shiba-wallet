@@ -19870,3 +19870,31 @@ halves of items 1, 2 and 3 and item 3b; then the emulator passes one
 driver at a time, item 1's first; 6 last. Subagents on Opus.
 
 ## Phase 26 progress
+- [x] Item 0 — HOUSEKEEPING (2026-11-09, the CTO; the record commit below;
+      no code). THE RESUME: the Chairperson's "you're approved to begin next
+      phase" of 2026-11-09 20:05 UTC reached the previous session after its
+      context had filled, and that session answered "Prompt is too long"
+      three times, so the approval went unacted for about three hours until
+      this session read the previous transcript's tail; the phase 26 plan
+      above is the result (commit d001f99, CI pending at the time of
+      writing). WORKTREES: 31 scratchpad worktrees of phases 23–25 were
+      removed after two checks — every modified or untracked file in each
+      was byte-identical to that path at some later commit on main (its
+      landed slice), and the rest were clean bar their .ready marker —
+      leaving wt-app (Metro), wt-verify, wt-ios2 (the iOS prebuild, 2.5 GB)
+      and the five phase 26 wave-1 worktrees; stash@{0} untouched (the
+      Chairperson's call). THE HELPER: .local/helpers/mkwt.sh takes its
+      scratchpad folder from SHIBA_SCRATCHPAD when set and keeps the
+      phase 23–25 folder as the default, so the "first session's folder"
+      follow-up is closed without moving anything. THE DEPOSITS: the two
+      +20 USDC deposits of 4 November on Account 1 (from 0x319d…460f) and
+      on the Kernel (from 0x3c33…752d) and the 0.01 test ETH on Account 1
+      line up with the Chairperson's message of 2026-11-04 ("any address
+      need some test funds on sepolia? I'll add a few sepETH and sepUSDC
+      if I have time", session 3da3082d), so the record now says they are
+      most likely the Chairperson's; the senders were not confirmed by the
+      Chairperson. WAVE 1 DISPATCHED the same hour: (A) the ENS renewal
+      engine and script with a live renewal of shibawalletdemo.eth, (B) the
+      Aave v3 lending engine and script with a live 0.1 USDC supply and
+      withdrawal on Arbitrum Sepolia, (C) a Token-2022 fee mint on Solana
+      devnet by script, (D) the item-4 code fixes, (E) docs/BITCOIN_ASSETS.md.
