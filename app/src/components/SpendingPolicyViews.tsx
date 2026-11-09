@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Alert, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '../theme';
+import { maskedSpokenProps, spokenMaskedText } from '../a11y';
 import { usePrefs } from '../wallet/PrefsContext';
 import { requireLocalAuth } from '../wallet/biometric';
 import {
@@ -201,7 +202,11 @@ export function SpendingPolicyNotice({
         </Text>
       ) : (
         readouts!.map((r) => (
-          <Text key={r.policy.id} style={[styles.line, { color: theme.text }]}>
+          <Text
+            key={r.policy.id}
+            {...maskedSpokenProps(`${policySummary(r.policy, hideAmounts)}. ${spentReadoutText(r, hideAmounts)}.`)}
+            style={[styles.line, { color: theme.text }]}
+          >
             {policySummary(r.policy, hideAmounts)}. {spentReadoutText(r, hideAmounts)}.
           </Text>
         ))
@@ -210,7 +215,7 @@ export function SpendingPolicyNotice({
         ? overLimitPreviewLines(lookAhead, hideAmounts).map((line) => (
             <Text
               key={line}
-              accessibilityLabel={`Warning: ${line}`}
+              accessibilityLabel={spokenMaskedText(`Warning: ${line}`)}
               style={[styles.warning, { color: theme.warningText, backgroundColor: theme.warningSurface, borderColor: theme.warningBorder }]}
             >
               {line}

@@ -1679,6 +1679,25 @@ console.log('check-wc: the sent view after a dApp transaction, batch or browser 
     !openWiringOk(provider.replace("const eoaSent = await sentOrOpen(", "const eoaSent = await (async (f) => ({ value: await f(), open: null }))(")));
 }
 
+// Phase 24 (the masked-amount follow-up to pass p24-solhist finding 1): the
+// typed-data card's row value ("•••• USDC" under Hide amounts) was spoken
+// "4 Bullet USDC"; it now carries a11y.ts maskedSpokenProps(row.value), a
+// label only when masked (the helper's behaviour on the summary rows is
+// pinned in check-typed-data).
+{
+  const a11y = await import('../src/a11y.ts');
+  const sheet = readFileSync(new URL('../src/components/WcApprovalSheet.tsx', import.meta.url), 'utf8');
+  const start = sheet.indexOf('function TypedDataSummaryCard(');
+  const card = start >= 0 ? sheet.slice(start, sheet.indexOf('\nfunction ', start + 10)) : '';
+  const pin = (src, c) =>
+    src.includes("import { maskedSpokenProps } from '../a11y';") &&
+    /<Text\s+selectable\s+\/\/[^\n]*\n\s+\{\.\.\.maskedSpokenProps\(row\.value\)\}[\s\S]{0,260}\{row\.value\}/.test(c);
+  check('the typed-data card speaks a masked row value through maskedSpokenProps(row.value) (source)', pin(sheet, card));
+  check('mutant caught: the row value without the helper', !pin(sheet, card.replace('{...maskedSpokenProps(row.value)}', '')));
+  check('the helper: "•••• USDC" → "(amount hidden) USDC"; "1.5 USDC" → no label',
+    a11y.maskedSpokenProps('•••• USDC').accessibilityLabel === '(amount hidden) USDC' && Object.keys(a11y.maskedSpokenProps('1.5 USDC')).length === 0);
+}
+
 console.log('');
 console.log(`check-wc: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

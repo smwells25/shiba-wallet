@@ -400,6 +400,25 @@ const WEI = 10n ** 18n;
     nowMs: T0,
   });
   check('hidden + stale: still just the mask', fiatLine(maskedStale) === masked?.text);
+  // Phase 24 (the masked-amount follow-up to pass p24-solhist finding 1): the
+  // Send and Swap confirm rows show this line under the amount, and TalkBack
+  // read "≈ ••••" as "approximately 4 Bullet"; the row's sub Text now speaks
+  // it through a11y.ts maskedSpokenProps, only when masked.
+  const a11y = await import('../src/a11y.ts');
+  const { readFileSync } = await import('node:fs');
+  check('hidden: the fiat line is spoken "≈ (amount hidden)", never "••••"',
+    a11y.maskedSpokenProps(fiatLine(masked)).accessibilityLabel === '≈ (amount hidden)');
+  check('…a shown fiat line gets no label of its own (read exactly as before)',
+    Object.keys(a11y.maskedSpokenProps(fiatLine(formatFiat(q('2674.34'), WEI, 18, { hidden: false, nowMs: T0 })))).length === 0);
+  const send = readFileSync(new URL('../src/screens/SendScreen.tsx', import.meta.url), 'utf8');
+  const swap = readFileSync(new URL('../src/screens/SwapScreen.tsx', import.meta.url), 'utf8');
+  const SEND_SUB = '{sub ? <Text {...maskedSpokenProps(localize(sub))} style={[styles.rowSub, { color: theme.textMuted }]}>{localize(sub)}</Text> : null}';
+  const SWAP_SUB = '{sub ? <Text {...maskedSpokenProps(localized(sub))} style={[styles.rowSub, { color: theme.textMuted }]}>{localized(sub)}</Text> : null}';
+  check('the Send and Swap confirm rows speak the fiat line through maskedSpokenProps (source)', send.includes(SEND_SUB) && swap.includes(SWAP_SUB));
+  check('…mutant caught: Send\'s sub line without the helper',
+    !send.replace(SEND_SUB, '{sub ? <Text style={[styles.rowSub, { color: theme.textMuted }]}>{localize(sub)}</Text> : null}').includes(SEND_SUB));
+  check('…mutant caught: Swap\'s sub line without the helper',
+    !swap.replace(SWAP_SUB, '{sub ? <Text style={[styles.rowSub, { color: theme.textMuted }]}>{localized(sub)}</Text> : null}').includes(SWAP_SUB));
 }
 
 // ---------------------------------------------------------------------------

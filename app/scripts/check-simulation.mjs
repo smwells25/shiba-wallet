@@ -575,5 +575,52 @@ console.log('check-simulation: pinned staking tokens are named by symbol (phase 
   check('Hoodi’s stETH address on another chain is not pinned there', otherChain[H_STETH.toLowerCase()]?.pinned !== true);
 }
 
+// Phase 24 (the masked-amount follow-up to pass p24-solhist finding 1): under
+// Hide amounts a preview row such as "You send •••• USDC" was spoken
+// "You send 4 Bullet USDC". The card's row Texts now carry a spoken label
+// with the mask in words (a11y.ts maskedSpokenProps), only when masked.
+console.log('check-simulation: masked preview rows are spoken "(amount hidden)" (phase 24)');
+{
+  const a11y = await import('../src/a11y.ts');
+  const { readFileSync } = await import('node:fs');
+  const T = '0x5555555555555555555555555555555555555555';
+  const metaM = { [T.toLowerCase()]: { symbol: 'USDC', decimals: 6, tracked: true } };
+  const changes = [
+    { type: 'native', callIndex: 0, direction: 'out', from: ME, to: DEX, amount: 1_000_000_000_000_000n },
+    { type: 'erc20', callIndex: 0, direction: 'in', token: T, from: DEX, to: ME, amount: 1_500_000n },
+    { type: 'erc1155', callIndex: 0, direction: 'in', token: NFT, from: DEX, to: ME, tokenId: 7n, amount: 3n },
+    { type: 'erc20-approval', callIndex: 0, token: T, owner: ME, spender: SPENDER, amount: 2_000_000n, unlimited: false },
+    { type: 'erc20-approval', callIndex: 0, token: T, owner: ME, spender: SPENDER, amount: 2n ** 255n, unlimited: false },
+  ];
+  const opts = (hidden) => ({ nativeSymbol: 'ETH', hidden });
+  const hidden = describeAssetChanges(changes, metaM, opts(true));
+  const shown = describeAssetChanges(changes, metaM, opts(false));
+  // What the card hands to the Text: the line itself, or "⚠ " + the line on a warning row.
+  const asShown = (l) => (l.tone === 'warning' ? `⚠ ${l.text}` : l.text);
+  const spoken = hidden.map((l) => a11y.maskedSpokenProps(asShown(l)).accessibilityLabel);
+  check('with Hide amounts on every row holding an amount carries a mask (the rows under test)',
+    hidden.length === 5 && hidden.every((l) => l.text.includes(a11y.AMOUNT_MASK)), texts(hidden));
+  check('…and each is spoken with "(amount hidden)" and never "••••"',
+    spoken.every((x) => typeof x === 'string' && x.includes('(amount hidden)') && !x.includes('••••')), spoken);
+  check('…exactly: "You send (amount hidden) ETH", "You receive (amount hidden) USDC", "You receive (amount hidden) × NFT #7 (…)"',
+    spoken[0] === 'You send (amount hidden) ETH' && spoken[1] === 'You receive (amount hidden) USDC' &&
+      spoken[2] === `You receive (amount hidden) × NFT #7 (${shortAddress(NFT)})`, spoken);
+  check('…the effectively-unlimited warning row keeps its "⚠" and speaks the mask in words',
+    spoken[4] === `⚠ Approval: ${shortAddress(SPENDER)} may spend up to (amount hidden) USDC (effectively unlimited)`, spoken[4]);
+  check('with Hide amounts off no row gets a label of its own (read exactly as before)',
+    shown.every((l) => Object.keys(a11y.maskedSpokenProps(asShown(l))).length === 0), shown);
+  check('…and the visible rows differ only by the mask', JSON.stringify(texts(hidden)) !== JSON.stringify(texts(shown)) &&
+    hidden.every((l, i) => !shown[i].text.includes('••••') && l.tone === shown[i].tone));
+  const card = readFileSync(new globalThis.URL('../src/components/BalanceChangePreview.tsx', import.meta.url), 'utf8');
+  const WARN = '<Text {...maskedSpokenProps(`⚠ ${text}`)} style={[styles.line, styles.bold, { color: theme.warningText }]}>⚠ {text}</Text>';
+  const LINE = '<Text {...maskedSpokenProps(text)} style={[styles.line, { color }]}>{text}</Text>';
+  const pin = (src) => src.includes("import { maskedSpokenProps } from '../a11y';") && src.includes(WARN) && src.includes(LINE);
+  check('BalanceChangePreview spreads maskedSpokenProps on both row Texts, with what each shows (source)', pin(card));
+  check('…mutant caught: the ordinary row without the helper',
+    !pin(card.replace(LINE, '<Text style={[styles.line, { color }]}>{text}</Text>')));
+  check('…mutant caught: the warning row without the helper',
+    !pin(card.replace(WARN, '<Text style={[styles.line, styles.bold, { color: theme.warningText }]}>⚠ {text}</Text>')));
+}
+
 console.log(`\ncheck-simulation: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

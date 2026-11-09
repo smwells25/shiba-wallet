@@ -480,6 +480,35 @@ check('failed allowance() read -> "could not confirm", not active', unconf && !b
 check('could-not-confirm shows the logged value labeled as such', /could not be read \(last logged: 40 USDT\)/.test(describeApprovalAmount(unconf, false)), describeApprovalAmount(unconf, false));
 node.allowanceRevert.clear();
 
+// Phase 24 (the masked-amount follow-up to pass p24-solhist finding 1): a
+// masked allowance ("•••• USDC") was spoken "4 Bullet USDC". The screen's
+// Row value and the card's amount Text now speak it "(amount hidden) USDC"
+// through a11y.ts maskedSpokenProps, only when masked.
+{
+  const a11y = await import('../src/a11y.ts');
+  const masked = describeApprovalAmount(unconf, true);
+  const finite = formatAllowance(5_000_000n, 6, 'USDC', true);
+  const spokenFinite = a11y.maskedSpokenProps(finite).accessibilityLabel;
+  const spokenUnconf = a11y.maskedSpokenProps(masked).accessibilityLabel;
+  check('Hide amounts: a masked allowance is spoken "(amount hidden) USDC", never "••••"',
+    spokenFinite === '(amount hidden) USDC' && !spokenFinite.includes('••••'), spokenFinite);
+  check('…the could-not-confirm line speaks its masked logged value the same way',
+    spokenUnconf === 'Current allowance could not be read (last logged: (amount hidden) USDT)', spokenUnconf);
+  check('…"Unlimited" (never masked) and every unmasked amount get no label of their own',
+    Object.keys(a11y.maskedSpokenProps(formatAllowance(MAX_UINT256, 6, 'USDC', true))).length === 0 &&
+      Object.keys(a11y.maskedSpokenProps(formatAllowance(5_000_000n, 6, 'USDC', false))).length === 0 &&
+      Object.keys(a11y.maskedSpokenProps(describeApprovalAmount(unconf, false))).length === 0);
+  const HERE0 = dirname(fileURLToPath(import.meta.url));
+  const screen = readFileSync(join(HERE0, '..', 'src', 'screens', 'ApprovalsScreen.tsx'), 'utf8');
+  const ROW = "{...(value === '—' ? { accessibilityLabel: 'not available' } : maskedSpokenProps(value))}";
+  const CARD = '{...maskedSpokenProps(describeApprovalAmount(item, hideAmounts))}';
+  const pin = (src) => src.includes("import { maskedSpokenProps } from '../a11y';") && src.includes(ROW) && src.includes(CARD);
+  check('ApprovalsScreen speaks the masked allowance through maskedSpokenProps on the Row value and the card amount (source)', pin(screen));
+  check('…mutant caught: the Row value without the helper',
+    !pin(screen.replace(ROW, "{...(value === '—' ? { accessibilityLabel: 'not available' } : {})}")));
+  check('…mutant caught: the card amount without the helper', !pin(screen.replace(CARD, '')));
+}
+
 // ---------------------------------------------------------------------------
 // 3. Endpoint depth refusal (publicnode-like)
 // ---------------------------------------------------------------------------

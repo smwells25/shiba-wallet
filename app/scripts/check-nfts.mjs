@@ -631,5 +631,32 @@ console.log('quotes + sign/broadcast:');
 // CAIP-19 helpers round-trip with the send route's ids.
 check('route asset id round-trips through core', nonFungibleTokenId(formatAssetId(nonFungibleAssetId(SEPOLIA, 'erc1155', C1155, BIG_1155))) === BIG_1155);
 
+// Phase 24 (the masked-amount follow-up to pass p24-solhist finding 1): an
+// ERC-1155 "You hold" / "Copies to send" figure is "••••" under Hide amounts
+// and was spoken "4 Bullet"; those Texts now speak it through a11y.ts
+// maskedSpokenProps. (The NFTs grid already had a spoken label: "amount hidden".)
+{
+  const a11y = await import('../src/a11y.ts');
+  const { t } = await import('../src/i18n/index.ts');
+  const copies = t('send.row.copies', { count: '2', held: '••••' });
+  const field = t('send.field.copies', { held: '••••' });
+  check('masked copies are spoken "(amount hidden)": the confirm row, the amount caption and the detail row',
+    a11y.maskedSpokenProps(copies).accessibilityLabel === '2 of (amount hidden) held' &&
+      a11y.maskedSpokenProps(field).accessibilityLabel === 'Amount (copies — you hold (amount hidden))' &&
+      a11y.maskedSpokenProps('••••').accessibilityLabel === '(amount hidden)', [copies, field]);
+  check('…and an unmasked figure gets no label of its own',
+    Object.keys(a11y.maskedSpokenProps(t('send.row.copies', { count: '2', held: '5' }))).length === 0);
+  const send = readFileSync(new URL('../src/screens/SendScreen.tsx', import.meta.url), 'utf8');
+  const detail = readFileSync(new URL('../src/screens/NftDetailScreen.tsx', import.meta.url), 'utf8');
+  const SEND_VALUE = "{...(value === '—' ? { accessibilityLabel: localize('not available') } : maskedSpokenProps(localize(value)))}";
+  const SEND_CAPTION = '<Text {...amountField.label} {...maskedSpokenProps(amountField.text)} style={[styles.label, { color: theme.textMuted }]}>';
+  const DETAIL_VALUE = /<Text\s+selectable\s+(?:\/\/[^\n]*\n\s+)*\{\.\.\.maskedSpokenProps\(value\)\}\s+style=\{\[styles\.rowValue,/;
+  const pin = (s1, s2) => s1.includes(SEND_VALUE) && s1.includes(SEND_CAPTION) && DETAIL_VALUE.test(s2);
+  check('Send\'s row value and copies caption, and the NFT detail row value spread maskedSpokenProps (source)', pin(send, detail));
+  check('…mutant caught: Send\'s row value without the helper',
+    !pin(send.replace(SEND_VALUE, "{...(value === '—' ? { accessibilityLabel: localize('not available') } : {})}"), detail));
+  check('…mutant caught: the NFT detail row without the helper', !pin(send, detail.replace('{...maskedSpokenProps(value)}', '')));
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

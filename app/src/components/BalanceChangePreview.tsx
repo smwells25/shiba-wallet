@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { toHex } from '@shiba-wallet/chains-evm';
 import { useTheme, type Theme } from '../theme';
+import { maskedSpokenProps } from '../a11y';
 import { usePrefs } from '../wallet/PrefsContext';
 import { listTokens } from '../wallet/tokens';
 import { reportEndpointFailure } from '../config/networks';
@@ -192,13 +193,15 @@ function PreviewLineView({ text, tone, theme }: { text: string; tone: PreviewTon
       <View
         style={[styles.warning, { backgroundColor: theme.warningSurface, borderColor: theme.warningBorder }]}
       >
-        <Text style={[styles.line, styles.bold, { color: theme.warningText }]}>⚠ {text}</Text>
+        <Text {...maskedSpokenProps(`⚠ ${text}`)} style={[styles.line, styles.bold, { color: theme.warningText }]}>⚠ {text}</Text>
       </View>
     );
   }
   const color =
     tone === 'out' ? theme.danger : tone === 'in' ? theme.success : tone === 'approval' ? theme.accent : theme.text;
-  return <Text style={[styles.line, { color }]}>{text}</Text>;
+  // Under Hide amounts a line such as "You send •••• USDC" is spoken
+  // "You send (amount hidden) USDC", not "4 Bullet" (a11y.ts).
+  return <Text {...maskedSpokenProps(text)} style={[styles.line, { color }]}>{text}</Text>;
 }
 
 const styles = StyleSheet.create({

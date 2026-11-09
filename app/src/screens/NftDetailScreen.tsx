@@ -5,6 +5,7 @@ import { parseAssetId } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
 import { Button, WarningBox, screenStyle } from '../components';
 import { useTheme } from '../theme';
+import { maskedSpokenProps } from '../a11y';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { EVM_CHAIN_ID } from '../wallet/send';
@@ -200,6 +201,8 @@ function Row({
       <Text accessibilityLabel={label} style={[styles.rowLabel, { color: theme.textMuted }]}>{label}</Text>
       <Text
         selectable
+        // "You hold" under Hide amounts is "••••": spoken "(amount hidden)".
+        {...maskedSpokenProps(value)}
         style={[styles.rowValue, { color: theme.text }, monoFont ? { fontFamily: mono, fontSize: 13 } : null]}
       >
         {value}

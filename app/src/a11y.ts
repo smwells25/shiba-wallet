@@ -147,6 +147,21 @@ export function spokenMaskedText(text: string): string {
   return text.split(AMOUNT_MASK).join(`(${t('activity.amountHidden')})`);
 }
 
+/**
+ * The props that make a <Text> speak its masked amounts in words (phase 24
+ * follow-up to pass p24-solhist finding 1): `{ accessibilityLabel }` with
+ * the text through spokenMaskedText when the text holds the Hide-amounts
+ * mask, else an empty object, so a Text with no mask keeps no label of its
+ * own and is read exactly as before. Spread it on a Text whose visible
+ * content can hold a mask: `<Text {...maskedSpokenProps(line)}>{line}</Text>`.
+ * Pass the string exactly as the Text shows it. The visible text never
+ * changes. Where a Text already builds an accessibilityLabel from the same
+ * string, call spokenMaskedText on that label instead.
+ */
+export function maskedSpokenProps(text: string): { accessibilityLabel?: string } {
+  return text.includes(AMOUNT_MASK) ? { accessibilityLabel: spokenMaskedText(text) } : {};
+}
+
 export function activityRowSpokenLead(p: {
   sentence: string | null;
   loading: boolean;

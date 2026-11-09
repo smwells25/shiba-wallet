@@ -18,6 +18,7 @@ import { callWithFailover, getEndpoint, withEndpoint, type NetworkEndpoint } fro
 import { endpointHost, findAlternateDefaultUrl, otherDefaultCandidates } from '../config/endpoint-probe';
 import { OfflineNotice, TechnicalDetail, describeNetworkError } from '../wallet/connectivity';
 import { useTheme, type Theme } from '../theme';
+import { maskedSpokenProps } from '../a11y';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { requireLocalAuth } from '../wallet/biometric';
@@ -684,6 +685,7 @@ export function ApprovalsScreen({ navigation }: Props) {
           theme={theme}
         />
         <Text
+          {...maskedSpokenProps(describeApprovalAmount(item, hideAmounts))}
           style={[
             styles.amount,
             { color: unlimited || (item.kind === 'operator' && withRevoke) ? theme.warningText : theme.text },
@@ -816,7 +818,8 @@ function Row({
       <Text
         selectable
         // "—" is a visual placeholder; screen readers hear "not available".
-        {...(value === '—' ? { accessibilityLabel: 'not available' } : {})}
+        // A masked allowance ("•••• USDC") is spoken "(amount hidden) USDC".
+        {...(value === '—' ? { accessibilityLabel: 'not available' } : maskedSpokenProps(value))}
         style={[styles.rowValue, { color: theme.text }, monoFont ? { fontFamily: mono, fontSize: 13 } : null]}
       >
         {value}

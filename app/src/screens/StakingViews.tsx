@@ -6,7 +6,7 @@ import { WarningBox } from '../components';
 import { T } from '../i18n/T';
 import { useI18n } from '../i18n/useI18n';
 import { t, tx } from '../i18n/index';
-import { spokenSiteName, spokenTokenName, withShortAddresses } from '../a11y';
+import { maskedSpokenProps, spokenSiteName, spokenTokenName, withShortAddresses } from '../a11y';
 import { stakingTokenName } from '../wallet/tokens';
 import { formatUnits } from '../wallet/balances';
 import {
@@ -83,7 +83,9 @@ export function Row({
           in the row's label. */}
       <Text
         selectable
-        {...(spoken !== undefined ? { importantForAccessibility: 'no' as const, accessibilityElementsHidden: true } : {})}
+        // Without a spoken label (a withdrawal request's "•••• stETH" under
+        // Hide amounts) the masked amount is spoken "(amount hidden) stETH".
+        {...(spoken !== undefined ? { importantForAccessibility: 'no' as const, accessibilityElementsHidden: true } : maskedSpokenProps(localize(value)))}
         style={[styles.rowValue, { color: theme.text }, monoFont ? { fontFamily: mono, fontSize: 13 } : null]}
       >
         {localize(value)}

@@ -1151,12 +1151,24 @@ console.log('\ncheck-staking: pass p20c finding 6 (what TalkBack says on the Sta
   // ("0.001315… stETH. Actions available"): a selectable Text is its own
   // focusable, long-clickable node. With a spoken row label, the amount is
   // hidden from screen readers and stays selectable for sight.
+  // Phase 24 (the masked-amount follow-up to pass p24-solhist finding 1): a
+  // row WITHOUT a spoken label (a Lido withdrawal request, "•••• stETH"
+  // under Hide amounts) speaks its masked value "(amount hidden) stETH"
+  // through a11y.ts maskedSpokenProps — the else branch of the same spread.
+  const VALUE_SPREAD = "{...(spoken !== undefined ? { importantForAccessibility: 'no' as const, accessibilityElementsHidden: true } : maskedSpokenProps(localize(value)))}";
   const rowValueOk = (src) =>
-    /<Text\s+selectable\s+\{\.\.\.\(spoken !== undefined \? \{ importantForAccessibility: 'no' as const, accessibilityElementsHidden: true \} : \{\}\)\}\s+style=\{\[styles\.rowValue,/.test(src) &&
+    /<Text\s+selectable\s+(?:\/\/[^\n]*\n\s+)*\{\.\.\.\(spoken !== undefined \? \{ importantForAccessibility: 'no' as const, accessibilityElementsHidden: true \} : maskedSpokenProps\(localize\(value\)\)\)\}\s+style=\{\[styles\.rowValue,/.test(src) &&
     src.includes("{...(spoken !== undefined ? { accessible: true, accessibilityLabel: spoken } : {})}");
   check('p20d finding 3: a balance row is ONE element — its selectable amount is hidden from screen readers when the row has a spoken label (source)', rowValueOk(views));
-  check('…mutant caught: the amount exposed again as a second item',
-    !rowValueOk(views.replace("{...(spoken !== undefined ? { importantForAccessibility: 'no' as const, accessibilityElementsHidden: true } : {})}", '')));
+  check('…mutant caught: the amount exposed again as a second item', !rowValueOk(views.replace(VALUE_SPREAD, '')));
+  check('phase 24: a row without a spoken label speaks a masked value through maskedSpokenProps (source)',
+    views.includes(VALUE_SPREAD) && views.includes("import { maskedSpokenProps, spokenSiteName, spokenTokenName, withShortAddresses } from '../a11y';"));
+  check('…mutant caught: the else branch back to {} (the request row spoken "4 Bullet stETH")',
+    !rowValueOk(views.replace(VALUE_SPREAD, "{...(spoken !== undefined ? { importantForAccessibility: 'no' as const, accessibilityElementsHidden: true } : {})}")));
+  const a11yMod = await import('../src/a11y.ts');
+  check('…the request row under Hide amounts: "•••• stETH" is spoken "(amount hidden) stETH"; an exact amount gets no label',
+    a11yMod.maskedSpokenProps('•••• stETH').accessibilityLabel === '(amount hidden) stETH' &&
+      Object.keys(a11yMod.maskedSpokenProps('0.005 stETH')).length === 0);
 }
 
 // Each Staking view opens at the top (the Bridge rule of pass p21b, finding 4,

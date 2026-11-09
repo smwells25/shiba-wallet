@@ -32,6 +32,7 @@ import {
   type UsableEndpoint,
 } from '../config/networks';
 import { useTheme, type Theme } from '../theme';
+import { maskedSpokenProps } from '../a11y';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { requireLocalAuth } from '../wallet/biometric';
@@ -2800,7 +2801,7 @@ export function SendScreen({ route, navigation }: Props) {
 
       {nft && nft.standard === 'erc721' ? null : (
         <>
-          <Text {...amountField.label} style={[styles.label, { color: theme.textMuted }]}>
+          <Text {...amountField.label} {...maskedSpokenProps(amountField.text)} style={[styles.label, { color: theme.textMuted }]}>
             {amountField.text}
           </Text>
           <View style={styles.amountRow}>
@@ -2913,7 +2914,8 @@ function Row({
       <Text
         selectable
         // "—" is a visual placeholder; screen readers hear "not available".
-        {...(value === '—' ? { accessibilityLabel: localize('not available') } : {})}
+        // A masked figure ("2 of •••• held") is spoken "(amount hidden)".
+        {...(value === '—' ? { accessibilityLabel: localize('not available') } : maskedSpokenProps(localize(value)))}
         style={[
           styles.rowValue,
           { color: theme.text },
@@ -2922,7 +2924,8 @@ function Row({
       >
         {localize(value)}
       </Text>
-      {sub ? <Text style={[styles.rowSub, { color: theme.textMuted }]}>{localize(sub)}</Text> : null}
+      {/* The fiat line is "≈ ••••" under Hide amounts: spoken "≈ (amount hidden)". */}
+      {sub ? <Text {...maskedSpokenProps(localize(sub))} style={[styles.rowSub, { color: theme.textMuted }]}>{localize(sub)}</Text> : null}
     </View>
   );
 }

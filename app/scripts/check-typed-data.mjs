@@ -117,6 +117,15 @@ const USDC_DOMAIN = { name: 'USD Coin', version: '2', chainId: 1, verifyingContr
   check('explanation says the approval persists after submission', /stays until it is used up or revoked/.test(s.explanation));
   const hidden = summarizeTypedData(p, opts({ hidden: true }));
   check('Hide amounts masks a finite amount', row(hidden, 'Amount') === '•••• USDC');
+  // Phase 24 (the masked-amount follow-up to pass p24-solhist finding 1): the
+  // approval sheet's row value is spoken through a11y.ts maskedSpokenProps.
+  const a11y = await import('../src/a11y.ts');
+  check('…and is spoken "(amount hidden) USDC", never "••••" (the sheet spreads maskedSpokenProps(row.value))',
+    a11y.maskedSpokenProps(row(hidden, 'Amount')).accessibilityLabel === '(amount hidden) USDC');
+  check('…with Hide amounts off no row value gets a label of its own (read exactly as before)',
+    s.rows.every((r) => Object.keys(a11y.maskedSpokenProps(r.value)).length === 0));
+  check('…and with it on, only the masked row does',
+    hidden.rows.filter((r) => Object.keys(a11y.maskedSpokenProps(r.value)).length > 0).map((r) => r.label).join(',') === 'Amount');
 }
 {
   const p = fixture('USDC permit unlimited, never expires', USDC_DOMAIN, PERMIT_TYPES, 'Permit', {

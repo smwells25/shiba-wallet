@@ -259,6 +259,43 @@ console.log('check-portfolio: the screen reuses Home’s loaders and price hook 
 }
 
 // ===========================================================================
+console.log('check-portfolio: masked amounts are never spoken as bullets (phase 24)');
+// ===========================================================================
+// The masked-amount follow-up to pass p24-solhist finding 1 found the
+// Portfolio screen already safe: every Text that can show "••••" (an amount,
+// a dollar value, a group total, the net worth, the watched total) sits
+// inside an `accessible` View whose own label is built from spokenMoney /
+// holdingSpokenLabel, which say "hidden" / "amount hidden" in words; Android
+// reads such a View as one element and does not read its children. These
+// pins keep it so.
+{
+  const AMOUNT_MASK = '••••';
+  const masked = { label: 'Account 1, ETH on Ethereum', amount: 5n, decimals: 0, symbol: 'ETH', value: { n: 5n, d: 1n }, quote: null, hidden: true, nowMs: 0 };
+  const labels = [
+    P.spokenMoney({ n: 12_345n, d: 1n }, { hidden: true }),
+    P.spokenMoney({ n: -5n, d: 1n }, { hidden: true, signed: true }),
+    P.holdingSpokenLabel({ ...masked, status: 'priced' }),
+    P.holdingSpokenLabel({ ...masked, status: 'test', value: null }),
+    P.holdingSpokenLabel({ ...masked, status: 'no-price', value: null }),
+  ];
+  check('Hide amounts: the spoken money and holding labels say it in words and never hold "••••"',
+    labels[0] === 'hidden' && labels[1] === 'hidden' && labels.every((l) => !l.includes(AMOUNT_MASK)) && labels.slice(2).every((l) => l.includes('amount hidden')), labels);
+  check('…while the visible amount and value ARE the mask (what those labels stand in for)',
+    P.amountText(5n, 0, 'ETH', true) === `${AMOUNT_MASK} ETH` && P.formatMoney({ n: 5n, d: 1n }, { hidden: true }) === AMOUNT_MASK);
+  const screen = readFileSync(join(HERE, '..', 'src', 'screens', 'PortfolioScreen.tsx'), 'utf8');
+  const ROW = "style={[styles.row, { backgroundColor: theme.card, borderColor: theme.border }]} accessible accessibilityLabel={spoken}>";
+  const GROUP = 'accessibilityLabel={`${group.label}: ${spokenMoney(group.value, { hidden })}${extra}`}';
+  const ACCOUNT = '<View accessible accessibilityLabel={`${group.label}: ${spokenMoney(group.value, { hidden })}`}>';
+  const HOLDING = /style=\{styles\.holding\}\s+accessible\s+accessibilityLabel=\{holdingSpokenLabel\(/;
+  const TOTAL = /accessible\s+accessibilityLabel=\{\s+summary\s+\? `Net worth: \$\{spokenMoney\(summary\.netWorth, \{ hidden: hideAmounts \}\)\}/;
+  const WATCHED = 'accessibilityLabel={`Watched total, not your funds: ${spokenMoney(summary.watchedTotal, { hidden: hideAmounts })}`}';
+  const pin = (src) => src.includes(ROW) && src.includes(GROUP) && src.includes(ACCOUNT) && HOLDING.test(src) && TOTAL.test(src) && src.includes(WATCHED);
+  check('every masked figure on the Portfolio screen sits in an accessible View labelled in words (source)', pin(screen));
+  check('…mutant caught: an asset row no longer one element', !pin(screen.replace(ROW, "style={[styles.row, { backgroundColor: theme.card, borderColor: theme.border }]}>")));
+  check('…mutant caught: a holding row no longer one element', !pin(screen.replace(/style=\{styles\.holding\}\s+accessible\s+/, 'style={styles.holding}\n            ')));
+}
+
+// ===========================================================================
 console.log('Mutation checks (scratch copies of portfolio.ts)');
 // ===========================================================================
 const MUTANT_DIR = join(HERE, `.mutants-portfolio-${process.pid}`);

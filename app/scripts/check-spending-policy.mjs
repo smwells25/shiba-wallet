@@ -576,6 +576,17 @@ console.log('readouts and masking:');
   check('readout text masked under Hide amounts', spentReadoutText(readouts[0], true) === 'Spent in the current window: •••• of •••• USDC', spentReadoutText(readouts[0], true));
   check('summary', policySummary(readouts[0].policy, false) === '100 USDC per 7 days');
   check('summary masked', policySummary(readouts[0].policy, true) === '•••• USDC per 7 days');
+  // Phase 24 (the masked-amount follow-up to pass p24-solhist finding 1): the
+  // screens speak these lines through a11y.ts maskedSpokenProps.
+  const a11y = await import('../src/a11y.ts');
+  check('…and spoken "(amount hidden)", never "••••": the readout, the summary and the notice line',
+    a11y.maskedSpokenProps(spentReadoutText(readouts[0], true)).accessibilityLabel === 'Spent in the current window: (amount hidden) of (amount hidden) USDC' &&
+      a11y.maskedSpokenProps(policySummary(readouts[0].policy, true)).accessibilityLabel === '(amount hidden) USDC per 7 days' &&
+      a11y.maskedSpokenProps(`${policySummary(readouts[0].policy, true)}. ${spentReadoutText(readouts[0], true)}.`).accessibilityLabel ===
+        '(amount hidden) USDC per 7 days. Spent in the current window: (amount hidden) of (amount hidden) USDC.');
+  check('…unmasked lines get no label of their own (read exactly as before)',
+    Object.keys(a11y.maskedSpokenProps(spentReadoutText(readouts[0], false))).length === 0 &&
+      Object.keys(a11y.maskedSpokenProps(policySummary(readouts[0].policy, false))).length === 0);
   const later = await spendingReadouts(SCOPE, { store: s, now: NOW + 7 * 86400 });
   check('readout drops to 0 once the window has passed', later.readouts[0].spentInWindow === 0n);
 }
@@ -619,6 +630,15 @@ console.log('the confirm screen warns before Send (finding 12):');
     lines.length === 1 && lines[0] === 'This send would go over the limit for test ETH (0.0000000000000002 test ETH per 1 hour): already spent 0.0000000000000001 test ETH, this send 0.00000000000000015 test ETH. Tapping Send will stop it; raise or remove the limit first.',
     lines[0]);
   check('…masked under Hide amounts', overLimitPreviewLines(look, true)[0] === 'This send would go over the limit for test ETH (•••• test ETH per 1 hour): already spent •••• test ETH, this send •••• test ETH. Tapping Send will stop it; raise or remove the limit first.', overLimitPreviewLines(look, true)[0]);
+  {
+    const a11y = await import('../src/a11y.ts');
+    const spokenWarn = a11y.spokenMaskedText(`Warning: ${overLimitPreviewLines(look, true)[0]}`);
+    check('…and its warning label (spokenMaskedText(`Warning: ${line}`)) speaks every mask as "(amount hidden)" (phase 24)',
+      spokenWarn === 'Warning: This send would go over the limit for test ETH ((amount hidden) test ETH per 1 hour): already spent (amount hidden) test ETH, this send (amount hidden) test ETH. Tapping Send will stop it; raise or remove the limit first.' &&
+        !spokenWarn.includes('••••'), spokenWarn);
+    check('…unmasked, the warning label is exactly the old "Warning: <line>"',
+      a11y.spokenMaskedText(`Warning: ${lines[0]}`) === `Warning: ${lines[0]}`);
+  }
   const fits = await evaluateBeforeSigning({ scope: SCOPE, spender: OWNER, calls: [{ to: TO, value: 100n }], fee: 0n, url: null, stage: false, store: s, now: NOW });
   check('a send that fits → no warning line', overLimitPreviewLines(fits, false).length === 0);
   // The look-ahead must not stage: a staged figure would be recorded for the
@@ -642,6 +662,19 @@ console.log('the confirm screen warns before Send (finding 12):');
   const views = readFileSync(new globalThis.URL('../src/components/SpendingPolicyViews.tsx', import.meta.url), 'utf8');
   check('SpendingPolicyNotice looks ahead with url null and stage false, and renders overLimitPreviewLines with Hide amounts',
     /url: null,\s*\n\s*quoteOutflows: extra,\s*\n\s*stage: false/.test(views) && /overLimitPreviewLines\(lookAhead, hideAmounts\)/.test(views));
+  // Phase 24: the notice's readout lines and its warning labels speak the mask in words.
+  const NOTICE_LINE = '{...maskedSpokenProps(`${policySummary(r.policy, hideAmounts)}. ${spentReadoutText(r, hideAmounts)}.`)}';
+  const NOTICE_WARN = 'accessibilityLabel={spokenMaskedText(`Warning: ${line}`)}';
+  const viewsPin = (src) => src.includes("import { maskedSpokenProps, spokenMaskedText } from '../a11y';") && src.includes(NOTICE_LINE) && src.includes(NOTICE_WARN);
+  check('SpendingPolicyNotice: the readout line spreads maskedSpokenProps and the warning label goes through spokenMaskedText (source)', viewsPin(views));
+  check('…mutant caught: the readout line without the helper', !viewsPin(views.replace(NOTICE_LINE, '')));
+  check('…mutant caught: the warning label without spokenMaskedText', !viewsPin(views.replace(NOTICE_WARN, 'accessibilityLabel={`Warning: ${line}`}')));
+  const limits = readFileSync(new globalThis.URL('../src/screens/SpendingLimitsScreen.tsx', import.meta.url), 'utf8');
+  const LIM_TITLE = '{...maskedSpokenProps(policySummary(r.policy, hideAmounts))}';
+  const LIM_BODY = '{...maskedSpokenProps(spentReadoutText(r, hideAmounts))}';
+  const limitsPin = (src) => src.includes(LIM_TITLE) && src.includes(LIM_BODY);
+  check('Spending limits screen: the card title and readout spread maskedSpokenProps (source)', limitsPin(limits));
+  check('…mutant caught: the readout without the helper', !limitsPin(limits.replace(LIM_BODY, '')));
   const send = readFileSync(new globalThis.URL('../src/screens/SendScreen.tsx', import.meta.url), 'utf8');
   const swap = readFileSync(new globalThis.URL('../src/screens/SwapScreen.tsx', import.meta.url), 'utf8');
   const wc = readFileSync(new globalThis.URL('../src/components/WcApprovalSheet.tsx', import.meta.url), 'utf8');

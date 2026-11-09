@@ -25,6 +25,7 @@ import { SpendingPolicyNotice } from './SpendingPolicyViews';
 import { getEndpoint } from '../config/networks';
 import type { EvmChainProfile } from '../config/evm-chain';
 import { useTheme, type Theme } from '../theme';
+import { maskedSpokenProps } from '../a11y';
 import { formatUnits } from '../wallet/balances';
 import { usePrefs } from '../wallet/PrefsContext';
 import { listTokens } from '../wallet/tokens';
@@ -1812,6 +1813,8 @@ function TypedDataSummaryCard({
           <Text accessibilityLabel={row.label} style={[styles.fieldLabel, { color: theme.textMuted }]}>{row.label}</Text>
           <Text
             selectable
+            // A masked amount ("•••• USDC") is spoken "(amount hidden) USDC".
+            {...maskedSpokenProps(row.value)}
             style={[
               styles.fieldValue,
               { color: row.emphasis ? theme.danger : theme.text },

@@ -5,6 +5,7 @@ import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
 import { Button, WarningBox, screenStyle, switchColors, useFieldLabels } from '../components';
 import { useTheme } from '../theme';
+import { maskedSpokenProps } from '../a11y';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { EVM_CHAIN_ID } from '../wallet/send';
@@ -351,8 +352,8 @@ export function SpendingLimitsScreen({ navigation }: Props) {
           key={r.policy.id}
           style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}
         >
-          <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>{policySummary(r.policy, hideAmounts)}</Text>
-          <Text style={[styles.body, { color: theme.text }]}>{spentReadoutText(r, hideAmounts)}</Text>
+          <Text accessibilityRole="header" {...maskedSpokenProps(policySummary(r.policy, hideAmounts))} style={[styles.cardTitle, { color: theme.text }]}>{policySummary(r.policy, hideAmounts)}</Text>
+          <Text {...maskedSpokenProps(spentReadoutText(r, hideAmounts))} style={[styles.body, { color: theme.text }]}>{spentReadoutText(r, hideAmounts)}</Text>
           {r.policy.token !== NATIVE_TOKEN ? (
             <Text style={[styles.mono, { color: theme.textMuted }]}>Token contract {r.policy.token}</Text>
           ) : null}

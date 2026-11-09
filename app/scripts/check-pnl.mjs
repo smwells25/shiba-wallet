@@ -316,6 +316,22 @@ console.log('check-pnl: Hide amounts');
 {
   const lines = L.pnlFigureLines(r, { symbol: 'ETH', decimals: 18 }, true);
   check('every figure is masked (only the counts remain)', lines.filter((l) => l.label !== 'Counted').every((l) => !/\d/.test(l.text)), JSON.stringify(lines));
+  // Phase 24 (the masked-amount follow-up to pass p24-solhist finding 1): the
+  // panel was already safe — each figure line is an `accessible` View whose
+  // label says "hidden" in words under Hide amounts, so its "••••" Text is
+  // never read on its own. Pinned so it stays so.
+  const spokenOf = (line, hidden) => `${line.label}: ${hidden && line.label !== 'Counted' ? 'hidden' : line.text}`;
+  const spoken = lines.map((l) => spokenOf(l, true));
+  check('…and every figure line is spoken "<label>: hidden", never with "••••"',
+    spoken.every((x) => !x.includes('••••')) && spoken.filter((x) => !x.startsWith('Counted')).every((x) => x.endsWith(': hidden')) &&
+      lines.some((l) => l.text.includes('••••')), JSON.stringify(spoken));
+  const panelSrc = readFileSync(join(HERE, '..', 'src/screens/PortfolioViews.tsx'), 'utf8');
+  const FIGURE = "<View key={line.label} style={styles.figure} accessible accessibilityLabel={`${line.label}: ${hideAmounts && line.label !== 'Counted' ? 'hidden' : line.text}`}>";
+  check('the P&L panel reads each figure line as one element labelled in words (source)', panelSrc.includes(FIGURE));
+  check('…mutant caught: the line no longer one element (its "••••" Text read on its own)',
+    !panelSrc.replace(FIGURE, '<View key={line.label} style={styles.figure}>').includes(FIGURE));
+  check('…mutant caught: the label speaking the visible figure under Hide amounts',
+    spokenOf(lines[0], false).includes('••••') && !spokenOf(lines[0], true).includes('••••'));
 }
 
 // ===========================================================================

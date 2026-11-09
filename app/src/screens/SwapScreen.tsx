@@ -32,6 +32,7 @@ import {
 import { OfflineNotice, TechnicalDetail } from '../wallet/connectivity';
 import { sanitizeEndpointMessage } from '../config/endpoint-probe';
 import { useTheme, type Theme } from '../theme';
+import { maskedSpokenProps } from '../a11y';
 import { BalanceChangePreview } from '../components/BalanceChangePreview';
 import { RiskWarnings } from '../components/RiskWarnings';
 import { SpendingPolicyNotice, spendingGateForQuote } from '../components/SpendingPolicyViews';
@@ -1823,7 +1824,8 @@ function Row({
       >
         {localized(value)}
       </Text>
-      {sub ? <Text style={[styles.rowSub, { color: theme.textMuted }]}>{localized(sub)}</Text> : null}
+      {/* The fiat line is "≈ ••••" under Hide amounts: spoken "≈ (amount hidden)". */}
+      {sub ? <Text {...maskedSpokenProps(localized(sub))} style={[styles.rowSub, { color: theme.textMuted }]}>{localized(sub)}</Text> : null}
     </View>
   );
 }
