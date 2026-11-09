@@ -65,6 +65,8 @@ export type RootStackParamList = {
   Handle: undefined;
   /** Net worth across the wallet's accounts and networks, with profit and loss (phase 20 item 1, features 96 and 97). */
   Portfolio: undefined;
+  /** Portfolio insights and risk overview (phase 25 item 2, feature 99): read only, no network request of its own. */
+  Insights: undefined;
   /** Watchlist and price alerts (phase 20 item 1, feature 98). */
   PriceAlerts: undefined;
   /** What the wallet has told the user: reminders, alerts, sent transactions (phase 22 item 5, feature 83). */

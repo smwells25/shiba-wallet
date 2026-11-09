@@ -3,7 +3,7 @@ import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View }
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
-import { WarningBox, WatchOnlyNotice, screenStyle } from '../components';
+import { Button, WarningBox, WatchOnlyNotice, screenStyle } from '../components';
 import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
 import { useWallet, type AccountView } from '../wallet/WalletContext';
@@ -44,6 +44,9 @@ import {
   type PortfolioSlot,
 } from '../wallet/portfolio';
 import { PnlSection } from './PortfolioViews';
+import { useI18n } from '../i18n/useI18n';
+import { activeStoreProfile } from '../wallet/store-keys';
+import { portfolioSnapshotKey, recordPortfolioSnapshot } from '../wallet/insights';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Portfolio'>;
 
@@ -136,8 +139,9 @@ async function readTask(task: PortfolioReadTask): Promise<PortfolioReadResult> {
  * The portfolio (feature 96) and, below it, profit and loss (feature 97).
  * Read-only for every kind of account: nothing here can sign or send.
  */
-export function PortfolioScreen(_props: Props) {
+export function PortfolioScreen({ navigation }: Props) {
   const theme = useTheme();
+  const { t } = useI18n();
   const { hideAmounts, showFiat, evmChain } = usePrefs();
   const { accounts, activeAccount, accountList, watchOnlyAccounts, multisigAccounts } = useWallet();
 
@@ -215,6 +219,24 @@ export function PortfolioScreen(_props: Props) {
   const summary = useMemo(() => (plan ? computePortfolio({ plan, results, quotes }) : null), [plan, results, quotes]);
   const pending = plan ? plan.tasks.length - results.size : 0;
 
+  // Phase 25 item 2: the risk overview (Insights) shows the shares of this
+  // reading instead of reading the balances again. Only a COMPLETE reading
+  // (every planned read answered) is handed over, in memory only, keyed by
+  // the storage profile and by exactly these accounts and network.
+  useEffect(() => {
+    if (!plan || !summary || loading || pending > 0) return;
+    recordPortfolioSnapshot({
+      profile: activeStoreProfile().id,
+      key: portfolioSnapshotKey([...accountList, ...watchOnlyAccounts, ...multisigAccounts], evmChain.caip2),
+      summary,
+      notRead: plan.notRead.length,
+      showFiat,
+      at: Date.now(),
+    });
+    // accountsKey stands for the three account arrays, which are new on every context render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see above
+  }, [plan, summary, loading, pending, showFiat, evmChain.caip2, accountsKey]);
+
   const money = (m: Parameters<typeof formatMoney>[0]) => formatMoney(m, { hidden: hideAmounts });
   const sourceLine = summary ? portfolioPriceSourceLine(summary, now) : null;
 
@@ -261,6 +283,8 @@ export function PortfolioScreen(_props: Props) {
         ) : null}
         {sourceLine ? <Text style={[styles.hint, { color: theme.textMuted }]}>{sourceLine}</Text> : null}
       </View>
+
+      <Button title={t('insights.open')} variant="secondary" accessibilityHint={t('insights.open.hint')} onPress={() => navigation.navigate('Insights')} />
 
       {summary && plan ? (
         <>

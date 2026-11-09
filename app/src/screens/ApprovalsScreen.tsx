@@ -21,6 +21,8 @@ import { useTheme, type Theme } from '../theme';
 import { maskedSpokenProps } from '../a11y';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
+import { activeStoreProfile } from '../wallet/store-keys';
+import { recordApprovalsSnapshot } from '../wallet/insights';
 import { requireLocalAuth } from '../wallet/biometric';
 import { formatUnits } from '../wallet/balances';
 import {
@@ -269,6 +271,22 @@ export function ApprovalsScreen({ navigation }: Props) {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- load() sets state only after its first await (the endpoint lookup), never synchronously, and this rule does not treat await as an asynchronous boundary.
     void load();
   }, [load]);
+
+  // Phase 25 item 2: the risk overview (Insights) lists the approvals this
+  // search found instead of searching again. Handed over in memory only,
+  // keyed by the storage profile, the network and the owner searched;
+  // every new list (a search, a search further back) replaces it.
+  useEffect(() => {
+    if (state.status !== 'ok' || !owner) return;
+    recordApprovalsSnapshot({
+      profile: activeStoreProfile().id,
+      chainCaip2: state.scan.chainCaip2,
+      owner,
+      scan: state.scan,
+      items: state.items,
+      at: Date.now(),
+    });
+  }, [state, owner]);
 
   const onRefresh = async () => {
     setRefreshing(true);

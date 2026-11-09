@@ -161,6 +161,10 @@ export const WATCH_ONLY_ALLOWED_ROUTES: readonly string[] = [
   // Phase 22 item 5: the notifications inbox, read-only (a list of what the
   // wallet showed; an entry opens a screen whose own gate still applies).
   'Inbox',
+  // Phase 25 item 2: the risk overview, read-only and request-free (stored
+  // and in-memory facts only; its "see <screen>" links are offered only
+  // where this list allows the screen).
+  'Insights',
 ];
 
 /**
@@ -291,6 +295,8 @@ export const MULTISIG_ALLOWED_ROUTES: readonly string[] = [
   'PriceAlerts',
   // Phase 22 item 5: read-only (see WATCH_ONLY_ALLOWED_ROUTES).
   'Inbox',
+  // Phase 25 item 2: read-only (see WATCH_ONLY_ALLOWED_ROUTES).
+  'Insights',
   'Receive',
   'Multisig',
 ];

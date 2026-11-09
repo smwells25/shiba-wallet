@@ -54,6 +54,7 @@ import { RecurringDueBanner } from './src/components/RecurringDueBanner';
 import { NotificationScheduler } from './src/components/NotificationScheduler';
 import { PriceAlertMonitor } from './src/components/PriceAlertMonitor';
 import { PortfolioScreen } from './src/screens/PortfolioScreen';
+import { InsightsScreen } from './src/screens/InsightsScreen';
 import { PriceAlertsScreen } from './src/screens/PriceAlertsScreen';
 import { ColdSignScreen } from './src/screens/ColdSignScreen';
 import { HandleScreen } from './src/screens/HandleScreen';
@@ -400,6 +401,7 @@ function Root() {
             <Stack.Screen name="Staking" component={StakingScreen} options={{ title: 'Staking (test networks)' }} />
             <Stack.Screen name="Bridge" component={BridgeScreen} options={{ title: 'Bridge (test networks)' }} />
             <Stack.Screen name="Portfolio" component={PortfolioScreen} options={{ title: 'Portfolio' }} />
+            <Stack.Screen name="Insights" component={InsightsScreen} options={{ title: 'Risk overview' }} />
             <Stack.Screen name="PriceAlerts" component={PriceAlertsScreen} options={{ title: 'Price alerts' }} />
             <Stack.Screen name="ColdSign" component={ColdSignScreen} options={{ title: 'Send with an off-line signer' }} />
             <Stack.Screen name="Handle" component={HandleScreen} options={{ title: 'Wallet handle (ENS)' }} />

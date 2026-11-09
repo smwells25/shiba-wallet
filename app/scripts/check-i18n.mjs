@@ -290,6 +290,8 @@ const UNBLOCK_FIX_NEW = ['home.solanaToken.send', 'home.solanaToken.send.hint', 
 const SOLHIST_NEW = ['activity.row.feeHidden'];
 // Phase 25 item 3: the gains report's export button, its note, its share-sheet title and its refusal (the profit-and-loss panel).
 const GAINS_NEW = ['pnl.export', 'pnl.export.note', 'pnl.export.dialog', 'pnl.export.unavailable'];
+// Phase 25 item 2 (feature 99): the risk overview's lines (wallet/insights.ts) are new, every one under "insights.".
+const insightsNew = (id) => id.startsWith('insights.');
 {
   const p = fixtureProblems(en, FIXTURE);
   check(`every English entry is the text the app showed at ${FIXTURE.base} (${Object.keys(FIXTURE.literal).length} literals, ${Object.keys(FIXTURE.template).length} templates by their static parts, ${Object.keys(FIXTURE.composite).length} composites) or listed as new (${FIXTURE.new.length})`,
@@ -308,14 +310,15 @@ const GAINS_NEW = ['pnl.export', 'pnl.export.note', 'pnl.export.dialog', 'pnl.ex
   const BROADCAST_OPEN_NEW = ['broadcast.open.title', 'broadcast.tx.open', 'broadcast.tx.openUnlisted', 'broadcast.userop.open',
     'broadcast.userop.openUnlisted', 'broadcast.open'];
   check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the Solana token-send readiness row, the wallet handle\'s, the six open-outcome broadcast sentences, the co-signer card\'s numbered Scan label, the eight period words of the hygiene slice, the four Bridge lines of pass p23-mint, the five lines of the p23-build fixes, the three Bridge lines of pass p23-bridge-recheck and the three navigation-bar lines of pass p23-navbar and the three iOS-pass lines (two iOS reminder notes, the "an" scanner sentence) and the five lines of the Solana-pass fix slice (the Solana devnet banner, the Solana token-fee line, the Solana devnet readiness line, two Max-lowering sentences) and the two smart-account Max-lowering sentences of the trim slice and the devnet form of the Solana token-fee line (pass p24-recheck) and the nine lines of the p24-unblock fixes (the Solana token Send link and its hint, seven Solana Activity sentences) and the hidden-fee word of an Activity row and the four gains-report lines of phase 25 item 3',
-    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || SPL_TOKENS_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id) || NAVBAR_FIX_NEW.includes(id) || IOS_FIX_NEW.includes(id) || SOLANA_FIX_NEW.includes(id) || AA_TRIM_NEW.includes(id) || RECHECK_FIX_NEW.includes(id) || UNBLOCK_FIX_NEW.includes(id) || SOLHIST_NEW.includes(id) || GAINS_NEW.includes(id)) &&
+    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || SPL_TOKENS_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id) || NAVBAR_FIX_NEW.includes(id) || IOS_FIX_NEW.includes(id) || SOLANA_FIX_NEW.includes(id) || AA_TRIM_NEW.includes(id) || RECHECK_FIX_NEW.includes(id) || UNBLOCK_FIX_NEW.includes(id) || SOLHIST_NEW.includes(id) || GAINS_NEW.includes(id) || insightsNew(id)) &&
       BUILD_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && BRIDGE_RECHECK_NEW.every((id) => FIXTURE.new.includes(id)) &&
       LOCK_KIND_NEW.every((id) => FIXTURE.new.includes(id)) && COLD_AA_NEW.every((id) => FIXTURE.new.includes(id)) && SPL_TOKENS_NEW.every((id) => FIXTURE.new.includes(id)) &&
       BROADCAST_OPEN_NEW.every((id) => FIXTURE.new.includes(id)) && THIRD_PASS_NEW.every((id) => FIXTURE.new.includes(id)) && PERIOD_NEW.every((id) => FIXTURE.new.includes(id)) &&
       BRIDGE_MINT_NEW.every((id) => FIXTURE.new.includes(id)) && NAVBAR_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && IOS_FIX_NEW.every((id) => FIXTURE.new.includes(id)) &&
       SOLANA_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && AA_TRIM_NEW.every((id) => FIXTURE.new.includes(id)) &&
       RECHECK_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && UNBLOCK_FIX_NEW.every((id) => FIXTURE.new.includes(id)) &&
-      SOLHIST_NEW.every((id) => FIXTURE.new.includes(id)) && GAINS_NEW.every((id) => FIXTURE.new.includes(id)));
+      SOLHIST_NEW.every((id) => FIXTURE.new.includes(id)) && GAINS_NEW.every((id) => FIXTURE.new.includes(id)) &&
+      Object.keys(en).filter(insightsNew).length > 0 && Object.keys(en).filter(insightsNew).every((id) => FIXTURE.new.includes(id)));
   // Phase 25 item 3: the four gains-report lines, English and Spanish exact, no placeholders, and each one used by the panel.
   {
     const WANT_EN = {

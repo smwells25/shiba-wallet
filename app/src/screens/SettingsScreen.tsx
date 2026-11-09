@@ -2475,6 +2475,7 @@ export function SettingsScreen({ navigation, route }: Props) {
           <NotificationSettingsSection />
         )}
         <Button title="Open the inbox" variant="secondary" accessibilityHint="Lists what the wallet has told you: reminders, alerts, requests from connected apps that it sent, and speed-ups and cancellations" onPress={() => navigation.navigate('Inbox')} />
+        <Button title={t('insights.open')} variant="secondary" accessibilityHint={t('insights.open.hint')} onPress={() => navigation.navigate('Insights')} />
       </View>
 
       <AppPinSection scrollTo={scrollToSection} />

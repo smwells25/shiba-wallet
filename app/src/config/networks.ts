@@ -239,6 +239,55 @@ export function forgetDefaultEndpointChoices(): void {
   defaultResolver.clear();
 }
 
+/** What the wallet knows about one active network's endpoint WITHOUT asking it (peekEndpointHealth). */
+export interface EndpointHealthPeek {
+  /** The slot id (e.g. 'eip155:1'). */
+  slot: string;
+  /** The network's own CAIP-2 id (e.g. 'eip155:11155111' in Sepolia test mode). */
+  networkChainId: string;
+  label: string;
+  /** The default candidate URLs, in order (the first is the primary). */
+  defaultUrls: readonly string[];
+  /** The user's own endpoint for this network (an RPC override, or the saved Blockbook URL), or null. */
+  overrideUrl: string | null;
+  /**
+   * The default choice cached by the last probe in this session (the same
+   * one Settings → Network endpoints shows), or null when nothing was probed
+   * yet or an override is in use.
+   */
+  choice: DefaultChoice | null;
+}
+
+/**
+ * The state of every active network's endpoint as this session last saw it,
+ * read from storage and from the in-memory default resolver ONLY: nothing
+ * is probed and no request is made (the resolver's peek never probes). Used
+ * by the risk overview (phase 25 item 2, feature 99), which may only state
+ * what the wallet already knows.
+ */
+export async function peekEndpointHealth(options: { store?: KeyValueStore } = {}): Promise<EndpointHealthPeek[]> {
+  const store = options.store ?? AsyncStorage;
+  const [overrides, prefs] = await Promise.all([loadOverrides(store), loadPrefs(store)]);
+  const out: EndpointHealthPeek[] = [];
+  for (const { slot, network } of resolveActiveNetworks(prefs.testNetwork, prefs.solanaDevnet)) {
+    let overrideUrl: string | null = null;
+    if (network.kind === 'blockbook') {
+      overrideUrl = (await getBlockbookConfig(network.chainId, store)).url;
+    } else {
+      overrideUrl = checkStoredOverride(overrides[network.chainId]).url ?? null;
+    }
+    out.push({
+      slot,
+      networkChainId: network.chainId,
+      label: network.label,
+      defaultUrls: network.defaultUrls,
+      overrideUrl,
+      choice: overrideUrl === null ? (defaultResolver.peek(network.chainId) ?? null) : null,
+    });
+  }
+  return out;
+}
+
 /** An endpoint whose URL is set (the only kind a request can use). */
 export type UsableEndpoint = NetworkEndpoint & { url: string };
 

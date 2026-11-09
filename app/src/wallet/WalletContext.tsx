@@ -107,6 +107,7 @@ import { resetBridgeTransfers } from './bridge';
 import { wipeInbox } from './inbox';
 import { resetPriceAlerts } from './price-alerts';
 import { resetPendingHandles } from './handle';
+import { forgetInsightSnapshots } from './insights';
 import { resetContacts } from './contacts';
 import { resetTrackedTokens } from './tokens';
 import { resetTakeoverScanStates } from './inheritance';
@@ -1445,6 +1446,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         await resetBridgeTransfers(store).catch(() => undefined);
         await wipeInbox(store).catch(() => undefined);
         await resetPendingHandles(store).catch(() => undefined);
+        // The risk overview's in-memory readings (phase 25 item 2) go with the
+        // wallet so a re-import in the same process never shows an old reading.
+        forgetInsightSnapshots();
         await resetContacts(store).catch(() => undefined);
         await resetTrackedTokens(store).catch(() => undefined);
         await resetTakeoverScanStates(store).catch(() => undefined);
@@ -1505,6 +1509,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     await resetBridgeTransfers(AsyncStorage).catch(() => undefined);
     await wipeInbox(AsyncStorage).catch(() => undefined);
     await resetPendingHandles(AsyncStorage).catch(() => undefined);
+    forgetInsightSnapshots(); // the risk overview's in-memory readings (phase 25 item 2)
     // Contacts, tracked-token lists, the takeover-scan bookkeeping and the
     // EIP-7702 upgrade marks are this wallet's records too (declared
     // 'wallet' in store-keys.ts); a wipe forgets them with the rest (pass

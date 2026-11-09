@@ -60,6 +60,7 @@ export const APP_SCRIPTS = {
   // historical-price read (feature 97), and price alerts (feature 98).
   'check-portfolio.mjs': { kind: 'offline', summary: 'counts' },
   'check-pnl.mjs': { kind: 'offline', summary: 'counts' },
+  'check-insights.mjs': { kind: 'offline', summary: 'counts' }, // Phase 25 item 2: the risk overview (feature 99; fakes only, no request).
   'check-price-alerts.mjs': { kind: 'offline', summary: 'counts' },
   // Phase 17 item 1: multi-signature accounts in the app (feature 24): ids,
   // records, request / approval round trip, the submit pipeline recovered by

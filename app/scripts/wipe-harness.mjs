@@ -71,6 +71,8 @@ export const WIPE_NON_STORE_CALLS = new Set([
   'deleteMnemonic', 'deletePublicAccounts', 'wipeBothWallets', 'createProfileVault', 'appSecureBackend',
   'dropPhraseTicket', 'setDerived', 'setMultisigInfo', 'commitAccounts', 'setPendingMnemonic', 'setSessionSlot',
   'setProfileKey', 'setStatus',
+  // The risk overview's in-memory snapshots (wallet/insights.ts; phase 25 item 2): no store.
+  'forgetInsightSnapshots',
 ]);
 
 function walk(node, visit) {
