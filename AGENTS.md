@@ -18930,6 +18930,68 @@ same time (one device driver); fixes after each pass; 6 last. Subagents
 on Opus.
 
 ## Phase 25 progress
+- [x] Item 1, the honesty half — THE NFT SCREENS SAY WHEN A TOKEN IS THE ENS
+      NAME ITSELF (commit e34a0e2; 13 files, one new —
+      app/src/components/EnsNameTokenNotice.tsx; wallet/nfts.ts, send-nft.ts,
+      risk.ts, NftDetailScreen.tsx, NftsScreen.tsx, SendScreen.tsx (two
+      insertions, the Send NFT form and confirm live there), en.ts / es.ts
+      and the fixture's "new" list, check-nfts 171 (was 142), check-approvals
+      294 (286), check-i18n 205 (202); offline runner ALL GREEN in the CTO's
+      isolated worktree on HEAD 689a748: checkout 0 / apply 0 / 13 files,
+      the staged patch id f9098b2c…bcd7 equal to the agent's, engine 1,351,
+      app 11,591 across 67 suites, lint 0/0, tsc clean; the pre-commit scan
+      clean; seven hand mutants on the real files caught and restored
+      cmp-equal; nothing sent; not seen on a device). THE RESEARCH FIRST
+      (ensdomains/contracts-v2 at 07e55a05, file and line in the report
+      and the component's comment): a transfer of the .eth registry's
+      ERC-1155 token moves the single owner AND every role the sender holds
+      — set the resolver, set the subregistry, the two admin roles, the
+      right to transfer (PermissionedRegistry.sol 517–547 →
+      EnhancedAccessControl _transferRoles 236–252) — and the sender keeps
+      none; the token id does NOT change on a plain transfer (keccak256
+      (label) with the low 32 bits a version, LibLabel.sol 15–17); the
+      resolver, the subregistry and the expiry stay as they were; anyone can
+      renew by paying the registrar with no owner check
+      (AbstractETHRegistrar.sol 93–95, 128–143); an expired name cannot be
+      transferred. ON-CHAIN (two keyless RPCs, block 12098142): ownerOf =
+      Account 1, balanceOf 1, getState REGISTERED with expiry 1795492140
+      (2026-11-24 03:49 UTC), Account 1 the only role holder with exactly
+      the registration roles, isEmancipated true, getLabel "qzv7hk2wmt".
+      CORRECTION TO THE CTO'S BRIEF, by read-only eth_simulateV1 (nothing
+      sent): after a simulated transfer the name STILL RESOLVES to Account 1
+      and reverse(Account 1) still returns qzv7hk2wmt.eth — the previous
+      owner's own resolver keeps pointing the name until the recipient sets
+      another, and whoever controls that resolver can still change where it
+      points; so the box says Home and the handle screen MAY KEEP showing
+      the name, not "will no longer show it". THE BOX (EnsNameTokenNotice;
+      on the NFT detail, the Send NFT form and the NFT confirm; only for
+      the engine's ENS_V2_SEPOLIA.ethRegistry on its network — no address
+      in the app; the label named only when the indexer's name hashes to
+      the token id, else nft.ens.isUnchecked; the expiry read from getState
+      with reading / unread / expired / stale sentences): "This token is the
+      ENS name {name} on {network}." / "Sending it hands the name to the
+      recipient: they get every right this account holds over it (to change
+      its resolver and its subregistry, to give those rights to others, and
+      to transfer it again), and this account keeps none of them." / "The
+      transfer does not change the name's resolver or its records: the name
+      keeps pointing where its resolver says (for a name registered in this
+      wallet, at this account, through this account's own resolver) until the
+      recipient sets another resolver, and until then whoever controls that
+      resolver can still change where the name points. Until then the Home
+      screen and the Wallet handle screen may also keep showing it as this
+      account's ENS name." / "The registry reports that the name expires on
+      {date}. The transfer does not change that, and anyone can renew a
+      .eth name by paying ENS's registrar." / the expired and stale
+      refusals ("…so this send would fail."); the collection header "ENS
+      names (ENSv2 .eth registry)"; the NFT confirm's risk card names "ENS's
+      .eth registry" as a pinned contract (the recipient's first-transfer
+      search still runs; the registry never accepted as a token spender;
+      check-approvals' pinned-ENS-contracts check now expects four).
+      FOLLOW-UP: wallet/approvals.ts still titles the registry "Unnamed
+      collection" (a one-line change, the polish slice). UNVERIFIED
+      (device): the live expiry read, the indexer's actual token name (a
+      mismatch falls back to the unnamed sentence), layout, TalkBack, dark
+      mode, the Spanish lengths; the post-transfer facts are simulated.
 - [x] Pass p25-emu1 finding 2 FIXED — ACTIVITY FILES SOLANA DEVNET NOTES
       UNDER THE DEVNET ID (commit 9e2aa98; 3 files, +146 / −4 —
       app/src/wallet/solana-activity.ts, screens/ActivityScreen.tsx,
