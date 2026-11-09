@@ -18930,6 +18930,71 @@ same time (one device driver); fixes after each pass; 6 last. Subagents
 on Opus.
 
 ## Phase 25 progress
+- [x] EMULATOR PASS p25-emu2 — THE FIXES SINCE p25-emu1 SEEN LIVE: THE NOTE
+      KEY, THE SOLANA PENDING CARD (INCLUDED STATE), THE SOL CARD AT 0, THE
+      ENS BOX, THE RISK OVERVIEW, THE GAINS EXPORT (2026-11-09 14:59–~15:45
+      UTC; Expo Go on emulator 37.1.11 under -gpu swangle, Metro moved to
+      wt-app at 2139b10 with the engine rebuilt inside it (npm 14023 / node
+      14057 on 8081, 1,958 modules); the REAL wallet; 2 prompts — "Unlock
+      Shiba Wallet" 14:59:29 UTC and "Approve sending 0.1 EURC" 15:11:41 UTC,
+      each read from the BiometricPrompt window; isKeyguardShowing read
+      false before input; no repository file touched; .dev-wallet never
+      read; the report with dumps, screenshots and the TalkBack transcript
+      in the session scratchpad p25-emu2). (1) NOTE KEY — PASS: the 0.5 USDC
+      devnet row of pass p25-emu1 now reads "Note: p25 emu1 max note"; a new
+      note "p25 emu2 row note" on another devnet row survived leaving and
+      reopening Activity; the CSV chooser's file name carries the devnet
+      reference: shiba-activity_solana-EtWTRABZaYq6iMfeYKouRu166VU2xqa1_
+      EK5jKr-rYPv_2026-11-09.csv (cancelled). (2) THE SOLANA PENDING CARD —
+      PARTIAL: the confirm shows "Spending limits (Settings) are set for
+      Ethereum networks only, so this send is not counted against any
+      limit."; the 0.1 EURC send to Account 2 — ONE prompt; the Sent view's
+      card "Solana token send 5iBq…zKRD: 0.1 EURC to 9WMg…471n, sent less
+      than a minute ago." then "Included: the network endpoint reports it
+      finalized (slot 520422950)." and the card gone about 13 s later;
+      signature 5iBqseGB1xC3CvjJoK3RhHQq4fqToK7SRc5qYZsr6EPwm86ZuU75FLL4zw38YPgk9Rvp8QV2y6uvv3ycgrQ1zKRD,
+      slot 520422950, err null, one transferChecked of 100,000 at 6
+      decimals, identical on both devnet RPCs; Account 1 EURC 19,000,000 →
+      18,900,000 and −5,000 lamports, Account 2's EURC 1,000,000 →
+      1,100,000; Activity's Solana slot showed no card (already settled) and
+      no Speed up / Cancel anywhere; NOT SEEN: the waiting state with the
+      no-replacement sentence, and the duplicate-send refusal — the transfer
+      finalised within about 18 s, faster than a second Review could be
+      reached (the states remain offline-pinned only). (3) THE SOL CARD AT 0
+      — PASS: Account 2 (0 test SOL) shows no Send on the Solana card,
+      Account 1's card still has it; observation 7: Account 2's token Send
+      links still show at 0 SOL (finding F, unchanged by design so far). (4)
+      THE ENS BOX — PASS: the collection header "ENS names (ENSv2 .eth
+      registry)"; the detail and the Send NFT form show the four paragraphs
+      word for word incl. "The registry reports that the name expires on
+      2026-11-24 03:49:00 UTC. The transfer does not change that, and anyone
+      can renew a .eth name by paying ENS's registrar." — THE EXPIRY READ
+      LIVE FROM THE REGISTRY; no recipient typed, Review never tapped,
+      nothing sent; the tile still said "1 copies" (2139b10 predates the
+      polish 3da568a, which changed the spoken label only). (5) THE RISK
+      OVERVIEW — sections PASS, masking not checkable: all eight sections
+      with their Source lines recorded exactly before and after an Approvals
+      search; the Settings → Privacy row opens the same screen; under Hide
+      amounts with TalkBack on, "Bullet" spoken 0 times and "(amount hidden)"
+      also 0 times — the wallet holds no priced asset, so there is no share
+      to mask. (6) THE GAINS EXPORT — PASS (a temporary switch to mainnet,
+      Ethereum Sepolia restored): the P&L panel for ETH shows only the gap
+      sentences, then "Export gains report (.csv)" and its note; the chooser
+      offered shiba-gains_eip155-1_ETH_2026-11-09.csv and was cancelled.
+      MAIN FINDING (8): the risk overview's "Transactions waiting" section
+      counts 4 regular-account and 10 smart-account records as waiting, all
+      older than 10 minutes, while Account 1's Sepolia Activity shows none of
+      them, and the section does not say which account or network they
+      belong to — a fix slice is dispatched (what those records are is to be
+      established from the registry's rules, not guessed: candidates are the
+      1-wei rehearsal sends never included and old smart-account operations
+      the bundler no longer knows, on other networks or accounts). OTHER
+      FINDINGS: (9) Account 2's Dogecoin card says "no endpoint" yet still
+      offers Send. END STATE: devnet OFF, Hide amounts OFF, TalkBack OFF
+      (level 6), protection OFF, light mode, IME ADBKeyboard; Home, Account
+      1, Ethereum Sepolia; Metro at 2139b10 with only the 8081 reverse; the
+      window in front. FUNDS (devnet): Account 1 46,998,120 lamports / 17.5
+      USDC / 18.9 EURC; Account 2 0 lamports / 2.5 USDC / 1.1 EURC.
 - [x] Phase 25 polish — A LOG WINDOW THE ENDPOINT ALLOWS, AN UNDATED
       READINESS REASON, "1 copy", THE REGISTRY'S TITLE ON APPROVALS, A HOME
       LINK TO THE RISK OVERVIEW (commit 3da568a; 14 files, +546 / −39;
