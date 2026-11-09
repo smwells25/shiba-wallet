@@ -19898,3 +19898,66 @@ driver at a time, item 1's first; 6 last. Subagents on Opus.
       Aave v3 lending engine and script with a live 0.1 USDC supply and
       withdrawal on Arbitrum Sepolia, (C) a Token-2022 fee mint on Solana
       devnet by script, (D) the item-4 code fixes, (E) docs/BITCOIN_ASSETS.md.
+- [x] Item 5 — docs/BITCOIN_ASSETS.md, BITCOIN-NATIVE ASSETS (ORDINALS AND
+      RUNES), RESEARCH ONLY (commit below; one new file, about 6,070 words;
+      the CTO read it in full and re-checked every citation of this
+      repository's own code against the files — send.ts 1322 / 1340 / 1375
+      / 1380, transport.ts 36–43, coinselect.ts 131, transfer.ts 77,
+      balances.ts 34–37, defaults.ts 83–86 — all exact; check-readiness
+      230, check-screen-protection 87 and check-devmode 476 green with the
+      file present; the pre-commit scan at the commit; no 32-hex run and no
+      wallet address in the file; every network call a read-only GET on
+      2026-11-09 22:51–22:54 UTC; nothing sent or signed; sources at pinned
+      commits — ord 1c2c8dee (0.29.1), Blockstream/esplora 57ae2e7f,
+      trezor/blockbook f39be4db, mempool cfe242ee, bitcoincore.org 08331130,
+      the three Doginals repositories, Hiro's, Xverse's, UniSat's and Best
+      in Slot's documentation). FINDINGS: ordinal theory moves satoshis
+      first-in-first-out and an inscription rides its first satoshi, so a
+      wallet that does not know which outputs are inscribed can hand an
+      inscription to the payee, to its change or to the miner by an
+      ordinary send; Runes in a spent output with no runestone go to the
+      first non-OP_RETURN output (rune_updater.rs 136–161), which in this
+      wallet is ALWAYS THE RECIPIENT, so an ordinary send from such an
+      output gives the Runes away; THIS WALLET IS EXPOSED ON MAINNET TODAY
+      — its coin selection is largest-first over every output Esplora
+      returns, Max spends every output, the engine drops Esplora's
+      confirmation status, and Esplora, mempool.space and Blockbook carry
+      no inscription or Runes data; ord's own wallet locks every inscribed
+      or runic output before an ordinary payment (wallet.rs 165–191) and
+      its server answers "which outputs are cardinal" per address; the app
+      has NO Bitcoin test network (mainnet only; testnet3 and signet exist
+      only in the smoke scripts); the test networks are alive on both
+      Esplora providers (testnet3 tip 5,322,592, testnet4 160,233, signet
+      330,151) while Bitcoin Core 28.0 intends to phase testnet3 out; no
+      keyless hosted Ordinals index exists for a test network (ord's
+      signet. and testnet.ordinals.com do not resolve; Hiro's APIs are
+      being deprecated; Xverse serves mainnet and signet with a key or a
+      per-request Lightning payment, its testnet4 host answered 503;
+      UniSat's testnet3 and signet hosts answered a status call keyless,
+      testnet4 refused; Best in Slot's hosted API is retired) — a
+      self-hosted ord server is the one keyless option; Doginals are one
+      README, two indexer forks that number koinu differently, no test
+      network — a no-go. RECOMMENDATION: a GO, test networks only, for a
+      PROTECT-ONLY slice — signet first, testnet4 second, never testnet3;
+      spend only confirmed outputs an index POSITIVELY reports as holding
+      neither inscriptions nor Runes, fail closed with no "send anyway"
+      when the index is unreadable, behind or on another network, show
+      nothing about the assets; the filter between getUtxos and
+      buildTransfer in prepareUtxoSend and maxUtxoSend plus a protected-
+      outpoints guard in the engine's buildTransfer and Esplora's status
+      kept on Utxo — CONDITIONAL on three INPUTS: the Chairperson's choice
+      of index (a self-hosted ord server, or Xverse's keyed signet API,
+      which sees every address asked about), a Bitcoin test-network switch
+      in the app (a prerequisite slice, like Solana's devnet switch), and
+      test coins plus one test inscription and one test Rune at a wallet
+      address; a NO-GO for showing or sending inscriptions or Runes, for
+      inscribing, etching or minting, for Dogecoin, and for anything on
+      mainnet. SEPARATELY, FOR THE CHAIRPERSON: one true sentence on the
+      mainnet Bitcoin send form — this wallet does not track inscriptions
+      or Runes, and an ordinary send or Max can spend outputs holding them
+      — costs almost nothing and describes a risk that exists now. Fifteen
+      items could not be verified (the document's section 10), among them
+      ord's index size on a test network, Hiro's real deprecation date, the
+      UniSat address endpoints, whether any wallet address has ever
+      received an inscription or Runes, and any audit of ord. FEATURE row
+      42 → Designed at the item-6 refresh.
