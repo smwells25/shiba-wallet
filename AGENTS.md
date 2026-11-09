@@ -18930,6 +18930,56 @@ same time (one device driver); fixes after each pass; 6 last. Subagents
 on Opus.
 
 ## Phase 25 progress
+- [x] Pass p25-emu2 finding 8 FIXED — THE RISK OVERVIEW'S WAITING TRANSACTIONS
+      NAMED BY NETWORK AND ACCOUNT (commit 448fc2c; 6 files, +308 / −54 —
+      insights.ts, InsightsScreen.tsx, check-insights 123 (was 100; in-suite
+      mutants 13 → 19), en.ts, es.ts, the fixture; offline runner ALL GREEN
+      in the CTO's isolated worktree on HEAD ec95d3d: checkout 0 / apply 0 /
+      6 files, the staged patch id 4ed4da60…0e23 equal to the agent's,
+      engine 1,351, app 11,667 across 67 suites, lint 0/0, tsc clean,
+      check-i18n 205 unchanged; the pre-commit scan clean; six hand mutants
+      caught and restored cmp-equal; not seen on a device). WHAT THE OLD
+      CODE DID: the registry holds tx, userop, resolved, marker and solana
+      records for every network and sender; Activity's card shows only the
+      active account on the active network (nonceGroups, userOpsFor,
+      solanaTransfersFor) and a record leaves only through that pair's card,
+      the 64-entry cap or a wipe; the overview counted every tx nonce group
+      and every userop on ALL networks and accounts with the age of the
+      oldest broadcast, named no network or account, did not count markers
+      or resolved notices (so nothing was miscounted that way) and did NOT
+      count Solana sends (a gap) — so the pass's 4 groups and 10 operations
+      were real stored records of OTHER network-and-account pairs (by
+      inference: Account 1's transactions on Arbitrum, Base, OP Sepolia or
+      Hoodi, the removed watched account Cold 8's sends and its cold-signed
+      operation, Kernel operations off Sepolia; some may have been included
+      long ago and never re-read). THE FIX: pendingPlaces() collects each
+      (network, account) pair a card would exist for and counts through the
+      cards' own selectors (one per nonce, so a speed-up counts once;
+      markers and resolved notices never; Solana sends included); ages by
+      the cards' rules (a smart-account operation by checkUserOperation's
+      >= 10-minute expression, a Solana send by solanaStatusFrom(null,
+      …).dropped, a regular-account nonce from its newest broadcast — the
+      card has no age rule there, so this is the overview's own figure); one
+      line per pair, e.g. "Base Sepolia, Account 1: regular-account
+      transactions sent more than 10 minutes ago: 1.", the network named as
+      Activity's title names it and the account through activityAccountLabels
+      (a new optional pendingAccounts context built in InsightsScreen; an
+      address no longer an account here reads "0x…(not an account in this
+      wallet now)" with a note); a summary line separates "waiting (sent
+      less than 10 minutes ago)" from "sent more than 10 minutes ago", and a
+      note says an older entry was either included without this phone
+      checking since, or most likely dropped, or (regular account only) is
+      still in a pool at too low a fee. STRINGS: insights.pending.none
+      changed in place (a "new"-list id), insights.pending.tx and .userop
+      removed, 11 new ids (summary, place, six part.*, otherAddress,
+      oldNote, otherNote) with Spanish drafts; pending-transactions.ts
+      unchanged. FOLLOW-UPS (design, the CTO's): only the active account's
+      Solana address is labelled (another account's Solana sends read as
+      "not an account in this wallet now"); the entries of a REMOVED account
+      can never be cleared from the UI — forgetting them when the account is
+      removed, or a removal control on the overview, is a later slice.
+      UNVERIFIED (device): the lines, their layout and TalkBack, the
+      Spanish lengths.
 - [x] EMULATOR PASS p25-emu2 — THE FIXES SINCE p25-emu1 SEEN LIVE: THE NOTE
       KEY, THE SOLANA PENDING CARD (INCLUDED STATE), THE SOL CARD AT 0, THE
       ENS BOX, THE RISK OVERVIEW, THE GAINS EXPORT (2026-11-09 14:59–~15:45
