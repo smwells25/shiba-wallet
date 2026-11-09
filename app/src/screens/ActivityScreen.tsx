@@ -100,7 +100,7 @@ import {
   type TransactionNote,
 } from '../wallet/notes';
 import { shareTextFile } from '../components/RecordFileActions';
-import { PendingTransactionsSection, resendPrefill } from '../components/PendingTransactions';
+import { PendingTransactionsSection, SolanaPendingTransactionsSection, resendPrefill } from '../components/PendingTransactions';
 import { loadPendingRegistry, replacementRowLine, type PendingRecord } from '../wallet/pending-transactions';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Activity'>;
@@ -1020,6 +1020,10 @@ export function ActivityScreen({ navigation, route }: Props) {
           });
         }}
       />
+    ) : isSolanaSlot && account && activeAccount?.multisig !== true && activeAccount?.watchOnly !== true ? (
+      // The Solana token sends this phone broadcast (phase 25 item 0b):
+      // listed until a block includes them, with no Speed up or Cancel.
+      <SolanaPendingTransactionsSection owner={account.address} />
     ) : null;
 
   if (!account || !network) {

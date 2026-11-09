@@ -1618,6 +1618,12 @@ console.log('check-pending: the screens wire the gates in order (source)');
   // Cancel open the cold-signing screen in replacement mode — the same
   // component and routing the cold success view uses.
   const pendingCond = (src) => /const pendingSection =\s*isEvmSlot && account && activeAccount\?\.multisig !== true \? \(\s*<PendingTransactionsSection/.test(src);
+  // Phase 25 item 0b: the Solana token sends this phone broadcast are listed on
+  // Activity too — only on the Solana slot, never for a multisig or a watched
+  // account (neither can have sent one), with the owner's address as the key.
+  check('Activity mounts SolanaPendingTransactionsSection on the Solana slot only, not for a multisig or watch-only account',
+    /isSolanaSlot && account && activeAccount\?\.multisig !== true && activeAccount\?\.watchOnly !== true \? \(\s*(?:\/\/[^\n]*\n\s*)*<SolanaPendingTransactionsSection owner=\{account\.address\} \/>/.test(activity));
+  check('Activity imports SolanaPendingTransactionsSection from the shared component', /import \{[^}]*SolanaPendingTransactionsSection[^}]*\} from '\.\.\/components\/PendingTransactions'/.test(activity));
   check('p22b: Activity shows "Pending on this phone" for a watch-only account (only a multisig is left out)', pendingCond(activity));
   check('…mutant caught: the old condition that hid it for a watch-only account',
     !pendingCond(activity.replace('isEvmSlot && account && activeAccount?.multisig !== true ? (', 'isEvmSlot && account && activeAccount?.watchOnly !== true && activeAccount?.multisig !== true ? (')));
@@ -1989,6 +1995,217 @@ console.log('check-pending: the section after a replacement is sent (pass p21g: 
     const lr = await run(lateMod);
     check('MUTANT caught: without the first draw from the registry the replacement is not shown until the network answers',
       pendingSrc.includes(FIRST) && lr.atOnce === null);
+  } finally {
+    rmSync(mutantDir, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-pending: phase 25 item 0b — Solana token transfers in the registry');
+// ---------------------------------------------------------------------------
+{
+  const { mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+  const { pathToFileURL } = await import('node:url');
+  const { resolve: resolvePath } = await import('node:path');
+  const { base58 } = await import('@scure/base');
+  const HERE_Z = dirname(fileURLToPath(import.meta.url));
+  const DEVNET = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1';
+  const MAINNET_SOL = 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp';
+  // Public addresses from the record (Account 1's and Account 2's devnet addresses, Circle's devnet USDC mint).
+  const SENDER = 'EK5jKrBRwvQXXsSERGN6jEoYaofE2PNiZWQoaCLtrYPv';
+  const RECIPIENT = '9WMgKdmRJBZy8WQ6Q9T6VjJN4wyT9jQenDvfvLFe471n';
+  const MINT = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU';
+  const sig = (n) => base58.encode(new Uint8Array(64).fill(n));
+  const sol = (over = {}) => ({
+    kind: 'solana', chain: DEVNET, signature: sig(1), sender: SENDER, mint: MINT, amount: '1000000', decimals: 6, symbol: 'USDC', recipient: RECIPIENT, sentAt: T0, ...over,
+  });
+  check('the fixtures are well formed (64-byte signature, 32-byte addresses)',
+    base58.decode(sig(1)).length === 64 && [SENDER, RECIPIENT, MINT].every((a) => base58.decode(a).length === 32));
+  check('a Solana record passes the strict parser', pending.validateRecord(sol()) !== null);
+
+  // Old stores load byte for byte, and keep doing so beside a Solana record.
+  const txRec = txRecordFromQuote(FROM, quoteLike(), H(0xa1), T0);
+  const opOld = { kind: 'userop', chain: CHAIN, userOpHash: H(0xb1), sender: TO, owner: FROM_L, sentAt: T0, resend: null };
+  const opNew = { ...opOld, userOpHash: H(0xb2), origin: 'bridge' };
+  const resolved = { kind: 'resolved', chain: CHAIN, from: FROM_L, nonce: '7', outcome: 'replaced', minedHash: H(0xc2), block: '100', success: true, original: H(0xc1), hashes: [H(0xc1), H(0xc2)], resolvedAt: T0 };
+  const marker = { kind: 'marker', chain: CHAIN, from: FROM_L, nonce: '8', outcome: 'cancelled', minedHash: H(0xd2), original: H(0xd1), markedAt: T0 };
+  const oldDoc = JSON.stringify({ version: 1, records: [txRec, opOld, opNew, resolved, marker] });
+  const oldParsed = parseRegistry(oldDoc);
+  check('a store written before this slice (tx, both userop shapes, a notice, a marker) loads as before: nothing dropped, writable, every record byte for byte',
+    oldParsed.readOnly === false && oldParsed.records.length === 5 && JSON.stringify({ version: 1, records: oldParsed.records }) === oldDoc);
+  const store = memoryStore({ [PENDING_TX_KEY]: oldDoc });
+  const state = await pending.recordPendingSolanaTransferBeforeBroadcast(sol(), store, T0);
+  const written = JSON.parse(store.map.get(PENDING_TX_KEY));
+  check('recording a Solana transfer into that store: created, appended, and the five old records written back byte for byte',
+    state === 'created' && written.records.length === 6 &&
+      JSON.stringify(written.records.slice(0, 5)) === JSON.stringify(JSON.parse(oldDoc).records) && JSON.stringify(written.records[5]) === JSON.stringify(sol()));
+  check('…the document still parses writable with all six', (() => {
+    const r = parseRegistry(store.map.get(PENDING_TX_KEY));
+    return r.readOnly === false && r.records.length === 6;
+  })());
+  check('…a second record of the same signature: existed, nothing written twice',
+    (await pending.recordPendingSolanaTransferBeforeBroadcast(sol(), store, T0)) === 'existed' &&
+      JSON.parse(store.map.get(PENDING_TX_KEY)).records.length === 6);
+  check('…the EVM views never see it (nonce groups, smart-account operations, notices)',
+    nonceGroups(written.records, CHAIN, FROM).length === 1 && userOpsFor(written.records, CHAIN, FROM).length === 2 &&
+      resolvedNotices(written.records, CHAIN, FROM).length === 1 && pending.solanaTransfersFor(written.records, DEVNET, SENDER).length === 1 &&
+      pending.solanaTransfersFor(written.records, MAINNET_SOL, SENDER).length === 0);
+  check('…and the cap still applies to it (pruneRecords keeps it like any pending record)',
+    pruneRecords([...written.records], T0).length === 6);
+
+  // A malformed Solana record is refused as a malformed EVM one is: the document turns read-only.
+  const bad = [
+    ['an EVM chain id', { chain: CHAIN }],
+    ['a chain that is not CAIP-2 Solana', { chain: 'solana:short' }],
+    ['a signature that is not 64 bytes', { signature: base58.encode(new Uint8Array(32).fill(1)) }],
+    ['a signature that is not base58', { signature: '0OIl' + sig(1).slice(4) }],
+    ['a sender that is not 32 bytes', { sender: sig(2) }],
+    ['a 0x mint', { mint: '0x' + 'ab'.repeat(20) }],
+    ['a recipient that is not base58', { recipient: 'not a key' }],
+    ['an amount of 0', { amount: '0' }],
+    ['a fractional amount', { amount: '1.5' }],
+    ['a leading-zero amount', { amount: '01' }],
+    ['decimals 256', { decimals: 256 }],
+    ['decimals as text', { decimals: '6' }],
+    ['an empty symbol', { symbol: '' }],
+    ['a sent time of 0', { sentAt: 0 }],
+  ];
+  const refusedAll = bad.every(([, over]) => pending.validateRecord(sol(over)) === null);
+  check(`the strict parser refuses each of ${bad.length} malformed Solana records`, refusedAll,
+    bad.filter(([, over]) => pending.validateRecord(sol(over)) !== null).map(([n]) => n).join(', '));
+  const extra = { ...sol(), note: 'x' };
+  const missing = { ...sol() };
+  delete missing.symbol;
+  check('…an extra key and a missing key are refused too', pending.validateRecord(extra) === null && pending.validateRecord(missing) === null);
+  const damaged = parseRegistry(JSON.stringify({ version: 1, records: [txRec, sol({ amount: '0' })] }));
+  check('…and a document holding one turns read-only with the valid records still shown (the EVM rule)',
+    damaged.readOnly === true && damaged.records.length === 1 && damaged.records[0].kind === 'tx');
+  const dup = parseRegistry(JSON.stringify({ version: 1, records: [sol(), sol()] }));
+  check('…a duplicated signature is refused like a duplicated hash', dup.readOnly === true && dup.records.length === 1);
+  const ro = memoryStore({ [PENDING_TX_KEY]: JSON.stringify({ version: 1, records: [sol({ amount: '0' })] }) });
+  check('recording into a damaged registry resolves "failed" and writes nothing',
+    (await pending.recordPendingSolanaTransferBeforeBroadcast(sol({ signature: sig(9) }), ro, T0)) === 'failed' &&
+      ro.map.get(PENDING_TX_KEY) === JSON.stringify({ version: 1, records: [sol({ amount: '0' })] }));
+
+  // The status of a signature (getSignatureStatuses).
+  const from = (st) => pending.solanaStatusFrom(st, { sentAt: T0 }, T0 + 5_000);
+  check('statuses: confirmed or finalized = included; processed = not yet; err = included but failed; null = not seen; null after 10 minutes = dropped',
+    JSON.stringify(from({ slot: 5, confirmations: 3, err: null, confirmationStatus: 'confirmed' })) === JSON.stringify({ state: 'included', ok: true, slot: 5, confirmationStatus: 'confirmed', err: null }) &&
+      from({ slot: 5, confirmations: null, err: null, confirmationStatus: 'finalized' }).confirmationStatus === 'finalized' &&
+      from({ slot: 5, confirmations: null, err: null, confirmationStatus: null }).state === 'included' &&
+      from({ slot: 5, confirmations: 0, err: null, confirmationStatus: 'processed' }).state === 'processed' &&
+      JSON.stringify(from({ slot: 6, confirmations: 2, err: { InstructionError: [1, 'Custom'] }, confirmationStatus: 'confirmed' })) ===
+        JSON.stringify({ state: 'included', ok: false, slot: 6, confirmationStatus: 'confirmed', err: '{"InstructionError":[1,"Custom"]}' }) &&
+      JSON.stringify(from(null)) === JSON.stringify({ state: 'not-seen', dropped: false }) &&
+      pending.solanaStatusFrom(null, { sentAt: T0 }, T0 + pending.SOLANA_UNKNOWN_AFTER_MS + 1).dropped === true &&
+      pending.solanaStatusFrom(null, { sentAt: T0 }, T0 + pending.SOLANA_UNKNOWN_AFTER_MS).dropped === false);
+  const asked = [];
+  const reader = (answers) => ({
+    getSignatureStatuses: async (sigs, history) => {
+      asked.push([sigs, history]);
+      if (answers instanceof Error) throw answers;
+      return answers;
+    },
+  });
+  const two = await pending.checkSolanaTransfers(reader([null, { slot: 9, confirmations: null, err: null, confirmationStatus: 'finalized' }]), [sol(), sol({ signature: sig(2) })], T0);
+  check('checkSolanaTransfers: ONE request for every listed signature, with searchTransactionHistory on',
+    asked.length === 1 && asked[0][0].join() === [sig(1), sig(2)].join() && asked[0][1] === true &&
+      two[sig(1)].state === 'not-seen' && two[sig(2)].state === 'included');
+  check('…a list of the wrong length is refused (never matched up by guess)',
+    (await rejection(() => pending.checkSolanaTransfers(reader([null]), [sol(), sol({ signature: sig(2) })], T0))) !== null);
+
+  // Sentences, exact.
+  check('the card sentences, exact',
+    pending.SOLANA_NO_REPLACEMENT_SENTENCE ===
+      'A Solana transaction cannot be sped up or cancelled: Solana has no account nonce to send a replacement under, and once its recent blockhash expires (after 150 slots) it can no longer be included.' &&
+      pending.solanaCardTitle(sol(), T0 + 30_000) === `Solana token send ${sig(1).slice(0, 4)}…${sig(1).slice(-4)}: 1 USDC to 9WMg…471n, sent less than a minute ago.` &&
+      pending.solanaCardTitle(sol({ amount: '1500000' }), T0 + 125_000).endsWith('1.5 USDC to 9WMg…471n, sent 2 minutes ago.') &&
+      pending.solanaStatusSentence({ state: 'included', ok: true, slot: 5, confirmationStatus: 'finalized', err: null }) === 'Included: the network endpoint reports it finalized (slot 5).' &&
+      pending.solanaStatusSentence({ state: 'included', ok: false, slot: 6, confirmationStatus: 'confirmed', err: '"X"' }) ===
+        'Included in slot 6, but it failed on-chain, so no tokens moved; the network fee was still paid. Technical detail: "X"' &&
+      pending.solanaStatusSentence({ state: 'processed', slot: 5 }) ===
+        'The network endpoint has seen this transaction in a block that is not confirmed yet. This list checks again every 15 seconds.' &&
+      pending.solanaStatusSentence({ state: 'not-seen', dropped: false }) === 'The network endpoint does not list this transaction yet. This list checks again every 15 seconds.' &&
+      pending.solanaStatusSentence({ state: 'not-seen', dropped: true }) ===
+        'The network endpoint has had no record of this transaction for more than 10 minutes, so it was most likely dropped: its recent blockhash has expired, so it can no longer be included. Nothing is resent from here. To try again, open the token’s Send screen from Home and review the send again.');
+  check('…the no-replacement sentence shows until the status reads "Included"',
+    pending.solanaShowsNoReplacementSentence(null) && pending.solanaShowsNoReplacementSentence({ state: 'processed', slot: 1 }) &&
+      !pending.solanaShowsNoReplacementSentence({ state: 'included', ok: true, slot: 1, confirmationStatus: 'confirmed', err: null }));
+  check('the same-send guard: the newest matching transfer younger than ten minutes, else none',
+    pending.openSolanaTransferLike([sol()], { chain: DEVNET, sender: SENDER, mint: MINT, recipient: RECIPIENT, amount: '1000000' }, T0 + 1000)?.signature === sig(1) &&
+      pending.openSolanaTransferLike([sol()], { chain: DEVNET, sender: SENDER, mint: MINT, recipient: RECIPIENT, amount: '1000001' }, T0 + 1000) === null &&
+      pending.openSolanaTransferLike([sol()], { chain: MAINNET_SOL, sender: SENDER, mint: MINT, recipient: RECIPIENT, amount: '1000000' }, T0 + 1000) === null &&
+      pending.openSolanaTransferLike([sol()], { chain: DEVNET, sender: SENDER, mint: MINT, recipient: RECIPIENT, amount: '1000000' }, T0 + pending.SOLANA_UNKNOWN_AFTER_MS) === null);
+
+  // The refresher: a first draw from the registry, then one status request; an included transfer leaves the list and is shown once more.
+  const runRefresh = async (mod, answers, recs = [sol(), sol({ signature: sig(2) })]) => {
+    const st = memoryStore({ [PENDING_TX_KEY]: JSON.stringify({ version: 1, records: recs }) });
+    const views = [];
+    asked.length = 0;
+    const r = mod.createSolanaPendingRefresher({ sender: SENDER, reader: async () => ({ chain: DEVNET, reader: reader(answers) }), apply: (v) => views.push(v), store: st, now: () => T0 + 5_000 });
+    await r.refresh();
+    return { st, views, r };
+  };
+  const ok1 = await runRefresh(pending, [{ slot: 9, confirmations: null, err: null, confirmationStatus: 'finalized' }, null]);
+  const left = parseRegistry(ok1.st.map.get(PENDING_TX_KEY)).records;
+  check('refresh: drawn at once from the registry (two transfers, no status yet), then after one request',
+    ok1.views.length === 2 && ok1.views[0].transfers.length === 2 && Object.keys(ok1.views[0].statuses).length === 0 && asked.length === 1 &&
+      ok1.views[0].nowMs === T0 + 5_000);
+  check('…the included transfer is removed from the registry and shown once more as settled with its status; the other stays, "not seen"',
+    left.length === 1 && left[0].signature === sig(2) && ok1.views[1].transfers.length === 1 && ok1.views[1].settled.length === 1 &&
+      ok1.views[1].settled[0].signature === sig(1) && ok1.views[1].statuses[sig(1)].state === 'included' && ok1.views[1].statuses[sig(2)].state === 'not-seen');
+  const err1 = await runRefresh(pending, new Error('fetch failed'));
+  check('…a failed status read leaves every record and draws nothing more',
+    err1.views.length === 1 && parseRegistry(err1.st.map.get(PENDING_TX_KEY)).records.length === 2);
+  const none = memoryStore();
+  let drew = 0;
+  await pending.createSolanaPendingRefresher({ sender: SENDER, reader: async () => null, apply: () => (drew += 1), store: none }).refresh();
+  check('…with no Solana endpoint configured: no request, no draw', drew === 0);
+  const other = await runRefresh(pending, [], [sol({ sender: RECIPIENT })]);
+  check('…another sender’s transfer is neither drawn nor asked about', other.views[0].transfers.length === 0 && asked.length === 0);
+
+  // The card component: no Speed up or Cancel, the no-replacement sentence, Remove only once dropped.
+  const comp = readFileSync(join(HERE_Z, '../src/components/PendingTransactions.tsx'), 'utf8');
+  const solComp = comp.slice(comp.indexOf('export function SolanaPendingTransactionsSection('), comp.indexOf('function ReplacementConfirm('));
+  check('the Solana card: the sentence, the status, "Remove from this list" only for a dropped transfer, and no Speed up, Cancel or Send again',
+    solComp.length > 0 && solComp.includes('{SOLANA_NO_REPLACEMENT_SENTENCE}') && solComp.includes('solanaStatusSentence(status)') &&
+      solComp.includes("status?.state === 'not-seen' && status.dropped ? (") && solComp.includes('title="Remove from this list"') &&
+      !/Speed up|title="Cancel"|Send again|startReplacement|signWith|requireLocalAuth/.test(solComp));
+  check('…re-read on focus and every PENDING_POLL_MS through createSolanaPendingRefresher on the slot’s endpoint',
+    solComp.includes('createSolanaPendingRefresher({') && solComp.includes('setInterval(() => void refresher.refresh(), PENDING_POLL_MS)') &&
+      solComp.includes('getEndpoint(SOLANA_SLOT_CHAIN_ID)'));
+
+  // Mutants of pending-transactions.ts.
+  const pendingSrc = readFileSync(join(HERE_Z, '../src/wallet/pending-transactions.ts'), 'utf8');
+  const toUrls = (src) => src.replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolvePath(join(HERE_Z, '../src/wallet'), spec)).href}'`);
+  const mutantDir = join(HERE_Z, `.mutants-pending-solana-${process.pid}`);
+  mkdirSync(mutantDir, { recursive: true });
+  try {
+    const load = async (name, from, to) => {
+      if (!pendingSrc.includes(from)) throw new Error(`mutation anchor not found: ${from}`);
+      const file = join(mutantDir, `${name}.ts`);
+      writeFileSync(file, toUrls(pendingSrc.replace(from, to)));
+      return import(pathToFileURL(file).href);
+    };
+    const m1 = await load('no-solana-branch', "  if (r.kind === 'solana') return validSolana(r);\n", '');
+    check('MUTANT caught: a parser that does not know the Solana kind turns every store holding one read-only',
+      m1.parseRegistry(JSON.stringify({ version: 1, records: [sol()] })).readOnly === true);
+    const m2 = await load('lenient-amount', "  if (typeof r.amount !== 'string' || !DECIMAL.test(r.amount) || r.amount === '0') return null;\n", '');
+    check('MUTANT caught: a lenient Solana parser accepts an amount of 0', m2.validateRecord(sol({ amount: '0' })) !== null);
+    const m3 = await load('processed-included', "  if (finalized || status.confirmationStatus === 'confirmed') {", "  if (finalized || status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'processed') {");
+    check('MUTANT caught: a processed (unconfirmed) transfer counted as included',
+      m3.solanaStatusFrom({ slot: 1, confirmations: 0, err: null, confirmationStatus: 'processed' }, { sentAt: T0 }, T0).state === 'included');
+    const m4 = await load('no-history', "  const answers = await reader.getSignatureStatuses(batch.map((r) => r.signature), true);", '  const answers = await reader.getSignatureStatuses(batch.map((r) => r.signature));');
+    asked.length = 0;
+    await m4.checkSolanaTransfers(reader([null]), [sol()], T0);
+    check('MUTANT caught: statuses read without searchTransactionHistory (only the recent status cache)', asked[0][1] !== true);
+    const m5 = await load('settle-forgets-nothing', '            await forgetSolanaTransfer({ chain, signature: record.signature }, store, now());\n', '');
+    const mr = await runRefresh(m5, [{ slot: 9, confirmations: null, err: null, confirmationStatus: 'finalized' }, null]);
+    check('MUTANT caught: an included transfer left listed as pending for ever',
+      parseRegistry(mr.st.map.get(PENDING_TX_KEY)).records.length === 2);
+    const m6 = await load('never-dropped', '    return { state: \'not-seen\', dropped: nowMs - record.sentAt > SOLANA_UNKNOWN_AFTER_MS };', "    return { state: 'not-seen', dropped: false };");
+    check('MUTANT caught: a transfer the node has not known for hours never offered as dropped',
+      m6.solanaStatusFrom(null, { sentAt: T0 }, T0 + 3_600_000).dropped === false);
   } finally {
     rmSync(mutantDir, { recursive: true, force: true });
   }

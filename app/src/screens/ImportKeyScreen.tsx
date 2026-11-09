@@ -132,10 +132,29 @@ export function ImportKeyScreen({ navigation }: Props) {
         <WarningBox>{IMPORT_KEY_TRUST_WARNING}</WarningBox>
 
         <Text {...fieldLabel('name', 'Account name (optional)').label} style={[styles.label, { color: theme.text }]}>Account name (optional)</Text>
+        {/* Pass p24-ioskey found iOS's "Passwords" bar above this field (in
+            the iOS 26.5 Simulator), most likely because iOS read it, untagged
+            beside the secure key field, as the user-name half of a login.
+            Apple's "About the Password AutoFill workflow": "If you haven't
+            tagged the input field, the system uses heuristics to identify
+            the view's type". Of the content types React Native 0.86.3 lists
+            (TextInput.d.ts 219–266), "username" is Apple's "an account or
+            login name" — a credential, the wrong tag here — and "name" is a
+            person's name; Apple defines UITextContentType.nickname as "the
+            content in a text input area as a nickname", the closest to a
+            label the user chooses for an account, and not a credential type
+            (Apple's "Enabling Password AutoFill on a text input view" lists
+            only user name, password, new password and one-time code). React
+            Native maps "nickname" to UITextContentTypeNickname
+            (RCTTextInputUtils.mm 206). iOS only; Android ignores the prop.
+            Not yet seen in the Simulator: that the tag removes the bar is an
+            inference, and iOS may still offer a nickname from the owner's
+            own contact card. */}
         <TextInput
           {...fieldLabel('name', 'Account name (optional)').input}
           value={name}
           onChangeText={setName}
+          textContentType="nickname"
           maxLength={MAX_ACCOUNT_NAME_LENGTH * 2}
           placeholder="Imported N"
           placeholderTextColor={theme.textMuted}

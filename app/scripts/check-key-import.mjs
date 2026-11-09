@@ -1114,6 +1114,25 @@ console.log('check-key-import: honesty and input hygiene in the screens (source 
     !keyFieldKeptFromPasswords(imp.replace('          textContentType="oneTimeCode"\n', '          textContentType="none"\n')));
   check('mutant caught: the key field loses secure entry (the key would show in clear)',
     !keyFieldKeptFromPasswords(imp.replace(/\n(\s*)secureTextEntry\n/, '\n')));
+  // Phase 25 item 0d: pass p24-ioskey saw iOS's Passwords bar above the
+  // "Account name (optional)" field (most likely read, untagged, as the
+  // user-name half of a login beside the secure key field). Tagged
+  // UITextContentType.nickname (RCTTextInputUtils.mm 206; Apple: "the
+  // content in a text input area as a nickname"), not "username" (Apple: "an
+  // account or login name", a credential) and not left untagged.
+  const nameFieldOf = (screen) => screen.slice(screen.indexOf("{...fieldLabel('name', 'Account name (optional)').input}"), screen.indexOf("<Text {...fieldLabel('key', 'Ethereum private key').label}"));
+  const nameFieldTagged = (screen) => {
+    const field = nameFieldOf(screen);
+    return field.length > 0 && (field.match(/textContentType=/g) ?? []).length === 1 && field.includes('textContentType="nickname"') &&
+      !/secureTextEntry/.test(field);
+  };
+  check('account-name field: tagged textContentType="nickname" (a name the user picks, not a credential), not secure, one tag only',
+    nameFieldTagged(imp), nameFieldOf(imp).slice(0, 300));
+  check('mutant caught: the account-name field left untagged again (iOS may read it as a login name)',
+    !nameFieldTagged(imp.replace('          textContentType="nickname"\n', '')));
+  check('mutant caught: the account-name field tagged "username" (Apple: an account or login name — a password-manager field)',
+    !nameFieldTagged(imp.replace('textContentType="nickname"', 'textContentType="username"')));
+  check('…and the key field keeps its own tag ("oneTimeCode") beside it', keyFieldKeptFromPasswords(imp));
   check('screenshots are blocked while the field holds text', /if \(!hasText\) return undefined;\s*preventScreenCaptureAsync\(CAPTURE_KEY\)/.test(imp));
   check('the key is cleared from state right after saving, and the clipboard warning is shown', /await importPrivateKey\(input, [^\n]*\);\s*\/\/[^\n]*\n\s*setInput\(''\);/.test(imp) && /IMPORT_KEY_CLIPBOARD_WARNING/.test(imp) && /Clipboard\.setStringAsync\(''\)/.test(imp));
   check('a scanned QR goes through the same validation (it only fills the field)', /onScanned=\{\(data\) => \{\s*setScanning\(false\);\s*setInput\(data\.trim\(\)\);/.test(imp) && /parsePrivateKeyInput\(input\)/.test(imp));

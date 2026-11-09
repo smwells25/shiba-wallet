@@ -37,6 +37,7 @@ import {
 import { isFeatureAllowed, readinessReason } from '../config/readiness.ts';
 import { formatBalanceDisplay, formatUnits, parseUnits } from './balances.ts';
 import { maskAmount } from '../config/prefs.ts';
+import type { BroadcastRecordState, PendingSolanaRecord, SolanaTransferLike } from './pending-transactions.ts';
 
 /**
  * The Solana slot's id: the mainnet CAIP-2 id the accounts, routes and
@@ -402,6 +403,20 @@ export function splSendLinkShown(state: SplRowState | undefined, sendOffered: bo
 }
 
 /**
+ * Whether Home's Solana card offers "Send ↗" for SOL (phase 25 item 0c; the
+ * phase 24 status's follow-up "the Solana mainnet SOL card offers Send at 0
+ * SOL"). The rule Home applies to a token row at a 0 balance
+ * (splSendLinkShown), for the SOL balance: hidden only when the balance was
+ * READ and is exactly 0 lamports, where a send could only be refused at
+ * Review for want of SOL. Shown before the read and after a failed read (the
+ * balance is not known to be 0 then), and at any balance above 0. Mainnet
+ * and devnet alike; the Ethereum card does not use this rule.
+ */
+export function solSendLinkShown(state: { status: string; amount?: bigint } | undefined): boolean {
+  return !(state !== undefined && state.status === 'ok' && state.amount === 0n);
+}
+
+/**
  * The amount "Max" fills in on the Solana token send's form (phase 24
  * follow-up): the owner's whole ASSOCIATED token account balance, the one
  * account a send uses (the engine's quote sends only from it), read from the
@@ -536,6 +551,17 @@ export async function quoteSplSend(
   return { caip2: params.caip2, owner: params.owner, recipient: params.recipient.trim(), symbol: params.token.symbol, url: params.url, quote };
 }
 
+/**
+ * Shown on the Solana token send's confirm (phase 25 item 0b): the spending
+ * limits (wallet/spending-policy.ts) are scoped to an EVM chain and an
+ * Ethereum address — its scopeKey refuses any chain id that is not
+ * eip155:<n>, and the rules it evaluates come from the EVM engine — so a
+ * Solana token send is never counted against a limit, and the confirm says
+ * so instead of leaving it to be assumed.
+ */
+export const SPL_SPENDING_LIMITS_NOTE =
+  'Spending limits (Settings) are set for Ethereum networks only, so this send is not counted against any limit.';
+
 /** One labelled row of the confirm view. */
 export interface ConfirmRow {
   label: string;
@@ -615,6 +641,23 @@ export interface SplSendDeps {
    * was cancelled or refused.
    */
   notifyAccepted: () => void;
+  /**
+   * The pending registry (pending-transactions.ts
+   * pendingSolanaBroadcastRecorder in the app; phase 25 item 0b): the
+   * transfer is listed under "Pending on this phone" BEFORE it is handed to
+   * the node, removed again only when the node refused it definitely and
+   * this attempt created the record, and a send exactly like one still
+   * listed is refused before any prompt. Best effort: a failure to write the
+   * record never blocks the send, and a failure to read the list lets it go
+   * ahead.
+   */
+  pending: {
+    record: (record: PendingSolanaRecord) => Promise<BroadcastRecordState>;
+    forget: (key: { chain: string; signature: string }) => Promise<void>;
+    openLike: (like: SolanaTransferLike, nowMs: number) => Promise<PendingSolanaRecord | null>;
+  };
+  /** Clock (Unix milliseconds) for the record's sent time; Date.now by default. */
+  now?: () => number;
   /** How long to wait for confirmation on the sending endpoint (default 60 s). */
   confirmTimeoutMs?: number;
   sleep?: (ms: number) => Promise<void>;
@@ -629,6 +672,75 @@ export class SplSendCancelledError extends Error {
 }
 
 /**
+ * The node gave no usable answer to sendTransaction (a dropped connection,
+ * an HTTP 5xx, an answer that is not JSON-RPC): the transaction may have
+ * been accepted. It is listed under "Pending on this phone" (when `listed`),
+ * whose status check says what happened; this quote is never sent again.
+ */
+export class SplBroadcastOutcomeUnknownError extends Error {
+  readonly signature: string;
+  readonly listed: boolean;
+  readonly technical: string;
+  constructor(signature: string, listed: boolean, technical: string) {
+    super(splOutcomeUnknownSentence(listed));
+    this.name = 'SplBroadcastOutcomeUnknownError';
+    this.signature = signature;
+    this.listed = listed;
+    this.technical = technical;
+  }
+}
+
+/** The sentence for an open outcome (phase 25 item 0b). */
+export function splOutcomeUnknownSentence(listed: boolean): string {
+  return listed
+    ? 'No usable answer came back from the network endpoint, so this wallet does not know whether the transaction was sent. ' +
+        'It is listed under Pending on this phone, which checks it every 15 seconds; do not send it again until that list says what happened.'
+    : 'No usable answer came back from the network endpoint, so this wallet does not know whether the transaction was sent, and it ' +
+        'could not add it to Pending on this phone. Look the account up in a Solana block explorer before sending anything again.';
+}
+
+/** A quote whose broadcast got no usable answer is never handed over again. */
+export class SplSendAlreadyHandedOverError extends Error {
+  constructor() {
+    super(
+      'This transfer was already handed to the network endpoint once and whether it was accepted is still unknown, so it was not ' +
+        'sent a second time. Check Pending on this phone; review a new send only if that list says it was dropped.',
+    );
+    this.name = 'SplSendAlreadyHandedOverError';
+  }
+}
+
+/** The same send is still listed as pending: signing it again would make a second, separate transaction. */
+export class SplSendStillPendingError extends Error {
+  constructor(symbol: string) {
+    super(
+      `A send of the same amount of ${symbol} to the same recipient from this account is still listed under Pending on this phone. ` +
+        'A Solana transaction signed again is a new transaction, so both could be included. Wait until that list says what ' +
+        'happened before sending it again. Nothing was signed.',
+    );
+    this.name = 'SplSendStillPendingError';
+  }
+}
+
+/**
+ * Whether a sendTransaction failure is a definite refusal (nothing was
+ * accepted, so a record this attempt created is removed). The engine's
+ * Solana transport (packages/chains-solana/src/rpc.ts httpTransport) throws
+ * "RPC error <code>: <message> (sendTransaction)" for a JSON-RPC error
+ * answer — the node refused it, for example a failed pre-flight — and
+ * "RPC HTTP error <status> for sendTransaction" for a non-2xx status. As for
+ * the EVM broadcasts since phase 23 item 8, a parsed error and an HTTP 4xx
+ * are definite; an HTTP 5xx, a rejected fetch and a body that is not
+ * JSON-RPC are open outcomes, because the request may have reached the node.
+ */
+export function isDefiniteSendRefusal(e: unknown): boolean {
+  const message = e instanceof Error ? e.message : String(e);
+  return /^RPC error -?\d+: /.test(message) || /^RPC HTTP error 4\d\d for /.test(message);
+}
+
+const handedOverQuotes = new WeakSet<SplSendQuote>();
+
+/**
  * Signs and sends a quoted Solana token transfer: the readiness gate again,
  * ONE device check titled like the SOL send, then ONE signWith (the active
  * account's Solana key, refused by WalletContext unless it controls exactly
@@ -639,6 +751,22 @@ export class SplSendCancelledError extends Error {
  */
 export async function runSplSend(deps: SplSendDeps, q: SplSendQuote): Promise<SplSendOutcome> {
   assertSplSendAllowed(q.caip2);
+  if (handedOverQuotes.has(q)) throw new SplSendAlreadyHandedOverError();
+  const now = deps.now ?? Date.now;
+  const like: SolanaTransferLike = {
+    chain: q.caip2,
+    sender: q.owner,
+    mint: q.quote.mint,
+    recipient: q.recipient,
+    amount: q.quote.amount.toString(),
+  };
+  let open: PendingSolanaRecord | null = null;
+  try {
+    open = await deps.pending.openLike(like, now());
+  } catch {
+    open = null;
+  }
+  if (open) throw new SplSendStillPendingError(q.symbol);
   const auth = await deps.requireAuth(splApprovalPromptTitle(q));
   if (!auth.ok) throw new SplSendCancelledError(auth.message);
   const signature = await deps.signWith(SOLANA_SLOT_CHAIN_ID, q.owner, async (signer) => {
@@ -649,7 +777,32 @@ export async function runSplSend(deps: SplSendDeps, q: SplSendQuote): Promise<Sp
       instructions: q.quote.instructions,
     });
     const signed = signTransaction(message, [{ publicKey: signer.publicKey, sign: (bytes) => signer.sign(bytes) }]);
-    return deps.client.sendTransaction(signed.wireBytes);
+    // Listed BEFORE the broadcast (phase 25 item 0b): an answer that never
+    // arrives must still leave the transfer in "Pending on this phone".
+    const record: PendingSolanaRecord = {
+      kind: 'solana',
+      ...like,
+      signature: signed.signature,
+      decimals: q.quote.decimals,
+      symbol: q.symbol,
+      sentAt: now(),
+    };
+    let state: BroadcastRecordState = 'failed';
+    try {
+      state = await deps.pending.record(record);
+    } catch {
+      state = 'failed';
+    }
+    try {
+      return await deps.client.sendTransaction(signed.wireBytes);
+    } catch (e) {
+      if (isDefiniteSendRefusal(e)) {
+        if (state === 'created') await deps.pending.forget({ chain: record.chain, signature: record.signature }).catch(() => undefined);
+        throw e;
+      }
+      handedOverQuotes.add(q);
+      throw new SplBroadcastOutcomeUnknownError(record.signature, state !== 'failed', e instanceof Error ? e.message : String(e));
+    }
   });
   // The broadcast was accepted: balances may have moved (best effort: a
   // failing listener never affects the send that was already made).

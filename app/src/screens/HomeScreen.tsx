@@ -53,6 +53,7 @@ import {
   splOutsideLine,
   splSendGate,
   splSendLinkShown,
+  solSendLinkShown,
   splSkippedLine,
   type SplRowState,
 } from '../wallet/spl-tokens';
@@ -778,15 +779,23 @@ export function HomeScreen({ navigation }: Props) {
           {watchOnly && isEvm
             ? cardLink('cold-sign', COLD_SIGN_HOME_LINK, () => navigation.navigate('ColdSign'), COLD_SIGN_LINK_HINT)
             : null}
-          {noKey
-            ? null
-            : cardLink('send', 'Send ↗', () =>
-                navigation.navigate('Send', { chainId: item.chainId }),
-                // The coin as this network names it ("test ETH" on a test
-                // network; pass p20d finding 6), and "test SOL" on the Solana
-                // card while Solana devnet is on (pass p24-solfix2 finding D).
-                sendLinkHint(isEvm ? evmChain.displaySymbol : solanaDevnetLine ? SOLANA_DEVNET_NETWORK.symbol : item.symbol),
-              )}
+          {/* The Solana card hides Send at a read balance of exactly 0
+              lamports (phase 25 item 0c; wallet/spl-tokens.ts
+              solSendLinkShown), as a token row hides it at 0. The Ethereum
+              card is never hidden by it. */}
+          {item.chainId === SOLANA_CHAIN_ID && !solSendLinkShown(balances[item.chainId]) ? null : (
+            <React.Fragment key="send">
+              {noKey
+                ? null
+                : cardLink('send', 'Send ↗', () =>
+                    navigation.navigate('Send', { chainId: item.chainId }),
+                    // The coin as this network names it ("test ETH" on a test
+                    // network; pass p20d finding 6), and "test SOL" on the Solana
+                    // card while Solana devnet is on (pass p24-solfix2 finding D).
+                    sendLinkHint(isEvm ? evmChain.displaySymbol : solanaDevnetLine ? SOLANA_DEVNET_NETWORK.symbol : item.symbol),
+                  )}
+            </React.Fragment>
+          )}
           {cardLink('activity', 'Activity', () =>
             navigation.navigate('Activity', { chainId: item.chainId }),
             t('home.link.activity.hint', { title }),

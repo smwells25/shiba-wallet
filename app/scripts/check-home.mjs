@@ -616,5 +616,28 @@ console.log('check-home: phase 23 item 8 — the third localisation pass (the re
   })());
 }
 
+// ---------------------------------------------------------------------------
+console.log('check-home: phase 25 item 0c — the Solana card hides Send at a read balance of 0 lamports');
+// ---------------------------------------------------------------------------
+{
+  const { solSendLinkShown, splSendLinkShown } = await import('../src/wallet/spl-tokens.ts');
+  const okState = (amount) => ({ status: 'ok', display: '0', symbol: 'SOL', amount, decimals: 9, networkChainId: 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp' });
+  check('Send hidden when the read SOL balance is exactly 0 lamports', solSendLinkShown(okState(0n)) === false);
+  check('Send shown at 1 lamport and at 0.05 SOL', solSendLinkShown(okState(1n)) === true && solSendLinkShown(okState(50_000_000n)) === true);
+  check('Send shown before the read (no state, loading)', solSendLinkShown(undefined) === true && solSendLinkShown({ status: 'loading' }) === true);
+  check('Send shown after a failed read (the balance is not known to be 0)', solSendLinkShown({ status: 'error', message: 'fetch failed' }) === true);
+  check('the token-row rule it mirrors still hides a 0 associated balance (splSendLinkShown unchanged)',
+    splSendLinkShown({ status: 'ok', associated: 0n, sendRefusal: null, decimalsChanged: false }, true) === false &&
+      splSendLinkShown({ status: 'ok', associated: 1n, sendRefusal: null, decimalsChanged: false }, true) === true);
+  const home = source('../src/screens/HomeScreen.tsx');
+  const SOL_RULE = "{item.chainId === SOLANA_CHAIN_ID && !solSendLinkShown(balances[item.chainId]) ? null : (\n            <React.Fragment key=\"send\">\n              {noKey\n                ? null\n                : cardLink('send', 'Send ↗', () =>";
+  const wired = (src) => src.includes(SOL_RULE) && /import \{[^}]*\bsolSendLinkShown,[^}]*\} from '\.\.\/wallet\/spl-tokens';/.test(src);
+  check('Home applies it to the Solana card only, around the unchanged noKey rule (source)', wired(home) && /\{noKey\s*\?\s*null\s*:\s*cardLink\('send'/.test(home));
+  check('…the Ethereum card is not given the rule (only the Solana chain id is compared)',
+    (home.match(/solSendLinkShown\(/g) ?? []).length === 1 && !/item\.chainId === EVM_CHAIN_ID && !solSendLinkShown/.test(home));
+  check('…mutant caught: the rule dropped (Send offered at 0 SOL again)',
+    !wired(home.replace('{item.chainId === SOLANA_CHAIN_ID && !solSendLinkShown(balances[item.chainId]) ? null : (', '{false ? null : (')));
+}
+
 console.log(`\ncheck-home: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

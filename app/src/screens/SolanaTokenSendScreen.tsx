@@ -15,8 +15,12 @@ import { SOLANA_CHAIN_ID, notifySendAccepted } from '../wallet/send';
 import { SolanaDevnetBanner } from '../components/SolanaDevnetBanner';
 import { NOTE_VIEW_SCROLL_PROPS, TransactionNoteField, dismissKeyboardThenClose } from '../components/TransactionNoteField';
 import { listSolanaTokens } from '../wallet/tokens';
+import { pendingSolanaBroadcastRecorder } from '../wallet/pending-transactions';
+import { SolanaPendingTransactionsSection } from '../components/PendingTransactions';
 import {
   SOLANA_SLOT_CHAIN_ID,
+  SPL_SPENDING_LIMITS_NOTE,
+  SplBroadcastOutcomeUnknownError,
   quoteSplSend,
   readSplMaxRow,
   runSplSend,
@@ -67,6 +71,9 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
   // Max: reading the balance, and the sentence when it could not be used.
   const [maxBusy, setMaxBusy] = useState(false);
   const [maxNote, setMaxNote] = useState<string | null>(null);
+  // A send whose broadcast got no usable answer (phase 25 item 0b): its
+  // signature, so the form shows that transfer's pending card.
+  const [unknownSignature, setUnknownSignature] = useState<string | null>(null);
 
   // The endpoint serving the Solana slot now, and the token from ITS list.
   useEffect(() => {
@@ -180,6 +187,7 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
           client: solanaClient(quote.url),
           second: secondUrl ? { url: secondUrl, client: solanaClient(secondUrl) } : null,
           notifyAccepted: notifySendAccepted,
+          pending: pendingSolanaBroadcastRecorder(),
         },
         quote,
       );
@@ -187,8 +195,22 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
       setSentNetwork(quote.caip2);
       setPhase('success');
     } catch (e) {
+      if (e instanceof SplBroadcastOutcomeUnknownError) {
+        // The transaction may have gone through: back to the form with the
+        // quote dropped (runSplSend never hands the same quote over again,
+        // and refuses a send exactly like one still listed as pending).
+        setQuote(null);
+        setUnknownSignature(e.signature);
+        setPhase('form');
+        setError({ message: e.message, technical: e.technical });
+        return;
+      }
       setPhase('confirm');
-      setError({ message: e instanceof Error ? `Not sent. ${e.message}` : 'Not sent.', technical: null });
+      const refusedBeforeSigning = e instanceof Error && (e.name === 'SplSendStillPendingError' || e.name === 'SplSendAlreadyHandedOverError');
+      setError({
+        message: e instanceof Error ? (refusedBeforeSigning ? e.message : `Not sent. ${e.message}`) : 'Not sent.',
+        technical: null,
+      });
     }
   };
 
@@ -207,6 +229,7 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
             ? 'Look the signature up in a Solana block explorer.'
             : 'No devnet block explorer link has been verified for this wallet; the signature above identifies the transaction.'}
         </Text>
+        <SolanaPendingTransactionsSection owner={quote.owner} onlySignature={outcome.signature} />
         {sentNetwork ? <TransactionNoteField network={sentNetwork} txid={outcome.signature} userOpHash={null} /> : null}
         <Button title="Done" onPress={() => dismissKeyboardThenClose(() => navigation.goBack())} />
       </ScrollView>
@@ -229,6 +252,7 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
         {quote.quote.notes.map((note) => (
           <Text key={note} style={[styles.hint, { color: theme.text }]}>{note}</Text>
         ))}
+        <Text style={[styles.hint, { color: theme.textMuted }]}>{SPL_SPENDING_LIMITS_NOTE}</Text>
         {error ? (
           <Text accessibilityLiveRegion="polite" style={[styles.hint, { color: theme.danger }]}>{error.message}</Text>
         ) : null}
@@ -295,6 +319,7 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
         <Text accessibilityLiveRegion="polite" style={[styles.hint, { color: theme.danger }]}>{error.message}</Text>
       ) : null}
       {error ? <TechnicalDetail text={error.technical} /> : null}
+      {unknownSignature ? <SolanaPendingTransactionsSection owner={owner} onlySignature={unknownSignature} /> : null}
       {phase === 'quoting' ? (
         <ActivityIndicator color={theme.textMuted} />
       ) : (

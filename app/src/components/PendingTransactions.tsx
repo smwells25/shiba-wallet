@@ -71,7 +71,17 @@ import {
   type ReplacementAction,
   type ResolvedRecord,
   type UserOpStatus,
+  SOLANA_NO_REPLACEMENT_SENTENCE,
+  createSolanaPendingRefresher,
+  forgetSolanaTransfer,
+  solanaCardTitle,
+  solanaShowsNoReplacementSentence,
+  solanaStatusSentence,
+  type PendingSolanaRecord,
+  type SolanaPendingView,
+  type SolanaTransferStatus,
 } from '../wallet/pending-transactions';
+import { SOLANA_SLOT_CHAIN_ID, solanaClient } from '../wallet/spl-tokens';
 
 /**
  * Pending transactions on this phone (feature 95, wallet/pending-transactions.ts):
@@ -532,6 +542,111 @@ export function PendingTransactionsSection({
               <Button title="Send again" variant="secondary" onPress={() => void sendAgain(record)} />
             ) : null}
           </View>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+/**
+ * The Solana token transfers this wallet broadcast (phase 25 item 0b;
+ * wallet/pending-transactions.ts PendingSolanaRecord), for the network that
+ * serves the Solana slot now. Re-read on focus and every PENDING_POLL_MS
+ * with one getSignatureStatuses request; a transfer a block included is
+ * removed from the list and shown once more as "Included …". No Speed up or
+ * Cancel: Solana has no account nonce to replace a transaction under
+ * (SOLANA_NO_REPLACEMENT_SENTENCE). A transfer the endpoint has not known
+ * for ten minutes reads "most likely dropped" and can be removed from the
+ * list; nothing is ever resent from here.
+ *
+ * Shown on the Solana token send's success view and, after a send whose
+ * outcome is unknown, on its form (`onlySignature`); Activity's Solana slot
+ * mounts it without `onlySignature`.
+ */
+export function SolanaPendingTransactionsSection({
+  owner,
+  onlySignature,
+}: {
+  /** The active account's Solana address (the sender). */
+  owner: string;
+  /** Show only this transfer (the send screen). */
+  onlySignature?: string | null;
+}) {
+  const theme = useTheme();
+  const [view, setView] = useState<SolanaPendingView | null>(null);
+  // The focused refresher's re-read, for "Remove from this list".
+  const refreshNow = useRef<(() => void) | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      // One refresher per focus; its draws stop when the screen loses focus
+      // or unmounts (`active`), so a late answer never draws on a gone view.
+      let active = true;
+      const refresher = createSolanaPendingRefresher({
+        sender: owner,
+        reader: async () => {
+          const ep = await getEndpoint(SOLANA_SLOT_CHAIN_ID);
+          if (!ep || !ep.url) return null;
+          return { chain: ep.network.chainId, reader: solanaClient(ep.url) };
+        },
+        apply: (next) => {
+          if (active) setView(next);
+        },
+      });
+      refreshNow.current = () => void refresher.refresh();
+      void refresher.refresh();
+      const timer = setInterval(() => void refresher.refresh(), PENDING_POLL_MS);
+      return () => {
+        active = false;
+        refreshNow.current = null;
+        clearInterval(timer);
+      };
+    }, [owner]),
+  );
+  if (!view) return null;
+  const all: { record: PendingSolanaRecord; status: SolanaTransferStatus | null }[] = [
+    ...view.transfers.map((record) => ({ record, status: view.statuses[record.signature] ?? null })),
+    ...view.settled
+      .filter((r) => !view.transfers.some((t) => t.signature === r.signature))
+      .map((record) => ({ record, status: view.statuses[record.signature] ?? null })),
+  ];
+  const shown = onlySignature ? all.filter((x) => x.record.signature === onlySignature) : all;
+  if (shown.length === 0 && !(view.registry.readOnly && !onlySignature)) return null;
+  const card = [styles.card, { backgroundColor: theme.card, borderColor: theme.border }];
+  return (
+    <View style={styles.section}>
+      {onlySignature ? null : (
+        <Text accessibilityRole="header" style={[styles.heading, { color: theme.text }]}>
+          Pending on this phone
+        </Text>
+      )}
+      {view.registry.readOnly && !onlySignature ? (
+        <View style={card}>
+          <Text style={[styles.text, { color: theme.warningText }]}>{PENDING_READ_ONLY_MESSAGE}</Text>
+        </View>
+      ) : null}
+      {shown.map(({ record, status }) => (
+        <View key={record.signature} style={card}>
+          <Text style={[styles.text, { color: theme.text }]}>{solanaCardTitle(record, view.nowMs)}</Text>
+          {solanaShowsNoReplacementSentence(status) ? (
+            <Text style={[styles.muted, { color: theme.textMuted }]}>{SOLANA_NO_REPLACEMENT_SENTENCE}</Text>
+          ) : null}
+          {status === null ? (
+            <Text style={[styles.muted, { color: theme.textMuted }]}>Checking with the network endpoint…</Text>
+          ) : (
+            <Text style={[styles.text, { color: theme.text }]}>{solanaStatusSentence(status)}</Text>
+          )}
+          {status?.state === 'not-seen' && status.dropped ? (
+            <View style={styles.actions}>
+              <Button
+                title="Remove from this list"
+                variant="secondary"
+                onPress={() => {
+                  const again = () => refreshNow.current?.();
+                  void forgetSolanaTransfer({ chain: record.chain, signature: record.signature }).then(again, again);
+                }}
+              />
+            </View>
+          ) : null}
         </View>
       ))}
     </View>

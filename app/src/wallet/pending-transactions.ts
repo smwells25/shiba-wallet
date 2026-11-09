@@ -7,6 +7,7 @@ import { AsyncStorage, readStoreItem, writeStoreItem, removeStoreItem, STORE_KEY
 import type { KeyValueStore } from './tokens.ts';
 import type { EvmSendQuote } from './send.ts';
 import type { AaOperationKind, AaOperationSentEvent, AaSendQuote } from './aa.ts';
+import { base58 } from '@scure/base';
 import { formatUnits } from './balances.ts';
 
 /**
@@ -268,7 +269,40 @@ export interface ReplacementMarker {
   markedAt: number;
 }
 
-export type PendingRecord = PendingTxRecord | PendingUserOpRecord | ResolvedRecord | ReplacementMarker;
+/**
+ * A Solana token transfer this wallet broadcast from the Solana token send
+ * (phase 25 item 0b; wallet/spl-tokens.ts runSplSend), written just BEFORE
+ * the transaction is handed to the node, as the EVM paths are since phase
+ * 23 item 8. Keyed by its signature (base58 of the fee payer's 64-byte
+ * signature, which Solana uses as the transaction id and sendTransaction
+ * returns). Nothing secret: these are the fields of a transaction that is
+ * public once sent. A Solana transaction has no account nonce to replace it
+ * under, so there is no speed-up or cancellation: the record only waits to
+ * learn whether a block included it (SOLANA_NO_REPLACEMENT_SENTENCE).
+ */
+export interface PendingSolanaRecord {
+  kind: 'solana';
+  /** CAIP-2 id of the Solana network ('solana:' + the first 32 characters of the genesis hash). */
+  chain: string;
+  /** Base58 transaction signature (decodes to 64 bytes). */
+  signature: string;
+  /** Base58 owner address that signed and paid (decodes to 32 bytes). */
+  sender: string;
+  /** Base58 token mint (decodes to 32 bytes). */
+  mint: string;
+  /** Decimal base units sent (more than 0). */
+  amount: string;
+  /** The mint's decimals as the quote read them (0–255). */
+  decimals: number;
+  /** The tracked token's symbol, for the card's sentence. */
+  symbol: string;
+  /** Base58 recipient OWNER address (not its token account). */
+  recipient: string;
+  /** Unix milliseconds just before the broadcast request. */
+  sentAt: number;
+}
+
+export type PendingRecord = PendingTxRecord | PendingUserOpRecord | ResolvedRecord | ReplacementMarker | PendingSolanaRecord;
 
 export interface PendingRegistry {
   records: PendingRecord[];
@@ -562,6 +596,31 @@ function validMarker(r: Record<string, unknown>): ReplacementMarker | null {
   return r as unknown as ReplacementMarker;
 }
 
+const SOLANA_CHAIN = /^solana:[1-9A-HJ-NP-Za-km-z]{32}$/;
+
+/** True when the text is base58 that decodes to exactly `bytes` bytes. */
+function isBase58Of(value: unknown, bytes: number): value is string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 100) return false;
+  try {
+    return base58.decode(value).length === bytes;
+  } catch {
+    return false;
+  }
+}
+
+function validSolana(r: Record<string, unknown>): PendingSolanaRecord | null {
+  const keys = ['kind', 'chain', 'signature', 'sender', 'mint', 'amount', 'decimals', 'symbol', 'recipient', 'sentAt'];
+  if (Object.keys(r).length !== keys.length || !keys.every((k) => k in r)) return null;
+  if (typeof r.chain !== 'string' || !SOLANA_CHAIN.test(r.chain)) return null;
+  if (!isBase58Of(r.signature, 64)) return null;
+  if (!isBase58Of(r.sender, 32) || !isBase58Of(r.mint, 32) || !isBase58Of(r.recipient, 32)) return null;
+  if (typeof r.amount !== 'string' || !DECIMAL.test(r.amount) || r.amount === '0') return null;
+  if (typeof r.decimals !== 'number' || !Number.isInteger(r.decimals) || r.decimals < 0 || r.decimals > 255) return null;
+  if (typeof r.symbol !== 'string' || r.symbol.length === 0 || r.symbol.length > 32) return null;
+  if (!isTime(r.sentAt)) return null;
+  return r as unknown as PendingSolanaRecord;
+}
+
 /** Strict validation of one stored record; null when anything is off. */
 export function validateRecord(value: unknown): PendingRecord | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
@@ -570,6 +629,7 @@ export function validateRecord(value: unknown): PendingRecord | null {
   if (r.kind === 'userop') return validUserOp(r);
   if (r.kind === 'resolved') return validResolved(r);
   if (r.kind === 'marker') return validMarker(r);
+  if (r.kind === 'solana') return validSolana(r);
   return null;
 }
 
@@ -608,6 +668,7 @@ function recordId(r: PendingRecord): string {
   if (r.kind === 'tx') return `tx:${r.chain}:${r.hash}`;
   if (r.kind === 'userop') return `op:${r.chain}:${r.userOpHash}`;
   if (r.kind === 'marker') return `marker:${r.chain}:${r.minedHash}`;
+  if (r.kind === 'solana') return `sol:${r.chain}:${r.signature}`;
   return `resolved:${r.chain}:${r.from}:${r.nonce}`;
 }
 
@@ -999,6 +1060,66 @@ export async function forgetUserOperation(
 ): Promise<void> {
   const hash = lower(key.userOpHash);
   await update(store, (records) => records.filter((r) => !(r.kind === 'userop' && r.chain === key.chain && r.userOpHash === hash)), nowMs);
+}
+
+/**
+ * Records a Solana token transfer BEFORE sendTransaction is sent (phase 25
+ * item 0b), awaiting the write so the record exists before the request
+ * leaves the device. Same states and rules as
+ * recordPendingTransactionBeforeBroadcast: best effort (a damaged registry
+ * or a storage failure resolves 'failed' and the broadcast still goes
+ * ahead), and an existing record of the same signature is kept as it is.
+ */
+export async function recordPendingSolanaTransferBeforeBroadcast(
+  record: PendingSolanaRecord,
+  store: PendingStore = AsyncStorage,
+  nowMs: number = Date.now(),
+): Promise<BroadcastRecordState> {
+  if (!validateRecord(record)) return 'failed';
+  let state: BroadcastRecordState = 'created';
+  try {
+    await update(
+      store,
+      (records) => {
+        if (records.some((r) => r.kind === 'solana' && r.chain === record.chain && r.signature === record.signature)) {
+          state = 'existed';
+          return records;
+        }
+        return [...records, record];
+      },
+      nowMs,
+    );
+    return state;
+  } catch {
+    return 'failed';
+  }
+}
+
+/**
+ * Removes the record of one Solana transfer (by signature): when the node
+ * refused its broadcast and this attempt created the record, when a block
+ * included it (the card shows it once more, then Activity lists it), or when
+ * the user removes a transfer the node has long stopped knowing.
+ */
+export async function forgetSolanaTransfer(
+  key: { chain: string; signature: string },
+  store: PendingStore = AsyncStorage,
+  nowMs: number = Date.now(),
+): Promise<void> {
+  await update(store, (records) => records.filter((r) => !(r.kind === 'solana' && r.chain === key.chain && r.signature === key.signature)), nowMs);
+}
+
+/** The recorder the Solana token send passes to runSplSend (wallet/spl-tokens.ts SplSendDeps.pending). */
+export function pendingSolanaBroadcastRecorder(store: PendingStore = AsyncStorage): {
+  record: (record: PendingSolanaRecord) => Promise<BroadcastRecordState>;
+  forget: (key: { chain: string; signature: string }) => Promise<void>;
+  openLike: (like: SolanaTransferLike, nowMs: number) => Promise<PendingSolanaRecord | null>;
+} {
+  return {
+    record: (record) => recordPendingSolanaTransferBeforeBroadcast(record, store, record.sentAt),
+    forget: (key) => forgetSolanaTransfer(key, store),
+    openLike: async (like, nowMs) => openSolanaTransferLike((await loadPendingRegistry(store)).records, like, nowMs),
+  };
 }
 
 /** Clears the whole registry (the "Reset the pending list" action and the wallet wipe). */
@@ -1858,4 +1979,292 @@ export function userOpsFor(records: readonly PendingRecord[], chain: string, own
   return records
     .filter((r): r is PendingUserOpRecord => r.kind === 'userop' && r.chain === chain && r.owner === o)
     .sort((a, b) => b.sentAt - a.sentAt);
+}
+
+// ---------------------------------------------------------------------------
+// Solana token transfers (phase 25 item 0b)
+// ---------------------------------------------------------------------------
+
+/**
+ * A Solana transfer the node does not know for this long is offered as
+ * "most likely dropped" (judgement: ten minutes, as for a smart-account
+ * operation). A Solana transaction names a recent blockhash, and Solana's
+ * documentation (solana-foundation/solana-com at 31f66e08,
+ * apps/docs/content/docs/en/core/transactions/transaction-structure.mdx line
+ * 215, read 2026-11-09) says: "A blockhash expires after 150 slots. If the
+ * blockhash is no longer valid when the transaction arrives, it is rejected
+ * with BlockhashNotFound" — so a transaction still unknown long after its
+ * blockhash was fetched can no longer be included. Ten minutes is many times
+ * 150 slots at the slot times the documentation states (its
+ * tools/transaction-landing.mdx line 253: "roughly 30 seconds at 200ms slot
+ * times"); the wallet does not read block heights to decide it exactly.
+ */
+export const SOLANA_UNKNOWN_AFTER_MS = 10 * 60 * 1000;
+
+/** Shown on every Solana card while its transfer may still be pending. */
+export const SOLANA_NO_REPLACEMENT_SENTENCE =
+  'A Solana transaction cannot be sped up or cancelled: Solana has no account nonce to send a replacement under, ' +
+  'and once its recent blockhash expires (after 150 slots) it can no longer be included.';
+
+export const SOLANA_NOT_SEEN_SENTENCE =
+  'The network endpoint does not list this transaction yet. This list checks again every 15 seconds.';
+
+export const SOLANA_PROCESSED_SENTENCE =
+  'The network endpoint has seen this transaction in a block that is not confirmed yet. This list checks again every 15 seconds.';
+
+export const SOLANA_DROPPED_SENTENCE =
+  'The network endpoint has had no record of this transaction for more than 10 minutes, so it was most likely dropped: ' +
+  'its recent blockhash has expired, so it can no longer be included.';
+
+export const SOLANA_RETRY_SENTENCE =
+  'Nothing is resent from here. To try again, open the token’s Send screen from Home and review the send again.';
+
+/** The fields that make two Solana token sends "the same send" for the double-send guard. */
+export interface SolanaTransferLike {
+  chain: string;
+  sender: string;
+  mint: string;
+  recipient: string;
+  amount: string;
+}
+
+/**
+ * The newest listed Solana transfer with the same network, sender, mint,
+ * recipient and amount that is younger than SOLANA_UNKNOWN_AFTER_MS, or null.
+ * A Solana send signed again gets a fresh blockhash and so a NEW signature:
+ * unlike an EVM transaction (whose second broadcast of the same nonce
+ * replaces the first), both could be included. The token send therefore
+ * refuses to sign the same send again while such a record waits
+ * (wallet/spl-tokens.ts SplSendStillPendingError).
+ */
+export function openSolanaTransferLike(
+  records: readonly PendingRecord[],
+  like: SolanaTransferLike,
+  nowMs: number,
+): PendingSolanaRecord | null {
+  const found = records
+    .filter(
+      (r): r is PendingSolanaRecord =>
+        r.kind === 'solana' &&
+        r.chain === like.chain &&
+        r.sender === like.sender &&
+        r.mint === like.mint &&
+        r.recipient === like.recipient &&
+        r.amount === like.amount &&
+        nowMs - r.sentAt < SOLANA_UNKNOWN_AFTER_MS,
+    )
+    .sort((a, b) => b.sentAt - a.sentAt);
+  return found[0] ?? null;
+}
+
+/** The Solana transfers of one sender on one network, newest first. */
+export function solanaTransfersFor(records: readonly PendingRecord[], chain: string, sender: string): PendingSolanaRecord[] {
+  return records
+    .filter((r): r is PendingSolanaRecord => r.kind === 'solana' && r.chain === chain && r.sender === sender)
+    .sort((a, b) => b.sentAt - a.sentAt);
+}
+
+/** What getSignatureStatuses answered for one signature (the engine's SignatureStatus, read structurally). */
+export interface SolanaSignatureStatus {
+  slot: number;
+  confirmations: number | null;
+  err: unknown;
+  confirmationStatus: string | null;
+}
+
+/** The part of the engine's SolanaRpcClient the status check uses. */
+export interface SolanaStatusReader {
+  getSignatureStatuses(signatures: string[], searchTransactionHistory?: boolean): Promise<(SolanaSignatureStatus | null)[]>;
+}
+
+export type SolanaTransferStatus =
+  | { state: 'included'; ok: boolean; slot: number; confirmationStatus: 'confirmed' | 'finalized'; err: string | null }
+  | { state: 'processed'; slot: number }
+  | { state: 'not-seen'; dropped: boolean };
+
+/**
+ * One status from getSignatureStatuses. Solana's documentation
+ * (rpc/http/getsignaturestatuses.mdx at 31f66e08, lines 199–202): a null
+ * `confirmations` "means the transaction is rooted and finalized by a
+ * supermajority of stake", `err` is null when it succeeded, and
+ * `confirmationStatus` is processed, confirmed or finalized. Confirmed or
+ * finalized (or a null confirmations count) counts as included; processed
+ * does not yet.
+ */
+export function solanaStatusFrom(status: SolanaSignatureStatus | null, record: Pick<PendingSolanaRecord, 'sentAt'>, nowMs: number): SolanaTransferStatus {
+  if (status === null || status === undefined) {
+    return { state: 'not-seen', dropped: nowMs - record.sentAt > SOLANA_UNKNOWN_AFTER_MS };
+  }
+  const finalized = status.confirmations === null || status.confirmationStatus === 'finalized';
+  if (finalized || status.confirmationStatus === 'confirmed') {
+    const failed = status.err !== null && status.err !== undefined;
+    return {
+      state: 'included',
+      ok: !failed,
+      slot: status.slot,
+      confirmationStatus: finalized ? 'finalized' : 'confirmed',
+      err: failed ? JSON.stringify(status.err) : null,
+    };
+  }
+  return { state: 'processed', slot: status.slot };
+}
+
+/**
+ * Reads the statuses of several Solana transfers in ONE getSignatureStatuses
+ * request (the method takes up to 256 signatures), with
+ * searchTransactionHistory on, because without it the method "only searches
+ * the recent status cache of signatures" (getsignaturestatuses.mdx lines
+ * 19–22) and an older transfer would read as unknown.
+ */
+export async function checkSolanaTransfers(
+  reader: SolanaStatusReader,
+  records: readonly PendingSolanaRecord[],
+  nowMs: number,
+): Promise<Record<string, SolanaTransferStatus>> {
+  const out: Record<string, SolanaTransferStatus> = {};
+  if (records.length === 0) return out;
+  const batch = records.slice(0, 256);
+  const answers = await reader.getSignatureStatuses(batch.map((r) => r.signature), true);
+  if (!Array.isArray(answers) || answers.length !== batch.length) {
+    throw new Error('The network endpoint answered getSignatureStatuses with a list of the wrong length.');
+  }
+  batch.forEach((r, i) => {
+    out[r.signature] = solanaStatusFrom(answers[i] ?? null, r, nowMs);
+  });
+  return out;
+}
+
+function shortSolana(text: string): string {
+  return text.length > 12 ? `${text.slice(0, 4)}…${text.slice(-4)}` : text;
+}
+
+/** The card's first line: what was sent, from the record alone. */
+export function solanaCardTitle(record: PendingSolanaRecord, nowMs: number): string {
+  return (
+    `Solana token send ${shortSolana(record.signature)}: ${formatUnits(BigInt(record.amount), record.decimals, record.decimals)} ` +
+    `${record.symbol} to ${shortSolana(record.recipient)}, sent ${ageText(nowMs - record.sentAt)}.`
+  );
+}
+
+function ageText(ms: number): string {
+  const minutes = Math.floor(Math.max(0, ms) / 60_000);
+  if (minutes < 1) return 'less than a minute ago';
+  if (minutes === 1) return '1 minute ago';
+  if (minutes < 60) return `${minutes} minutes ago`;
+  const hours = Math.floor(minutes / 60);
+  return hours === 1 ? '1 hour ago' : `${hours} hours ago`;
+}
+
+/** The card's status line for a Solana transfer. */
+export function solanaStatusSentence(status: SolanaTransferStatus): string {
+  if (status.state === 'included') {
+    return status.ok
+      ? `Included: the network endpoint reports it ${status.confirmationStatus} (slot ${status.slot}).`
+      : `Included in slot ${status.slot}, but it failed on-chain, so no tokens moved; the network fee was still paid. Technical detail: ${status.err}`;
+  }
+  if (status.state === 'processed') return SOLANA_PROCESSED_SENTENCE;
+  return status.dropped ? `${SOLANA_DROPPED_SENTENCE} ${SOLANA_RETRY_SENTENCE}` : SOLANA_NOT_SEEN_SENTENCE;
+}
+
+/** Whether the card still shows SOLANA_NO_REPLACEMENT_SENTENCE (not once it reads "Included …"). */
+export function solanaShowsNoReplacementSentence(status: SolanaTransferStatus | null | undefined): boolean {
+  return status?.state !== 'included';
+}
+
+/** What the Solana part of the pending section draws, from one registry snapshot. */
+export interface SolanaPendingView {
+  registry: PendingRegistry;
+  transfers: PendingSolanaRecord[];
+  statuses: Readonly<Record<string, SolanaTransferStatus>>;
+  /** Transfers this re-read found included and removed from the registry, shown once more. */
+  settled: readonly PendingSolanaRecord[];
+  /** When this view was drawn (Unix milliseconds; the card's "sent … ago"). */
+  nowMs: number;
+}
+
+/**
+ * The Solana section's re-read (its focus and its 15-second poll): draws at
+ * once from the registry, then asks the network endpoint about every listed
+ * transfer of this sender on this network in one request, removes the ones
+ * a block included (shown once more with "Included …", as an included
+ * smart-account operation is), and draws again. A failed read leaves every
+ * record and its shown status as they were. Refreshes may overlap: an older
+ * answer never draws over a newer one.
+ */
+export function createSolanaPendingRefresher(options: {
+  sender: string;
+  /** The Solana network serving the slot now and a status reader for it; null when no endpoint is configured. */
+  reader: () => Promise<{ chain: string; reader: SolanaStatusReader } | null>;
+  apply: (view: SolanaPendingView) => void;
+  store?: PendingStore;
+  now?: () => number;
+}): PendingSectionRefresher {
+  const store = options.store ?? AsyncStorage;
+  const now = options.now ?? Date.now;
+  let started = 0;
+  let drawnFirst = 0;
+  let drawnFinal = 0;
+  let shown: Record<string, SolanaTransferStatus> = {};
+  const draw = (view: SolanaPendingView) => {
+    shown = { ...view.statuses };
+    options.apply(view);
+  };
+  return {
+    async refresh() {
+      const seq = ++started;
+      let source: { chain: string; reader: SolanaStatusReader } | null = null;
+      try {
+        source = await options.reader();
+      } catch {
+        source = null;
+      }
+      if (!source) return;
+      const { chain } = source;
+      let registry: PendingRegistry;
+      try {
+        registry = await loadPendingRegistry(store);
+      } catch {
+        registry = { records: [], readOnly: true };
+      }
+      const listed = solanaTransfersFor(registry.records, chain, options.sender);
+      if (seq > drawnFinal && seq > drawnFirst) {
+        drawnFirst = seq;
+        draw({ registry, transfers: listed, statuses: pick(shown, listed), settled: [], nowMs: now() });
+      }
+      if (listed.length === 0) return;
+      let statuses: Record<string, SolanaTransferStatus>;
+      try {
+        statuses = await checkSolanaTransfers(source.reader, listed, now());
+      } catch {
+        return;
+      }
+      const settled: PendingSolanaRecord[] = [];
+      for (const record of listed) {
+        if (statuses[record.signature]?.state === 'included' && !registry.readOnly) {
+          try {
+            await forgetSolanaTransfer({ chain, signature: record.signature }, store, now());
+            settled.push(record);
+          } catch {
+            // The next re-read tries again.
+          }
+        }
+      }
+      let after: PendingRegistry;
+      try {
+        after = await loadPendingRegistry(store);
+      } catch {
+        return;
+      }
+      if (seq <= drawnFinal) return;
+      drawnFinal = seq;
+      const transfers = solanaTransfersFor(after.records, chain, options.sender);
+      draw({ registry: after, transfers, statuses: { ...pick(shown, transfers), ...statuses }, settled, nowMs: now() });
+    },
+  };
+}
+
+function pick(statuses: Readonly<Record<string, SolanaTransferStatus>>, records: readonly PendingSolanaRecord[]): Record<string, SolanaTransferStatus> {
+  const out: Record<string, SolanaTransferStatus> = {};
+  for (const r of records) if (statuses[r.signature]) out[r.signature] = statuses[r.signature]!;
+  return out;
 }

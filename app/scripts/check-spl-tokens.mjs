@@ -1032,6 +1032,157 @@ check(`solana-activity.ts with the p24-solfix2 mutant: all caught (${solactCaugh
 // ---------------------------------------------------------------------------
 console.log('check-spl-tokens: phase 24 follow-ups (the coin in the not-enough-SOL refusal, Max, the note on the Sent view)');
 // ---------------------------------------------------------------------------
+console.log('check-spl-tokens: phase 25 item 0b — the token send listed under "Pending on this phone"');
+// ---------------------------------------------------------------------------
+const PENDING = await import('../src/wallet/pending-transactions.ts');
+/** A client whose sendTransaction fails the way `fail` says; every other method is the fake chain's. */
+function failingSend(chain, fail) {
+  const inner = chain.client.transport;
+  return new SolanaRpcClient(async (method, params) => {
+    if (method === 'sendTransaction') {
+      chain.log.push(method);
+      throw fail();
+    }
+    return inner(method, params);
+  });
+}
+/** The real recorder over an in-memory store, with every call logged. */
+function recorderOn(store, chain) {
+  const real = PENDING.pendingSolanaBroadcastRecorder(store);
+  const calls = [];
+  return {
+    calls,
+    pending: {
+      record: async (r) => {
+        calls.push(['record', r.signature, chain ? chain.sent.length : null]);
+        return real.record(r);
+      },
+      forget: async (k) => {
+        calls.push(['forget', k.signature]);
+        return real.forget(k);
+      },
+      openLike: async (like, nowMs) => real.openLike(like, nowMs),
+    },
+  };
+}
+const okAuth = async () => ({ ok: true });
+const aliceSigns = async (_c, _a, fn) => fn(ALICE);
+{
+  const chain = fakeChain();
+  const q = await quoteOn(chain);
+  const store = memoryStore();
+  const rec = recorderOn(store, chain);
+  const T0 = 1_800_000_000_000;
+  const outcome = await SPL.runSplSend(
+    { requireAuth: okAuth, signWith: aliceSigns, client: chain.client, second: null, sleep: async () => {}, notifyAccepted: () => {}, pending: rec.pending, now: () => T0 },
+    q,
+  );
+  check('the transfer is recorded BEFORE the broadcast: one record call, made while nothing had been sent yet',
+    rec.calls.length === 1 && rec.calls[0][0] === 'record' && rec.calls[0][2] === 0 && chain.sent.length === 1);
+  const reg = await PENDING.loadPendingRegistry(store);
+  const r = reg.records[0];
+  check('…the stored record: kind solana, the devnet CAIP-2, the signature the node returned, the sender, the mint, 1.5 USDC in base units, 6 decimals, USDC, the recipient owner, the sent time',
+    reg.readOnly === false && reg.records.length === 1 && r.kind === 'solana' && r.chain === DEVNET && r.signature === outcome.signature &&
+      r.sender === ALICE.address && r.mint === usdcDevnet.assetId.reference && r.amount === '1500000' && r.decimals === 6 &&
+      r.symbol === 'USDC' && r.recipient === BOB.address && r.sentAt === T0,
+    JSON.stringify(r));
+  check('…exactly the ten fields of the strict parser, and it parses back', Object.keys(r).length === 10 && PENDING.validateRecord(r) !== null);
+  check('the sentences the confirm and the outcome use, exact',
+    SPL.SPL_SPENDING_LIMITS_NOTE === 'Spending limits (Settings) are set for Ethereum networks only, so this send is not counted against any limit.' &&
+      SPL.splOutcomeUnknownSentence(true) ===
+        'No usable answer came back from the network endpoint, so this wallet does not know whether the transaction was sent. It is listed under Pending on this phone, which checks it every 15 seconds; do not send it again until that list says what happened.');
+}
+{
+  // A definite refusal: a JSON-RPC error answer (the node refused, e.g. a failed pre-flight) and an HTTP 4xx.
+  for (const [label, fail] of [
+    ['a JSON-RPC error', () => new Error('RPC error -32002: Transaction simulation failed: Blockhash not found (sendTransaction)')],
+    ['HTTP 429', () => new Error('RPC HTTP error 429 for sendTransaction')],
+  ]) {
+    const chain = fakeChain();
+    const q = await quoteOn(chain);
+    const store = memoryStore();
+    const rec = recorderOn(store, chain);
+    const e = await rejection(() =>
+      SPL.runSplSend({ requireAuth: okAuth, signWith: aliceSigns, client: failingSend(chain, fail), second: null, notifyAccepted: () => {}, pending: rec.pending }, q));
+    const after = await PENDING.loadPendingRegistry(store);
+    check(`${label}: the node's error is shown as before and the record this attempt created is removed again`,
+      e !== null && e.name !== 'SplBroadcastOutcomeUnknownError' && e.message === fail().message && after.records.length === 0 &&
+        rec.calls.map((c) => c[0]).join() === 'record,forget');
+  }
+}
+{
+  // An open outcome: the fetch rejected, an HTTP 5xx, a body that is not JSON-RPC.
+  for (const [label, fail] of [
+    ['a rejected fetch', () => new TypeError('fetch failed: java.net.SocketTimeoutException')],
+    ['HTTP 503', () => new Error('RPC HTTP error 503 for sendTransaction')],
+    ['a body that is not JSON', () => new SyntaxError('JSON Parse error: Unexpected character: <')],
+  ]) {
+    const chain = fakeChain();
+    const q = await quoteOn(chain);
+    const store = memoryStore();
+    const rec = recorderOn(store, chain);
+    const T0 = 1_800_000_000_000;
+    let auths = 0;
+    const deps = { requireAuth: async () => ((auths += 1), { ok: true }), signWith: aliceSigns, client: failingSend(chain, fail), second: null, notifyAccepted: () => {}, pending: rec.pending, now: () => T0 };
+    const e = await rejection(() => SPL.runSplSend(deps, q));
+    const after = await PENDING.loadPendingRegistry(store);
+    check(`${label}: SplBroadcastOutcomeUnknownError naming the signed transaction, listed, the record kept`,
+      e?.name === 'SplBroadcastOutcomeUnknownError' && e.listed === true && after.records.length === 1 &&
+        after.records[0].signature === e.signature && e.message === SPL.splOutcomeUnknownSentence(true) && rec.calls.length === 1);
+    const again = await rejection(() => SPL.runSplSend(deps, q));
+    check(`…the same quote is never handed over again: refused before any prompt`,
+      again?.name === 'SplSendAlreadyHandedOverError' && auths === 1);
+    const q2 = await quoteOn(chain);
+    const still = await rejection(() => SPL.runSplSend({ ...deps, client: chain.client, now: () => T0 + 60_000 }, q2));
+    check('…a NEW quote of the same transfer (a new blockhash, so a new transaction) is refused while the record waits, before any prompt',
+      still?.name === 'SplSendStillPendingError' && auths === 1 &&
+        still.message === 'A send of the same amount of USDC to the same recipient from this account is still listed under Pending on this phone. A Solana transaction signed again is a new transaction, so both could be included. Wait until that list says what happened before sending it again. Nothing was signed.');
+    const later = await SPL.runSplSend({ ...deps, client: chain.client, now: () => T0 + PENDING.SOLANA_UNKNOWN_AFTER_MS + 1, sleep: async () => {} }, q2).catch((x) => x);
+    check('…allowed again once that record is older than ten minutes (most likely dropped)', later?.signature !== undefined && auths === 2);
+  }
+}
+{
+  // A record that could not be written never blocks the send, and is said so.
+  const chain = fakeChain();
+  const q = await quoteOn(chain);
+  const outcome = await SPL.runSplSend(
+    {
+      requireAuth: okAuth, signWith: aliceSigns, client: chain.client, second: null, sleep: async () => {}, notifyAccepted: () => {},
+      pending: { record: async () => { throw new Error('storage full'); }, forget: async () => {}, openLike: async () => { throw new Error('unreadable'); } },
+    },
+    q,
+  );
+  check('a failing recorder or an unreadable list never blocks the send', chain.sent.length === 1 && typeof outcome.signature === 'string');
+  const c2 = fakeChain();
+  const q2 = await quoteOn(c2);
+  const e = await rejection(() =>
+    SPL.runSplSend({ requireAuth: okAuth, signWith: aliceSigns, client: failingSend(c2, () => new TypeError('fetch failed')), second: null, notifyAccepted: () => {}, pending: { record: async () => 'failed', forget: async () => {}, openLike: async () => null } }, q2));
+  check('…and an open outcome with no record says it is not listed', e?.name === 'SplBroadcastOutcomeUnknownError' && e.listed === false && e.message === SPL.splOutcomeUnknownSentence(false));
+  check('isDefiniteSendRefusal: a parsed JSON-RPC error and HTTP 4xx are definite; HTTP 5xx, a rejected fetch and a parse error are not',
+    SPL.isDefiniteSendRefusal(new Error('RPC error -32602: invalid (sendTransaction)')) && SPL.isDefiniteSendRefusal(new Error('RPC HTTP error 400 for sendTransaction')) &&
+      !SPL.isDefiniteSendRefusal(new Error('RPC HTTP error 502 for sendTransaction')) && !SPL.isDefiniteSendRefusal(new TypeError('fetch failed')) &&
+      !SPL.isDefiniteSendRefusal(new SyntaxError('Unexpected token <')));
+}
+{
+  const screen = readFileSync(resolve(HERE, '../src/screens/SolanaTokenSendScreen.tsx'), 'utf8');
+  check('the send screen passes the pending registry (pendingSolanaBroadcastRecorder) to runSplSend',
+    screen.includes("import { pendingSolanaBroadcastRecorder } from '../wallet/pending-transactions';") && screen.includes('pending: pendingSolanaBroadcastRecorder(),'));
+  check('…shows the transfer’s pending card on the success view and, after an open outcome, on the form',
+    screen.includes('<SolanaPendingTransactionsSection owner={quote.owner} onlySignature={outcome.signature} />') &&
+      screen.includes('{unknownSignature ? <SolanaPendingTransactionsSection owner={owner} onlySignature={unknownSignature} /> : null}') &&
+      /if \(e instanceof SplBroadcastOutcomeUnknownError\) \{\s*\/\/[^\n]*\n[^\n]*\n[^\n]*\n\s*setQuote\(null\);/.test(screen));
+  check('…and the confirm says the send is not counted against a spending limit', screen.includes('{SPL_SPENDING_LIMITS_NOTE}'));
+  const SP = await import('../src/wallet/spending-policy.ts');
+  let refused = false;
+  try {
+    SP.scopeKey({ chain: DEVNET, owner: ALICE.address });
+  } catch {
+    refused = true;
+  }
+  check('…which is true: the spending-limit scope refuses a Solana chain id (spending-policy.ts scopeKey)', refused);
+}
+
+// ---------------------------------------------------------------------------
 {
   // Item 1: the coin's name comes from splNativeSymbol; mainnet keeps "SOL".
   check('splNativeSymbol: "test SOL" on devnet, "SOL" on mainnet',
@@ -1265,6 +1416,60 @@ let caught = 0;
   const ok = M.splMaxAmountText(row) === '5.25';
   caught += ok ? 1 : 0;
   check('mutant caught: Max filling in the total across all token accounts ("5.25") instead of the associated one', ok);
+}
+{
+  // M17 (phase 25 item 0b): the record written AFTER the broadcast.
+  const M = await mutant(
+    "    try {\n      state = await deps.pending.record(record);\n    } catch {\n      state = 'failed';\n    }\n    try {\n      return await deps.client.sendTransaction(signed.wireBytes);",
+    "    try {\n      const sig = await deps.client.sendTransaction(signed.wireBytes);\n      state = await deps.pending.record(record);\n      return sig;",
+  );
+  const c = fakeChain();
+  const rec = recorderOn(memoryStore(), c);
+  await M.runSplSend({ requireAuth: okAuth, signWith: aliceSigns, client: c.client, second: null, sleep: async () => {}, notifyAccepted: () => {}, pending: rec.pending }, await quoteOn(c));
+  const ok = rec.calls.length === 1 && rec.calls[0][2] === 1;
+  caught += ok ? 1 : 0;
+  check('mutant caught: the transfer recorded only after the node answered (an answer that never comes would leave it unlisted)', ok);
+}
+{
+  // M18: a definite refusal that keeps the record.
+  const M = await mutant("        if (state === 'created') await deps.pending.forget({ chain: record.chain, signature: record.signature }).catch(() => undefined);\n", '');
+  const c = fakeChain();
+  const store = memoryStore();
+  const q = await quoteOn(c);
+  await rejection(() => M.runSplSend({ requireAuth: okAuth, signWith: aliceSigns, client: failingSend(c, () => new Error('RPC error -32002: refused (sendTransaction)')), second: null, notifyAccepted: () => {}, pending: recorderOn(store, c).pending }, q));
+  const ok = (await PENDING.loadPendingRegistry(store)).records.length === 1;
+  caught += ok ? 1 : 0;
+  check('mutant caught: a transfer the node refused left listed as pending', ok);
+}
+{
+  // M19: every failure treated as a definite refusal (an open outcome shown as "Not sent", the record removed).
+  const M = await mutant('      if (isDefiniteSendRefusal(e)) {', '      if (true) {');
+  const c = fakeChain();
+  const store = memoryStore();
+  const e = await rejection(async () => M.runSplSend({ requireAuth: okAuth, signWith: aliceSigns, client: failingSend(c, () => new TypeError('fetch failed')), second: null, notifyAccepted: () => {}, pending: recorderOn(store, c).pending }, await quoteOn(c)));
+  const ok = e?.name !== 'SplBroadcastOutcomeUnknownError' && (await PENDING.loadPendingRegistry(store)).records.length === 0;
+  caught += ok ? 1 : 0;
+  check('mutant caught: a dropped connection treated as "not sent" and its record removed', ok);
+}
+{
+  // M20: the same-send guard removed.
+  const M = await mutant('  if (open) throw new SplSendStillPendingError(q.symbol);\n', '');
+  const c = fakeChain();
+  const store = memoryStore();
+  const rec = recorderOn(store, c);
+  await rejection(async () => M.runSplSend({ requireAuth: okAuth, signWith: aliceSigns, client: failingSend(c, () => new TypeError('fetch failed')), second: null, notifyAccepted: () => {}, pending: rec.pending }, await quoteOn(c)));
+  let auths = 0;
+  await M.runSplSend({ requireAuth: async () => ((auths += 1), { ok: true }), signWith: aliceSigns, client: c.client, second: null, sleep: async () => {}, notifyAccepted: () => {}, pending: rec.pending }, await quoteOn(c)).catch(() => undefined);
+  const ok = auths === 1 && c.sent.length === 1;
+  caught += ok ? 1 : 0;
+  check('mutant caught: a second, separate transaction signed while the first one’s outcome is unknown', ok);
+}
+{
+  // M21 (phase 25 item 0c): Send hidden before the SOL balance is read (as the token rule does).
+  const M = await mutant('  return !(state !== undefined && state.status === \'ok\' && state.amount === 0n);', "  return state !== undefined && state.status === 'ok' && state.amount !== 0n;");
+  const ok = M.solSendLinkShown(undefined) === false;
+  caught += ok ? 1 : 0;
+  check('mutant caught: the SOL card’s Send hidden before its balance was read', ok);
 }
 check(`at least six mutants, all caught (${caught} of ${mutants})`, mutants >= 6 && caught === mutants);
 
