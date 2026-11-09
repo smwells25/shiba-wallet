@@ -191,7 +191,9 @@ export type EnsRegisterErrorReason =
   /** The commitment is unknown, too new or too old for register(). */
   | 'commitment'
   /** A node answer did not have the expected shape. */
-  | 'malformed';
+  | 'malformed'
+  /** The name cannot be renewed: never registered, reserved, or past its grace period (ETHRegistrar._isRenewable). */
+  | 'not-renewable';
 
 export class EnsRegisterError extends Error {
   readonly reason: EnsRegisterErrorReason;
@@ -221,6 +223,10 @@ export const ENS_REGISTER_ERROR_SIGNATURES = {
   labelAlreadyRegistered: 'LabelAlreadyRegistered(string)',
   labelExpired: 'LabelExpired(uint256)',
   eacUnauthorizedAccountRoles: 'EACUnauthorizedAccountRoles(uint256,uint256,address)',
+  /** IETHRenewer.sol 48–50 ("Error selector: 0x1caefaa0"): renew() of a name that is not renewable. */
+  nameNotRenewable: 'NameNotRenewable(string)',
+  /** IStandardRegistry.sol 24–26 ("Error selector: 0x68c1425a"): PermissionedRegistry.renew() to an earlier expiry. */
+  cannotReduceExpiry: 'CannotReduceExpiry(uint64,uint64)',
 } as const;
 
 export type EnsRegisterRevertKind = keyof typeof ENS_REGISTER_ERROR_SIGNATURES | 'unknown';
@@ -1000,7 +1006,7 @@ export function ensRegisterTiming(window: EnsRegisterWindow, now: bigint): 'too-
 
 /** One step of a plan: calls the owner sends (one transaction each from a regular account, or one batch from a smart account). */
 export interface EnsPlanStep {
-  kind: 'prepare' | 'register' | 'subname';
+  kind: 'prepare' | 'register' | 'subname' | 'renew';
   calls: Call[];
   /** One line per call, for the confirm screen. */
   describe: string[];
@@ -1312,4 +1318,333 @@ export async function readEnsPrimaryName(transport: JsonRpcTransport, address: s
   const check = normalizeEnsNameAscii(decoded.name);
   if (!check.ok || check.name !== decoded.name) return { status: 'unsupported', name: decoded.name };
   return { status: 'ok', name: decoded.name, resolver: decoded.resolver };
+}
+
+// ---------------------------------------------------------------------------
+// Renewal (phase 26 item 1)
+// ---------------------------------------------------------------------------
+//
+// Sources: ensdomains/contracts-v2 at 07e55a05, read 2026-11-09; the
+// deployed sources on Sourcify were byte-identical for every file named here
+// (the registrar and the oracle "match", the .eth registry "exact_match").
+//
+//  - ETHRegistrar inherits renew from src/registrar/AbstractETHRegistrar.sol:
+//    `renew(RenewData calldata rd, IERC20 paymentToken)` (93–95) with
+//    RenewData = { string label; uint64 duration; bytes32 referrer; }
+//    (interfaces/IETHRenewer.sol 6–13). There is NO caller check: anyone may
+//    renew any renewable name, and msg.sender pays the price with
+//    safeTransferFrom to BENEFICIARY (94).
+//  - _renew (128–143): newExpiry = state.expiry + duration — the expiry is
+//    extended from the CURRENT expiry, not from now — with checked uint64
+//    arithmetic; the amount is rentPriceOracle.getRenewPrice(label,
+//    state.expiry, duration, token); then ETH_REGISTRY.renew(tokenId,
+//    newExpiry) and NameRenewed(tokenId, label, duration, newExpiry, token,
+//    referrer, amount).
+//  - _requireRenewable (156–168): NameNotRenewable(label) unless
+//    ETHRegistrar._isRenewable (ETHRegistrar.sol 265–292): REGISTERED, or
+//    AVAILABLE with a latest owner and less than GRACE_PERIOD past expiry;
+//    DurationTooShort(duration, 1) below MIN_RENEW_DURATION = 1 (line 22).
+//    No maximum duration exists other than the uint64 overflow.
+//  - StandardRentPriceOracle.getRenewPrice (319–330) = _toAmount(base price
+//    of label and duration) — the expiry argument is unused and THERE IS NO
+//    PREMIUM in a renewal; with no premium it equals the registration price.
+//  - PermissionedRegistry.renew (registry/PermissionedRegistry.sol 243–259)
+//    refuses an earlier expiry (CannotReduceExpiry) but does NOT refuse an
+//    expiry in the past, so a renewal inside the grace period that is too
+//    short would leave the name expired; quoteEnsRenewal refuses that.
+//
+// Every call is SENT BY THE PAYER (any address — usually the name's holder):
+// the registrar pulls the price from msg.sender.
+
+/** AbstractETHRegistrar.MIN_RENEW_DURATION (AbstractETHRegistrar.sol 22); read again by every quote. */
+export const ENS_MIN_RENEW_DURATION = 1n;
+
+/** IETHRenewer.NameRenewed (IETHRenewer.sol 30–38); tokenId and referrer are indexed. */
+export const ENS_NAME_RENEWED_EVENT = 'NameRenewed(uint256,string,uint64,uint64,address,bytes32,uint256)';
+
+/** keccak256 of ENS_NAME_RENEWED_EVENT: topic 0 of the registrar's NameRenewed log. */
+export const ENS_NAME_RENEWED_TOPIC = toHex(keccak(utf8ToBytes(ENS_NAME_RENEWED_EVENT)));
+
+/** ETHRegistrar.renew((string,uint64,bytes32),address): RenewData{label, duration, referrer} and the payment token. */
+export function encodeEnsRenew(label: string, duration: bigint, paymentToken: string, referrer: Uint8Array = ZERO_32): Uint8Array {
+  requireLabel(label);
+  if (referrer.length !== 32) throw new EnsRegisterError('malformed', 'The referrer must be 32 bytes');
+  return encodeFunctionCall('renew((string,uint64,bytes32),address)', [
+    { kind: 'tuple', items: [
+      { kind: 'bytes', value: utf8ToBytes(label) }, // a Solidity string encodes like bytes
+      { kind: 'uint256', value: requireUint64(duration, 'The duration') }, // uint64 occupies a full word
+      { kind: 'fixedBytes', value: referrer },
+    ] },
+    { kind: 'address', value: requireAddress(paymentToken, 'The payment token') },
+  ]);
+}
+
+/** ETHRegistrar.getRenewPrice(string,uint64,address). */
+export function encodeEnsGetRenewPrice(label: string, duration: bigint, paymentToken: string): Uint8Array {
+  return encodeFunctionCall('getRenewPrice(string,uint64,address)', [
+    { kind: 'bytes', value: utf8ToBytes(label) },
+    { kind: 'uint256', value: requireUint64(duration, 'The duration') },
+    { kind: 'address', value: paymentToken },
+  ]);
+}
+
+/** ETHRegistrar.isRenewable(string). */
+export function encodeEnsIsRenewable(label: string): Uint8Array {
+  return encodeFunctionCall('isRenewable(string)', [{ kind: 'bytes', value: utf8ToBytes(label) }]);
+}
+
+/**
+ * StandardRentPriceOracle.getRenewPrice(label, expiry, duration, token)
+ * (StandardRentPriceOracle.sol 319–330): the base price converted to the
+ * token with ceil rounding; no premium, and the expiry is not used.
+ */
+export function ensRenewPrice(pricing: EnsRentPricing, label: string, duration: bigint, ratio: EnsPaymentRatio): bigint {
+  const base = ensBasePrice(pricing, label, duration);
+  if (base === 0n) throw new EnsRegisterError('invalid-label', `The oracle does not price "${label}"`);
+  return ensToTokenAmount(base, ratio);
+}
+
+/**
+ * ETHRegistrar._isRenewable (ETHRegistrar.sol 265–292) on a registry state:
+ * REGISTERED, or AVAILABLE with a latest owner less than gracePeriod
+ * seconds after its expiry.
+ */
+export function ensIsRenewableState(state: Pick<EnsNameState, 'status' | 'expiry' | 'latestOwner'>, now: bigint, gracePeriod: bigint): boolean {
+  if (state.status === 2) return true;
+  return state.status === 0 && state.latestOwner !== ZERO_ADDRESS && now >= state.expiry && now - state.expiry < gracePeriod;
+}
+
+/** A renewal quote, every figure read at one block. */
+export interface EnsRenewalQuote {
+  label: string;
+  name: string;
+  node: string;
+  duration: bigint;
+  paymentToken: EnsPaymentToken;
+  /** The renewal price in the payment token's base units: the registrar's own figure, equal to the wallet's mirror. */
+  total: bigint;
+  /** The registry's status at the quote block: 2 REGISTERED, 0 AVAILABLE (renewable only inside the grace period). */
+  status: 0 | 1 | 2;
+  /** The name's holder at the quote block (getState latestOwner). The payer may be anyone. */
+  holder: string;
+  tokenId: bigint;
+  /** The expiry now, and the expiry after this renewal (currentExpiry + duration). */
+  currentExpiry: bigint;
+  newExpiry: bigint;
+  /** True when the name has expired and is still inside its grace period. */
+  inGrace: boolean;
+  /** currentExpiry + GRACE_PERIOD: after this the name can no longer be renewed by anyone. */
+  graceEndsAt: bigint;
+  blockNumber: bigint;
+  quoteTimestamp: bigint;
+  config: EnsRegistrarConfig;
+}
+
+/**
+ * Quotes a renewal: checks the chain and the deployment (the registrar's
+ * configuration and MIN_RENEW_DURATION), the label, the duration and the
+ * payment token, reads the name's registry state, asks the registrar
+ * whether it is renewable (and checks that against the wallet's own rule),
+ * reads the registrar's price (getRenewPrice) and recomputes it with the
+ * oracle's own parameters; any disagreement refuses. A renewal that would
+ * still leave the name expired (possible inside the grace period, because
+ * the registry does not refuse a past expiry) is refused.
+ */
+export async function quoteEnsRenewal(
+  transport: JsonRpcTransport,
+  input: { label: string; duration: bigint; paymentToken?: EnsPaymentToken },
+): Promise<EnsRenewalQuote> {
+  const label = requireLabel(input.label);
+  const token = input.paymentToken ?? ENS_V2_SEPOLIA_USDC;
+  if (token.address.toLowerCase() !== ENS_V2_SEPOLIA_USDC.address.toLowerCase()) {
+    throw new EnsRegisterError('payment-token', `This wallet pays ENS renewals only in Circle's Sepolia USDC (${ENS_V2_SEPOLIA_USDC.address})`);
+  }
+  const duration = requireUint64(input.duration, 'The duration');
+  if (duration < ENS_MIN_RENEW_DURATION) throw new EnsRegisterError('duration', 'A renewal must add at least one second');
+  const { blockTag, blockNumber, timestamp } = await sepoliaBlock(transport);
+  const config = await readRegistrarConfigAt(transport, blockTag);
+  const reg = ENS_V2_SEPOLIA.ethRegistrar;
+  const minRenew = word(await ensView(transport, reg, 'MIN_RENEW_DURATION()', [], blockTag), 0);
+  if (minRenew !== ENS_MIN_RENEW_DURATION) {
+    throw new EnsRegisterError('deployment-mismatch', `The Sepolia ETHRegistrar's MIN_RENEW_DURATION() is ${minRenew.toString()}, not ${ENS_MIN_RENEW_DURATION.toString()}`);
+  }
+  const state = await readStateAt(transport, ENS_V2_SEPOLIA.ethRegistry, label, blockTag);
+  const renewable = await ensCall(transport, reg, encodeEnsIsRenewable(label), blockTag);
+  if (!renewable.ok) throw new EnsRegisterError('deployment-mismatch', `isRenewable reverted (${renewable.kind})`);
+  const registrarSays = asBool(word(renewable.result, 0));
+  const walletSays = ensIsRenewableState(state, timestamp, config.gracePeriod);
+  if (registrarSays !== walletSays) {
+    throw new EnsRegisterError('deployment-mismatch', `The registrar says ${label}.eth is ${registrarSays ? '' : 'not '}renewable but the wallet's rule says the opposite`);
+  }
+  if (!registrarSays) {
+    throw new EnsRegisterError('not-renewable', `${label}.eth cannot be renewed: it is not registered, it is reserved, or its grace period has ended`);
+  }
+  // _renew: newExpiry = state.expiry + duration, checked (AbstractETHRegistrar.sol 130).
+  const newExpiry = state.expiry + duration;
+  if (newExpiry > UINT64_MAX) throw new EnsRegisterError('duration', 'The new expiry would not fit a uint64');
+  if (newExpiry <= timestamp) {
+    throw new EnsRegisterError('duration', `${label}.eth expired at ${state.expiry.toString()}; adding ${duration.toString()} seconds would still leave it expired`);
+  }
+  const price = await ensCall(transport, reg, encodeEnsGetRenewPrice(label, duration, token.address), blockTag);
+  if (!price.ok) {
+    if (price.kind === 'paymentTokenNotSupported') throw new EnsRegisterError('payment-token', 'The registrar no longer accepts this payment token');
+    if (price.kind === 'notValid') throw new EnsRegisterError('invalid-label', `The registrar does not price "${label}"`);
+    if (price.kind === 'durationTooShort') throw new EnsRegisterError('duration', 'The duration is below the registrar minimum');
+    if (price.kind === 'nameNotRenewable') throw new EnsRegisterError('not-renewable', `${label}.eth cannot be renewed`);
+    throw new EnsRegisterError('deployment-mismatch', `getRenewPrice reverted (${price.kind})`);
+  }
+  if (price.result.length !== 32) throw new EnsRegisterError('malformed', 'getRenewPrice returned an unexpected size');
+  const total = word(price.result, 0);
+  const pricing = await readPricingAt(transport, blockTag);
+  const ratioRaw = await ensView(transport, ENS_V2_SEPOLIA.rentPriceOracle, 'getPaymentTokenRatio(address)', [{ kind: 'address', value: token.address }], blockTag);
+  const mirror = ensRenewPrice(pricing, label, duration, { numer: word(ratioRaw, 0), denom: word(ratioRaw, 1) });
+  if (mirror !== total) {
+    throw new EnsRegisterError('price-mismatch', `The registrar quoted ${total.toString()} for the renewal but the wallet computed ${mirror.toString()}`);
+  }
+  if (total <= 0n) throw new EnsRegisterError('malformed', 'The renewal has no price');
+  const name = `${label}.eth`;
+  return {
+    label,
+    name,
+    node: toHex(namehash(name)),
+    duration,
+    paymentToken: token,
+    total,
+    status: state.status,
+    holder: state.latestOwner,
+    tokenId: state.tokenId,
+    currentExpiry: state.expiry,
+    newExpiry,
+    inGrace: state.status === 0,
+    graceEndsAt: state.expiry + config.gracePeriod,
+    blockNumber,
+    quoteTimestamp: timestamp,
+    config,
+  };
+}
+
+/** A renewal: one step of two calls the payer sends (two transactions from a regular account, one batch from a smart account). */
+export interface EnsRenewalPlan {
+  name: string;
+  label: string;
+  node: string;
+  payer: string;
+  /** The holder at the quote; renewing a name someone else holds is allowed, and only extends its expiry. */
+  holder: string;
+  payerIsHolder: boolean;
+  duration: bigint;
+  paymentToken: EnsPaymentToken;
+  total: bigint;
+  currentExpiry: bigint;
+  newExpiry: bigint;
+  renew: EnsPlanStep;
+}
+
+/**
+ * Builds the renewal: approve(registrar, exactly the quoted price) on the
+ * payment token, then renew({label, duration, 0x0…0}, token). The registrar
+ * pulls getRenewPrice at execution, which for a given label and duration is
+ * the quoted figure while the oracle's parameters are unchanged, so no
+ * allowance is left behind; if the owner of the oracle raised the price in
+ * between, safeTransferFrom fails and the renewal reverts.
+ */
+export function planEnsRenewal(input: { quote: EnsRenewalQuote; payer: string }): EnsRenewalPlan {
+  const { quote } = input;
+  const payer = requireAddress(input.payer, 'The payer');
+  if (quote.total <= 0n) throw new EnsRegisterError('malformed', 'The quote has no price');
+  if (quote.newExpiry !== quote.currentExpiry + quote.duration) throw new EnsRegisterError('malformed', 'The quote\'s new expiry is not its current expiry plus the duration');
+  const renew: EnsPlanStep = {
+    kind: 'renew',
+    calls: [
+      { to: quote.paymentToken.address, value: 0n, data: encodeEnsExactApprove(ENS_V2_SEPOLIA.ethRegistrar, quote.total) },
+      { to: ENS_V2_SEPOLIA.ethRegistrar, value: 0n, data: encodeEnsRenew(quote.label, quote.duration, quote.paymentToken.address) },
+    ],
+    describe: [
+      `Approve exactly ${quote.total.toString()} base units of ${quote.paymentToken.symbol} for the ENS registrar`,
+      `Renew ${quote.name} for ${quote.duration.toString()} seconds, paying ${quote.total.toString()} base units of ${quote.paymentToken.symbol}: its expiry moves from ${quote.currentExpiry.toString()} to ${quote.newExpiry.toString()}`,
+    ],
+  };
+  return {
+    name: quote.name,
+    label: quote.label,
+    node: quote.node,
+    payer,
+    holder: quote.holder,
+    payerIsHolder: quote.holder.toLowerCase() === payer.toLowerCase(),
+    duration: quote.duration,
+    paymentToken: quote.paymentToken,
+    total: quote.total,
+    currentExpiry: quote.currentExpiry,
+    newExpiry: quote.newExpiry,
+    renew,
+  };
+}
+
+/** The registry state after a renewal was sent. */
+export interface EnsRenewalResult {
+  blockNumber: bigint;
+  status: 0 | 1 | 2;
+  expiry: bigint;
+  holder: string;
+  /** The expiry is at least the plan's new expiry (another renewal in between would make it later). */
+  extended: boolean;
+  /** The expiry is exactly the plan's new expiry. */
+  exact: boolean;
+}
+
+/** Reads the .eth registry's state again after a renewal (getState at the latest block). */
+export async function readEnsRenewalResult(transport: JsonRpcTransport, plan: Pick<EnsRenewalPlan, 'label' | 'newExpiry'>): Promise<EnsRenewalResult> {
+  requireLabel(plan.label);
+  const { blockTag, blockNumber } = await sepoliaBlock(transport);
+  const state = await readStateAt(transport, ENS_V2_SEPOLIA.ethRegistry, plan.label, blockTag);
+  return {
+    blockNumber,
+    status: state.status,
+    expiry: state.expiry,
+    holder: state.latestOwner,
+    extended: state.expiry >= plan.newExpiry,
+    exact: state.expiry === plan.newExpiry,
+  };
+}
+
+/** A decoded NameRenewed log. */
+export interface EnsNameRenewedLog {
+  tokenId: bigint;
+  label: string;
+  duration: bigint;
+  newExpiry: bigint;
+  paymentToken: string;
+  referrer: string;
+  amount: bigint;
+}
+
+/**
+ * Decodes the pinned registrar's NameRenewed logs from a receipt's logs
+ * (other emitters and other topics are skipped); a malformed NameRenewed log
+ * from the registrar throws.
+ */
+export function decodeEnsNameRenewedLogs(logs: { address: string; topics: string[]; data: string }[]): EnsNameRenewedLog[] {
+  const out: EnsNameRenewedLog[] = [];
+  for (const log of logs) {
+    if (log.address.toLowerCase() !== ENS_V2_SEPOLIA.ethRegistrar.toLowerCase()) continue;
+    if ((log.topics[0] ?? '').toLowerCase() !== ENS_NAME_RENEWED_TOPIC) continue;
+    if (log.topics.length !== 3) throw new EnsRegisterError('malformed', 'NameRenewed must carry three topics');
+    const data = toBytes(log.data);
+    if (word(data, 0) !== 160n) throw new EnsRegisterError('malformed', 'NameRenewed: unexpected label offset');
+    const length = word(data, 5);
+    if (length > 255n || data.length !== 192 + Math.ceil(Number(length) / 32) * 32) throw new EnsRegisterError('malformed', 'NameRenewed: unexpected label length');
+    const duration = word(data, 1);
+    const newExpiry = word(data, 2);
+    if (duration > UINT64_MAX || newExpiry > UINT64_MAX) throw new EnsRegisterError('malformed', 'NameRenewed: a uint64 field is out of range');
+    out.push({
+      tokenId: BigInt(log.topics[1]!),
+      label: new TextDecoder('utf-8', { fatal: true }).decode(data.slice(192, 192 + Number(length))),
+      duration,
+      newExpiry,
+      paymentToken: asAddress(word(data, 3)),
+      referrer: log.topics[2]!.toLowerCase(),
+      amount: word(data, 4),
+    });
+  }
+  return out;
 }

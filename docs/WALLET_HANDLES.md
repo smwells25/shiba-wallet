@@ -59,6 +59,13 @@ approval 137,757; commit 127,458; register 682,685; reverse record
 
 Open questions are collected in section 12.
 
+**Renewal (phase 26).** A name can be renewed by anyone who pays: the
+registrar adds the chosen duration to the name's current expiry and takes
+the same USDC price a registration of that length would cost, with no
+premium. The engine quotes and plans a renewal, and the CTO's dev-wallet
+name `shibawalletdemo.eth` was renewed live for 28 days on 2026-11-09
+(section 14).
+
 ## 2. What a wallet handle can honestly be
 
 A "handle" here is an ENS `.eth` name that (a) resolves to the wallet's
@@ -551,3 +558,114 @@ and from which attesters.
   `ethereum-sepolia-rpc.publicnode.com`, `sepolia.drpc.org` and
   `eth-sepolia-testnet.api.pocket.network`, 2026-10-25, blocks 11,991,368
   to 11,991,465.
+
+## 14. Renewal (phase 26 item 1)
+
+The two names the wallet registered in phase 23 expire on 2026-11-24 and the
+dev wallet's `shibawalletdemo.eth` on 2026-11-22 (its expiry 1795359696 is
+2026-11-22 15:01:36 UTC). This section records how the ENSv2 Sepolia
+registrar renews a name, what the engine now builds, and the live renewal
+that proved the engine's calls before the app's renew screen is built.
+
+### 14.1 What the contracts do
+
+Everything here was read in `ensdomains/contracts-v2` at `07e55a05`
+(`contracts/src/...`) on 2026-11-09, and the deployed sources on Sourcify
+were byte-identical for each file named: the ETHRegistrar `0xf633…a3d3`
+("match", runtime and creation; `ETHRegistrar.sol`,
+`AbstractETHRegistrar.sol`, `IETHRenewer.sol`, `IRentPriceOracle.sol`), the
+StandardRentPriceOracle `0x8196…263A` ("match"; `StandardRentPriceOracle.sol`)
+and the .eth PermissionedRegistry `0xD4eB…A8B4` ("exact_match";
+`PermissionedRegistry.sol`, `IStandardRegistry.sol`, `IRegistryEvents.sol`).
+
+- **The call.** The registrar inherits
+  `renew(RenewData calldata rd, IERC20 paymentToken)` from
+  `registrar/AbstractETHRegistrar.sol` (lines 93–95), where `RenewData` is
+  `{ string label; uint64 duration; bytes32 referrer; }`
+  (`registrar/interfaces/IETHRenewer.sol` 6–13). Its selector is
+  `0x2d06649b`; the six `IETHRenewer` functions XOR to `0x37e6a567`, the
+  interface id the source states (line 16), and the deployed code answers
+  `supportsInterface(0x37e6a567)` with true.
+- **Who may call it.** Anyone. There is no caller check; the caller pays:
+  `safeTransferFrom(paymentToken, msg.sender, BENEFICIARY, amount)` (94).
+  On Sepolia `BENEFICIARY()` is `0x84D3a426D4E12E955d1DF95db0B24fe26afE39D3`.
+- **How the expiry moves.** `newExpiry = state.expiry + rd.duration`
+  (130): the duration is added to the **current expiry**, not to the present
+  time, with checked arithmetic (an overflow of the uint64 reverts). The
+  registry then stores it with `renew(tokenId, newExpiry)`
+  (`registry/PermissionedRegistry.sol` 243–259), which emits
+  `ExpiryUpdated`, and the registrar emits `NameRenewed(tokenId, label,
+  duration, newExpiry, paymentToken, referrer, amount)` (128–143).
+- **Which names can be renewed.** A REGISTERED name, or one that has expired
+  but is still inside the 28-day grace period and had an owner
+  (`ETHRegistrar.sol` 265–292). Anything else reverts
+  `NameNotRenewable(label)` (selector `0x1caefaa0`). The minimum duration is
+  one second (`MIN_RENEW_DURATION = 1`, line 22; `DurationTooShort` below it).
+  There is no maximum other than the uint64 overflow.
+- **The price.** `StandardRentPriceOracle.getRenewPrice` (319–330) returns
+  the base price of the label and duration converted to the token with
+  ceiling rounding. The expiry argument is not used and **there is no
+  premium on a renewal**; with no premium the figure equals the registration
+  price of the same label and duration. For a five-or-more-character label
+  and 28 days it is 613,701 base units (0.613701 USDC) — read on 2026-11-09
+  for all three of the wallet's names at block 12,100,588 on two endpoints.
+- **A trap inside the grace period.** The registry refuses an earlier expiry
+  (`CannotReduceExpiry`) but does not refuse an expiry that is already in
+  the past, so a renewal of an expired name that is shorter than the time
+  since it expired would succeed and leave the name expired. The engine
+  refuses such a renewal.
+
+### 14.2 What the engine builds
+
+Added to `packages/chains-evm/src/ens-register.ts` (exported through
+`index.ts`):
+
+- `quoteEnsRenewal(transport, { label, duration })` reads, at one block:
+  the chain, the registrar's configuration and `MIN_RENEW_DURATION()`, the
+  name's registry state, the registrar's `isRenewable` (and refuses when it
+  disagrees with the wallet's own rule, `ensIsRenewableState`), the new
+  expiry (refusing an overflow or a renewal that would leave the name
+  expired), the registrar's `getRenewPrice`, and the oracle's parameters and
+  USDC ratio, from which `ensRenewPrice` recomputes the price exactly in
+  bigint; any difference refuses with `price-mismatch`. Circle's Sepolia
+  USDC is the only payment token offered.
+- `planEnsRenewal({ quote, payer })` returns one step of two calls — an
+  approval of exactly the quoted price, then `renew` — sent as two
+  transactions by a regular account or as one batch by a smart account.
+  The payer may be any address; `payerIsHolder` says whether it is the
+  holder.
+- `readEnsRenewalResult(transport, plan)` reads the expiry back;
+  `decodeEnsNameRenewedLogs(logs)` decodes the registrar's `NameRenewed`
+  event from a receipt.
+- The tests replay a session recorded at block 12,100,610 and 112 answers of
+  the oracle's `getRenewPrice` (`test/fixtures/ens-renew-sepolia-2026-11-09.json`),
+  and pin every call against ethers.
+
+### 14.3 The live renewal (2026-11-09)
+
+`ENS_LIVE=renew ENS_LABEL=shibawalletdemo node scripts/testnet/ens-register-smoke.mjs`,
+sent by the dev EOA after the dry run passed:
+
+- the approval of exactly 613,701 USDC base units:
+  `0xb0a9180f3bcc726dedbeadb79b8347b22ad16e1a379a2504b704ac1c0cca249e`,
+  block 12,100,634, 137,757 gas;
+- `renew`: `0x4f7e9b1c57147ce86bf33c3ce0d51cc60bbec6e2ae6489b3eb286ba807a2741e`,
+  block 12,100,637, 126,012 gas.
+
+Both receipts read the same (status 1, block, block hash, gas) on
+PublicNode, 0xrpc.io and 1rpc. The `NameRenewed` event and the registry
+both report the new expiry 1797778896 (2026-12-20 15:01:36 UTC = the old
+expiry plus exactly 28 days). Exactly 613,701 USDC base units left the dev
+EOA and reached the beneficiary, the ETH spent equalled the two gas fees to
+the wei, and no allowance was left. Each name costs 0.613701 USDC per 28
+days to renew; the two transactions cost about 264,000 gas together.
+
+### 14.4 Not verified
+
+- A renewal inside the grace period, and a renewal paid by someone other
+  than the holder, were covered in tests with altered answers only, not on
+  the chain.
+- A renewal from a smart account (one batch through a bundler) was not run;
+  it is the app half's first live step.
+- Whether ENS will keep the Sepolia ENSv2 deployment, its prices or its
+  payment tokens unchanged is not something the wallet controls.

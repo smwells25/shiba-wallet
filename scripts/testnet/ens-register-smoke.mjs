@@ -61,6 +61,30 @@
  * at least one slot (12 s) past the commitment's notBefore; a pending-nonce
  * mismatch is read again up to four times 5 s apart (PublicNode's backends
  * disagree for a few seconds after a transaction is mined).
+ *
+ * RENEWAL (phase 26 item 1; ENS_RENEW=1 for the dry run, ENS_LIVE=renew for a
+ * live renewal; ENS_LABEL is required, ENS_RENEW_DAYS sets the duration,
+ * default 28 days). The dry run checks the deployment, quotes the renewal
+ * through the engine (the registrar's getRenewPrice equal to the engine's
+ * mirror; the oracle's getRenewPrice read independently through ethers),
+ * builds the plan (an exact approve, then renew), decodes both calls with
+ * ethers, and simulates them with eth_simulateV1: the expiry must move by
+ * exactly the duration, the registrar must pull exactly the quoted price
+ * from the sender to its BENEFICIARY, the NameRenewed log must decode equal
+ * through the engine and ethers, and no allowance may be left; negatives (an
+ * approval one unit short, renewing a never-registered label, a second
+ * renewal with no new approval) must revert. The live run does the dry run
+ * first, then sends the two transactions (each simulated first), reads both
+ * receipts on two endpoints, reads the expiry back with the engine on both,
+ * and checks the USDC and ETH balance deltas exactly. Caps: the price at most
+ * 2 USDC and the gas worst case of the run at most 0.01 ETH; the run record
+ * is scripts/testnet/runs/ens-renew-run.json (git-ignored).
+ *
+ * ENS_MNEMONIC_FILE names the mnemonic file to read instead of
+ * .dev-wallet/mnemonic.txt (for a worktree without its own .dev-wallet; the
+ * mnemonic is never printed). ENS_RPC2 overrides the second endpoint
+ * (default https://0xrpc.io/sep: sepolia.drpc.org answered "chain is not
+ * available on free plan", code 35, on 2026-11-09).
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { AbiCoder, Interface, getAddress, dnsEncode, namehash as ethersNamehash, keccak256, id as ethersId } from 'ethers';
@@ -68,7 +92,7 @@ import { ChainRegistry, HdKeyring, evmKeyProvider } from '../../packages/core/di
 import * as E from '../../packages/chains-evm/dist/index.js';
 
 const RPC = 'https://ethereum-sepolia-rpc.publicnode.com';
-const RPC2 = 'https://sepolia.drpc.org';
+const RPC2 = process.env.ENS_RPC2 ?? 'https://0xrpc.io/sep';
 const EXPLORER = 'https://sepolia.etherscan.io/tx/';
 const D = E.ENS_V2_SEPOLIA;
 const USDC = E.ENS_V2_SEPOLIA_USDC;
@@ -79,7 +103,11 @@ const DEV_KERNEL = '0xc995E49acA5C888F4FF1E50E8467E9fFc31CC5AC';
 const IMPL_SLOT = '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc';
 const MAX_FEE_USDC = BigInt(process.env.ENS_MAX_FEE_USDC ?? 1_000_000);
 const DURATION = BigInt(process.env.ENS_DURATION_SECONDS ?? 2_419_200);
-const MAX_GAS_WEI = 2n * 10n ** 16n; // 0.02 ETH for every transaction of the run together
+const RENEW_MODE = process.env.ENS_RENEW === '1' || process.env.ENS_LIVE === 'renew';
+const RENEW_MAX_USDC = 2_000_000n; // 2 USDC: the hard cap of a live renewal
+const RENEW_DAYS = BigInt(process.env.ENS_RENEW_DAYS ?? 28);
+// 0.02 ETH for every transaction of a registration run together; 0.01 ETH for a renewal run.
+const MAX_GAS_WEI = RENEW_MODE ? 10n ** 16n : 2n * 10n ** 16n;
 /** Seconds beyond the commitment's notBefore that the LATEST BLOCK on both endpoints must reach (one Sepolia slot). */
 const READY_MARGIN_SECONDS = 12n;
 const PENDING_REREADS = 4;
@@ -106,7 +134,13 @@ const I = new Interface([
   'function getState(uint256) view returns ((uint8,uint64,address,uint256,uint256))',
   'function BENEFICIARY() view returns (address)',
   'event Transfer(address indexed from, address indexed to, uint256 value)',
+  'function renew((string label, uint64 duration, bytes32 referrer) rd, address paymentToken)',
+  'function approve(address spender, uint256 amount) returns (bool)',
+  'function isRenewable(string) view returns (bool)',
+  'function MIN_RENEW_DURATION() view returns (uint64)',
+  'event NameRenewed(uint256 indexed tokenId, string label, uint64 duration, uint64 newExpiry, address paymentToken, bytes32 indexed referrer, uint256 amount)',
 ]);
+const ORACLE_I = new Interface(['function getRenewPrice(string,uint64,uint64,address) view returns (uint256)']);
 
 let failures = 0;
 const ok = (cond, msg) => {
@@ -343,7 +377,7 @@ async function sendCall(signer, call, label) {
   const gasLimit = (estimate * 120n) / 100n;
   const fees = await new E.NodeClient(node).suggestFees();
   const worst = gasLimit * fees.maxFeePerGas;
-  if (gasBudgetUsed + worst > MAX_GAS_WEI) throw new Error(`${label}: the run's gas worst case would exceed 0.02 ETH. Nothing was sent.`);
+  if (gasBudgetUsed + worst > MAX_GAS_WEI) throw new Error(`${label}: the run's gas worst case would exceed ${MAX_GAS_WEI} wei. Nothing was sent.`);
   gasBudgetUsed += worst;
   const tx = { chainId: 11155111n, nonce: latest, maxPriorityFeePerGas: fees.maxPriorityFeePerGas, maxFeePerGas: fees.maxFeePerGas, gasLimit, to: call.to, value: call.value, data: call.data };
   const signed = E.signEip1559(tx, signer);
@@ -354,7 +388,7 @@ async function sendCall(signer, call, label) {
   const [r1, r2] = await Promise.all([receiptOn(node, hash), receiptOn(node2, hash)]);
   ok(r1.status === '0x1' && r2.status === '0x1' && r1.blockHash === r2.blockHash, `${label}: status 0x1 in block ${BigInt(r1.blockNumber)} on both endpoints, gas used ${BigInt(r1.gasUsed)}`);
   if (r1.status !== '0x1') throw new Error(`${label} reverted on-chain. Stopped.`);
-  return { hash, blockNumber: BigInt(r1.blockNumber), gasUsed: BigInt(r1.gasUsed), effectiveGasPrice: BigInt(r1.effectiveGasPrice) };
+  return { hash, blockNumber: BigInt(r1.blockNumber), gasUsed: BigInt(r1.gasUsed), effectiveGasPrice: BigInt(r1.effectiveGasPrice), logs: r1.logs, logs2: r2.logs };
 }
 
 async function live(signer, label, target) {
@@ -502,16 +536,152 @@ async function afterRegistration(signer, run, resolverState, target) {
 }
 
 // ---------------------------------------------------------------------------
+// Renewal (phase 26 item 1): ENS_RENEW=1 (dry run) and ENS_LIVE=renew (live)
+// ---------------------------------------------------------------------------
+
+const RENEW_RUN_FILE = new URL('./runs/ens-renew-run.json', import.meta.url);
+
+async function viewAt(n, to, fn, args, block) {
+  return I.decodeFunctionResult(fn, await n('eth_call', [{ to, data: I.encodeFunctionData(fn, args) }, block]));
+}
+
+async function renewDryRun(sender, label) {
+  await checkDeployment();
+  const duration = RENEW_DAYS * 86_400n;
+  console.log(`\n-- renewal quote for ${label}.eth, ${duration} s (${RENEW_DAYS} days), payer ${sender}`);
+  const quote = await E.quoteEnsRenewal(node, { label, duration });
+  ok(true, `the registrar's getRenewPrice equals the engine's mirror: ${fmtUsdc(quote.total)} (block ${quote.blockNumber})`);
+  const blockHex = hex(quote.blockNumber);
+  const oracleDirect = ORACLE_I.decodeFunctionResult('getRenewPrice', await node('eth_call', [{ to: D.rentPriceOracle, data: ORACLE_I.encodeFunctionData('getRenewPrice', [label, quote.currentExpiry, duration, USDC.address]) }, blockHex]))[0];
+  ok(oracleDirect === quote.total, `the oracle's own getRenewPrice (read through ethers at the same block) is ${fmtUsdc(oracleDirect)}`);
+  const quote2 = await E.quoteEnsRenewal(node2, { label, duration });
+  ok(quote2.total === quote.total && quote2.currentExpiry === quote.currentExpiry, `${new URL(RPC2).host}: the same price and current expiry (block ${quote2.blockNumber})`);
+  ok(quote.status === 2, `${quote.name} is REGISTERED to ${quote.holder}; expiry ${quote.currentExpiry} (${new Date(Number(quote.currentExpiry) * 1000).toISOString()}) → ${quote.newExpiry} (${new Date(Number(quote.newExpiry) * 1000).toISOString()})`);
+  ok(quote.newExpiry === quote.currentExpiry + duration, 'the new expiry is the current expiry plus the duration (AbstractETHRegistrar.sol 130)');
+  ok(quote.total <= RENEW_MAX_USDC, `the price is within the 2 USDC cap of a live renewal`);
+  const usdc = (await view(node, USDC.address, 'balanceOf', [sender]))[0];
+  ok(usdc >= quote.total, `the payer holds ${fmtUsdc(usdc)} ≥ the price`);
+  console.log(`  info payer is ${lower(sender) === lower(quote.holder) ? '' : 'NOT '}the holder; anyone may renew (AbstractETHRegistrar.sol 93–95)`);
+
+  const plan = E.planEnsRenewal({ quote, payer: sender });
+  for (const line of plan.renew.describe) console.log(`  plan: ${line}`);
+  const [approveCall, renewCall] = plan.renew.calls;
+  const a = I.decodeFunctionData('approve', E.toHex(approveCall.data));
+  ok(lower(approveCall.to) === lower(USDC.address) && lower(a[0]) === lower(D.ethRegistrar) && a[1] === quote.total && approveCall.value === 0n, `call 1 decodes (ethers) as USDC.approve(registrar, ${quote.total})`);
+  const r = I.decodeFunctionData('renew', E.toHex(renewCall.data));
+  ok(lower(renewCall.to) === lower(D.ethRegistrar) && r[0].label === label && r[0].duration === duration && r[0].referrer === '0x' + '00'.repeat(32) && lower(r[1]) === lower(USDC.address) && renewCall.value === 0n,
+    `call 2 decodes (ethers) as registrar.renew({${label}, ${duration}, 0x0…0}, USDC)`);
+  ok(E.toHex(renewCall.data) === I.encodeFunctionData('renew', [[label, duration, '0x' + '00'.repeat(32)], USDC.address]), 'call 2 is byte-identical to the ethers encoding');
+
+  const beneficiary = (await view(node, D.ethRegistrar, 'BENEFICIARY'))[0];
+  const from = (calls) => calls.map((c) => ({ ...c, from: sender }));
+  const reads = [
+    { from: sender, to: D.ethRegistry, data: I.encodeFunctionData('getState', [BigInt(ethersId(label))]) },
+    { from: sender, to: USDC.address, data: I.encodeFunctionData('allowance', [sender, D.ethRegistrar]) },
+  ];
+  console.log('\n-- eth_simulateV1: approve + renew');
+  const sim = await simulate([{ calls: [...from(plan.renew.calls), ...reads] }]);
+  const [ap, rn, st, al] = sim[0];
+  ok(ap.ok, `approve succeeds (gas ${ap.gasUsed})`);
+  ok(rn.ok, `renew succeeds (gas ${rn.gasUsed})`);
+  if (st.ok) {
+    const s = I.decodeFunctionResult('getState', st.returnData)[0];
+    ok(s[1] === quote.newExpiry && Number(s[0]) === 2 && lower(s[2]) === lower(quote.holder), `after the renewal the registry reports expiry ${s[1]} (= ${quote.currentExpiry} + ${duration}), REGISTERED to ${s[2]}`);
+  } else ok(false, 'getState after the renewal answers');
+  const transfers = rn.logs.filter((l) => lower(l.address) === lower(USDC.address) && l.topics[0] === I.getEvent('Transfer').topicHash).map((l) => I.parseLog(l));
+  ok(transfers.length === 1 && lower(transfers[0].args.from) === lower(sender) && lower(transfers[0].args.to) === lower(beneficiary) && transfers[0].args.value === quote.total, `the registrar pulls exactly ${fmtUsdc(quote.total)} from the payer to its beneficiary ${beneficiary}`);
+  const engineLogs = E.decodeEnsNameRenewedLogs(rn.logs);
+  const ethersLogs = rn.logs.filter((l) => lower(l.address) === lower(D.ethRegistrar) && l.topics[0] === I.getEvent('NameRenewed').topicHash).map((l) => I.parseLog(l));
+  ok(engineLogs.length === 1 && ethersLogs.length === 1 && engineLogs[0].label === label && engineLogs[0].label === ethersLogs[0].args.label
+    && engineLogs[0].newExpiry === quote.newExpiry && engineLogs[0].newExpiry === ethersLogs[0].args.newExpiry
+    && engineLogs[0].amount === quote.total && engineLogs[0].amount === ethersLogs[0].args.amount
+    && engineLogs[0].duration === duration && engineLogs[0].tokenId === ethersLogs[0].args.tokenId && engineLogs[0].tokenId === quote.tokenId
+    && lower(engineLogs[0].paymentToken) === lower(USDC.address), `NameRenewed decodes equal through the engine and ethers (newExpiry ${engineLogs[0]?.newExpiry}, amount ${engineLogs[0]?.amount})`);
+  ok(al.ok && BigInt(al.returnData) === 0n, 'no USDC allowance is left for the registrar');
+  console.log(`  info gas used: approve ${ap.gasUsed} + renew ${rn.gasUsed}`);
+
+  console.log('\n-- negatives (simulated)');
+  const short = { to: USDC.address, value: 0n, data: E.encodeEnsExactApprove(D.ethRegistrar, quote.total - 1n) };
+  const n1 = await simulate([{ calls: from([short, renewCall]) }]);
+  ok(n1[0][0].ok && !n1[0][1].ok, `renew after an approval one unit short reverts (${n1[0][1].message ?? revertKind(n1[0][1])})`);
+  const never = `shibanever${Date.now().toString(36)}`;
+  const n2 = await simulate([{ calls: from([approveCall, { to: D.ethRegistrar, value: 0n, data: E.encodeEnsRenew(never, duration, USDC.address) }]) }]);
+  ok(!n2[0][1].ok && revertKind(n2[0][1]) === 'nameNotRenewable', `renewing the never-registered ${never}.eth reverts ${revertKind(n2[0][1])}`);
+  const n3 = await simulate([{ calls: from([approveCall, renewCall, renewCall]) }]);
+  ok(n3[0][1].ok && !n3[0][2].ok, `a second renewal with no new approval reverts (${n3[0][2].message ?? revertKind(n3[0][2])})`);
+  return { quote, plan, beneficiary };
+}
+
+async function renewLive(signer, label, dry) {
+  const sender = getAddress(signer.address);
+  if (dry.quote.total > RENEW_MAX_USDC) throw new Error(`The price ${fmtUsdc(dry.quote.total)} is above the 2 USDC cap. Nothing was sent.`);
+  if (existsSync(RENEW_RUN_FILE)) {
+    const prev = JSON.parse(readFileSync(RENEW_RUN_FILE, 'utf8'));
+    if (prev.status !== 'renewed') throw new Error(`An unfinished renewal record exists (${prev.name}, status ${prev.status}); check it on-chain and move it away. Nothing was sent.`);
+  }
+  // A fresh quote just before sending: the price and the current expiry must still be the dry run's.
+  const quote = await E.quoteEnsRenewal(node, { label, duration: dry.quote.duration });
+  if (quote.total !== dry.quote.total || quote.currentExpiry !== dry.quote.currentExpiry) throw new Error('The price or the expiry changed since the dry run. Nothing was sent.');
+  const plan = E.planEnsRenewal({ quote, payer: sender });
+  const head = await node('eth_getBlockByNumber', ['latest', false]);
+  const before = { block: BigInt(head.number) };
+  const tag = hex(before.block);
+  before.usdc = (await viewAt(node, USDC.address, 'balanceOf', [sender], tag))[0];
+  before.eth = BigInt(await node('eth_getBalance', [sender, tag]));
+  before.nonce = BigInt(await node('eth_getTransactionCount', [sender, tag]));
+  before.beneficiaryUsdc = (await viewAt(node, USDC.address, 'balanceOf', [dry.beneficiary], tag))[0];
+  const run = { name: plan.name, payer: sender, duration: `${plan.duration}n`, price: `${plan.total}n`, currentExpiry: `${plan.currentExpiry}n`, newExpiry: `${plan.newExpiry}n`, status: 'sending', txs: {}, startedAt: new Date().toISOString() };
+  const save = () => { mkdirSync(new URL('./runs/', import.meta.url), { recursive: true }); writeFileSync(RENEW_RUN_FILE, JSON.stringify(run, (k, v) => (typeof v === 'bigint' ? `${v}n` : v), 2)); };
+  save();
+  console.log(`\n=== LIVE renewal of ${plan.name}: ${fmtUsdc(plan.total)} (cap 2 USDC), gas cap ${MAX_GAS_WEI} wei; before: block ${before.block}, ${fmtUsdc(before.usdc)}, ${before.eth} wei, nonce ${before.nonce}`);
+  const approveTx = await sendCall(signer, plan.renew.calls[0], 'approve');
+  run.txs.approve = { hash: approveTx.hash, block: `${approveTx.blockNumber}n`, gasUsed: `${approveTx.gasUsed}n`, effectiveGasPrice: `${approveTx.effectiveGasPrice}n` };
+  run.status = 'approved';
+  save();
+  const renewTx = await sendCall(signer, plan.renew.calls[1], 'renew');
+  run.txs.renew = { hash: renewTx.hash, block: `${renewTx.blockNumber}n`, gasUsed: `${renewTx.gasUsed}n`, effectiveGasPrice: `${renewTx.effectiveGasPrice}n` };
+  run.status = 'renewed';
+  save();
+
+  console.log('\n=== verification');
+  const afterTag = hex(renewTx.blockNumber);
+  const after = {
+    usdc: (await viewAt(node, USDC.address, 'balanceOf', [sender], afterTag))[0],
+    eth: BigInt(await node('eth_getBalance', [sender, afterTag])),
+    nonce: BigInt(await node('eth_getTransactionCount', [sender, afterTag])),
+    beneficiaryUsdc: (await viewAt(node, USDC.address, 'balanceOf', [dry.beneficiary], afterTag))[0],
+    allowance: (await viewAt(node, USDC.address, 'allowance', [sender, D.ethRegistrar], afterTag))[0],
+  };
+  const fees = approveTx.gasUsed * approveTx.effectiveGasPrice + renewTx.gasUsed * renewTx.effectiveGasPrice;
+  ok(after.nonce === before.nonce + 2n, `nonce ${before.nonce} → ${after.nonce}: exactly the two transactions of this run in between`);
+  ok(before.usdc - after.usdc === plan.total, `payer USDC ${before.usdc} → ${after.usdc}: −${before.usdc - after.usdc} = the price exactly`);
+  ok(after.beneficiaryUsdc - before.beneficiaryUsdc === plan.total, `beneficiary ${dry.beneficiary} USDC +${after.beneficiaryUsdc - before.beneficiaryUsdc}`);
+  ok(before.eth - after.eth === fees, `payer ETH ${before.eth} → ${after.eth}: −${before.eth - after.eth} = gas ${approveTx.gasUsed} × ${approveTx.effectiveGasPrice} + ${renewTx.gasUsed} × ${renewTx.effectiveGasPrice}`);
+  ok(after.allowance === 0n, 'no USDC allowance is left for the registrar');
+  for (const [logs, host] of [[renewTx.logs, new URL(RPC).host], [renewTx.logs2, new URL(RPC2).host]]) {
+    const ev = E.decodeEnsNameRenewedLogs(logs);
+    ok(ev.length === 1 && ev[0].label === label && ev[0].newExpiry === plan.newExpiry && ev[0].amount === plan.total && ev[0].duration === plan.duration, `${host}: the receipt's NameRenewed — ${ev[0]?.label}, duration ${ev[0]?.duration}, newExpiry ${ev[0]?.newExpiry}, amount ${ev[0]?.amount}`);
+  }
+  for (const [n, host] of [[node, new URL(RPC).host], [node2, new URL(RPC2).host]]) {
+    const res = await E.readEnsRenewalResult(n, plan);
+    ok(res.exact && res.status === 2, `${host}: the engine's readEnsRenewalResult — expiry ${res.expiry} (${new Date(Number(res.expiry) * 1000).toISOString()}), exact ${res.exact}, holder ${res.holder} (block ${res.blockNumber})`);
+  }
+  run.verifiedAt = new Date().toISOString();
+  run.balances = { before, after, fees };
+  save();
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
-const LIVE = process.env.ENS_LIVE === '1';
+const LIVE = process.env.ENS_LIVE === '1' || process.env.ENS_LIVE === 'renew';
 let signer = null;
 let sender;
 if (process.env.ENS_SENDER && !LIVE) {
   sender = getAddress(process.env.ENS_SENDER);
 } else {
-  const devPath = new URL('../../.dev-wallet/mnemonic.txt', import.meta.url);
+  const devPath = process.env.ENS_MNEMONIC_FILE ?? new URL('../../.dev-wallet/mnemonic.txt', import.meta.url);
   if (!existsSync(devPath)) {
     console.error('No .dev-wallet/mnemonic.txt: set ENS_SENDER for a dry run, or provide the dev wallet for a live run.');
     process.exit(1);
@@ -527,12 +697,28 @@ if (!labelCheck.ok || labelCheck.label !== label) {
   console.error(`ENS_LABEL "${label}" is not a registrable lower-case label (${labelCheck.ok ? 'not normalized' : labelCheck.problem}).`);
   process.exit(1);
 }
-if (LIVE && !process.env.ENS_LABEL) {
+if ((LIVE || RENEW_MODE) && !process.env.ENS_LABEL) {
   console.error('ENS_LIVE=1 needs ENS_LABEL: the name is the CTO\'s choice and permanent once registered.');
   process.exit(1);
 }
 const target = getAddress(process.env.ENS_SUBNAME_TARGET ?? DEV_KERNEL);
-console.log(`ENS handle smoke: sender ${sender}; label ${label}.eth; ${DURATION} s; mode ${LIVE ? 'LIVE' : 'dry run'}; ethers id check ${ethersId('OwnedResolver').slice(0, 10)}`);
+console.log(`ENS handle smoke: sender ${sender}; label ${label}.eth; ${RENEW_MODE ? `renewal of ${RENEW_DAYS} days` : `${DURATION} s`}; mode ${LIVE ? 'LIVE' : 'dry run'}; ethers id check ${ethersId('OwnedResolver').slice(0, 10)}`);
+
+if (RENEW_MODE) {
+  try {
+    const dry = await renewDryRun(sender, label);
+    if (failures > 0) {
+      console.log(`\n${failures} check(s) failed in the renewal dry run. Nothing live was attempted.`);
+      process.exit(1);
+    }
+    if (LIVE) await renewLive(signer, label, dry);
+  } catch (e) {
+    console.log(`\nSTOPPED: ${e?.reason ? `[${e.reason}] ` : ''}${e?.message ?? e}`);
+    process.exit(1);
+  }
+  console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} FAILED`}`);
+  process.exit(failures === 0 ? 0 : 1);
+}
 
 try {
   const registeredResume = LIVE && process.env.ENS_RESUME === '1' && loadRun()?.status === 'registered';

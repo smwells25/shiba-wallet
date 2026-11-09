@@ -269,6 +269,8 @@ describe('selectors and calldata (pinned against ethers)', () => {
       labelAlreadyRegistered: '0xdef545a4',
       labelExpired: '0xc44e2374',
       eacUnauthorizedAccountRoles: '0x4b27a133',
+      nameNotRenewable: '0x1caefaa0',
+      cannotReduceExpiry: '0x68c1425a',
     };
     for (const [k, sig] of Object.entries(ENS_REGISTER_ERROR_SIGNATURES)) {
       expect(ENS_REGISTER_ERROR_SELECTORS[k as keyof typeof ENS_REGISTER_ERROR_SIGNATURES]).toBe(id(sig).slice(0, 10));
@@ -571,5 +573,278 @@ describe('readEnsPrimaryName (Universal Resolver reverse)', () => {
     await expect(readEnsPrimaryName(fake(REVERSE_NONE.result, '0x1'), DEV, 11155111n)).rejects.toMatchObject({ reason: 'wrong-chain' });
     await expect(readEnsPrimaryName(fake(REVERSE_NONE.result), DEV, 84532n)).rejects.toMatchObject({ reason: 'wrong-chain' });
     await expect(readEnsPrimaryName(fake(REVERSE_NAMED.result + '00'), DEV, 11155111n)).rejects.toMatchObject({ reason: 'malformed' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Renewal (phase 26 item 1)
+// ---------------------------------------------------------------------------
+
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  ENS_MIN_RENEW_DURATION,
+  ENS_NAME_RENEWED_EVENT,
+  ENS_NAME_RENEWED_TOPIC,
+  decodeEnsNameRenewedLogs,
+  encodeEnsGetRenewPrice,
+  encodeEnsIsRenewable,
+  encodeEnsRenew,
+  ensIsRenewableState,
+  ensRenewPrice,
+  planEnsRenewal,
+  quoteEnsRenewal,
+  readEnsRenewalResult,
+  type EnsRenewalQuote,
+} from '../src/ens-register.js';
+
+/**
+ * Read-only answers recorded from ethereum-sepolia-rpc.publicnode.com on
+ * 2026-11-09 with "latest" pinned to block 12100610 (0xb8a402): the calls
+ * quoteEnsRenewal and readEnsRenewalResult made, and 112 answers of the
+ * oracle's getRenewPrice.
+ */
+const RENEW_FIXTURE = JSON.parse(
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'ens-renew-sepolia-2026-11-09.json'), 'utf8'),
+) as { block: { number: string; timestamp: string }; recording: typeof RECORDING; oracle: [string, string, string, string, string][] };
+const RB = RENEW_FIXTURE.block.number;
+const RT = BigInt(RENEW_FIXTURE.block.timestamp);
+const rKey = (to: string, data: string) => `eth_call ${JSON.stringify([{ to, data }, RB])}`;
+function replayRenew(overrides: Record<string, unknown> = {}): JsonRpcTransport & { calls: string[] } {
+  const calls: string[] = [];
+  const transport = (async (method: string, params: unknown[]) => {
+    const key = `${method} ${JSON.stringify(params)}`;
+    calls.push(key);
+    if (key in overrides) {
+      const o = overrides[key];
+      if (o instanceof Error) throw o;
+      return o;
+    }
+    const hit = RENEW_FIXTURE.recording[key];
+    if (!hit) throw new Error(`no recorded answer for ${key}`);
+    if (hit.error) throw Object.assign(new Error(hit.error.message), hit.error);
+    return hit.result;
+  }) as JsonRpcTransport & { calls: string[] };
+  transport.calls = calls;
+  return transport;
+}
+const renewer = new Interface([
+  'function renew((string label, uint64 duration, bytes32 referrer) rd, address paymentToken)',
+  'function renewBatch((string label, uint64 duration, bytes32 referrer)[] rds, address paymentToken)',
+  'function getRenewPrice(string label, uint64 duration, address paymentToken) view returns (uint256)',
+  'function isRenewable(string label) view returns (bool)',
+  'function getRemainingGracePeriod(string label) view returns (uint64)',
+  'function GRACE_PERIOD() view returns (uint64)',
+  'event NameRenewed(uint256 indexed tokenId, string label, uint64 duration, uint64 newExpiry, address paymentToken, bytes32 indexed referrer, uint256 amount)',
+]);
+const USDC_ADDR = ENS_V2_SEPOLIA_USDC.address;
+const REG = ENS_V2_SEPOLIA.ethRegistrar;
+const DEMO_EXPIRY = 1795359696n;
+const stateKey = (label: string) => rKey(ENS_V2_SEPOLIA.ethRegistry, '0x44c9af28' + BigInt(id(label)).toString(16).padStart(64, '0'));
+const stateWord = (status: bigint, expiry: bigint, owner: string, label: string) =>
+  coder.encode(['uint8', 'uint64', 'address', 'uint256', 'uint256'], [status, expiry, owner, BigInt(id(label)), BigInt(id(label))]);
+const renewableKey = (label: string) => rKey(REG, toHex(encodeEnsIsRenewable(label)));
+const renewPriceKey = (label: string, d: bigint) => rKey(REG, toHex(encodeEnsGetRenewPrice(label, d, USDC_ADDR)));
+const revertWith = (data: string) => Object.assign(new Error('execution reverted'), { code: 3, data });
+
+describe('renewal: calldata (pinned against ethers)', () => {
+  it('encodes renew, getRenewPrice and isRenewable exactly as ethers does', () => {
+    expect(toHex(encodeEnsRenew('shibawalletdemo', 2419200n, USDC_ADDR))).toBe(renewer.encodeFunctionData('renew', [['shibawalletdemo', 2419200n, Z32], USDC_ADDR]));
+    const ref = '0x' + '5a'.repeat(32);
+    expect(toHex(encodeEnsRenew('a-very-long-label-for-the-renewal-fixture-that-spans-two-words', 1n, USDC_ADDR, toBytes(ref)))).toBe(
+      renewer.encodeFunctionData('renew', [['a-very-long-label-for-the-renewal-fixture-that-spans-two-words', 1n, ref], USDC_ADDR]),
+    );
+    expect(toHex(encodeEnsGetRenewPrice('qzv7hk2wmt', 31536000n, USDC_ADDR))).toBe(renewer.encodeFunctionData('getRenewPrice', ['qzv7hk2wmt', 31536000n, USDC_ADDR]));
+    expect(toHex(encodeEnsIsRenewable('xk9fdq4rvz'))).toBe(renewer.encodeFunctionData('isRenewable', ['xk9fdq4rvz']));
+    expect(toHex(encodeEnsExactApprove(REG, 613701n))).toBe(iface.encodeFunctionData('approve', [REG, 613701n]));
+  });
+
+  it('pins the selectors, the interface id in IETHRenewer.sol 16 and the NameRenewed topic', () => {
+    expect(toHex(encodeEnsRenew('abc', 1n, USDC_ADDR)).slice(0, 10)).toBe('0x2d06649b');
+    expect(toHex(encodeEnsGetRenewPrice('abc', 1n, USDC_ADDR)).slice(0, 10)).toBe('0xddf0effc');
+    expect(toHex(encodeEnsIsRenewable('abc')).slice(0, 10)).toBe('0x130d6f00');
+    const sels = ['renew', 'renewBatch', 'getRenewPrice', 'isRenewable', 'getRemainingGracePeriod', 'GRACE_PERIOD'].map((f) => BigInt(renewer.getFunction(f)!.selector));
+    expect('0x' + sels.reduce((x, y) => x ^ y).toString(16).padStart(8, '0')).toBe('0x37e6a567');
+    expect(BigInt(renewer.getFunction('renew')!.selector)).toBe(BigInt(toHex(encodeEnsRenew('abc', 1n, USDC_ADDR)).slice(0, 10)));
+    expect(ENS_NAME_RENEWED_TOPIC).toBe(id(ENS_NAME_RENEWED_EVENT));
+    expect(ENS_NAME_RENEWED_TOPIC).toBe(renewer.getEvent('NameRenewed')!.topicHash);
+    expect(ENS_MIN_RENEW_DURATION).toBe(1n);
+  });
+
+  it('refuses a bad label, a short referrer, a zero token and a duration above uint64', () => {
+    expect(() => encodeEnsRenew('ab', 1n, USDC_ADDR)).toThrow(EnsRegisterError);
+    expect(() => encodeEnsRenew('Shiba', 1n, USDC_ADDR)).toThrow(EnsRegisterError);
+    expect(() => encodeEnsRenew('shibawalletdemo', 1n, USDC_ADDR, new Uint8Array(31))).toThrow(/32 bytes/);
+    expect(() => encodeEnsRenew('shibawalletdemo', 1n, Z)).toThrow(/zero address/);
+    expect(() => encodeEnsRenew('shibawalletdemo', 1n << 64n, USDC_ADDR)).toThrow(/uint64/);
+  });
+});
+
+describe('renewal: the price mirror against the deployed oracle', () => {
+  it('reproduces 112 recorded getRenewPrice answers and ignores the expiry argument as the source does', async () => {
+    const pricing = await readEnsPricing(replayRenew());
+    expect(RENEW_FIXTURE.oracle.length).toBe(112);
+    for (const [label, , duration, token, amount] of RENEW_FIXTURE.oracle) {
+      expect(ensRenewPrice(pricing, label, BigInt(duration), TOKENS[token]!)).toBe(BigInt(amount));
+    }
+    // With no premium, the renewal price equals the registration price (StandardRentPriceOracle.sol 298–330).
+    for (const [label, , duration, token, base, premium] of ORACLE_PRICES) {
+      if (premium === 0n) expect(ensRenewPrice(pricing, label, duration, TOKENS[token]!)).toBe(base);
+    }
+  });
+
+  it('refuses a label the oracle does not price', async () => {
+    const pricing = await readEnsPricing(replayRenew());
+    expect(() => ensRenewPrice(pricing, 'ab', 2419200n, TOKENS.USDC!)).toThrow(/does not price/);
+    expect(() => ensRenewPrice(pricing, 'abc', 2419200n, { numer: 1n, denom: 0n })).toThrow(EnsRegisterError);
+  });
+
+  it('applies ETHRegistrar._isRenewable', () => {
+    const grace = 2419200n;
+    expect(ensIsRenewableState({ status: 2, expiry: 2000n, latestOwner: DEV }, 1000n, grace)).toBe(true);
+    expect(ensIsRenewableState({ status: 0, expiry: 1000n, latestOwner: DEV }, 1000n + grace - 1n, grace)).toBe(true);
+    expect(ensIsRenewableState({ status: 0, expiry: 1000n, latestOwner: DEV }, 1000n + grace, grace)).toBe(false);
+    expect(ensIsRenewableState({ status: 0, expiry: 1000n, latestOwner: Z }, 1001n, grace)).toBe(false);
+    expect(ensIsRenewableState({ status: 1, expiry: 2000n, latestOwner: DEV }, 1000n, grace)).toBe(false);
+    expect(ensIsRenewableState({ status: 0, expiry: 0n, latestOwner: Z }, 1000n, grace)).toBe(false);
+  });
+});
+
+describe('renewal: quote (replayed Sepolia session, block 12100610)', () => {
+  it('quotes the three names the wallet holds, every figure equal to the registrar', async () => {
+    const want: Record<string, [string, bigint]> = {
+      shibawalletdemo: [DEV, DEMO_EXPIRY],
+      qzv7hk2wmt: ['0x772eAA1d3BEf14C0BD5cee980b90dB3FC680F44F', 1795492140n],
+      xk9fdq4rvz: [KERNEL, 1795493244n],
+    };
+    for (const [label, [holder, expiry]] of Object.entries(want)) {
+      const t = replayRenew();
+      const q = await quoteEnsRenewal(t, { label, duration: 2419200n });
+      expect(q.total).toBe(613701n);
+      expect(q.status).toBe(2);
+      expect(q.holder).toBe(holder);
+      expect(q.currentExpiry).toBe(expiry);
+      expect(q.newExpiry).toBe(expiry + 2419200n);
+      expect(q.inGrace).toBe(false);
+      expect(q.graceEndsAt).toBe(expiry + 2419200n);
+      expect(q.blockNumber).toBe(12100610n);
+      expect(q.quoteTimestamp).toBe(RT);
+      expect(q.name).toBe(`${label}.eth`);
+      expect(q.node).toBe(ethersNamehash(`${label}.eth`));
+      expect(q.tokenId & ~0xffffffffn).toBe(BigInt(id(label)) & ~0xffffffffn);
+      expect(t.calls.filter((c) => c.startsWith('eth_call')).every((c) => c.endsWith(`"${RB}"]`))).toBe(true);
+    }
+  });
+
+  it('refuses a name that was never registered', async () => {
+    await expect(quoteEnsRenewal(replayRenew(), { label: 'shibawallet-fixture', duration: 2419200n })).rejects.toMatchObject({ reason: 'not-renewable' });
+  });
+
+  it('refuses another chain, another payment token and a zero or overflowing duration before reading prices', async () => {
+    await expect(quoteEnsRenewal(replayRenew({ 'eth_chainId []': '0x1' }), { label: 'shibawalletdemo', duration: 2419200n })).rejects.toMatchObject({ reason: 'wrong-chain' });
+    await expect(quoteEnsRenewal(replayRenew(), { label: 'shibawalletdemo', duration: 2419200n, paymentToken: { address: '0x240b0000000000000000000000000000000014aa', symbol: 'USDC', decimals: 6 } })).rejects.toMatchObject({ reason: 'payment-token' });
+    await expect(quoteEnsRenewal(replayRenew(), { label: 'shibawalletdemo', duration: 0n })).rejects.toMatchObject({ reason: 'duration' });
+    await expect(quoteEnsRenewal(replayRenew(), { label: 'shibawalletdemo', duration: 1n << 64n })).rejects.toMatchObject({ reason: 'duration' });
+    const overflow = (1n << 64n) - DEMO_EXPIRY;
+    await expect(quoteEnsRenewal(replayRenew(), { label: 'shibawalletdemo', duration: overflow })).rejects.toThrow(/would not fit a uint64/);
+  });
+
+  it('refuses a price the mirror does not reproduce, a changed MIN_RENEW_DURATION and a disagreement about renewability', async () => {
+    await expect(quoteEnsRenewal(replayRenew({ [renewPriceKey('shibawalletdemo', 2419200n)]: word(613702n) }), { label: 'shibawalletdemo', duration: 2419200n })).rejects.toMatchObject({ reason: 'price-mismatch' });
+    await expect(quoteEnsRenewal(replayRenew({ [rKey(REG, '0x307a64a5')]: word(2419200n) }), { label: 'shibawalletdemo', duration: 2419200n })).rejects.toMatchObject({ reason: 'deployment-mismatch' });
+    await expect(quoteEnsRenewal(replayRenew({ [renewableKey('shibawalletdemo')]: word(0n) }), { label: 'shibawalletdemo', duration: 2419200n })).rejects.toMatchObject({ reason: 'deployment-mismatch' });
+    await expect(quoteEnsRenewal(replayRenew({ [renewableKey('shibawallet-fixture')]: word(1n) }), { label: 'shibawallet-fixture', duration: 2419200n })).rejects.toMatchObject({ reason: 'deployment-mismatch' });
+  });
+
+  it('maps the registrar\'s reverts of getRenewPrice', async () => {
+    const at = (data: string) => replayRenew({ [renewPriceKey('shibawalletdemo', 2419200n)]: revertWith(data) });
+    const sel = (sig: string, args: string) => id(sig).slice(0, 10) + args;
+    await expect(quoteEnsRenewal(at(sel('PaymentTokenNotSupported(address)', '00'.repeat(32))), { label: 'shibawalletdemo', duration: 2419200n })).rejects.toMatchObject({ reason: 'payment-token' });
+    await expect(quoteEnsRenewal(at(sel('NotValid(string)', '')), { label: 'shibawalletdemo', duration: 2419200n })).rejects.toMatchObject({ reason: 'invalid-label' });
+    await expect(quoteEnsRenewal(at(sel('NameNotRenewable(string)', '')), { label: 'shibawalletdemo', duration: 2419200n })).rejects.toMatchObject({ reason: 'not-renewable' });
+    await expect(quoteEnsRenewal(at(sel('DurationTooShort(uint64,uint64)', '')), { label: 'shibawalletdemo', duration: 2419200n })).rejects.toMatchObject({ reason: 'duration' });
+    await expect(quoteEnsRenewal(at('0xdeadbeef'), { label: 'shibawalletdemo', duration: 2419200n })).rejects.toMatchObject({ reason: 'deployment-mismatch' });
+  });
+
+  it('quotes a name inside its grace period from its old expiry, and refuses a renewal that would leave it expired', async () => {
+    const expired = RT - 1000n; // expired 1,000 s before the recorded block
+    const graceful = {
+      [stateKey('shibawalletdemo')]: stateWord(0n, expired, DEV, 'shibawalletdemo'),
+    };
+    const q = await quoteEnsRenewal(replayRenew(graceful), { label: 'shibawalletdemo', duration: 2419200n });
+    expect(q.inGrace).toBe(true);
+    expect(q.status).toBe(0);
+    expect(q.currentExpiry).toBe(expired);
+    expect(q.newExpiry).toBe(expired + 2419200n);
+    // 1,000 s added to an expiry 1,000 s ago lands exactly on now: still expired (the registry would accept it).
+    await expect(quoteEnsRenewal(replayRenew(graceful), { label: 'shibawalletdemo', duration: 1000n })).rejects.toThrow(/still leave it expired/);
+    await expect(quoteEnsRenewal(replayRenew(graceful), { label: 'shibawalletdemo', duration: 1001n })).rejects.toThrow(/no recorded answer/); // past the check: asks the price
+    // Past the grace period: both the registrar and the wallet say not renewable.
+    const late = { [stateKey('shibawalletdemo')]: stateWord(0n, RT - 2419200n, DEV, 'shibawalletdemo'), [renewableKey('shibawalletdemo')]: word(0n) };
+    await expect(quoteEnsRenewal(replayRenew(late), { label: 'shibawalletdemo', duration: 2419200n })).rejects.toMatchObject({ reason: 'not-renewable' });
+  });
+});
+
+describe('renewal: plan, read-back and the NameRenewed log', () => {
+  async function demoQuote(): Promise<EnsRenewalQuote> {
+    return quoteEnsRenewal(replayRenew(), { label: 'shibawalletdemo', duration: 2419200n });
+  }
+
+  it('plans the exact approval then renew, for the holder or another payer', async () => {
+    const q = await demoQuote();
+    const plan = planEnsRenewal({ quote: q, payer: DEV.toLowerCase() });
+    expect(plan.renew.kind).toBe('renew');
+    expect(plan.payer).toBe(DEV);
+    expect(plan.payerIsHolder).toBe(true);
+    expect(plan.renew.calls.map((c) => ({ to: c.to, value: c.value, data: toHex(c.data) }))).toEqual([
+      { to: USDC_ADDR, value: 0n, data: iface.encodeFunctionData('approve', [REG, 613701n]) },
+      { to: REG, value: 0n, data: renewer.encodeFunctionData('renew', [['shibawalletdemo', 2419200n, Z32], USDC_ADDR]) },
+    ]);
+    expect(plan.renew.describe).toEqual([
+      'Approve exactly 613701 base units of USDC for the ENS registrar',
+      'Renew shibawalletdemo.eth for 2419200 seconds, paying 613701 base units of USDC: its expiry moves from 1795359696 to 1797778896',
+    ]);
+    expect(plan.newExpiry).toBe(1797778896n);
+    expect(planEnsRenewal({ quote: q, payer: KERNEL }).payerIsHolder).toBe(false);
+  });
+
+  it('refuses a bad payer, a quote with no price and a tampered expiry', async () => {
+    const q = await demoQuote();
+    expect(() => planEnsRenewal({ quote: q, payer: Z })).toThrow(/zero address/);
+    expect(() => planEnsRenewal({ quote: q, payer: '0x1234' })).toThrow(/not an address/);
+    expect(() => planEnsRenewal({ quote: { ...q, total: 0n }, payer: DEV })).toThrow(/no price/);
+    expect(() => planEnsRenewal({ quote: { ...q, newExpiry: q.newExpiry + 1n }, payer: DEV })).toThrow(/current expiry plus the duration/);
+  });
+
+  it('reads the expiry back', async () => {
+    const t = replayRenew();
+    const before = await readEnsRenewalResult(t, { label: 'shibawalletdemo', newExpiry: DEMO_EXPIRY + 2419200n });
+    expect(before).toMatchObject({ blockNumber: 12100610n, status: 2, expiry: DEMO_EXPIRY, holder: DEV, extended: false, exact: false });
+    const after = await readEnsRenewalResult(
+      replayRenew({ [stateKey('shibawalletdemo')]: stateWord(2n, DEMO_EXPIRY + 2419200n, DEV, 'shibawalletdemo') }),
+      { label: 'shibawalletdemo', newExpiry: DEMO_EXPIRY + 2419200n },
+    );
+    expect(after).toMatchObject({ expiry: DEMO_EXPIRY + 2419200n, extended: true, exact: true });
+    const later = await readEnsRenewalResult(
+      replayRenew({ [stateKey('shibawalletdemo')]: stateWord(2n, DEMO_EXPIRY + 4838400n, DEV, 'shibawalletdemo') }),
+      { label: 'shibawalletdemo', newExpiry: DEMO_EXPIRY + 2419200n },
+    );
+    expect(later).toMatchObject({ extended: true, exact: false });
+  });
+
+  it('decodes the registrar\'s NameRenewed log as ethers encodes it, and skips other emitters', () => {
+    const tokenId = BigInt(id('shibawalletdemo'));
+    const ref = '0x' + '00'.repeat(32);
+    const ev = renewer.getEvent('NameRenewed')!;
+    const enc = renewer.encodeEventLog(ev, [tokenId, 'shibawalletdemo', 2419200n, 1797778896n, USDC_ADDR, ref, 613701n]);
+    const log = { address: REG.toLowerCase(), topics: enc.topics, data: enc.data };
+    expect(decodeEnsNameRenewedLogs([log, { ...log, address: USDC_ADDR }, { address: REG, topics: [id('Other()')], data: '0x' }])).toEqual([
+      { tokenId, label: 'shibawalletdemo', duration: 2419200n, newExpiry: 1797778896n, paymentToken: USDC_ADDR, referrer: ref, amount: 613701n },
+    ]);
+    expect(() => decodeEnsNameRenewedLogs([{ ...log, topics: enc.topics.slice(0, 2) }])).toThrow(/three topics/);
+    expect(() => decodeEnsNameRenewedLogs([{ ...log, data: log.data.slice(0, -64) }])).toThrow(EnsRegisterError);
+    const badOffset = '0x' + word(192n).slice(2) + log.data.slice(66);
+    expect(() => decodeEnsNameRenewedLogs([{ ...log, data: badOffset }])).toThrow(/offset/);
   });
 });

@@ -20019,3 +20019,76 @@ driver at a time, item 1's first; 6 last. Subagents on Opus.
       words the withheld part; Withdraw / Harvest read, never called (the
       0.01 SFEE stays withheld); SetTransferFee and the cap; a smart-account
       sender; that devnet's program binary is exactly 5170695d.
+- [x] Item 1, engine and script — ENS RENEWAL, PROVEN LIVE ON
+      shibawalletdemo.eth (commit below; 5 files, +2,139 / −10 —
+      packages/chains-evm/src/ens-register.ts additive (index.ts already
+      re-exports the module), test/ens-register.test.ts +16 (47), the
+      fixture test/fixtures/ens-renew-sepolia-2026-11-09.json,
+      scripts/testnet/ens-register-smoke.mjs, docs/WALLET_HANDLES.md
+      section 14 plus a pointer in section 1; verified as ONE TREE with
+      items 2 and 4 in the CTO's isolated worktree on HEAD e1e81fb:
+      checkout 0 / apply 0 / 30 files, the combined staged patch id
+      52b8a384…b762 equal to the file's, the engine rebuilt, engine 1,415
+      (core 162, chains-evm 943, chains-utxo 70, chains-solana 111, prices
+      129), app 11,726 across 67 suites, lint 0/0, tsc clean; the
+      pre-commit scan at the commit; nine hand mutants on the real source
+      caught (the referrer dropped, the expiry counted from now, the price
+      rounded down, the mismatch check removed, the grace boundary, the
+      still-expired check, the emitter filter, an approval one unit high,
+      the renewability check); the CTO re-read both receipts on publicnode
+      and 0xrpc.io and decoded the NameRenewed data words). SOURCES
+      (contracts-v2 at 07e55a05; the deployed sources byte-identical on
+      Sourcify — the registrar 0xf633…a3d3 and the oracle 0x8196…263A
+      "match", the .eth registry 0xD4eB…A8B4 "exact_match"): renew(RenewData
+      {label, uint64 duration, bytes32 referrer}, IERC20) in
+      AbstractETHRegistrar.sol 93–95, selector 0x2d06649b, the IETHRenewer
+      interface id 0x37e6a567 answered true by the deployed code; ANYONE
+      may renew and the caller pays safeTransferFrom(msg.sender →
+      BENEFICIARY 0x84D3…39D3); newExpiry = the CURRENT expiry + duration
+      (line 130, checked uint64), NameRenewed(tokenId, label, duration,
+      newExpiry, token, referrer, amount) emitted (128–143); renewable =
+      REGISTERED, or expired with an owner and inside the 28-day grace
+      (ETHRegistrar.sol 265–292), else NameNotRenewable 0x1caefaa0;
+      MIN_RENEW_DURATION 1 s, no maximum but the overflow; the price =
+      StandardRentPriceOracle.getRenewPrice (319–330), NO PREMIUM, equal to
+      a registration of the same length — 613,701 USDC base units for 28
+      days for all three names at block 12100588 on two RPCs; A TRAP: the
+      registry refuses an earlier expiry (CannotReduceExpiry 0x68c1425a) but
+      not a past one, so a too-short renewal inside the grace period would
+      leave the name expired — the engine refuses that. CORRECTION TO THE
+      RECORD: shibawalletdemo.eth's expiry 1795359696 was 2026-11-22
+      15:01:36 UTC, not the 23rd. ENGINE: quoteEnsRenewal (one block: the
+      chain, the registrar config and MIN_RENEW_DURATION, the name's state,
+      isRenewable checked against the wallet's own ensIsRenewableState,
+      the new expiry refusing an overflow or a still-expired result,
+      getRenewPrice checked against the bigint mirror ensRenewPrice — any
+      difference refuses; USDC only), planEnsRenewal (an exact approve then
+      renew; two transactions from a regular account or one batch from a
+      smart account; payerIsHolder), readEnsRenewalResult,
+      decodeEnsNameRenewedLogs, the encoders, ENS_MIN_RENEW_DURATION, the
+      NameRenewed topic, the error signatures and the reason
+      'not-renewable', the plan-step kind 'renew'; tests pin the calldata
+      against ethers, replay 112 recorded getRenewPrice answers and a
+      session at block 12100610, and cover every refusal. SCRIPT: ENS_RENEW=1
+      (dry run) and ENS_LIVE=renew with ENS_RENEW_DAYS, caps 2 USDC and 0.01
+      ETH; ENS_MNEMONIC_FILE and ENS_RPC2 (default now 0xrpc.io/sep —
+      sepolia.drpc.org answers "chain is not available on free plan", code
+      35, so the existing dry run could not pass as written). DRY RUN for
+      shibawalletdemo.eth ALL CHECKS PASSED (the approve 137,757 and the
+      renew 126,012 gas in eth_simulateV1, the expiry +2,419,200 exactly,
+      613,701 to the beneficiary, no allowance left; the three negatives
+      reverted); the registration dry run still 63 ok. LIVE (the dev EOA,
+      2026-11-09 ~23:00 UTC; the mnemonic in one 0600 file, deleted with rm
+      -P): approve 0xb0a9180f3bcc726dedbeadb79b8347b22ad16e1a379a2504b704ac1c0cca249e
+      block 12100634, 137,757 gas; renew
+      0x4f7e9b1c57147ce86bf33c3ce0d51cc60bbec6e2ae6489b3eb286ba807a2741e
+      block 12100637, 126,012 gas, 3 logs — NameRenewed duration 2,419,200,
+      NEW EXPIRY 1797778896 = 2026-12-20 15:01:36 UTC, amount 613,701 (the
+      CTO decoded the same words); identical on publicnode, 0xrpc.io and
+      1rpc; the dev EOA nonce 57 → 59, USDC 18,786,299 → 18,172,598, ETH
+      −346,328,697 wei = the two fees, allowance 0. The two wallet names
+      (qzv7hk2wmt.eth, xk9fdq4rvz.eth, expiring 2026-11-24) were NOT
+      renewed — the app half does that. NOT VERIFIED: a renewal inside the
+      grace period or by a non-holder on-chain; a smart-account batch
+      through a bundler (the app half's first live step); that Sourcify's
+      "match" differs from "exact_match" only in metadata.
