@@ -18565,6 +18565,107 @@ arrive; 6 last. Subagents on Opus.
       found (F-65, F-82); display-only defects Low (F-69, F-70, F-83, F-84).
       The three earlier "left for the CTO" header lines stay; a fourth,
       dated 2026-11-08, records the assignment.
+- [x] MASKED AMOUNTS SPOKEN AS "(amount hidden)" ON EVERY SCREEN THAT SHOWS
+      THEM (commit 0fbebc7; 20 files, +304 / −16, no new file; check-simulation
+      97 (was 88), check-approvals 286 (280), check-typed-data 109 (106),
+      check-wc 342 (339), check-spending-policy 144 (135), check-portfolio 73
+      (68), check-pnl 142 (138), check-prices 117 (112), check-nfts 142 (137),
+      check-staking 139 (136); offline runner in the CTO's isolated worktree
+      on HEAD 2af3b6e: checkout 0 / apply 0 / 20 files, the staged patch id
+      47cbbe54…5a7e equal to the agent's, app 11,270 across 66 suites, lint
+      0/0, tsc clean, engine 1,349 — ONE engine test failed in the first run,
+      chains-solana history.test.ts's 30-round random stress (commit 67daf2a)
+      at 12.9 s against its 5 s limit while three runners shared the machine
+      (load average 76–178), a package the patch never touches; re-run alone
+      on the same patched tree: 99 of 99 passed, the stress test in 4.3 s
+      (the timeout raised to 20 s in the follow-up slice below); the
+      pre-commit scan clean; six hand mutants on the real files caught and
+      restored cmp-equal; not heard on a device). THE HELPER
+      maskedSpokenProps(text) in app/src/a11y.ts returns { accessibilityLabel:
+      spokenMaskedText(text) } only when the text holds AMOUNT_MASK, else {}
+      — every unmasked label and every existing label byte-identical, the
+      visible text unchanged everywhere. TEXTS CHANGED: BalanceChangePreview
+      .tsx 196 (the warning row) and 204 (the ordinary row); ApprovalsScreen
+      .tsx 688 (the card amount) and 822 (a Row value); WcApprovalSheet.tsx
+      1817 (a typed-data row value); SpendingPolicyViews.tsx 207 (the readout
+      line) and 218 (the existing "Warning: …" label through
+      spokenMaskedText); SpendingLimitsScreen.tsx 355–356; SendScreen.tsx
+      2804 (the ERC-1155 copies caption), 2918 (a Row value), 2928 (the fiat
+      sub-line); SwapScreen.tsx 1828 (the fiat sub-line); NftDetailScreen.tsx
+      205; StakingViews.tsx 88 (rows with no spoken label, e.g. Lido
+      withdrawal requests). NO CHANGE NEEDED in portfolio.ts / PortfolioScreen
+      and pnl.ts / PortfolioViews — every masked figure there sits in an
+      accessible View whose label already says "hidden" or "amount hidden"
+      (spokenMoney, holdingSpokenLabel, the P&L "<label>: hidden" form) —
+      pinned so it stays that way; Home, Tokens, the NFT grid, Activity and
+      Manage Solana tokens were already covered. Each suite checks the
+      module's real masked strings through the helper ("(amount hidden)"
+      present, never '••••', unmasked text unchanged) with 20 new in-suite
+      mutants; check-staking's p20d finding-3 pin rewritten in place for the
+      new spread, its mutant kept. STILL SPEAKING BULLETS, by design or
+      deferred: the remove-limit Alert body (a native Alert body takes no
+      label); the ERC-1155 copies TextInput's own accessibilityLabel
+      (VoiceOver only — a spread there broke 15 check-devmode caption-scanner
+      checks, so it was left; TalkBack names the field by its caption);
+      the P&L "Average cost: nothing held" spoken as "hidden" (a wording nit).
+      Agent slip: it began editing while its baseline run was still going
+      (the one baseline failure was its own edit; the counts equal the
+      expected baseline). UNVERIFIED: TalkBack and VoiceOver reading the new
+      labels (incl. whether a selectable Text's label replaces its text); the
+      Spanish "(importe oculto)".
+- [x] SOLANA TOKEN SEND FOLLOW-UPS — THE DEVNET COIN'S NAME, MAX, A PRIVATE
+      NOTE, T-93, THE MAINNET USDC MINT READ (commit c781efa; 7 files, +273 /
+      −16 — packages/chains-solana/src/tokenTransfer.ts and
+      test/token2022.test.ts, app/src/wallet/spl-tokens.ts,
+      screens/SolanaTokenSendScreen.tsx, config/readiness.ts,
+      scripts/check-spl-tokens.mjs and check-readiness.mjs; engine 1,349 →
+      1,351 (chains-solana 99 → 101), check-spl-tokens 177 (was 153; 16
+      in-suite mutants), check-readiness 230 (229); offline runner ALL GREEN
+      in the CTO's isolated worktree on HEAD 0fbebc7: checkout 0 / apply 0 /
+      7 files, the staged patch id 07e8cc83…ffdb equal to the agent's, app
+      11,295 across 66 suites, lint 0/0, tsc clean; the pre-commit scan
+      clean; six hand mutants on the real files caught; nothing sent on any
+      chain; not seen on a device). (1) SPL_QUOTE_SENTENCES.notEnoughSol
+      (needed, held, nativeSymbol = 'SOL') and quoteSplTokenTransfer's
+      optional nativeSymbol, which the app's quoteSplSend fills from
+      splNativeSymbol(caip2): devnet reads "Not enough test SOL for this
+      transfer: it needs … lamports for the network fee and any new account's
+      rent, and the account holds … lamports."; mainnet and every older call
+      byte-identical. (2) MAX on the token send's form: readSplMaxRow reads
+      the row fresh through loadSplTokenRows (as Home does) and
+      splMaxAmountText fills in the owner's ASSOCIATED-account balance only —
+      DEVIATION, accepted: as the exact formatUnits(associated, decimals,
+      decimals), not Home's display form, because formatBalanceDisplay cuts
+      the fraction at 6 digits and shows "< 0.000001", neither the full
+      balance nor parseable (identical for 6-decimal tokens); nothing held
+      back (the fee and any rent are paid in SOL; the quote still refuses
+      when SOL is short); the lines "Max could not read this account's token
+      balance just now. Type the amount, or try Max again." and "Max is not
+      available: the mint now reports other decimals than were recorded when
+      this token was tracked. Remove the token and track it again.";
+      CORRECTION to the CTO's brief: a 0 balance fills "0" and Review then
+      refuses "Enter an amount greater than zero." (the amount check runs
+      before the source-account check) — pinned as it behaves. (3) The Sent
+      view renders TransactionNoteField with the network from quote.caip2 at
+      the moment of sending, txid = the signature, userOpHash null;
+      NOTE_VIEW_SCROLL_PROPS on the ScrollView and Done through
+      dismissKeyboardThenClose — the Bridge / Handle pattern. (4) The
+      readiness row spl-tokens's evidence is W1, W2, W9, W13, T-93 (the
+      reviewer line pinned). (5) READ-ONLY, 2026-11-09 02:48 UTC at slot
+      467155464 on api.mainnet-beta.solana.com and solana-rpc.publicnode.com,
+      byte-identical: the mainnet USDC mint
+      EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v is owned by the classic
+      SPL Token program, 82 bytes, 6 decimals, initialized, mint and freeze
+      authorities set (parseMint / classifyMint: plain) — the table's source
+      comment now says "read on mainnet 2026-11-09"; its metadata not read;
+      the raw answers kept under the session scratchpad p24-solfollow.
+      Agent slip: a first baseline run overlapped its edits and was
+      discarded (a broad pkill was refused; the clean baseline matched the
+      expected counts). Its two proposals outside its files — the spl-tokens
+      readiness reason still saying no Solana token transfer has been sent,
+      and the note field's doc list — are the follow-up slice below.
+      UNVERIFIED: the Max layout and TalkBack, one-tap Done on the note, the
+      devnet "test SOL" refusal live, iOS.
 
 ## Phase 24 status (2026-11-08)
 
