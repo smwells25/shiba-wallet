@@ -18930,3 +18930,70 @@ same time (one device driver); fixes after each pass; 6 last. Subagents
 on Opus.
 
 ## Phase 25 progress
+- [x] Item 4 — docs/LENDING_VAULTS.md, LENDING AND YIELD VAULTS ON THE TEST
+      NETWORKS, RESEARCH ONLY (commit c1aba7a; one new file, 234 lines, about
+      5,900 words; verified in the CTO's isolated worktree on HEAD 215f3e0:
+      apply 0 / 1 file, the staged patch id 953e2f27…c679 equal to the
+      agent's, check-readiness 230, check-screen-protection 87, check-devmode
+      476 green with the file present; the pre-commit scan clean; no 64-hex
+      or uuid-shaped string in the file; nothing sent, no code; every
+      address read from the protocols' own sources at pinned commits —
+      bgd-labs/aave-address-book d4c2848e, aave-dao/aave-v3-origin 8305565a,
+      aave/aave-v3-core 782f5191 (deprecated), compound-finance/comet
+      f766f515 and the 2026-06-11 commit db72b0ca that dropped the Sepolia
+      deployment, ethereum/ERCs cf8bff87 for ERC-4626, Morpho's addresses
+      page and API — and checked on two public endpoints per network with
+      Sourcify status, all on 2026-11-08). FINDINGS: Aave v3 has a market on
+      Ethereum Sepolia (pool revision 1, the oldest code), two on Base Sepolia,
+      one each on Arbitrum and OP Sepolia (revision 3), none on Hoodi; the
+      USDC reserve is CIRCLE'S USDC only on Arbitrum Sepolia and OP Sepolia
+      (the wallet's own known-token addresses) and Aave's mintable test token
+      on Ethereum and Base Sepolia; SEPOLIA USDC SUPPLY IS BLOCKED — the
+      reserve's cap is 2,000,000,000 and about 4.75 billion is supplied (DAI
+      and USDT over their caps too), so a supply reverts with Aave error 51
+      SUPPLY_CAP_EXCEEDED in simulation on both endpoints; ARBITRUM SEPOLIA
+      WORKS IN SIMULATION from Account 1 (1 USDC) and the Kernel (0.745441
+      USDC): supply 217,287 gas, withdraw about 177,800, 855,824 USDC of
+      liquidity, the cap half used; Compound v3's cUSDCv3 on Sepolia uses
+      Circle's USDC and simulates, but Compound removed the deployment from
+      its repository and utilisation is above 100% (a fallback, not a
+      recommendation); Morpho is deployed on Ethereum and Base Sepolia but
+      its markets and vaults cannot be listed keylessly (its API indexes
+      main networks only); ERC-4626: Aave's StataTokenV2 wrappers on Base
+      Sepolia and older StaticATokenLM wrappers on Sepolia, every one holding
+      Aave's test tokens, no vault for Circle's USDC anywhere; each test
+      market is administered by one address with no code (the Base Sepolia
+      admin also owns the Executors behind Arbitrum and OP Sepolia); every
+      call a slice needs has fixed-size arguments, so Kernel's CallPolicy
+      can pin them all — on the engine's mirror a grant allowed supply on
+      behalf of the account and withdraw to it and refused another
+      recipient, spender, a larger amount, borrow and an aToken transfer,
+      while allowing a batch of three in-limit supplies (the known batching
+      weakness); Sepolia gas after Glamsterdam about 1.8× Arbitrum's (supply
+      394,392, withdraw 186,836, vault deposit 333,915; the fork as the
+      cause is inferred from the ratio). RECOMMENDATION (section 1 and 8):
+      NO-GO for "supply USDC to Aave v3 on Sepolia"; GO, test networks
+      only, for "Supply USDC to Aave v3 on Arbitrum Sepolia" (supply and
+      withdraw only, no borrowing; an exact approve plus supply from the
+      regular account or one batch from the smart account, the recipient
+      always the account itself, the reserve's state read before every
+      confirm, Aave's pinned addresses on the risk card, an enforced
+      readiness row; the residuals of section 7.4 stated on screen); OP
+      Sepolia next once an account holds USDC there; Compound on Sepolia
+      only as a fallback; NO-GO for now for an ERC-4626 slice; design only
+      for borrowing, sponsored supply, a supply-and-withdraw-only session
+      key and a health-factor reminder (section 6). NOT VERIFIED (section
+      9): everything beyond simulation (no transaction, operation, bundler
+      or paymaster tried; no preview or risk card rendered; the pinning on
+      the mirror only); which commits the audits cover and whether the
+      test-network code matches them; several contracts not on Sourcify
+      (Base Sepolia's provider and pool proxy, the Base vault proxies and
+      factory, Comet's implementation, Morpho's vault factories, Sepolia's
+      162-byte price sources); who holds the admin keys; why the Sepolia
+      and Arbitrum reserves report more debt than supply; whether Aave's
+      oracle refuses a stale price (the Arbitrum USDC feed read 14.5 hours
+      old); aToken symbols and rounding; Spark, Euler, Fluid and Silo not
+      researched; whether a sponsor's paymaster policy can match call
+      arguments; the BUSL-1.1 licence questions (counsel). DECISION FOR THE
+      CHAIRPERSON: whether to build the Arbitrum Sepolia supply-and-withdraw
+      slice (the dev EOA and both wallet accounts already hold USDC there).
