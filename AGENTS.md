@@ -18532,6 +18532,39 @@ arrive; 6 last. Subagents on Opus.
       its prebuild edits. UNVERIFIED: a real iPhone; iOS with a hardware
       keyboard attached; VoiceOver; an actual SMS code offered above these
       fields.
+- [x] THE EIGHT UNRATED THREAT-MODEL ROWS RATED (docs commit bfbebba; docs/
+      THREAT_MODEL.md only, 9 insertions / 8 deletions — the eight rating
+      cells and one header line; verified in the CTO's isolated worktree on
+      HEAD af4fcf0: checkout 0 / apply 0 / 1 file, the staged patch id
+      4a7e65e3…3dc3 equal to the agent's, check-readiness 229,
+      check-screen-protection 87, check-devmode 476, check-bridge 430 and
+      check-multisig 435 green on the patched tree; the pre-commit scan
+      clean; pushed, CI pending at the time of writing). A documentation
+      agent proposed the ratings on the file's own scale with a two-sentence
+      reason each (its report in the session scratchpad p24-ratings) and the
+      CTO accepted all eight as its own: T-91 Medium / Medium (test networks
+      only — ENS has redeployed the Sepolia ENSv2 contracts before and single
+      keys control them; a re-pointed name misdirects funds; enforced
+      test-only), T-92 Medium / Medium (no usable answer on a broadcast is
+      common on public endpoints and resending a common mistake; the harm is
+      a doubled or uncounted payment, not everything the key controls — High
+      likelihood could be argued at mainnet scale), T-93 Low / Medium (test
+      networks only — undescribable mints refused by class, look-alikes
+      warned about, devnet only behind an off-by-default switch; the worst
+      case loses one token's holdings), F-85 Medium (contacts, linkable
+      private data, survived a wipe the dialog said removed everything — Low
+      could be argued since only a later holder of the phone sees them),
+      F-86 Low (navigation-button contrast only), F-87 Low (a stale devnet
+      SOL balance for minutes; a send planned on it is refused at Review),
+      F-88 Low (misdescribed or missing devnet history rows; no funds moved;
+      Home's balance right), F-89 Low (Review re-estimated and either
+      lowered the amount so it still fitted or refused; only the reason
+      sentence was false). CONVENTIONS applied: T rows as "Likelihood /
+      Impact" with "(test networks only)" on gated features as T-80 / T-84 /
+      T-85 carry it; a fixed finding keeps the severity of the defect as
+      found (F-65, F-82); display-only defects Low (F-69, F-70, F-83, F-84).
+      The three earlier "left for the CTO" header lines stay; a fourth,
+      dated 2026-11-08, records the assignment.
 
 ## Phase 24 status (2026-11-08)
 
