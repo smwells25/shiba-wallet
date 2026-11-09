@@ -2144,5 +2144,11 @@ export const es: Readonly<Partial<Record<StringId, string>>> = {
   'insights.pending.part.solOld': 'envíos de tokens de Solana enviados hace más de 10 minutos: {count}',
   'insights.pending.otherAddress': '{address} (ya no es una cuenta de esta billetera)',
   'insights.pending.oldNote': 'Una entrada enviada hace más de 10 minutos no se cuenta como en espera. O bien un bloque la incluyó y este teléfono no lo ha comprobado desde entonces (Actividad solo comprueba la red y la cuenta abiertas en ella), o lo más probable es que se haya descartado, o —solo una transacción de cuenta normal— sigue en el pool de un punto de conexión con una comisión demasiado baja para incluirse. Abre Actividad en esa red con esa cuenta: comprueba cada entrada, quita las incluidas y dice qué pasó con las demás.',
-  'insights.pending.otherNote': 'Una dirección marcada «ya no es una cuenta de esta billetera» (por ejemplo, una cuenta eliminada) no tiene Actividad que abrir, así que sus entradas siguen en esta lista hasta que la lista supere las {max} entradas y estén entre las más antiguas, o hasta que se borre la billetera.',
+  'insights.pending.otherNote': 'Una dirección marcada «ya no es una cuenta de esta billetera» (por ejemplo, una cuenta cuyas entradas no se olvidaron al quitarla: una quitada antes de que la billetera empezara a hacerlo, o una cuyas entradas no se pudieron olvidar entonces) no tiene Actividad que abrir, así que sus entradas siguen en esta lista hasta que la lista supere las {max} entradas y estén entre las más antiguas, o hasta que se borre la billetera.',
+  // Phase 26 item 4: removing an account forgets its entries in the pending list (the removal dialogs' last sentence and the failure notice).
+  'accounts.remove.pendingForgotten': 'Sus entradas en la lista de transacciones pendientes de este teléfono también se olvidan, en todas las redes, salvo donde otra cuenta de esta billetera tenga la misma dirección.',
+  'accounts.remove.pendingNotForgottenTitle': 'Lista de pendientes sin actualizar',
+  'accounts.remove.pendingNotForgotten': 'La cuenta se quitó, pero sus entradas en la lista de transacciones pendientes de este teléfono no se pudieron olvidar, así que el resumen de riesgos aún puede mostrarlas. {reason}',
+  // Pass p25-emu2 finding 9: Home's Dogecoin card without an endpoint offers no Send and says what is needed.
+  'home.dogecoin.noEndpoint': 'Para enviar DOGE hace falta un punto de conexión Blockbook de Dogecoin: añade uno en Ajustes → Puntos de conexión de red.',
 };

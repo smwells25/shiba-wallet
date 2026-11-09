@@ -23,7 +23,7 @@ import { IMPORTED_KEY_NO_CHAIN, MULTISIG_NO_CHAIN, WATCH_ONLY_NO_CHAIN } from '.
 import { useTheme } from '../theme';
 import { textOnFill } from '../theme-palette';
 import { sendLinkHint, solanaTokenSendLinkHint, solanaTokenSendLinkText, spokenLinkText, spokenMaskedText, tokenRowSpokenLabel } from '../a11y';
-import { EVM_CHAIN_ID, SOLANA_CHAIN_ID, addSendAcceptedListener } from '../wallet/send';
+import { EVM_CHAIN_ID, SOLANA_CHAIN_ID, addSendAcceptedListener, dogecoinNoEndpointLine, dogecoinSendLinkShown } from '../wallet/send';
 import { addAaSentListener } from '../wallet/aa';
 import { createSendRefreshTracker, reloadNowAndLater } from '../wallet/home-refresh';
 import { ChainAccount, useWallet } from '../wallet/WalletContext';
@@ -783,7 +783,8 @@ export function HomeScreen({ navigation }: Props) {
               lamports (phase 25 item 0c; wallet/spl-tokens.ts
               solSendLinkShown), as a token row hides it at 0. The Ethereum
               card is never hidden by it. */}
-          {item.chainId === SOLANA_CHAIN_ID && !solSendLinkShown(balances[item.chainId]) ? null : (
+          {(item.chainId === SOLANA_CHAIN_ID && !solSendLinkShown(balances[item.chainId])) ||
+          !dogecoinSendLinkShown(item.chainId, balances[item.chainId]) ? null : (
             <React.Fragment key="send">
               {noKey
                 ? null
@@ -840,6 +841,12 @@ export function HomeScreen({ navigation }: Props) {
             ? cardLink('multisig-operations', 'Multisig', () => navigation.navigate('Multisig'), 'Opens this multisig’s operations')
             : null}
         </View>
+        {/* Pass p25-emu2 finding 9: with no Dogecoin endpoint the card says
+            "no endpoint" and offers no Send (wallet/send.ts
+            dogecoinSendLinkShown); this line says what is needed instead. */}
+        {!noKey && !dogecoinSendLinkShown(item.chainId, balances[item.chainId]) ? (
+          <Text style={[styles.address, { color: theme.textMuted }]}>{dogecoinNoEndpointLine()}</Text>
+        ) : null}
         {isEvm && multisig ? (
           <Text
             style={[styles.address, { color: theme.textMuted }]}

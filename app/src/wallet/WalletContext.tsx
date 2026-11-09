@@ -101,7 +101,13 @@ import { addAaBroadcastRecorder, addAaOperationSentListener, addAaSentListener, 
 import { recoveryRecordListener, wipeRecoveryData } from './recovery';
 import { forgetBrowserConnections } from './browser-sites';
 import { wipeTransactionNotes } from './notes';
-import { pendingUserOpBroadcastRecorder, pendingUserOpRecorder, resetPendingRegistry } from './pending-transactions';
+import {
+  forgetPendingRecordsOfSender,
+  pendingUserOpBroadcastRecorder,
+  pendingUserOpRecorder,
+  resetPendingRegistry,
+  type ForgetSenderOutcome,
+} from './pending-transactions';
 import { walletConnectFollowProfile } from './walletconnect';
 import { resetBridgeTransfers } from './bridge';
 import { wipeInbox } from './inbox';
@@ -261,8 +267,12 @@ interface WalletContextValue {
    * Does not switch to it.
    */
   addWatchOnly: (address: string, name?: string | null) => Promise<AccountView>;
-  /** Removes a non-active watch-only account (nothing secret is deleted). */
-  removeWatchOnly: (index: number) => Promise<void>;
+  /**
+   * Removes a non-active watch-only account (nothing secret is deleted) and,
+   * since phase 26 item 4, its entries in the pending list (best effort; the
+   * outcome is returned so the screen can name a failure).
+   */
+  removeWatchOnly: (index: number) => Promise<ForgetSenderOutcome>;
   /** Hides a non-active account other than the first; keys are unaffected. */
   hideAccount: (index: number) => Promise<void>;
   unhideAccount: (index: number) => Promise<void>;
@@ -276,9 +286,11 @@ interface WalletContextValue {
   /**
    * Deletes an imported account's key from this phone and removes the
    * account. The screen must have asked for an explicit confirmation that
-   * states the consequence. The active account cannot be removed.
+   * states the consequence. The active account cannot be removed. Since
+   * phase 26 item 4 its entries in the pending list are forgotten too (best
+   * effort; the outcome is returned so the screen can name a failure).
    */
-  removeImportedAccount: (index: number) => Promise<void>;
+  removeImportedAccount: (index: number) => Promise<ForgetSenderOutcome>;
   /**
    * Reads an imported account's private key for display (Settings), after
    * the caller's requireLocalAuth gate for that key. null when it could not
@@ -1269,6 +1281,35 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     [serialized, commitAccounts],
   );
 
+  /**
+   * The EVM addresses of every account that remains in `state` (phase 26
+   * item 4: a removed account's pending-list entries are kept when another
+   * account has the same address). Public data only, no prompt: watched and
+   * multisig entries carry their address, imported keys their record's, a
+   * phrase account its derived or cached row (one not known yet is skipped —
+   * the same known gap as addWatchOnly's check).
+   */
+  const remainingEvmAddresses = useCallback(async (state: AccountsState): Promise<string[]> => {
+    const list = await importedKeyVault.list().catch(() => ({ keys: [] as ImportedKeyInfo[], damaged: true }));
+    const out: string[] = [];
+    for (const a of state.accounts) {
+      if (a.watchOnly || a.multisig) {
+        if (a.address) out.push(a.address);
+        continue;
+      }
+      if (a.imported) {
+        const info = list.keys.find((k) => importedAccountId(k.slot) === a.index);
+        if (info) out.push(info.address);
+        continue;
+      }
+      let rows: ChainAccount[] | undefined = derivedRef.current[a.index];
+      if (rows === undefined) rows = hydratePublic(await loadPublicAccount(a.index).catch(() => null)) ?? undefined;
+      const evm = rows?.find((c) => c.chainId === EVM_SLOT)?.address;
+      if (evm) out.push(evm);
+    }
+    return out;
+  }, []);
+
   const removeImportedAccount = useCallback(
     (index: number) =>
       serialized(async () => {
@@ -1278,6 +1319,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           const name = state.accounts.find((a) => a.index === index)?.name ?? 'This account';
           throw new Error(`${name}${IMPORTED_NAME_SUFFIX} is the active account. Switch to another account first.`);
         }
+        // The address the key controls, read before the key is deleted
+        // (public data from the imported-key record; no prompt).
+        const removedAddress =
+          (await importedKeyVault.list().catch(() => ({ keys: [] as ImportedKeyInfo[], damaged: true }))).keys.find((k) => k.slot === slot)
+            ?.address ?? null;
         // The key first, then the list entry: a failed delete keeps the
         // account listed, so the user can see the key is still there.
         await importedKeyVault.remove(slot);
@@ -1290,8 +1336,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           return copy;
         });
         commitAccounts(next);
+        // Phase 26 item 4: its pending-list entries go with it (best effort,
+        // after the removal; kept when another account has the same address).
+        if (removedAddress === null) {
+          return { state: 'failed', message: 'The address of the removed key could not be read.' } as ForgetSenderOutcome;
+        }
+        return forgetPendingRecordsOfSender(AsyncStorage, removedAddress, { stillHeldBy: await remainingEvmAddresses(next) });
       }),
-    [serialized, commitAccounts],
+    [serialized, commitAccounts, remainingEvmAddresses],
   );
 
   const addWatchOnly = useCallback(
@@ -1362,6 +1414,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       serialized(async () => {
         // Nothing secret exists for a watch-only account: only its list
         // entry (public data) is deleted.
+        const removedAddress = (await loadAccounts()).accounts.find((a) => a.index === index && a.watchOnly)?.address ?? null;
         const next = await removeWatchOnlyAccountEntry(index);
         setDerived((prev) => {
           const copy = { ...prev };
@@ -1369,8 +1422,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           return copy;
         });
         commitAccounts(next);
+        // Phase 26 item 4: its pending-list entries (cold-signed sends and
+        // its smart account's operations) go with it, best effort; kept when
+        // another account has the same address.
+        if (removedAddress === null) {
+          return { state: 'failed', message: 'The address of the removed account could not be read.' } as ForgetSenderOutcome;
+        }
+        return forgetPendingRecordsOfSender(AsyncStorage, removedAddress, { stillHeldBy: await remainingEvmAddresses(next) });
       }),
-    [serialized, commitAccounts],
+    [serialized, commitAccounts, remainingEvmAddresses],
   );
 
   // Uses the key the reveal's approval prompt just opened (no second prompt).

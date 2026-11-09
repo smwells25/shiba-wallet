@@ -13071,7 +13071,11 @@
   "insights.pending.part.solOld",
   "insights.pending.otherAddress",
   "insights.pending.oldNote",
-  "insights.pending.otherNote"
+  "insights.pending.otherNote",
+  "accounts.remove.pendingForgotten",
+  "accounts.remove.pendingNotForgottenTitle",
+  "accounts.remove.pendingNotForgotten",
+  "home.dogecoin.noEndpoint"
  ],
  "changed": {
   "activity.note.privacy": {

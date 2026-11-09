@@ -1635,7 +1635,7 @@ console.log('check-pending: the screens wire the gates in order (source)');
   // A wipe forgets the registry with the rest of the wallet's on-device state (CTO, phase 19 item 3).
   const walletContext = readFileSync(join(HERE, '../src/wallet/WalletContext.tsx'), 'utf8');
   check('WalletContext registers the pending recorder once on the operation-sent channel', (walletContext.match(/addAaOperationSentListener\(pendingUserOpRecorder\(AsyncStorage\)\)/g) ?? []).length === 1);
-  check('the wallet wipe resets the pending-transaction registry', walletContext.includes("import { pendingUserOpBroadcastRecorder, pendingUserOpRecorder, resetPendingRegistry } from './pending-transactions';") && walletContext.includes('await resetPendingRegistry(AsyncStorage).catch(() => undefined);'));
+  check('the wallet wipe resets the pending-transaction registry', /import \{[^}]*\bresetPendingRegistry\b[^}]*\} from '\.\/pending-transactions';/.test(walletContext) && walletContext.includes('await resetPendingRegistry(AsyncStorage).catch(() => undefined);'));
 }
 
 // ---------------------------------------------------------------------------
@@ -2206,6 +2206,185 @@ console.log('check-pending: phase 25 item 0b — Solana token transfers in the r
     const m6 = await load('never-dropped', '    return { state: \'not-seen\', dropped: nowMs - record.sentAt > SOLANA_UNKNOWN_AFTER_MS };', "    return { state: 'not-seen', dropped: false };");
     check('MUTANT caught: a transfer the node has not known for hours never offered as dropped',
       m6.solanaStatusFrom(null, { sentAt: T0 }, T0 + 3_600_000).dropped === false);
+  } finally {
+    rmSync(mutantDir, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-pending: phase 26 item 4 — a removed account\'s records are forgotten with it');
+// ---------------------------------------------------------------------------
+{
+  const { mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+  const { pathToFileURL } = await import('node:url');
+  const { resolve: resolvePath } = await import('node:path');
+  const { base58 } = await import('@scure/base');
+  const HERE_R = dirname(fileURLToPath(import.meta.url));
+  const { forgetPendingRecordsOfSender, pendingRecordOfAddress, removalPendingFailure, removalPendingSentence } = pending;
+  const BASE = 'eip155:84532';
+  const DEVNET = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1';
+  const X = FROM; // the removed account, checksummed as the account list holds it
+  const O = other.address.toLowerCase(); // another account that stays
+  const KERNEL_X = '0x96e96e31123abb64597eda1074fa907ede7a00c9'; // a smart account owned by X
+  const SOL_SENDER = 'EK5jKrBRwvQXXsSERGN6jEoYaofE2PNiZWQoaCLtrYPv';
+  const sol = { kind: 'solana', chain: DEVNET, signature: base58.encode(new Uint8Array(64).fill(7)), sender: SOL_SENDER, mint: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU', amount: '1000000', decimals: 6, symbol: 'USDC', recipient: '9WMgKdmRJBZy8WQ6Q9T6VjJN4wyT9jQenDvfvLFe471n', sentAt: T0 };
+  const ofX = [
+    txRecordFromQuote(X, quoteLike(), H(0xd1), T0),
+    { ...txRecordFromQuote(X, quoteLike({ chainId: 84532n }), H(0xd2), T0), chain: BASE },
+    { kind: 'userop', chain: CHAIN, userOpHash: H(0xd3), sender: KERNEL_X, owner: FROM_L, sentAt: T0, resend: null, origin: 'send' },
+    { kind: 'userop', chain: BASE, userOpHash: H(0xd4), sender: FROM_L, owner: O, sentAt: T0, resend: null, origin: 'multisig' },
+    { kind: 'resolved', chain: CHAIN, from: FROM_L, nonce: '7', outcome: 'replaced', minedHash: H(0xd6), block: '100', success: true, original: H(0xd5), hashes: [H(0xd5), H(0xd6)], resolvedAt: T0 },
+    { kind: 'marker', chain: BASE, from: FROM_L, nonce: '8', outcome: 'cancelled', minedHash: H(0xd8), original: H(0xd7), markedAt: T0 },
+  ];
+  const ofOthers = [
+    txRecordFromQuote(other.address, quoteLike(), H(0xe1), T0),
+    { kind: 'userop', chain: CHAIN, userOpHash: H(0xe2), sender: TO, owner: O, sentAt: T0, resend: null, origin: 'swap' },
+    { kind: 'resolved', chain: CHAIN, from: O, nonce: '3', outcome: 'cancelled', minedHash: H(0xe4), block: '9', success: true, original: H(0xe3), hashes: [H(0xe3), H(0xe4)], resolvedAt: T0 },
+    sol,
+  ];
+  check('the fixture records all pass the strict parser', [...ofX, ...ofOthers].every((r) => pending.validateRecord(r) !== null));
+  const doc = (records) => JSON.stringify({ version: 1, records });
+  const counting = (initial) => {
+    const st = memoryStore(initial);
+    let writes = 0;
+    const setItem = st.setItem.bind(st);
+    st.setItem = async (k, v) => {
+      writes += 1;
+      return setItem(k, v);
+    };
+    return { st, writes: () => writes };
+  };
+
+  {
+    const { st, writes } = counting({ [PENDING_TX_KEY]: doc([...ofOthers.slice(0, 2), ...ofX, ...ofOthers.slice(2)]) });
+    const out = await forgetPendingRecordsOfSender(st, X);
+    const left = parseRegistry(st.map.get(PENDING_TX_KEY));
+    check('removal forgets exactly that sender\'s six records, on both networks and of every EVM kind (tx, userop as owner, userop as sender, resolved, marker)',
+      out.state === 'forgotten' && out.removed === 6 && writes() === 1 && !left.readOnly &&
+        JSON.stringify(left.records) === JSON.stringify(ofOthers), JSON.stringify(out));
+    check('…the other accounts\' records and the Solana record are untouched, in their order', left.records.length === 4 && left.records[3].kind === 'solana');
+  }
+  {
+    const { st } = counting({ [PENDING_TX_KEY]: doc([...ofX, ...ofOthers]) });
+    const out = await forgetPendingRecordsOfSender(st, `0x${FROM_L.slice(2).toUpperCase()}`);
+    check('the address is compared without regard to case (upper-case hex forgets the lower-case records)', out.state === 'forgotten' && out.removed === 6);
+  }
+  {
+    const { st } = counting({ [PENDING_TX_KEY]: doc([...ofX, ...ofOthers]) });
+    const out = await forgetPendingRecordsOfSender(st, SOL_SENDER.toLowerCase());
+    const out2 = await forgetPendingRecordsOfSender(st, SOL_SENDER);
+    check('a base58 Solana sender is case-sensitive: the lower-cased form forgets nothing, the exact form its one record',
+      out.state === 'none' && out2.state === 'forgotten' && out2.removed === 1 && pendingRecordOfAddress(sol, SOL_SENDER) && !pendingRecordOfAddress(sol, FROM));
+  }
+  {
+    const damaged = JSON.stringify({ version: 1, records: [...ofX, { kind: 'tx', chain: CHAIN }] });
+    const { st, writes } = counting({ [PENDING_TX_KEY]: damaged });
+    const out = await forgetPendingRecordsOfSender(st, X);
+    check('a damaged (read-only) list is refused: nothing written, the stored text byte for byte, the read-only message returned',
+      out.state === 'read-only' && out.message === PENDING_READ_ONLY_MESSAGE && writes() === 0 && st.map.get(PENDING_TX_KEY) === damaged);
+  }
+  {
+    const empty = counting({});
+    const none = await forgetPendingRecordsOfSender(empty.st, X);
+    const others = counting({ [PENDING_TX_KEY]: doc(ofOthers) });
+    const none2 = await forgetPendingRecordsOfSender(others.st, X);
+    check('an empty store writes nothing (no key created); a list without that sender writes nothing either',
+      none.state === 'none' && empty.writes() === 0 && !empty.st.map.has(PENDING_TX_KEY) && none2.state === 'none' && others.writes() === 0);
+  }
+  {
+    const { st, writes } = counting({ [PENDING_TX_KEY]: doc([...ofX, ...ofOthers]) });
+    const out = await forgetPendingRecordsOfSender(st, X, { stillHeldBy: [O, FROM_L] });
+    check('another remaining account with the same address keeps the records ("shared"; nothing read or written)', out.state === 'shared' && writes() === 0);
+    const kept = await forgetPendingRecordsOfSender(st, X, { exceptChains: [BASE] });
+    const left = parseRegistry(st.map.get(PENDING_TX_KEY)).records;
+    check('exceptChains keeps that network\'s records (a multisig at the same address elsewhere): 3 forgotten, the 3 Base ones kept',
+      kept.state === 'forgotten' && kept.removed === 3 && left.filter((r) => r.chain === BASE).length === 3);
+  }
+  {
+    const st = memoryStore({ [PENDING_TX_KEY]: doc(ofX) });
+    st.setItem = async () => {
+      throw new Error('disk full');
+    };
+    const out = await forgetPendingRecordsOfSender(st, X);
+    check('a failed write never throws: "failed" with the storage error', out.state === 'failed' && out.message === 'disk full');
+    const failure = removalPendingFailure(out);
+    check('…and the screen\'s notice names it (title and the reason inside the sentence)',
+      failure !== null && failure.title === 'Pending list not updated' &&
+        failure.body === 'The account was removed, but its entries in the list of pending transactions on this phone could not be forgotten, so the risk overview may still list them. disk full');
+    check('no notice when the entries were forgotten, there were none, or the address is shared; a notice for a read-only list',
+      [{ state: 'forgotten', removed: 1 }, { state: 'none' }, { state: 'shared' }].every((o) => removalPendingFailure(o) === null) &&
+        removalPendingFailure({ state: 'read-only', message: PENDING_READ_ONLY_MESSAGE })?.body.endsWith(PENDING_READ_ONLY_MESSAGE));
+  }
+  check('the removal dialogs\' sentence', removalPendingSentence() ===
+    'Its entries in the list of pending transactions on this phone are forgotten too, on every network, except where another account in this wallet has the same address.');
+
+  // Where it is called: both WalletContext removals (after the account is gone, with the remaining accounts' addresses), the
+  // multisig record's removal (with the networks of other records at the same address) — and NOT hiding a phrase account.
+  const wc = readFileSync(join(HERE_R, '../src/wallet/WalletContext.tsx'), 'utf8');
+  // Right after the account list is committed: only comments, the guard for an address that could not be read, then the forget.
+  const FORGET_AFTER_COMMIT =
+    /commitAccounts\(next\);\s*(\/\/[^\n]*\n\s*)*if \(removedAddress === null\) \{\s*return \{ state: 'failed', message: '[^']*' \} as ForgetSenderOutcome;\s*\}\s*return forgetPendingRecordsOfSender\(AsyncStorage, removedAddress, \{ stillHeldBy: await remainingEvmAddresses\(next\) \}\);/;
+  const body = (name) => {
+    const head = `const ${name} = useCallback(`;
+    const at = wc.indexOf(head);
+    return at < 0 ? '' : wc.slice(at, wc.indexOf('useCallback(', at + head.length));
+  };
+  const removalCalls = (b) => FORGET_AFTER_COMMIT.test(b);
+  check('WalletContext: removing an imported key forgets its records after the removal, keeping them when another account has the address',
+    removalCalls(body('removeImportedAccount')) && body('removeImportedAccount').indexOf('importedKeyVault.list()') < body('removeImportedAccount').indexOf('importedKeyVault.remove(slot)'));
+  check('WalletContext: removing a watched address does the same', removalCalls(body('removeWatchOnly')));
+  check('WalletContext: hiding (and unhiding) a phrase account is not removal and forgets nothing',
+    body('hideAccount').length > 0 && body('unhideAccount').length > 0 && !/forgetPendingRecordsOfSender/.test(body('hideAccount')) && !/forgetPendingRecordsOfSender/.test(body('unhideAccount')));
+  const ms = readFileSync(join(HERE_R, '../src/wallet/multisig.ts'), 'utf8');
+  check('multisig.ts: removeMultisigRecord forgets the record\'s entries except on networks where another record has the same address',
+    /return forgetPendingRecordsOfSender\(pendingStore, removed\.address, \{ exceptChains: sameAddressChains \}\);/.test(ms));
+  const accountsSrc = readFileSync(join(HERE_R, '../src/components/AccountsSection.tsx'), 'utf8');
+  const msScreen = readFileSync(join(HERE_R, '../src/screens/MultisigScreen.tsx'), 'utf8');
+  check('the three removal dialogs end with the sentence, and each removal names a step that did not complete',
+    accountsSrc.includes("`${removeWatchOnlyMessage(account.name, account.evmAddress ?? tx('unknown address'))} ${removalPendingSentence()}`") &&
+      accountsSrc.includes("`${removeImportedMessage(account.name, account.evmAddress ?? tx('unknown address'), stranded)} ${removalPendingSentence()}`") &&
+      msScreen.includes('`${removeMultisigMessage(selected)} ${removalPendingSentence()}`') &&
+      accountsSrc.includes('notePendingOutcome(await removeWatchOnly(account.index))') &&
+      accountsSrc.includes('notePendingOutcome(await removeImportedAccount(account.index))') &&
+      msScreen.includes('const failure = removalPendingFailure(pending);') && msScreen.includes('if (failure) Alert.alert(failure.title, failure.body);'));
+
+  // Mutants of pending-transactions.ts.
+  const pendingSrc = readFileSync(join(HERE_R, '../src/wallet/pending-transactions.ts'), 'utf8');
+  const toUrls = (src) => src.replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolvePath(join(HERE_R, '../src/wallet'), spec)).href}'`);
+  const mutantDir = join(HERE_R, `.mutants-pending-forget-${process.pid}`);
+  mkdirSync(mutantDir, { recursive: true });
+  try {
+    const load = async (name, from, to) => {
+      if (!pendingSrc.includes(from)) throw new Error(`mutation anchor not found: ${from}`);
+      const file = join(mutantDir, `${name}.ts`);
+      writeFileSync(file, toUrls(pendingSrc.replace(from, to)));
+      return import(pathToFileURL(file).href);
+    };
+    const fresh = () => counting({ [PENDING_TX_KEY]: doc([...ofX, ...ofOthers]) });
+    const m1 = await load('no-owner', "  if (record.kind === 'userop') return record.sender === evm || record.owner === evm;", "  if (record.kind === 'userop') return record.sender === evm;");
+    const r1 = fresh();
+    const o1 = await m1.forgetPendingRecordsOfSender(r1.st, X);
+    check('MUTANT caught: a match on the operation\'s sender only leaves the imported key\'s smart-account operation listed for ever', o1.removed === 5);
+    const m2 = await load('case-sensitive', "  const evm = /^0x[0-9a-fA-F]{40}$/.test(address) ? address.toLowerCase() : null;", "  const evm = /^0x[0-9a-fA-F]{40}$/.test(address) ? address : null;");
+    const r2 = fresh();
+    const o2 = await m2.forgetPendingRecordsOfSender(r2.st, X);
+    check('MUTANT caught: a case-sensitive match forgets nothing for a checksummed address', o2.state === 'none');
+    const m3 = await load('always-write', "      if (removed === 0) return { state: 'none' };\n", '');
+    const r3 = counting({ [PENDING_TX_KEY]: doc(ofOthers) });
+    await m3.forgetPendingRecordsOfSender(r3.st, X);
+    check('MUTANT caught: a forget that writes although nothing changed', r3.writes() === 1);
+    const m4 = await load('ignore-read-only', "      if (current.readOnly) return { state: 'read-only', message: PENDING_READ_ONLY_MESSAGE };\n", '');
+    const dmg = counting({ [PENDING_TX_KEY]: JSON.stringify({ version: 1, records: [...ofX, { kind: 'tx' }] }) });
+    await m4.forgetPendingRecordsOfSender(dmg.st, X);
+    check('MUTANT caught: a damaged list rewritten (its unreadable record silently dropped)', dmg.writes() === 1);
+    const m5 = await load('no-except', '      const kept = current.records.filter((r) => except.has(r.chain) || !pendingRecordOfAddress(r, address));', '      const kept = current.records.filter((r) => !pendingRecordOfAddress(r, address));');
+    const r5 = fresh();
+    const o5 = await m5.forgetPendingRecordsOfSender(r5.st, X, { exceptChains: [BASE] });
+    check('MUTANT caught: another multisig\'s network not kept', o5.removed === 6);
+    const m6 = await load('no-shared', "  if (lowerHeld.includes(address.toLowerCase())) return { state: 'shared' };\n", '');
+    const r6 = fresh();
+    const o6 = await m6.forgetPendingRecordsOfSender(r6.st, X, { stillHeldBy: [FROM_L] });
+    check('MUTANT caught: an address another account still has loses its records', o6.state === 'forgotten');
   } finally {
     rmSync(mutantDir, { recursive: true, force: true });
   }

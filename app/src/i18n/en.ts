@@ -2143,5 +2143,11 @@ export const en = {
   'insights.pending.part.solOld': 'Solana token sends sent more than 10 minutes ago: {count}',
   'insights.pending.otherAddress': '{address} (not an account in this wallet now)',
   'insights.pending.oldNote': 'An entry sent more than 10 minutes ago is not counted as waiting. Either a block included it and this phone has not checked since (Activity checks only the network and the account open in it), or it was most likely dropped, or — a regular-account transaction only — it still sits in a network endpoint’s pool at a fee too low to be included. Open Activity on that network with that account: it checks each entry, removes the included ones and says what happened to the others.',
-  'insights.pending.otherNote': 'An address marked “not an account in this wallet now” (an account that was removed, for example) has no Activity to open, so its entries stay on this list until the list grows past {max} entries and they are among the oldest, or the wallet is wiped.',
+  'insights.pending.otherNote': 'An address marked “not an account in this wallet now” (for example an account whose entries were not forgotten when it was removed: one removed before the wallet began doing so, or one whose entries could not be forgotten then) has no Activity to open, so its entries stay on this list until the list grows past {max} entries and they are among the oldest, or the wallet is wiped.',
+  // Phase 26 item 4: removing an account forgets its entries in the pending list (the removal dialogs' last sentence and the failure notice).
+  'accounts.remove.pendingForgotten': 'Its entries in the list of pending transactions on this phone are forgotten too, on every network, except where another account in this wallet has the same address.',
+  'accounts.remove.pendingNotForgottenTitle': 'Pending list not updated',
+  'accounts.remove.pendingNotForgotten': 'The account was removed, but its entries in the list of pending transactions on this phone could not be forgotten, so the risk overview may still list them. {reason}',
+  // Pass p25-emu2 finding 9: Home's Dogecoin card without an endpoint offers no Send and says what is needed.
+  'home.dogecoin.noEndpoint': 'Sending DOGE needs a Dogecoin Blockbook endpoint: add one under Settings → Network endpoints.',
 } as const;

@@ -20165,3 +20165,60 @@ driver at a time, item 1's first; 6 last. Subagents on Opus.
       far the cap estimate sits from the Pool's figure at inclusion (the
       eth_call pre-flight stays the final check); which commits Aave's
       audits cover; who holds the provider owner's key; OP Sepolia.
+- [x] Item 4, code — A REMOVED ACCOUNT'S PENDING RECORDS GO WITH IT, THE
+      DOGECOIN CARD WITHOUT AN ENDPOINT, DEMO STEPS 51 AND 52 (commit
+      below; 19 files, +653 / −38, no new file, no engine change; verified
+      as one tree with items 1 and 2 — app 11,726 across 67 suites:
+      check-pending 390 (was 366), check-key-import 257 (253),
+      check-watch-only 192 (188), check-multisig 443 (435; mutants 31 → 32),
+      check-i18n 208 (205), check-home 142 (132), check-insights 126 (123),
+      check-pnl 192 (189); eleven hand mutants caught, one after its pin was
+      tightened to require the forget directly after commitAccounts; not
+      seen on a device). (1) pending-transactions.ts pendingRecordOfAddress
+      (tx, resolved and marker records by from; userop records by sender
+      OR owner — an imported or watched owner's Kernel operations carry
+      owner = that EOA, a multisig's sender = the multisig and owner = the
+      local signer; solana records by sender; 0x case-insensitive, base58
+      exact) and forgetPendingRecordsOfSender(store, address, {stillHeldBy,
+      exceptChains}) → forgotten / none / shared / read-only / failed, never
+      throwing, under the store's queue, the strict parse kept, one write
+      only when something was removed; WalletContext's removeImportedAccount
+      and removeWatchOnly read the address before the key is deleted and
+      forget after commitAccounts with stillHeldBy = the remaining accounts'
+      addresses (an imported key equal to a phrase account, or a watched
+      address that became one, keeps its records — 'shared');
+      multisig.ts removeMultisigRecord(…, pendingStore) forgets on every
+      network except where another stored multisig has the same address
+      (Multisig 2 and 3 share 0x944c…0d38 on Sepolia and Base Sepolia);
+      hiding a phrase account forgets nothing (pinned); both removal
+      functions return the outcome and the screens alert only on read-only
+      or failed, the removal standing. STRINGS (i18n ids with Spanish
+      drafts): the dialogs end "Its entries in the list of pending
+      transactions on this phone are forgotten too, on every network,
+      except where another account in this wallet has the same address.";
+      the failure "Pending list not updated" / "The account was removed,
+      but its entries in the list of pending transactions on this phone
+      could not be forgotten, so the risk overview may still list them.
+      {reason}"; insights.pending.otherNote no longer says such entries
+      stay for ever. (2) send.ts dogecoinSendLinkShown(chainId, state):
+      false only for the Dogecoin card while its balance state is
+      'unavailable' (no endpoint; defaults.ts 152–172 ship none;
+      useBalances.ts 66–70); Home then shows "Sending DOGE needs a Dogecoin
+      Blockbook endpoint: add one under Settings → Network endpoints."
+      (home.dogecoin.noEndpoint); the "no endpoint" wording unchanged;
+      check-home +10. (3) DEMO steps 51 and 52 name the exact labels read
+      from source — Settings → Privacy → "Risk overview" directly after
+      "Open the inbox"; Portfolio's own "Risk overview" button under the
+      net worth; the "Profit and loss" section at the end of Portfolio with
+      the "ETH on Ethereum" button ("✓ ETH on Ethereum" once chosen) and
+      "Export gains report (.csv)" — pinned in check-insights and check-pnl
+      so the steps cannot drift; check-screen-protection 87, check-devmode
+      476 and check-readiness 230 unchanged. KNOWN GAP: a phrase account
+      whose address is not yet in the public cache is not counted in
+      stillHeldBy (the gap addWatchOnly already has). EMULATOR CHECKS
+      QUEUED: stopping watching an address with pending entries (the
+      dialog's last sentence; the risk overview no longer lists it); the
+      same for an imported key; removing Multisig 3 while Multisig 2
+      keeps its Sepolia entries; Account 2's Dogecoin card with no Send and
+      the new line, spoken by TalkBack; DEMO steps 51 and 52 followed
+      literally; the Spanish lengths.

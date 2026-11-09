@@ -567,5 +567,32 @@ async function importMutant(from, to) {
   check(`${mutantCount} mutants written and each caught above`, mutantCount >= 19);
 }
 
+// Phase 26 item 4: DEMO.md step 51 names the screens' own labels — Portfolio's "Risk overview" button, and in Settings → Privacy
+// (the section titled SCREEN_PROTECTION_TITLE = "Privacy", ending before the app-lock section) the "Risk overview" button
+// directly after "Open the inbox" — so the walk-through cannot drift from the app.
+console.log('check-insights: DEMO step 51 names the exact labels (phase 26 item 4)');
+{
+  const demo = readFileSync(join(APP, '..', 'docs', 'DEMO.md'), 'utf8');
+  const step = (d) => d.slice(d.indexOf('### Step 51.'), d.indexOf('### Step 52.'));
+  const settings = read('src/screens/SettingsScreen.tsx');
+  const portfolio = read('src/screens/PortfolioScreen.tsx');
+  const ok = (d, set) =>
+    en['insights.open'] === 'Risk overview' &&
+    read('src/wallet/screen-protection.ts').includes("export const SCREEN_PROTECTION_TITLE = 'Privacy';") &&
+    set.includes('<Button title="Open the inbox" variant="secondary"') &&
+    set.indexOf("<Button title={t('insights.open')} variant=\"secondary\"") > set.indexOf('<Button title="Open the inbox" variant="secondary"') &&
+    set.indexOf("<Button title={t('insights.open')} variant=\"secondary\"") - set.indexOf('<Button title="Open the inbox" variant="secondary"') < 400 &&
+    set.indexOf('<T>{SCREEN_PROTECTION_TITLE}</T>') >= 0 && set.indexOf('<T>{SCREEN_PROTECTION_TITLE}</T>') < set.indexOf('<Button title="Open the inbox" variant="secondary"') &&
+    set.indexOf('<Button title="Open the inbox" variant="secondary"') < set.indexOf('<AppPinSection scrollTo={scrollToSection} />') &&
+    portfolio.includes("<Button title={t('insights.open')} variant=\"secondary\"") &&
+    step(d).includes(`Portfolio → **${en['insights.open']}**`) &&
+    step(d).includes(`Settings → **Privacy** → **${en['insights.open']}**, the button directly after **Open the inbox**`);
+  check('DEMO step 51: Portfolio → Risk overview, and Settings → Privacy → Risk overview right after "Open the inbox" — the labels the source draws', ok(demo, settings));
+  check('…mutant caught: the old vague wording ("the row after") back in the step',
+    !ok(demo.replace('Settings → **Privacy** → **Risk overview**, the button directly after **Open the inbox**', 'Settings → Privacy, the row after "Open the inbox"'), settings));
+  check('…mutant caught: the Settings button moved away from "Open the inbox"',
+    !ok(demo, settings.replace("<Button title={t('insights.open')} variant=\"secondary\"", '{/* moved */}')));
+}
+
 console.log(`\ncheck-insights: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

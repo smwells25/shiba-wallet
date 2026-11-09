@@ -922,6 +922,27 @@ async function importMutant(from, to, relPath = 'src/wallet/pnl.ts', more = []) 
   check('mutant (US dollar figures truncated instead of rounded to the cent) is caught', g9.usdDecimal(usd(9800n, 3n)) === '3266.66');
 }
 
+// Phase 26 item 4: DEMO.md step 52 names the panel's own labels — the "Profit and loss" section, the mainnet chip "ETH on Ethereum"
+// (PortfolioViews builds "<symbol> on <label>" from the active EVM profile) and the "Export gains report (.csv)" button.
+console.log('check-pnl: DEMO step 52 names the exact labels (phase 26 item 4)');
+{
+  const { en } = await import('../src/i18n/en.ts');
+  const { EVM_MAINNET } = await import('../src/config/evm-chain.ts');
+  const demo = readFileSync(join(HERE, '..', '..', 'docs', 'DEMO.md'), 'utf8');
+  const views = readFileSync(join(HERE, '..', 'src', 'screens', 'PortfolioViews.tsx'), 'utf8');
+  const step = (d) => d.slice(d.indexOf('### Step 52.'), d.indexOf('### Step 53.'));
+  const chip = `${EVM_MAINNET.displaySymbol} on ${EVM_MAINNET.label}`;
+  const ok = (d, v) =>
+    chip === 'ETH on Ethereum' && v.includes('? `${x.slot.symbol} on ${x.slot.label}`') && v.includes("title={`${chosen === key ? '✓ ' : ''}${title}`}") &&
+    />\s*Profit and loss\s*</.test(v) && v.includes("t('pnl.export')") &&
+    step(d).includes('the **Profit and loss** section') && step(d).includes(`the **${chip}** button (it reads "✓ ${chip}" once chosen)`) &&
+    step(d).includes(`**${en['pnl.export']}**`);
+  check('DEMO step 52: the Profit and loss section, the "ETH on Ethereum" button and "Export gains report (.csv)" — the labels the panel draws', ok(demo, views));
+  check('…mutant caught: the old wording ("the profit-and-loss panel → **ETH**") back in the step',
+    !ok(demo.replace('scroll to the **Profit and loss** section at the end of the screen → the **ETH on Ethereum** button (it reads "✓ ETH on Ethereum" once chosen)', 'the profit-and-loss panel → **ETH**'), views));
+  check('…mutant caught: the chip titled by the symbol alone', !ok(demo, views.replace('? `${x.slot.symbol} on ${x.slot.label}`', '? `${x.slot.symbol}`')));
+}
+
 console.log(`\nformatMoney sanity: ${formatMoney(usd(2500n), { hidden: false, signed: true })}`);
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

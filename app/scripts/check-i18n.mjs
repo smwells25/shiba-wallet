@@ -294,6 +294,11 @@ const GAINS_NEW = ['pnl.export', 'pnl.export.note', 'pnl.export.dialog', 'pnl.ex
 const insightsNew = (id) => id.startsWith('insights.');
 // Phase 25 (pass p25-emu1): a token of ENS's pinned ENSv2 .eth registry IS a .eth name — the gallery's collection title and the warning
 // on the NFT detail screen, the Send NFT form and the NFT send confirm (wallet/nfts.ts, wallet/send-nft.ts).
+// Phase 26 item 4: removing an account forgets its entries in the pending list — the removal dialogs' last sentence and the notice
+// when that step did not complete (wallet/pending-transactions.ts removalPendingSentence / removalPendingFailure).
+const PENDING_FORGET_NEW = ['accounts.remove.pendingForgotten', 'accounts.remove.pendingNotForgottenTitle', 'accounts.remove.pendingNotForgotten'];
+// Pass p25-emu2 finding 9: Home's Dogecoin card without an endpoint says what is needed instead of offering Send (wallet/send.ts).
+const DOGE_ENDPOINT_NEW = ['home.dogecoin.noEndpoint'];
 const NFT_ENS_NEW = ['nft.ens.collection', 'nft.ens.is', 'nft.ens.isUnchecked', 'nft.ens.handover', 'nft.ens.resolver', 'nft.ens.expiry',
   'nft.ens.expired', 'nft.ens.stale', 'nft.ens.reading', 'nft.ens.unread'];
 {
@@ -313,8 +318,8 @@ const NFT_ENS_NEW = ['nft.ens.collection', 'nft.ens.is', 'nft.ens.isUnchecked', 
   // broadcast sentences (an HTTP 5xx or a dropped connection, not a timeout).
   const BROADCAST_OPEN_NEW = ['broadcast.open.title', 'broadcast.tx.open', 'broadcast.tx.openUnlisted', 'broadcast.userop.open',
     'broadcast.userop.openUnlisted', 'broadcast.open'];
-  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the Solana token-send readiness row, the wallet handle\'s, the six open-outcome broadcast sentences, the co-signer card\'s numbered Scan label, the eight period words of the hygiene slice, the four Bridge lines of pass p23-mint, the five lines of the p23-build fixes, the three Bridge lines of pass p23-bridge-recheck and the three navigation-bar lines of pass p23-navbar and the three iOS-pass lines (two iOS reminder notes, the "an" scanner sentence) and the five lines of the Solana-pass fix slice (the Solana devnet banner, the Solana token-fee line, the Solana devnet readiness line, two Max-lowering sentences) and the two smart-account Max-lowering sentences of the trim slice and the devnet form of the Solana token-fee line (pass p24-recheck) and the nine lines of the p24-unblock fixes (the Solana token Send link and its hint, seven Solana Activity sentences) and the hidden-fee word of an Activity row and the four gains-report lines of phase 25 item 3 and the ten ENS name-token lines of pass p25-emu1',
-    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || SPL_TOKENS_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id) || NAVBAR_FIX_NEW.includes(id) || IOS_FIX_NEW.includes(id) || SOLANA_FIX_NEW.includes(id) || AA_TRIM_NEW.includes(id) || RECHECK_FIX_NEW.includes(id) || UNBLOCK_FIX_NEW.includes(id) || SOLHIST_NEW.includes(id) || GAINS_NEW.includes(id) || NFT_ENS_NEW.includes(id) || insightsNew(id)) &&
+  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the Solana token-send readiness row, the wallet handle\'s, the six open-outcome broadcast sentences, the co-signer card\'s numbered Scan label, the eight period words of the hygiene slice, the four Bridge lines of pass p23-mint, the five lines of the p23-build fixes, the three Bridge lines of pass p23-bridge-recheck and the three navigation-bar lines of pass p23-navbar and the three iOS-pass lines (two iOS reminder notes, the "an" scanner sentence) and the five lines of the Solana-pass fix slice (the Solana devnet banner, the Solana token-fee line, the Solana devnet readiness line, two Max-lowering sentences) and the two smart-account Max-lowering sentences of the trim slice and the devnet form of the Solana token-fee line (pass p24-recheck) and the nine lines of the p24-unblock fixes (the Solana token Send link and its hint, seven Solana Activity sentences) and the hidden-fee word of an Activity row and the four gains-report lines of phase 25 item 3 and the ten ENS name-token lines of pass p25-emu1 and the three pending-list lines of phase 26 item 4 (account removal) and the Dogecoin no-endpoint line of pass p25-emu2',
+    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || SPL_TOKENS_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id) || NAVBAR_FIX_NEW.includes(id) || IOS_FIX_NEW.includes(id) || SOLANA_FIX_NEW.includes(id) || AA_TRIM_NEW.includes(id) || RECHECK_FIX_NEW.includes(id) || UNBLOCK_FIX_NEW.includes(id) || SOLHIST_NEW.includes(id) || GAINS_NEW.includes(id) || NFT_ENS_NEW.includes(id) || PENDING_FORGET_NEW.includes(id) || DOGE_ENDPOINT_NEW.includes(id) || insightsNew(id)) &&
       BUILD_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && BRIDGE_RECHECK_NEW.every((id) => FIXTURE.new.includes(id)) &&
       LOCK_KIND_NEW.every((id) => FIXTURE.new.includes(id)) && COLD_AA_NEW.every((id) => FIXTURE.new.includes(id)) && SPL_TOKENS_NEW.every((id) => FIXTURE.new.includes(id)) &&
       BROADCAST_OPEN_NEW.every((id) => FIXTURE.new.includes(id)) && THIRD_PASS_NEW.every((id) => FIXTURE.new.includes(id)) && PERIOD_NEW.every((id) => FIXTURE.new.includes(id)) &&
@@ -322,8 +327,30 @@ const NFT_ENS_NEW = ['nft.ens.collection', 'nft.ens.is', 'nft.ens.isUnchecked', 
       SOLANA_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && AA_TRIM_NEW.every((id) => FIXTURE.new.includes(id)) &&
       RECHECK_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && UNBLOCK_FIX_NEW.every((id) => FIXTURE.new.includes(id)) &&
       SOLHIST_NEW.every((id) => FIXTURE.new.includes(id)) && GAINS_NEW.every((id) => FIXTURE.new.includes(id)) &&
-      NFT_ENS_NEW.every((id) => FIXTURE.new.includes(id)) &&
+      NFT_ENS_NEW.every((id) => FIXTURE.new.includes(id)) && PENDING_FORGET_NEW.every((id) => FIXTURE.new.includes(id)) && DOGE_ENDPOINT_NEW.every((id) => FIXTURE.new.includes(id)) &&
       Object.keys(en).filter(insightsNew).length > 0 && Object.keys(en).filter(insightsNew).every((id) => FIXTURE.new.includes(id)));
+  // Phase 26 item 4: the three account-removal lines about the pending list, English and Spanish exact, the placeholders
+  // matching, and each one used by wallet/pending-transactions.ts.
+  {
+    const WANT_EN = {
+      'accounts.remove.pendingForgotten': 'Its entries in the list of pending transactions on this phone are forgotten too, on every network, except where another account in this wallet has the same address.',
+      'accounts.remove.pendingNotForgottenTitle': 'Pending list not updated',
+      'accounts.remove.pendingNotForgotten': 'The account was removed, but its entries in the list of pending transactions on this phone could not be forgotten, so the risk overview may still list them. {reason}',
+    };
+    const WANT_ES = {
+      'accounts.remove.pendingForgotten': 'Sus entradas en la lista de transacciones pendientes de este teléfono también se olvidan, en todas las redes, salvo donde otra cuenta de esta billetera tenga la misma dirección.',
+      'accounts.remove.pendingNotForgottenTitle': 'Lista de pendientes sin actualizar',
+      'accounts.remove.pendingNotForgotten': 'La cuenta se quitó, pero sus entradas en la lista de transacciones pendientes de este teléfono no se pudieron olvidar, así que el resumen de riesgos aún puede mostrarlas. {reason}',
+    };
+    const pendingSrc = readFileSync(join(APP, 'src/wallet/pending-transactions.ts'), 'utf8');
+    const holes = (v) => (v.match(/\{[a-z]+\}/gi) ?? []).sort().join(',');
+    const forgetOk = (e, sp) => PENDING_FORGET_NEW.every((id) => e[id] === WANT_EN[id] && sp[id] === WANT_ES[id] && holes(e[id]) === holes(sp[id]));
+    check('phase 26 item 4: the three pending-list removal lines, English and Spanish exact, the placeholders matching, each used by pending-transactions.ts',
+      forgetOk(en, es) && PENDING_FORGET_NEW.every((id) => pendingSrc.includes(`t('${id}'`)));
+    check('…mutant caught: a Spanish removal line missing', !forgetOk(en, { ...es, 'accounts.remove.pendingForgotten': undefined }));
+    check('…mutant caught: the English removal sentence changed by one character',
+      !forgetOk({ ...en, 'accounts.remove.pendingForgotten': en['accounts.remove.pendingForgotten'].replace('every network', 'any network') }, es));
+  }
   // Phase 25 item 3: the four gains-report lines, English and Spanish exact, no placeholders, and each one used by the panel.
   {
     const WANT_EN = {

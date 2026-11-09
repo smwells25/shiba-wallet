@@ -25,6 +25,7 @@ import { usePrefs } from '../wallet/PrefsContext';
 import { requireLocalAuth } from '../wallet/biometric';
 import { formatBalanceDisplay, formatUnits, parseUnits } from '../wallet/balances';
 import { EVM_CHAIN_ID, validateRecipient } from '../wallet/send';
+import { removalPendingFailure, removalPendingSentence } from '../wallet/pending-transactions';
 import { listTokens } from '../wallet/tokens';
 import {
   aaErc20TransferCalls,
@@ -894,14 +895,18 @@ export function MultisigScreen() {
           title="Remove from this wallet"
           variant="secondary"
           onPress={() =>
-            Alert.alert(localize(REMOVE_MULTISIG_TITLE), removeMultisigMessage(selected), [
+            Alert.alert(localize(REMOVE_MULTISIG_TITLE), `${removeMultisigMessage(selected)} ${removalPendingSentence()}`, [
               { text: tx('Cancel'), style: 'cancel' },
               {
                 text: tx('Remove'),
                 style: 'destructive',
                 onPress: () => {
                   removeMultisigRecord(selected.id).then(
-                    () => {
+                    (pending) => {
+                      // Phase 26 item 4: its pending-list entries went with it; a
+                      // step that did not complete is named (the removal stands).
+                      const failure = removalPendingFailure(pending);
+                      if (failure) Alert.alert(failure.title, failure.body);
                       setSelectedId(null);
                       setPhase('list');
                       void reload();

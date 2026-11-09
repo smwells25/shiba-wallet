@@ -114,6 +114,25 @@ import {
 export const EVM_CHAIN_ID = 'eip155:1';
 export const BITCOIN_CHAIN_ID = 'bip122:000000000019d6689c085ae165831e93';
 export const DOGECOIN_CHAIN_ID = 'bip122:1a91e3dace36e2be3bf030a65679fe82';
+
+/**
+ * Whether Home's Dogecoin card offers "Send ↗" (pass p25-emu2 finding 9: the
+ * card said "no endpoint" yet offered Send). Hidden only while the card's
+ * balance state is 'unavailable' — which useBalances.ts loadNativeBalance
+ * gives exactly when config/networks.ts getEndpoint resolves no URL (Dogecoin
+ * has no default endpoint, config/defaults.ts; the user adds a Blockbook one
+ * in Settings) and which the balance cell draws as "no endpoint". Shown before
+ * the read and after a read error (an endpoint exists then). Every other card
+ * is unaffected.
+ */
+export function dogecoinSendLinkShown(chainId: string, state: { status: string } | undefined): boolean {
+  return !(chainId === DOGECOIN_CHAIN_ID && state !== undefined && state.status === 'unavailable');
+}
+
+/** The line Home's Dogecoin card shows in place of "Send ↗" while dogecoinSendLinkShown is false. */
+export function dogecoinNoEndpointLine(): string {
+  return t('home.dogecoin.noEndpoint');
+}
 export const SOLANA_CHAIN_ID = 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp';
 
 // ---------------------------------------------------------------------------

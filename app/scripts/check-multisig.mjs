@@ -2359,6 +2359,55 @@ console.log('check-multisig: phase 23 item 8 — the co-signer card captions');
     scanProblems(screenSrc, recoverySrc.replace('${localize(scanLabel ?? label)}', '${localize(label)}')).length >= 1);
 }
 
+const read2 = (rel) => readFileSync(join(HERE, '..', rel), 'utf8');
+/** Phase 26 item 4: the removal dialog's body, then the pending-list sentence; a failed pending-list step is named. */
+const MS_PENDING_SENTENCE_OK = (screen) =>
+  screen.includes('Alert.alert(localize(REMOVE_MULTISIG_TITLE), `${removeMultisigMessage(selected)} ${removalPendingSentence()}`, [') &&
+  screen.includes('const failure = removalPendingFailure(pending);') && screen.includes('if (failure) Alert.alert(failure.title, failure.body);');
+// ===========================================================================
+console.log('check-multisig: removing a record forgets its pending-list entries (phase 26 item 4)');
+// ===========================================================================
+{
+  const PT = await import('../src/wallet/pending-transactions.ts');
+  const BASE_SEPOLIA = 'eip155:84532';
+  const st = memoryStore();
+  const onSep = await createMultisigRecord({ chain: SEPOLIA, config: CONFIG_2_OF_3, localSigner: S0.address, now: 10 }, st);
+  const onBase = await createMultisigRecord({ chain: BASE_SEPOLIA, config: CONFIG_2_OF_3, localSigner: S0.address, now: 11 }, st);
+  const addr = onSep.address.toLowerCase();
+  const H = (n) => `0x${n.toString(16).padStart(64, '0')}`;
+  const op = (chain, n, sender) => ({ kind: 'userop', chain, userOpHash: H(n), sender, owner: S0.address.toLowerCase(), sentAt: 1_791_700_000_000, resend: null, origin: 'multisig' });
+  const unrelated = op(SEPOLIA, 9, '0x' + '11'.repeat(20));
+  const seed = () => st._map.set(PT.PENDING_TX_KEY, JSON.stringify({ version: 1, records: [op(SEPOLIA, 1, addr), op(BASE_SEPOLIA, 2, addr), unrelated] }));
+  const left = () => PT.parseRegistry(st._map.get(PT.PENDING_TX_KEY)).records;
+  seed();
+  check('the same signer set gives the same address on Sepolia and Base Sepolia (two records, one address)', onSep.address === onBase.address && onSep.id !== onBase.id);
+  const outBase = await removeMultisigRecord(onBase.id, st);
+  check('removing the Base Sepolia record forgets its Base Sepolia operation only: the Sepolia record still has its entry, the other sender untouched',
+    outBase.state === 'forgotten' && outBase.removed === 1 && left().length === 2 && left().some((r) => r.chain === SEPOLIA && r.sender === addr) && left().some((r) => r.userOpHash === unrelated.userOpHash));
+  const outSep = await removeMultisigRecord(onSep.id, st);
+  check('removing the last record at that address forgets the rest (on every network), the other sender still untouched',
+    outSep.state === 'forgotten' && outSep.removed === 1 && left().length === 1 && left()[0].userOpHash === unrelated.userOpHash);
+  const again = await createMultisigRecord({ chain: SEPOLIA, config: CONFIG_2_OF_3, localSigner: S0.address, now: 12 }, st);
+  st._map.set(PT.PENDING_TX_KEY, '{"version":1,"records":[{"kind":"tx"}]}');
+  const ro = await removeMultisigRecord(again.id, st);
+  check('a damaged pending list never blocks the removal: the record is gone, "read-only" returned, the list byte for byte',
+    ro.state === 'read-only' && (await listMultisigRecords(undefined, st)).length === 0 && st._map.get(PT.PENDING_TX_KEY) === '{"version":1,"records":[{"kind":"tx"}]}');
+  check('the removal dialog keeps its body and ends with the pending-list sentence',
+    MS_PENDING_SENTENCE_OK(read2('src/screens/MultisigScreen.tsx')));
+  check('…mutant caught: the dialog without the sentence', !MS_PENDING_SENTENCE_OK(read2('src/screens/MultisigScreen.tsx').replace(' ${removalPendingSentence()}`', '`')));
+  check('…mutant caught: the screen ignoring a step that did not complete',
+    !MS_PENDING_SENTENCE_OK(read2('src/screens/MultisigScreen.tsx').replace('if (failure) Alert.alert(failure.title, failure.body);', '')));
+  const m = await importMutant('src/wallet/multisig.ts',
+    'return forgetPendingRecordsOfSender(pendingStore, removed.address, { exceptChains: sameAddressChains });',
+    'return forgetPendingRecordsOfSender(pendingStore, removed.address);');
+  const st2 = memoryStore();
+  const a = await m.createMultisigRecord({ chain: SEPOLIA, config: CONFIG_2_OF_3, localSigner: S0.address, now: 20 }, st2);
+  const b = await m.createMultisigRecord({ chain: BASE_SEPOLIA, config: CONFIG_2_OF_3, localSigner: S0.address, now: 21 }, st2);
+  st2._map.set(PT.PENDING_TX_KEY, JSON.stringify({ version: 1, records: [op(SEPOLIA, 1, a.address.toLowerCase()), op(BASE_SEPOLIA, 2, b.address.toLowerCase())] }));
+  const mo = await m.removeMultisigRecord(b.id, st2);
+  check('…mutant caught: a removal that ignores another record at the same address forgets that record\'s entry too', mo.removed === 2);
+}
+
 // ===========================================================================
 console.log('check-multisig: wipe');
 // ===========================================================================

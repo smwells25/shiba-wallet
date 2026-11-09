@@ -966,7 +966,7 @@ console.log('check-key-import: findings 2–8 of the 2026-10-04 private-key run'
   };
   check('Remove: both dialogs, then requireLocalAuth for THAT key, then the deletion; a cancel returns with "Nothing was deleted."',
     removeOrder(removeBody) && /kind: 'imported',\s*slot: importedSlotOf\(account\.index\)/.test(removeBody));
-  check('…the opened key is dropped right after the deletion', /await removeImportedAccount\(account\.index\);\s*\} finally \{\s*dropPhraseTicket\(\);/.test(removeBody));
+  check('…the opened key is dropped right after the deletion', /await removeImportedAccount\(account\.index\)\)?;\s*\} finally \{\s*dropPhraseTicket\(\);/.test(removeBody));
   check('…with its own prompt title', PROMPTS.importedKeyRemove === 'Approve deleting the imported private key');
   check('M7 caught: a Remove without the device check fails the order check',
     !removeOrder(removeBody.replace('requireLocalAuth(PROMPTS.importedKeyRemove, {', 'Promise.resolve({ ok: true }) && ({')));
@@ -1090,6 +1090,26 @@ console.log('check-key-import: honesty and input hygiene in the screens (source 
   check('the reveal view blocks screenshots while open and empties a pending clipboard copy when closed', /preventScreenCaptureAsync\(CAPTURE_KEY\)/.test(src('components/ImportedKeyReveal.tsx')) && /keyClipboard\.clearNow\(\)/.test(src('components/ImportedKeyReveal.tsx')));
   const removeBody = acc.slice(acc.indexOf('const onRemoveImported'), acc.indexOf('const onRevealImported'));
   check('Remove: two confirmations that state the consequence come before the deletion', /removeImportedMessage\(/.test(removeBody) && /REMOVE_IMPORTED_CONFIRM_TITLE/.test(removeBody) && removeBody.indexOf('REMOVE_IMPORTED_CONFIRM_TITLE') < removeBody.indexOf('removeImportedAccount(account.index)'));
+  // Phase 26 item 4: the first dialog also says the key's pending-list entries are forgotten, and WalletContext forgets them
+  // (the address read from the imported-key record BEFORE the key is deleted; after the account is gone; kept when another
+  // account has the same address). A pending-list step that did not complete is named; the removal stands.
+  {
+    const ctx = src('wallet/WalletContext.tsx');
+    const ctxBody = ctx.slice(ctx.indexOf('const removeImportedAccount = useCallback('), ctx.indexOf('const addWatchOnly = useCallback('));
+    const pendingOk = (body, wc) =>
+      body.includes("`${removeImportedMessage(account.name, account.evmAddress ?? tx('unknown address'), stranded)} ${removalPendingSentence()}`") &&
+      body.includes('notePendingOutcome(await removeImportedAccount(account.index));') &&
+      wc.indexOf('.keys.find((k) => k.slot === slot)') >= 0 && wc.indexOf('.keys.find((k) => k.slot === slot)') < wc.indexOf('await importedKeyVault.remove(slot);') &&
+      /commitAccounts\(next\);\s*(\/\/[^\n]*\n\s*)*if \(removedAddress === null\) \{\s*return \{ state: 'failed', message: '[^']*' \} as ForgetSenderOutcome;\s*\}\s*return forgetPendingRecordsOfSender\(AsyncStorage, removedAddress, \{ stillHeldBy: await remainingEvmAddresses\(next\) \}\);/.test(wc) &&
+      wc.indexOf('commitAccounts(next);') >= 0;
+    check('Remove: the first dialog ends with the pending-list sentence and the key\'s pending-list entries are forgotten after the removal (phase 26 item 4)',
+      pendingOk(removeBody, ctxBody));
+    check('…mutant caught: the dialog without the sentence', !pendingOk(removeBody.replace(' ${removalPendingSentence()}`', '`'), ctxBody));
+    check('…mutant caught: the address read after the key is deleted (nothing left to read it from)',
+      !pendingOk(removeBody, ctxBody.replace('await importedKeyVault.remove(slot);', 'PLACEHOLDER').replace('const removedAddress =', 'await importedKeyVault.remove(slot);\n        const removedAddress =').replace('PLACEHOLDER', '')));
+    check('…mutant caught: WalletContext no longer forgets the key\'s entries',
+      !pendingOk(removeBody, ctxBody.replace('return forgetPendingRecordsOfSender(AsyncStorage, removedAddress, { stillHeldBy: await remainingEvmAddresses(next) });', "return { state: 'none' };")));
+  }
   const imp = src('screens/ImportKeyScreen.tsx');
   // Pass p24-iosfix2 follow-up (commit 84deacd's reasoning): React Native
   // 0.86.3 maps textContentType "none" to an EMPTY content type

@@ -9,6 +9,7 @@ import type { EvmSendQuote } from './send.ts';
 import type { AaOperationKind, AaOperationSentEvent, AaSendQuote } from './aa.ts';
 import { base58 } from '@scure/base';
 import { formatUnits } from './balances.ts';
+import { t } from '../i18n/index.ts';
 
 /**
  * Stuck and failed transactions (feature 95, the transaction half): the
@@ -1119,6 +1120,106 @@ export function pendingSolanaBroadcastRecorder(store: PendingStore = AsyncStorag
     record: (record) => recordPendingSolanaTransferBeforeBroadcast(record, store, record.sentAt),
     forget: (key) => forgetSolanaTransfer(key, store),
     openLike: async (like, nowMs) => openSolanaTransferLike((await loadPendingRegistry(store)).records, like, nowMs),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Removing an account (phase 26 item 4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether a stored record belongs to the account at `address`: a regular-
+ * account transaction, a resolved notice or a marker sent FROM it; a smart-
+ * account operation whose SENDER is it (a multisig's operations, whose owner
+ * is this wallet's local signer) or whose OWNER is it (the operations of an
+ * imported key's or a watched owner's smart account, listed under that
+ * owner: insights.ts pendingPlaces and Activity's card both key them by
+ * owner); a Solana transfer whose sender is it. An 0x address is compared
+ * without regard to case (the registry stores lower case); a base58 Solana
+ * address is case-sensitive and compared exactly.
+ */
+export function pendingRecordOfAddress(record: PendingRecord, address: string): boolean {
+  const evm = /^0x[0-9a-fA-F]{40}$/.test(address) ? address.toLowerCase() : null;
+  if (record.kind === 'solana') return record.sender === address;
+  if (evm === null) return false;
+  if (record.kind === 'userop') return record.sender === evm || record.owner === evm;
+  return record.from === evm;
+}
+
+/** What forgetPendingRecordsOfSender did. It never throws. */
+export type ForgetSenderOutcome =
+  /** These records were deleted (one write). */
+  | { state: 'forgotten'; removed: number }
+  /** The registry held nothing of this address; nothing was written. */
+  | { state: 'none' }
+  /** Another account of this wallet has the same address, so its records are its records too; nothing was written. */
+  | { state: 'shared' }
+  /** The stored list is damaged (the strict parse), so it was not changed (PENDING_READ_ONLY_MESSAGE). */
+  | { state: 'read-only'; message: string }
+  /** The storage refused the read or the write. */
+  | { state: 'failed'; message: string };
+
+/**
+ * Forgets every pending-list record of an account the user removed from this
+ * wallet (an imported key, a watched address, a multisig record): regular-
+ * account transactions, smart-account operations, resolved notices, markers
+ * and Solana transfers (pendingRecordOfAddress), on every network — so the
+ * risk overview never lists them as "not an account in this wallet now" for
+ * good, which nothing in the UI could clear. Hiding a phrase account is not
+ * removal and does not call this.
+ *
+ * `stillHeldBy`: the EVM addresses of the accounts that REMAIN in the wallet;
+ * when the removed address is among them (an imported key equal to a phrase
+ * account, a watched address that became a phrase account) nothing is
+ * forgotten ('shared'). `exceptChains`: networks whose records are kept
+ * because another record of the same address remains there (a multisig at
+ * the same CREATE2 address on another network).
+ *
+ * Writes only when something is removed, under the store's queue, without
+ * pruning anything else; a damaged list is refused as every write refuses it.
+ * Best effort: the removal itself never waits on this to succeed.
+ */
+export async function forgetPendingRecordsOfSender(
+  store: PendingStore,
+  address: string,
+  options: { stillHeldBy?: readonly string[]; exceptChains?: readonly string[] } = {},
+): Promise<ForgetSenderOutcome> {
+  const lowerHeld = (options.stillHeldBy ?? []).map((a) => a.toLowerCase());
+  if (lowerHeld.includes(address.toLowerCase())) return { state: 'shared' };
+  const except = new Set(options.exceptChains ?? []);
+  try {
+    return await serialized(store, async (): Promise<ForgetSenderOutcome> => {
+      const current = await readRegistry(store);
+      if (current.readOnly) return { state: 'read-only', message: PENDING_READ_ONLY_MESSAGE };
+      const kept = current.records.filter((r) => except.has(r.chain) || !pendingRecordOfAddress(r, address));
+      const removed = current.records.length - kept.length;
+      if (removed === 0) return { state: 'none' };
+      await writeStoreItem(store, PENDING_TX_KEY, JSON.stringify({ version: STORE_VERSION, records: kept }));
+      return { state: 'forgotten', removed };
+    });
+  } catch (e) {
+    return { state: 'failed', message: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
+ * The sentence every account-removal dialog ends with (phase 26 item 4): an
+ * imported key's, a watched address's and a multisig record's.
+ */
+export function removalPendingSentence(): string {
+  return t('accounts.remove.pendingForgotten');
+}
+
+/**
+ * What to tell the user after a removal whose pending-list step did not
+ * complete (the removal itself stands): null when the entries were forgotten,
+ * there were none, or another account has the same address.
+ */
+export function removalPendingFailure(outcome: ForgetSenderOutcome): { title: string; body: string } | null {
+  if (outcome.state !== 'read-only' && outcome.state !== 'failed') return null;
+  return {
+    title: t('accounts.remove.pendingNotForgottenTitle'),
+    body: t('accounts.remove.pendingNotForgotten', { reason: outcome.message }),
   };
 }
 

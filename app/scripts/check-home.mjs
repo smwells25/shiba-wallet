@@ -630,13 +630,47 @@ console.log('check-home: phase 25 item 0c — the Solana card hides Send at a re
     splSendLinkShown({ status: 'ok', associated: 0n, sendRefusal: null, decimalsChanged: false }, true) === false &&
       splSendLinkShown({ status: 'ok', associated: 1n, sendRefusal: null, decimalsChanged: false }, true) === true);
   const home = source('../src/screens/HomeScreen.tsx');
-  const SOL_RULE = "{item.chainId === SOLANA_CHAIN_ID && !solSendLinkShown(balances[item.chainId]) ? null : (\n            <React.Fragment key=\"send\">\n              {noKey\n                ? null\n                : cardLink('send', 'Send ↗', () =>";
+  // Pass p25-emu2 finding 9 joined the Dogecoin rule to the same condition (its own section below); the Solana rule is unchanged.
+  const SOL_RULE = "{(item.chainId === SOLANA_CHAIN_ID && !solSendLinkShown(balances[item.chainId])) ||\n          !dogecoinSendLinkShown(item.chainId, balances[item.chainId]) ? null : (\n            <React.Fragment key=\"send\">\n              {noKey\n                ? null\n                : cardLink('send', 'Send ↗', () =>";
   const wired = (src) => src.includes(SOL_RULE) && /import \{[^}]*\bsolSendLinkShown,[^}]*\} from '\.\.\/wallet\/spl-tokens';/.test(src);
   check('Home applies it to the Solana card only, around the unchanged noKey rule (source)', wired(home) && /\{noKey\s*\?\s*null\s*:\s*cardLink\('send'/.test(home));
   check('…the Ethereum card is not given the rule (only the Solana chain id is compared)',
     (home.match(/solSendLinkShown\(/g) ?? []).length === 1 && !/item\.chainId === EVM_CHAIN_ID && !solSendLinkShown/.test(home));
   check('…mutant caught: the rule dropped (Send offered at 0 SOL again)',
-    !wired(home.replace('{item.chainId === SOLANA_CHAIN_ID && !solSendLinkShown(balances[item.chainId]) ? null : (', '{false ? null : (')));
+    !wired(home.replace('{(item.chainId === SOLANA_CHAIN_ID && !solSendLinkShown(balances[item.chainId])) ||', '{(false) ||')));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-home: pass p25-emu2 finding 9 — the Dogecoin card offers no Send without an endpoint');
+// ---------------------------------------------------------------------------
+{
+  const { DOGECOIN_CHAIN_ID, EVM_CHAIN_ID: EVM, SOLANA_CHAIN_ID: SOL, dogecoinNoEndpointLine, dogecoinSendLinkShown } = await import('../src/wallet/send.ts');
+  const { DEFAULT_NETWORKS } = await import('../src/config/defaults.ts');
+  const unavailable = { status: 'unavailable', note: 'No public keyless Dogecoin API is known.' };
+  const doge = DEFAULT_NETWORKS.find((n) => n.chainId === DOGECOIN_CHAIN_ID);
+  check('Dogecoin ships with no default endpoint (config/defaults.ts), so the card starts at "no endpoint"', doge !== undefined && doge.defaultUrl === null && doge.defaultUrls.length === 0);
+  check('Send hidden on the Dogecoin card while its balance is "unavailable" (no endpoint configured)', dogecoinSendLinkShown(DOGECOIN_CHAIN_ID, unavailable) === false);
+  check('Send shown on the Dogecoin card before the read, while loading, after a read error and with a balance',
+    dogecoinSendLinkShown(DOGECOIN_CHAIN_ID, undefined) && dogecoinSendLinkShown(DOGECOIN_CHAIN_ID, { status: 'loading' }) &&
+      dogecoinSendLinkShown(DOGECOIN_CHAIN_ID, { status: 'error', message: 'HTTP 500' }) &&
+      dogecoinSendLinkShown(DOGECOIN_CHAIN_ID, { status: 'ok', display: '1', symbol: 'DOGE', amount: 100000000n, decimals: 8, networkChainId: DOGECOIN_CHAIN_ID }));
+  check('…no other card is given the rule (Ethereum, Bitcoin and Solana keep Send at "unavailable")',
+    [EVM, SOL, 'bip122:000000000019d6689c085ae165831e93'].every((id) => dogecoinSendLinkShown(id, unavailable) === true));
+  check('the line in its place', dogecoinNoEndpointLine() === 'Sending DOGE needs a Dogecoin Blockbook endpoint: add one under Settings → Network endpoints.');
+  const { t: tr, setActiveLanguage: setLang } = await import('../src/i18n/index.ts');
+  setLang('es');
+  const es = dogecoinNoEndpointLine();
+  setLang('en');
+  check('…in Spanish through the string table', es === 'Para enviar DOGE hace falta un punto de conexión Blockbook de Dogecoin: añade uno en Ajustes → Puntos de conexión de red.' && tr('home.dogecoin.noEndpoint') === dogecoinNoEndpointLine());
+  const home = source('../src/screens/HomeScreen.tsx');
+  const dogeWired = (src) =>
+    src.includes('!dogecoinSendLinkShown(item.chainId, balances[item.chainId]) ? null : (\n            <React.Fragment key="send">') &&
+    src.includes('{!noKey && !dogecoinSendLinkShown(item.chainId, balances[item.chainId]) ? (\n          <Text style={[styles.address, { color: theme.textMuted }]}>{dogecoinNoEndpointLine()}</Text>') &&
+    /import \{[^}]*\bdogecoinNoEndpointLine, dogecoinSendLinkShown\b[^}]*\} from '\.\.\/wallet\/send';/.test(src);
+  check('Home hides the Dogecoin Send link and shows the line instead (only where a key exists to send with; source)', dogeWired(home));
+  check('…the balance cell\'s "no endpoint" wording is unchanged', home.includes("<Text style={[styles.balanceSymbol, { color: theme.textMuted }]}><T>no endpoint</T></Text>"));
+  check('…mutant caught: the Send link no longer hidden', !dogeWired(home.replace('          !dogecoinSendLinkShown(item.chainId, balances[item.chainId]) ? null : (', '          false ? null : (')));
+  check('…mutant caught: the line not drawn', !dogeWired(home.replace('{dogecoinNoEndpointLine()}', '{null}')));
 }
 
 // Phase 25 polish (the risk-overview follow-up): a "Risk overview" link in

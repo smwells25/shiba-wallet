@@ -742,6 +742,25 @@ console.log('check-watch-only: honesty and the screens (source checks)');
   check('Settings → Accounts: the watch-only group shows the notice and a "Watch-only" tag', /<WatchOnlyNotice \/>/.test(acc) && /'Watch-only'/.test(acc));
   const removeBody = acc.slice(acc.indexOf('const onRemoveWatchOnly'), acc.indexOf('const onHide'));
   check('Remove: ONE confirmation, no device check (no secret exists)', (removeBody.match(/Alert\.alert\(/g) ?? []).length === 1 && !/requireLocalAuth/.test(removeBody) && /removeWatchOnly\(account\.index\)/.test(removeBody));
+  // Phase 26 item 4: the dialog also says the watched address's pending-list entries (its cold-signed sends and its smart
+  // account's operations) are forgotten, and WalletContext forgets them after the removal, keeping them when another account
+  // has the same address; a pending-list step that did not complete is named, the removal stands.
+  {
+    const ctx = src('wallet/WalletContext.tsx');
+    const ctxBody = ctx.slice(ctx.indexOf('const removeWatchOnly = useCallback('), ctx.indexOf('// Uses the key the reveal'));
+    const pendingOk = (body, wc) =>
+      body.includes("`${removeWatchOnlyMessage(account.name, account.evmAddress ?? tx('unknown address'))} ${removalPendingSentence()}`") &&
+      body.includes('notePendingOutcome(await removeWatchOnly(account.index))') &&
+      /a\.index === index && a\.watchOnly\)\?\.address/.test(wc) &&
+      wc.indexOf('commitAccounts(next);') >= 0 &&
+      /commitAccounts\(next\);\s*(\/\/[^\n]*\n\s*)*if \(removedAddress === null\) \{\s*return \{ state: 'failed', message: '[^']*' \} as ForgetSenderOutcome;\s*\}\s*return forgetPendingRecordsOfSender\(AsyncStorage, removedAddress, \{ stillHeldBy: await remainingEvmAddresses\(next\) \}\);/.test(wc);
+    check('Remove: the dialog ends with the pending-list sentence and the address\'s pending-list entries are forgotten after the removal (phase 26 item 4)',
+      pendingOk(removeBody, ctxBody));
+    check('…mutant caught: the dialog without the sentence', !pendingOk(removeBody.replace(' ${removalPendingSentence()}`', '`'), ctxBody));
+    check('…mutant caught: WalletContext no longer forgets the watched address\'s entries',
+      !pendingOk(removeBody, ctxBody.replace('return forgetPendingRecordsOfSender(AsyncStorage, removedAddress, { stillHeldBy: await remainingEvmAddresses(next) });', "return { state: 'none' };")));
+    check('…mutant caught: the outcome of the pending-list step ignored by the screen', !pendingOk(removeBody.replace('notePendingOutcome(await removeWatchOnly(account.index))', 'removeWatchOnly(account.index)'), ctxBody));
+  }
   check('the removal dialog says nothing secret is deleted',
     REMOVE_WATCH_ONLY_TITLE === 'Stop watching this address?' && removeWatchOnlyMessage('W', WATCHED) === `W (${WATCHED}) is removed from this wallet. Nothing secret is deleted, because the wallet never held a key for it, and nothing on-chain changes. You can watch it again at any time.`);
   check('Settings → Accounts: no Hide for a watch-only account', /!account\.imported && !account\.watchOnly && account\.index !== 0 && !active/.test(acc));

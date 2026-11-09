@@ -63,6 +63,7 @@ import {
   type AaSendQuote,
   type TransportFactory,
 } from './aa.ts';
+import { forgetPendingRecordsOfSender, type ForgetSenderOutcome, type PendingStore } from './pending-transactions.ts';
 import { assertFeatureAllowed, eip155Caip2 } from '../config/readiness.ts';
 import { evmProfileByCaip2 } from '../config/evm-chain.ts';
 // The sentences the Multisig screen shows go through the string table (phase
@@ -1104,13 +1105,30 @@ export async function createMultisigRecord(
   });
 }
 
-/** Removes a record from this phone. Nothing secret exists for it and nothing on-chain changes. */
-export async function removeMultisigRecord(id: number, store: KeyValueStore = AsyncStorage): Promise<void> {
-  await mutate(store, (state) => {
+/**
+ * Removes a record from this phone. Nothing secret exists for it and nothing
+ * on-chain changes. Since phase 26 item 4 its entries in the pending list
+ * (pending-transactions.ts: operations it sent, on every network) are
+ * forgotten in the same step — except on a network where another record of
+ * this wallet has the same address (the same signer set and threshold gives
+ * the same CREATE2 address on every chain). That step is best effort and
+ * never undoes the removal: its outcome is returned for the screen to name a
+ * failure. `pendingStore` defaults to the multisig store (AsyncStorage holds
+ * both keys).
+ */
+export async function removeMultisigRecord(
+  id: number,
+  store: KeyValueStore = AsyncStorage,
+  pendingStore: PendingStore = store,
+): Promise<ForgetSenderOutcome> {
+  const { removed, sameAddressChains } = await mutate(store, (state) => {
     const i = state.records.findIndex((r) => r.id === id);
     if (i < 0) throw new Error('This multisig is not in this wallet.');
-    state.records.splice(i, 1);
+    const [gone] = state.records.splice(i, 1);
+    const others = state.records.filter((r) => r.address.toLowerCase() === gone.address.toLowerCase()).map((r) => r.chain);
+    return { removed: gone, sameAddressChains: others };
   });
+  return forgetPendingRecordsOfSender(pendingStore, removed.address, { exceptChains: sameAddressChains });
 }
 
 export async function renameMultisigRecord(id: number, rawName: string, store: KeyValueStore = AsyncStorage): Promise<MultisigRecord> {

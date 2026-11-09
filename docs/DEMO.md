@@ -889,7 +889,7 @@ adb shell am start -a android.intent.action.VIEW -d "exp://127.0.0.1:8081/--/pri
 **Rehearsed in Expo Go on 2026-11-09 UTC** (phase 25 item 2; `AGENTS.md`, phase 25, "EMULATOR PASS p25-emu2" check 5), Ethereum Sepolia, Account 1.
 
 - First open **Portfolio** and let it finish reading, then **Approvals** and run a search: the overview uses the last complete reading of each in this session and makes no request of its own.
-- Open the overview: Portfolio → **Risk overview**, or Settings → Privacy, the row after "Open the inbox" (since commit `3da568a` also a **Risk overview** link on Home, in the row with Portfolio, Price alerts and Inbox; not yet seen on the emulator). The screen titled "Risk overview" shows eight sections in a fixed order, each ending with a "Source: …" line: the network in use; where the value is (shares of the counted net worth by asset and by network, with test and unpriced assets listed apart and watched addresses never counted); token approvals (unlimited ones first); the recovery phrase's protection and the app lock; transactions waiting; endpoints as this session last saw them; the accounts on this phone (watched, imported, multi-signature); limits and alerts.
+- Open the overview: Portfolio → **Risk overview** (the button under the net worth), or Settings → **Privacy** → **Risk overview**, the button directly after **Open the inbox** at the end of the Privacy section (since commit `3da568a` also a **Risk overview** link on Home, in the row with Portfolio, Price alerts and Inbox; not yet seen on the emulator). The screen titled "Risk overview" shows eight sections in a fixed order, each ending with a "Source: …" line: the network in use; where the value is (shares of the counted net worth by asset and by network, with test and unpriced assets listed apart and watched addresses never counted); token approvals (unlimited ones first); the recovery phrase's protection and the app lock; transactions waiting; endpoints as this session last saw them; the accounts on this phone (watched, imported, multi-signature); limits and alerts.
 - Opened before Portfolio or Approvals has run in the session, the value and approvals sections say they have not been worked out or checked in this session and offer to open that screen.
 - Turn on **Hide amounts**: amounts, values and shares are masked and spoken "(amount hidden)".
 
@@ -901,7 +901,7 @@ adb shell am start -a android.intent.action.VIEW -d "exp://127.0.0.1:8081/--/pri
 
 **Rehearsed in Expo Go on 2026-11-09 UTC** (phase 25 item 3; `AGENTS.md`, phase 25, "EMULATOR PASS p25-emu2" check 6), with a temporary switch to mainnet.
 
-- Settings → Developer → choose **Off (mainnet)** (profit and loss is offered only for a main network's coin and tokens). Portfolio → the profit-and-loss panel → **ETH**. The demo wallet has no main-network history, so the panel shows only its gap sentences and no figures.
+- Settings → Developer → choose **Off (mainnet)** (profit and loss is offered only for a main network's coin and tokens). Portfolio → scroll to the **Profit and loss** section at the end of the screen → the **ETH on Ethereum** button (it reads "✓ ETH on Ethereum" once chosen). The demo wallet has no main-network history, so the panel shows only its gap sentences and no figures.
 - Below them, **Export gains report (.csv)** and its note; the share sheet offers `shiba-gains_eip155-1_ETH_<date>.csv`. Cancel it.
 - Switch back to **Ethereum Sepolia** before the next step.
 

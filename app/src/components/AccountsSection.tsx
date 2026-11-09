@@ -24,6 +24,7 @@ import { usePrefs } from '../wallet/PrefsContext';
 import { getAaConfig, readOwnerSmartAccountHoldings } from '../wallet/aa';
 import { formatUnits } from '../wallet/balances';
 import { EVM_CHAIN_ID } from '../wallet/send';
+import { removalPendingFailure, removalPendingSentence, type ForgetSenderOutcome } from '../wallet/pending-transactions';
 import { useWallet, type AccountView } from '../wallet/WalletContext';
 import { ImportedKeyReveal } from './ImportedKeyReveal';
 import { MULTISIG_ACCOUNTS_HEADING, MULTISIG_ACCOUNTS_LIST_HINT, multisigAccountListLine } from '../wallet/multisig';
@@ -140,17 +141,29 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
     }
   };
 
+  // Phase 26 item 4: after a removal, a pending-list step that did not
+  // complete is named (the removal itself stands).
+  const notePendingOutcome = (outcome: ForgetSenderOutcome) => {
+    const failure = removalPendingFailure(outcome);
+    if (failure) Alert.alert(failure.title, failure.body);
+  };
+
   // No device check: a watch-only account has no secret to delete. One
-  // confirmation that says exactly that.
+  // confirmation that says exactly that, and that its pending-list entries go
+  // with it (phase 26 item 4).
   const onRemoveWatchOnly = (account: AccountView) => {
-    Alert.alert(localize(REMOVE_WATCH_ONLY_TITLE), removeWatchOnlyMessage(account.name, account.evmAddress ?? tx('unknown address')), [
-      { text: tx('Keep it'), style: 'cancel' },
-      {
-        text: tx('Stop watching'),
-        style: 'destructive',
-        onPress: () => void run('Could not remove account', () => removeWatchOnly(account.index)),
-      },
-    ]);
+    Alert.alert(
+      localize(REMOVE_WATCH_ONLY_TITLE),
+      `${removeWatchOnlyMessage(account.name, account.evmAddress ?? tx('unknown address'))} ${removalPendingSentence()}`,
+      [
+        { text: tx('Keep it'), style: 'cancel' },
+        {
+          text: tx('Stop watching'),
+          style: 'destructive',
+          onPress: () => void run('Could not remove account', async () => notePendingOutcome(await removeWatchOnly(account.index))),
+        },
+      ],
+    );
   };
 
   const onRename = async (account: AccountView) => {
@@ -185,7 +198,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
     }
     Alert.alert(
       localize(REMOVE_IMPORTED_TITLE),
-      removeImportedMessage(account.name, account.evmAddress ?? tx('unknown address'), stranded),
+      `${removeImportedMessage(account.name, account.evmAddress ?? tx('unknown address'), stranded)} ${removalPendingSentence()}`,
       [
         { text: tx('Keep it'), style: 'cancel' },
         {
@@ -213,7 +226,7 @@ export function AccountsSection({ onImportKey }: { onImportKey: () => void }) {
                   }
                   void run('Could not remove account', async () => {
                     try {
-                      await removeImportedAccount(account.index);
+                      notePendingOutcome(await removeImportedAccount(account.index));
                     } finally {
                       dropPhraseTicket();
                     }
