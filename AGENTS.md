@@ -18666,6 +18666,41 @@ arrive; 6 last. Subagents on Opus.
       and the note field's doc list — are the follow-up slice below.
       UNVERIFIED: the Max layout and TalkBack, one-tap Done on the note, the
       devnet "test SOL" refusal live, iOS.
+- [x] THE SPL-TOKENS READINESS REASON NAMES THE LIVE DEVNET SENDS, AND A
+      LOAD-SENSITIVE TEST GETS ROOM (commit 0e3ffc3; 6 files, +20 / −8 —
+      app/src/config/readiness.ts, i18n/en.ts, i18n/es.ts,
+      scripts/check-readiness.mjs, components/TransactionNoteField.tsx,
+      packages/chains-solana/test/history.test.ts; built by the CTO in a
+      clone worktree from the Solana agent's two proposals; offline runner
+      ALL GREEN in the isolated verify worktree on HEAD c781efa: checkout 0 /
+      apply 0 / 6 files, the staged patch id 199f1823…c5ad equal to the
+      verified tree's, engine 1,351, app 11,295 across 66 suites, lint 0/0,
+      tsc clean; the pre-commit scan clean; not seen on a device). The
+      reason's first sentence had said no Solana token transfer had been
+      sent on any network — untrue since passes p24-unblock and p24-solfix2
+      — and now reads "Solana token transfers through this wallet's token
+      layer have been sent only on Solana devnet (three transfers of 1 USDC
+      or 1 EURC between two accounts of this wallet on 2026-11-08 UTC, two
+      of them creating the recipient's token account), never on Solana
+      mainnet; no Token-2022 token and no token with a non-zero transfer
+      fee has been sent." followed by the unchanged clauses; the id
+      readiness.spl-tokens.reason is on the i18n fixture's "new" list, where
+      a "changed" record is refused (the 7f89feb rule), so en.ts and es.ts
+      changed in place (Spanish a draft) and check-readiness's regex pin
+      (its old form failed on the new text first, which is the pin's
+      sensitivity) now requires the dated devnet sentence, the
+      "never on Solana mainnet … non-zero transfer fee" clause, and the
+      absence of "any network yet". history.test.ts's 30-round random
+      stress of 67daf2a carries a 20 s timeout (it ran 4.3 s at a host load
+      average of 76 in this session's verify runs and timed out once at the
+      5 s default under three concurrent runners — in both the
+      masked-amounts and the import-key verify runs). TransactionNoteField's
+      doc comment lists Staking, Bridge, the wallet handle and the Solana
+      token send beside the earlier views. One slip, recorded: the
+      follow-up worktree's engine dist had been built before the Solana
+      patch was applied into it, so one check-spl-tokens check failed there
+      on the old dist until `npm run build` — a worktree that takes a patch
+      touching packages/ must rebuild its dist before running app suites.
 
 ## Phase 24 status (2026-11-08)
 
