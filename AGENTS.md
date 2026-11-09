@@ -18930,6 +18930,75 @@ same time (one device driver); fixes after each pass; 6 last. Subagents
 on Opus.
 
 ## Phase 25 progress
+- [x] Item 0 b–d — SOLANA TOKEN SENDS LISTED AS PENDING, THE SOL CARD AT 0,
+      THE NAME FIELD'S TAG (commit cfb9f39; 11 files, +1,211 / −13, no new
+      file; check-pending 366 (was 332), check-spl-tokens 207 (177; in-suite
+      mutants 16 → 21), check-home 124 (116), check-key-import 253 (249);
+      offline runner ALL GREEN in the CTO's isolated worktree on HEAD
+      87e4d78: checkout 0 / apply 0, the agent's 10-file patch (id
+      e6ee3663…adec) plus its proposed one-hunk ActivityScreen.tsx mount
+      (outside its allow-list) plus two CTO pins in check-pending for that
+      mount, together the staged patch id fd132bcd…7bcc, engine 1,351, app
+      11,431 across 66 suites, lint 0/0, tsc clean; the pre-commit scan
+      clean; 13 new in-suite and 9 hand mutants caught by the agent, the
+      CTO's "mount removed" mutant failing exactly its two pins; not seen on
+      a device). (b) THE RECORD KIND 'solana' in pending-transactions.ts,
+      keyed by the signature taken from the signed transaction itself
+      (network, signature, sender, mint, amount, decimals, symbol,
+      recipient, sent time — 10 fields, exact key set), written just before
+      sendTransaction in runSplSend; the strict parser unchanged for EVM
+      records (an old store loads and is rewritten byte for byte when a
+      Solana record is added — pinned; 14 malformed Solana shapes, an extra
+      or missing key and a duplicated signature each turn the list
+      read-only; NOTE: an OLDER app build reading a store that holds a
+      Solana record would mark the whole list read-only, as the parser's
+      strictness demands); send errors follow the EVM rule (a JSON-RPC
+      error or HTTP 4xx = a definite refusal, the record removed if this
+      attempt created it; 5xx, a failed fetch or an unreadable answer = an
+      open outcome, the record kept, the quote never sent again); BEYOND
+      THE BRIEF, accepted: a Solana transfer signed again carries a new
+      blockhash and is a NEW transaction, so while the same send (network,
+      sender, mint, recipient, amount) is listed and younger than 10
+      minutes a new one is refused before any prompt ("…A Solana
+      transaction signed again is a new transaction, so both could be
+      included. Wait until that list says what happened… Nothing was
+      signed."); THE POLL every 15 s asks getSignatureStatuses once for all
+      listed signatures with searchTransactionHistory on — confirmed or
+      finalized → "Included: the network endpoint reports it {confirmed |
+      finalized} (slot N)." once and the record dropped; a failed one →
+      "Included in slot N, but it failed on-chain, so no tokens moved; the
+      network fee was still paid. Technical detail: …"; unknown for more
+      than 10 minutes → SOLANA_DROPPED_SENTENCE ("…its recent blockhash has
+      expired, so it can no longer be included.") with "Remove from this
+      list" and SOLANA_RETRY_SENTENCE ("Nothing is resent from here…"); no
+      Speed up / Cancel, with SOLANA_NO_REPLACEMENT_SENTENCE ("…Solana has
+      no account nonce to send a replacement under, and once its recent
+      blockhash expires (after 150 slots) it can no longer be included.");
+      sources: solana-foundation/solana-com at 31f66e08 —
+      transaction-structure.mdx 215, transaction-landing.mdx 252–255,
+      getsignaturestatuses.mdx 19–22 and 199–202 (solana.com answered HTTP
+      429). WHERE: the token send's success view, its form after an unknown
+      outcome, and Activity's Solana slot (SolanaPendingTransactionsSection
+      owner={account.address}, only when isSolanaSlot and the account is
+      neither a multisig nor watch-only). SPENDING LIMITS do not count a
+      Solana send — the policy engine's scopeKey refuses any chain that is
+      not eip155 — and the confirm now says so (SPL_SPENDING_LIMITS_NOTE);
+      counting would need a Solana scope in the policy engine (the agent's
+      report lists what). (c) HOME: solSendLinkShown hides the SOL card's
+      Send only when the balance was read and is exactly 0 lamports (shown
+      before the read and after a read error); the agent's first version
+      broke a check-watch-only pin and it reshaped the card rather than
+      edit that suite. (d) the import screen's "Account name (optional)"
+      field is textContentType "nickname" (Apple's UITextContentType page
+      read 2026-11-09: "a nickname"; "username" is "an account or login
+      name", a password-manager field, rejected; "name" means a person's
+      name) — whether it removes iOS's Passwords bar is UNTESTED (no
+      Simulator this slice). Agent slip: it began editing in its
+      worktree while its baseline's lint and tsc steps were still running
+      (the four touched suites had already passed at the expected counts).
+      UNVERIFIED: everything on a device — the card on Activity and the
+      success view, the poll settling a real devnet send, the dropped state,
+      the duplicate-send refusal, the hidden SOL Send, the name field on iOS.
 - [x] Item 3 — A GAINS REPORT EXPORTED FROM THE PROFIT-AND-LOSS ENGINE
       (feature 84, the report half; commit 47b9193; 9 files, +661 / −26, no
       new file; check-pnl 189 (was 142), check-notes 227 (219), check-i18n
