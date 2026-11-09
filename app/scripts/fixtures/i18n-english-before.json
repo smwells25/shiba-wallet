@@ -13015,8 +13015,6 @@
   "insights.pending.error",
   "insights.pending.readOnly",
   "insights.pending.none",
-  "insights.pending.tx",
-  "insights.pending.userop",
   "insights.pending.note",
   "insights.endpoint.error",
   "insights.endpoint.override",
@@ -13062,7 +13060,18 @@
   "nft.ens.expired",
   "nft.ens.stale",
   "nft.ens.reading",
-  "nft.ens.unread"
+  "nft.ens.unread",
+  "insights.pending.summary",
+  "insights.pending.place",
+  "insights.pending.part.txWaiting",
+  "insights.pending.part.txOld",
+  "insights.pending.part.opWaiting",
+  "insights.pending.part.opOld",
+  "insights.pending.part.solWaiting",
+  "insights.pending.part.solOld",
+  "insights.pending.otherAddress",
+  "insights.pending.oldNote",
+  "insights.pending.otherNote"
  ],
  "changed": {
   "activity.note.privacy": {

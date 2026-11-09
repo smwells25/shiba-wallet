@@ -259,22 +259,99 @@ const protection = (over = {}) => ({
 // ===========================================================================
 console.log('check-insights: transactions waiting (the stored pending list)');
 // ===========================================================================
-const tx = (hash, nonce, sentAt, action = 'send', from = A(1)) => ({
-  kind: 'tx', chain: 'eip155:1', hash, nonce, from, to: A(2), value: '1', data: '0x', maxFeePerGas: '1', maxPriorityFeePerGas: '1', gasLimit: '21000', sentAt, action, replaces: null,
+const tx = (hash, nonce, sentAt, action = 'send', from = A(1), chain = 'eip155:1') => ({
+  kind: 'tx', chain, hash, nonce, from, to: A(2), value: '1', data: '0x', maxFeePerGas: '1', maxPriorityFeePerGas: '1', gasLimit: '21000', sentAt, action, replaces: null,
 });
+// Pass p25-emu2 finding 8: the section counted every stored regular-account
+// and smart-account record of every network and account as "waiting", with
+// no network or account named. It now counts exactly what each network's and
+// account's Activity cards list (the cards' own selectors), splits by age
+// with the cards' own ten-minute rules, and names network and account.
+const MIN = 60_000;
+const SEPOLIA_ID = 'eip155:11155111';
+const BASE_SEPOLIA_ID = 'eip155:84532';
+const OP_SEPOLIA_ID = 'eip155:11155420';
+const DEVNET = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1';
+const SOL_A1 = 'EK5jKrBRwvQXXsSERGN6jEoYaofE2PNiZWQoaCLtrYPv';
+const ACC2 = '0xAbCdEf0000000000000000000000000000000007'; // labelled in mixed case, stored lower case
+const h = (c) => `0x${c.repeat(64)}`;
+const op = (hash, owner, sentAt, chain = SEPOLIA_ID) => ({ kind: 'userop', chain, userOpHash: hash, sender: A(3), owner, sentAt, resend: null });
+const sol = (signature, sentAt) => ({
+  kind: 'solana', chain: DEVNET, signature, sender: SOL_A1, mint: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU', amount: '1000000', decimals: 6, symbol: 'USDC', recipient: '9WMgKdmRJBZy8WQ6Q9T6VjJN4wyT9jQenDvfvLFe471n', sentAt,
+});
+const marker = { kind: 'marker', chain: SEPOLIA_ID, from: A(1), nonce: '4', outcome: 'replaced', minedHash: h('e'), original: h('f'), markedAt: NOW - 30 * MIN };
+const resolved = { kind: 'resolved', chain: SEPOLIA_ID, from: A(1), nonce: '3', outcome: 'cancelled', minedHash: h('9'), block: '1', success: true, original: h('8'), hashes: [h('8'), h('9')], resolvedAt: NOW - 30 * MIN };
+const pendingRecords = [
+  tx(h('a'), '5', NOW - 20 * MIN, 'send', A(1), SEPOLIA_ID), // an old original …
+  tx(h('b'), '5', NOW - 1 * MIN, 'speed-up', A(1), SEPOLIA_ID), // … sped up a minute ago: one nonce, one card, waiting
+  tx(h('c'), '9', NOW - 30 * MIN, 'send', A(1), BASE_SEPOLIA_ID), // another network, older than 10 minutes
+  op(h('d'), ACC2.toLowerCase(), NOW - 2 * MIN), // another account's smart-account operation, waiting
+  op(h('1'), A(1), NOW - 11 * MIN), // older than 10 minutes
+  op(h('2'), A(1), NOW - 10 * MIN), // exactly 10 minutes: the card offers "Send again" from here (>=)
+  marker,
+  resolved,
+  sol('5sig1', NOW - 1 * MIN),
+  sol('5sig2', NOW - 10 * MIN), // exactly 10 minutes: the card does not call it dropped yet (>)
+  sol('5sig3', NOW - 11 * MIN),
+  tx(h('7'), '2', NOW - 40 * MIN, 'send', A(8), OP_SEPOLIA_ID), // a removed account's transaction
+];
+const pendingCtx = (over = {}) =>
+  ctx({ pendingAccounts: [{ address: A(1), name: 'Account 1' }, { address: ACC2, name: 'Account 2' }, { address: SOL_A1, name: 'Account 1' }], ...over });
+const pendingTexts = (records, over) => texts(I.pendingSection({ pending: { status: 'ok', value: { records, readOnly: false } } }, pendingCtx(over)));
+const WANT_PENDING = [
+  'Pending on this phone, every account and network: waiting (sent less than 10 minutes ago): 4; sent more than 10 minutes ago and not seen included since: 5.',
+  'Ethereum Sepolia, Account 1: regular-account transactions waiting: 1; smart-account operations sent more than 10 minutes ago: 2.',
+  'Ethereum Sepolia, Account 2: smart-account operations waiting: 1.',
+  'OP Sepolia, 0x0000…0008 (not an account in this wallet now): regular-account transactions sent more than 10 minutes ago: 1.',
+  'Base Sepolia, Account 1: regular-account transactions sent more than 10 minutes ago: 1.',
+  'Solana devnet, Account 1: Solana token sends waiting: 2; Solana token sends sent more than 10 minutes ago: 1.',
+  en['insights.pending.oldNote'],
+  en['insights.pending.otherNote'].replace('{max}', '64'),
+  en['insights.pending.note'],
+];
 {
-  const records = [
-    tx(`0x${'a'.repeat(64)}`, '5', NOW - 20 * 60_000),
-    tx(`0x${'b'.repeat(64)}`, '5', NOW - 60_000, 'speed-up'), // same nonce: one waiting transaction
-    tx(`0x${'c'.repeat(64)}`, '6', NOW - 60_000),
-    { kind: 'userop', chain: 'eip155:1', userOpHash: `0x${'d'.repeat(64)}`, sender: A(3), owner: A(1), sentAt: NOW - 11 * 60_000, resend: null },
-    { kind: 'resolved', chain: 'eip155:1', from: A(1), nonce: '4', outcome: 'replaced', minedHash: `0x${'e'.repeat(64)}`, block: '1', success: true, original: `0x${'e'.repeat(64)}`, hashes: [], resolvedAt: NOW },
-  ];
-  const t = texts(I.pendingSection({ pending: { status: 'ok', value: { records, readOnly: false } } }, ctx()));
-  check('two waiting regular transactions (a speed-up shares its nonce), one sent more than 10 minutes ago', t[0] === 'Regular-account transactions handed to the network and not yet seen included: 2 (sent more than 10 minutes ago: 1).', t[0]);
-  check('one smart-account operation, sent more than 10 minutes ago; a resolved notice is not waiting', t[1] === 'Smart-account operations handed to a bundler and not yet seen included: 1 (sent more than 10 minutes ago: 1).', t[1]);
-  check('the unknown-outcome note covers every account and network', t[2] === en['insights.pending.note']);
-  check('nothing waiting', JSON.stringify(texts(I.pendingSection({ pending: { status: 'ok', value: { records: [records[4]], readOnly: false } } }, ctx()))) === JSON.stringify([en['insights.pending.none']]));
+  const t = pendingTexts(pendingRecords);
+  check('every line exact: the summary, one line per network and account, then the notes', JSON.stringify(t) === JSON.stringify(WANT_PENDING), t);
+  check('an EVM nonce group on another network is counted on its own line (Base Sepolia), not with the open network', t.includes(WANT_PENDING[4]));
+  check('a smart-account operation of another account is counted under that account (Account 2), labelled by address in any case', t.includes(WANT_PENDING[2]));
+  check('a speed-up shares its original\'s nonce: one card, counted once, waiting by its newest broadcast', t[1].includes('regular-account transactions waiting: 1;'));
+  check('a Solana token send is counted (it was not counted at all before), by its sender', t.includes(WANT_PENDING[5]));
+  check('an address that is not an account in this wallet now is shown short and named as such, with its note', t[3].includes('0x0000…0008 (not an account in this wallet now)') && t.includes(WANT_PENDING[7]));
+  check('a record older than 10 minutes is never called waiting: the old-entries note says "most likely dropped"', t.includes(en['insights.pending.oldNote']) && en['insights.pending.oldNote'].includes('most likely dropped') && en['insights.pending.oldNote'].includes('is not counted as waiting'));
+  check('the old-entries note is left out when nothing is older than 10 minutes', !pendingTexts([op(h('d'), A(1), NOW - MIN)]).includes(en['insights.pending.oldNote']));
+  check('the other-address note is left out when every address is an account here', !pendingTexts([op(h('d'), A(1), NOW - MIN)]).includes(WANT_PENDING[7]));
+  check('a marker and a settled notice are never waiting: alone they read "nothing is waiting"',
+    JSON.stringify(pendingTexts([marker, resolved])) === JSON.stringify([en['insights.pending.none']]));
+  check('the "nothing is waiting" sentence names Solana token sends too', en['insights.pending.none'].includes('Solana token send'));
+  check('without account labels every address is named "not an account in this wallet now" (never guessed)',
+    pendingTexts([op(h('d'), A(1), NOW - MIN)], { pendingAccounts: undefined })[1] === 'Ethereum Sepolia, 0x0000…0001 (not an account in this wallet now): smart-account operations waiting: 1.');
+  check('a network the wallet does not know is named by its CAIP-2 id', pendingTexts([tx(h('a'), '1', NOW - MIN, 'send', A(1), 'eip155:999999')])[1] === 'eip155:999999, Account 1: regular-account transactions waiting: 1.');
+  // The cards' own rules at the ten-minute boundary, called (not copied).
+  const { checkUserOperation, solanaStatusFrom } = await import('../src/wallet/pending-transactions.ts');
+  const noRecord = async () => null;
+  const atTen = await checkUserOperation(noRecord, { userOpHash: h('2'), sentAt: NOW - 10 * MIN }, NOW);
+  const underTen = await checkUserOperation(noRecord, { userOpHash: h('2'), sentAt: NOW - 10 * MIN + 1 }, NOW);
+  check('the smart-account boundary is the card\'s: at exactly 10 minutes the card offers "Send again" and the overview counts it older',
+    atTen.state === 'unknown' && atTen.resendOffered === true && underTen.resendOffered === false && I.pendingPlaces([op(h('2'), A(1), NOW - 10 * MIN)], NOW)[0].opOld === 1 && I.pendingPlaces([op(h('2'), A(1), NOW - 10 * MIN + 1)], NOW)[0].opWaiting === 1);
+  check('the Solana boundary is the card\'s: at exactly 10 minutes not yet dropped, a millisecond later dropped',
+    solanaStatusFrom(null, { sentAt: NOW - 10 * MIN }, NOW).dropped === false && I.pendingPlaces([sol('x', NOW - 10 * MIN)], NOW)[0].solWaiting === 1 &&
+    solanaStatusFrom(null, { sentAt: NOW - 10 * MIN - 1 }, NOW).dropped === true && I.pendingPlaces([sol('x', NOW - 10 * MIN - 1)], NOW)[0].solOld === 1);
+  check('the summary\'s two figures add up to every card the per-place lines count',
+    I.pendingPlaces(pendingRecords, NOW).reduce((n, p) => n + p.txWaiting + p.txOld + p.opWaiting + p.opOld + p.solWaiting + p.solOld, 0) === 9);
+  const hiddenLines = I.pendingSection({ pending: { status: 'ok', value: { records: pendingRecords, readOnly: false } } }, pendingCtx({ hidden: true })).lines;
+  check('the lines hold no amount, so Hide amounts changes nothing in them', JSON.stringify(hiddenLines.map((l) => l.text)) === JSON.stringify(WANT_PENDING));
+  const spokenCtx = pendingCtx({ pendingAccounts: [] });
+  const spoken = I.pendingSection({ pending: { status: 'ok', value: { records: [tx(h('a'), '1', NOW - MIN, 'send', `0x${'ab'.repeat(20)}`, SEPOLIA_ID)], readOnly: false } } }, spokenCtx).lines[1];
+  check('an address is shown and spoken short (never the full 42 characters)', spoken.text.includes('0xabab…abab') && !/0x[0-9a-fA-F]{40}/.test(spoken.text + spoken.spoken));
+  const mod = read('src/wallet/insights.ts');
+  check('the counting goes through the cards\' own selectors (nonceGroups, userOpsFor, solanaTransfersFor) and the Solana card\'s own status rule',
+    /for \(const g of nonceGroups\(records, chain, account\)\)/.test(mod) && /for \(const op of userOpsFor\(records, chain, account\)\)/.test(mod) &&
+    /for \(const s of solanaTransfersFor\(records, chain, account\)\)/.test(mod) && mod.includes('solanaStatusFrom(null, s, nowMs)'));
+  const screen = read('src/screens/InsightsScreen.tsx');
+  check('the screen names accounts as Activity does (activityAccountLabels over the accounts with a key, the watched ones and the multisigs) and passes them',
+    /activityAccountLabels\(\s+\[\.\.\.accountList, \.\.\.watchOnlyAccounts\]/.test(screen) && screen.includes('pendingAccounts,'));
+  check('the Spanish place line keeps its placeholders and reads as Spanish',
+    es['insights.pending.place'] === '{network}, cuenta {account}: {parts}.' && es['insights.pending.oldNote'].includes('descartado'));
   check('a damaged list: said so first', texts(I.pendingSection({ pending: { status: 'ok', value: { records: [], readOnly: true } } }, ctx()))[0] === en['insights.pending.readOnly']);
   check('a failed read: "could not be read", no count', JSON.stringify(texts(I.pendingSection({ pending: { status: 'error', message: 'x' } }, ctx()))) === JSON.stringify([en['insights.pending.error']]));
   check('its link is Activity', I.pendingSection({ pending: { status: 'error', message: 'x' } }, ctx()).link === 'Activity');
@@ -454,9 +531,9 @@ async function importMutant(from, to) {
   check('mutant caught: a reading made with fiat off is shown as shares', texts(m4.concentrationSection(snapshot({ showFiat: false }), ctx()))[0] !== en['insights.concentration.fiatOff']);
   const m5 = await importMutant("  return { id, text, spoken: spokenMaskedText(withShortAddresses(text)) };", '  return { id, text, spoken: text };');
   check('mutant caught: the bullets and the full address spoken', m5.approvalsSection(approvalsSnap, ctx({ hidden: true })).lines.some((l) => l.spoken.includes(MASK) || /0x[0-9a-fA-F]{40}/.test(l.spoken)));
-  const m6 = await importMutant("      const key = `${r.chain}|${r.from}|${r.nonce}`;", '      const key = r.hash;');
+  const m6 = await importMutant('    for (const g of nonceGroups(records, chain, account)) {', "    for (const g of records.filter((r) => r.kind === 'tx' && r.chain === chain && r.from === account).map((r) => ({ latest: r }))) {");
   const recs = [tx(`0x${'a'.repeat(64)}`, '5', NOW - 60_000), tx(`0x${'b'.repeat(64)}`, '5', NOW - 30_000, 'speed-up')];
-  check('mutant caught: a speed-up counted as a second waiting transaction', !texts(m6.pendingSection({ pending: { status: 'ok', value: { records: recs, readOnly: false } } }, ctx()))[0].includes(': 1 ('));
+  check('mutant caught: a speed-up counted as a second waiting transaction', JSON.stringify(texts(m6.pendingSection({ pending: { status: 'ok', value: { records: recs, readOnly: false } } }, ctx()))).includes('transactions waiting: 2'));
   const m7 = await importMutant('  return s && s.key === key ? s : null;', '  return s ?? null;');
   m7.recordPortfolioSnapshot(snapshot({ key: 'A' }));
   check('mutant caught: a reading for other accounts or another network is shown', m7.latestPortfolioSnapshot('primary', 'B') !== null);
@@ -471,10 +548,23 @@ async function importMutant(from, to) {
   check('mutant caught: two thirds truncated to 66.6%', m11.shareText({ n: 2n, d: 3n }, { n: 1n, d: 1n }, false) === '66.6%');
   const m12 = await importMutant('  const net = s.netWorth;', '  const net = s.watchedTotal;');
   check('mutant caught: shares taken of a total that includes the watched addresses', !texts(m12.concentrationSection(snapshot(), ctx())).includes('ETH on Ethereum: 60.0% of the counted net worth ($3,000.00)'));
-  const m13 = await importMutant('    if (r.kind === \'tx\') {', "    if (r.kind === 'tx' || r.kind === 'resolved') {");
-  const resolvedOnly = [{ kind: 'resolved', chain: 'eip155:1', from: A(1), nonce: '4', outcome: 'replaced', minedHash: `0x${'e'.repeat(64)}`, block: '1', success: true, original: `0x${'e'.repeat(64)}`, hashes: [], resolvedAt: NOW, sentAt: NOW }];
-  check('mutant caught: a settled (resolved) nonce counted as waiting', texts(m13.pendingSection({ pending: { status: 'ok', value: { records: resolvedOnly, readOnly: false } } }, ctx()))[0] !== en['insights.pending.none']);
-  check(`${mutantCount} mutants written and each caught above`, mutantCount >= 8);
+  // Pass p25-emu2 finding 8: markers and settled notices counted beside the cards.
+  const m13 = await importMutant('    for (const g of nonceGroups(records, chain, account)) {',
+    "    for (const g of [...nonceGroups(records, chain, account), ...records.filter((r) => (r.kind === 'marker' || r.kind === 'resolved') && r.chain === chain && r.from === account).map(() => ({ latest: { sentAt: nowMs } }))]) {");
+  check('mutant caught: a marker and a settled notice counted beside a waiting nonce', texts(m13.pendingSection({ pending: { status: 'ok', value: { records: pendingRecords, readOnly: false } } }, pendingCtx()))[1] !== WANT_PENDING[1]);
+  const m14 = await importMutant('      if (nowMs - g.latest.sentAt > USEROP_UNKNOWN_AFTER_MS) p.txOld += 1;', '      if (nowMs - g.original.sentAt > USEROP_UNKNOWN_AFTER_MS) p.txOld += 1;');
+  check('mutant caught: a nonce just sped up counted older by its original', texts(m14.pendingSection({ pending: { status: 'ok', value: { records: pendingRecords, readOnly: false } } }, pendingCtx()))[1] !== WANT_PENDING[1]);
+  const m15 = await importMutant("      if (unseen.state === 'not-seen' && unseen.dropped) p.solOld += 1;", '      if (false) p.solOld += 1;');
+  check('mutant caught: an old Solana send called waiting', texts(m15.pendingSection({ pending: { status: 'ok', value: { records: pendingRecords, readOnly: false } } }, pendingCtx()))[5] !== WANT_PENDING[5]);
+  const m16 = await importMutant('    keys.set(`${r.chain}|${account}`, { chain: r.chain, account });', '    keys.set(r.chain, { chain: r.chain, account });');
+  check('mutant caught: two accounts on one network merged into one line', !texts(m16.pendingSection({ pending: { status: 'ok', value: { records: pendingRecords, readOnly: false } } }, pendingCtx())).includes(WANT_PENDING[2]));
+  const m17 = await importMutant('  return found ? found.name : null;', '  return null;');
+  check('mutant caught: the accounts of this wallet named as unknown addresses', texts(m17.pendingSection({ pending: { status: 'ok', value: { records: pendingRecords, readOnly: false } } }, pendingCtx()))[1] !== WANT_PENDING[1]);
+  const m18 = await importMutant('      if (nowMs - op.sentAt >= USEROP_UNKNOWN_AFTER_MS) p.opOld += 1;', '      if (nowMs - op.sentAt > USEROP_UNKNOWN_AFTER_MS) p.opOld += 1;');
+  check('mutant caught: the smart-account boundary moved off the card\'s (exactly 10 minutes called waiting)', m18.pendingPlaces([op(h('2'), A(1), NOW - 10 * MIN)], NOW)[0].opOld === 0);
+  const m19 = await importMutant("  if (old > 0) out.push(line('old', t('insights.pending.oldNote')));\n", '');
+  check('mutant caught: entries older than 10 minutes shown with no word that they are not waiting', !texts(m19.pendingSection({ pending: { status: 'ok', value: { records: pendingRecords, readOnly: false } } }, pendingCtx())).includes(en['insights.pending.oldNote']));
+  check(`${mutantCount} mutants written and each caught above`, mutantCount >= 19);
 }
 
 console.log(`\ncheck-insights: ${passed} passed, ${failed} failed`);

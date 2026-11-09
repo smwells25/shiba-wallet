@@ -16,7 +16,8 @@ import { loadPriceAlerts } from '../wallet/price-alerts';
 import { activeStoreProfile } from '../wallet/store-keys';
 import { multisigRouteRefusal, watchOnlyRouteRefusal } from '../wallet/watch-only';
 import { peekEndpointHealth } from '../config/networks';
-import { EVM_CHAIN_ID } from '../wallet/send';
+import { EVM_CHAIN_ID, SOLANA_CHAIN_ID } from '../wallet/send';
+import { activityAccountLabels } from '../wallet/activity-sentences';
 import {
   buildInsightSections,
   latestApprovalsSnapshot,
@@ -91,6 +92,19 @@ export function InsightsScreen({ navigation }: Props) {
 
   const owner = accounts.find((a) => a.chainId === EVM_CHAIN_ID)?.address ?? null;
   const profile = activeStoreProfile().id;
+  // The pending section names each account as Activity does
+  // (activityAccountLabels: the accounts with a key, the watched ones — a
+  // cold-signed send is recorded under the watched address — and the
+  // multisigs, by EVM address), plus the active account's Solana address, the
+  // only Solana address this screen knows without deriving one.
+  const solanaAddress = accounts.find((a) => a.chainId === SOLANA_CHAIN_ID)?.address ?? null;
+  const pendingAccounts = [
+    ...activityAccountLabels(
+      [...accountList, ...watchOnlyAccounts].map((a) => ({ name: a.name, evmAddress: a.evmAddress, index: a.index })),
+      multisigAccounts.flatMap((m) => (m.evmAddress ? [{ address: m.evmAddress, label: m.name }] : [])),
+    ).map((l) => ({ address: l.address, name: l.label })),
+    ...(activeAccount && solanaAddress ? [{ address: solanaAddress, name: activeAccount.name }] : []),
+  ];
   const portfolioKey = portfolioSnapshotKey([...accountList, ...watchOnlyAccounts, ...multisigAccounts], evmChain.caip2);
 
   const sections: InsightSection[] | null = reads
@@ -114,6 +128,7 @@ export function InsightsScreen({ navigation }: Props) {
           },
           appLock: { on: lockOn, kind: lockKind },
           autoLockMs,
+          pendingAccounts,
         },
       })
     : null;

@@ -1,7 +1,7 @@
 // Explicit .ts extensions: scripts/check-insights.mjs loads this module under
 // Node's type stripping, which resolves relative specifiers literally.
 import { t } from '../i18n/index.ts';
-import { spokenMaskedText, withShortAddresses } from '../a11y.ts';
+import { spokenMaskedText, spokenShortAddress, withShortAddresses } from '../a11y.ts';
 import { maskAmount } from '../config/prefs.ts';
 import { describeDefaultFallbackNote, endpointHost, type DefaultChoice } from '../config/endpoint-probe.ts';
 import { describeAge } from './prices.ts';
@@ -16,7 +16,18 @@ import {
   type ApprovalScan,
 } from './approvals.ts';
 import { describeProtectionStatus } from './phrase-protection-copy.ts';
-import { USEROP_UNKNOWN_AFTER_MS, type PendingRegistry } from './pending-transactions.ts';
+import {
+  MAX_PENDING_RECORDS,
+  USEROP_UNKNOWN_AFTER_MS,
+  nonceGroups,
+  solanaStatusFrom,
+  solanaTransfersFor,
+  userOpsFor,
+  type PendingRecord,
+  type PendingRegistry,
+} from './pending-transactions.ts';
+import { shortSolanaAddress } from './solana-activity.ts';
+import { networkDefaultFor } from '../config/defaults.ts';
 import type { PriceAlertBook } from './price-alerts.ts';
 import type { StorageProtection } from './storage.ts';
 import type { LockKind } from './pin.ts';
@@ -37,7 +48,8 @@ import type { LockKind } from './pin.ts';
  *    Settings makes), the app lock (the PIN record's presence and kind, read
  *    at launch) and auto-lock (preferences);
  *  - broadcasts waiting or with an unknown outcome (the pending registry,
- *    pending-transactions.ts, as stored);
+ *    pending-transactions.ts, as stored), counted as each network's and
+ *    account's Activity cards list them and named by network and account;
  *  - the default endpoints as the last check in this session left them
  *    (config/networks.ts peekEndpointHealth: storage plus the default
  *    resolver's in-memory cache, never a probe);
@@ -240,6 +252,14 @@ export interface InsightContext {
   counts: { watched: number; imported: number; multisig: number; hidden: number };
   appLock: { on: boolean | null; kind: LockKind };
   autoLockMs: number | null;
+  /**
+   * The accounts on this phone as Activity labels them
+   * (activity-sentences.ts activityAccountLabels: phrase, imported and
+   * watched accounts and the multisigs by EVM address; the active account's
+   * Solana address too). The pending section names each account by it; an
+   * address not in it is not an account in this wallet now. Absent = none.
+   */
+  pendingAccounts?: readonly { address: string; name: string }[];
 }
 
 function line(id: string, text: string): InsightLine {
@@ -400,36 +420,138 @@ export function keysSection(reads: Pick<InsightReads, 'protection'>, ctx: Insigh
   return { id: 'keys', title: t('insights.section.keys'), lines: out, source: t('insights.source.keys'), link: null };
 }
 
-/** Broadcasts recorded as handed to the network and not yet seen included (every account and network on this phone). */
+/**
+ * Broadcasts recorded as handed to the network and not yet seen included,
+ * on every network and for every account on this phone, broken down by
+ * network and account (pass p25-emu2 finding 8).
+ *
+ * WHAT IS COUNTED is exactly what Activity's "Pending on this phone" cards
+ * would list for that network and account (components/PendingTransactions
+ * .tsx), through the same selectors the cards use, never a rule of its own:
+ *  - a regular-account transaction: one per nonce group
+ *    (pending-transactions.ts nonceGroups — a speed-up or a cancellation
+ *    shares its original's nonce, so it is one card and counts once);
+ *  - a smart-account operation: one per record (userOpsFor, keyed by its
+ *    owner, the account whose Activity lists it);
+ *  - a Solana token send: one per record (solanaTransfersFor, keyed by its
+ *    sender).
+ * Never counted: a resolved notice (kind 'resolved': its nonce is settled
+ * and the notice only reports what a block included) and a replacement
+ * marker (kind 'marker': kept only for an Activity row's "Speed-up of …"
+ * line). An operation or transfer a re-read found included is removed from
+ * the stored list by Activity, so it is not in the registry to count.
+ *
+ * WAITING OR OLDER. The overview makes no request, so it cannot know what
+ * Activity would read on the network now. It sorts by age with the cards'
+ * own ten-minute rules instead:
+ *  - a smart-account operation is older once nowMs − sentAt reaches
+ *    USEROP_UNKNOWN_AFTER_MS (checkUserOperation's own expression, after
+ *    which the card says "most likely dropped" when the bundler has no
+ *    record of it);
+ *  - a Solana transfer is older exactly when the card would call it dropped
+ *    had the endpoint no record of it (solanaStatusFrom(null, …).dropped,
+ *    called here);
+ *  - a regular-account nonce is older when its NEWEST broadcast was handed
+ *    over more than USEROP_UNKNOWN_AFTER_MS ago (a speed-up sent a minute
+ *    ago is a fresh hand-over). The card has no age rule for these; the
+ *    figure is the one this section always used.
+ * An entry older than that is NOT called waiting: the note says it was
+ * either included without this phone checking since (Activity checks only
+ * the network and the account open in it), most likely dropped, or — a
+ * regular-account transaction only — still sitting in a pool at a fee too
+ * low to be included.
+ */
 export function pendingSection(reads: Pick<InsightReads, 'pending'>, ctx: InsightContext): InsightSection {
   const base = { id: 'pending', title: t('insights.section.pending'), source: t('insights.source.pending'), link: 'Activity' as const };
   if (reads.pending.status === 'error') return { ...base, lines: [line('error', t('insights.pending.error'))] };
   const registry = reads.pending.value;
   const out: InsightLine[] = [];
   if (registry.readOnly) out.push(line('read-only', t('insights.pending.readOnly')));
-  // A nonce with a speed-up or a cancellation is one waiting transaction: group by chain, sender and nonce.
-  const groups = new Map<string, number>();
-  let ops = 0;
-  let oldOps = 0;
-  for (const r of registry.records) {
-    if (r.kind === 'tx') {
-      const key = `${r.chain}|${r.from}|${r.nonce}`;
-      const first = groups.get(key);
-      groups.set(key, first === undefined ? r.sentAt : Math.min(first, r.sentAt));
-    } else if (r.kind === 'userop') {
-      ops += 1;
-      if (ctx.nowMs - r.sentAt > USEROP_UNKNOWN_AFTER_MS) oldOps += 1;
-    }
-  }
-  const oldTx = [...groups.values()].filter((sentAt) => ctx.nowMs - sentAt > USEROP_UNKNOWN_AFTER_MS).length;
-  if (groups.size === 0 && ops === 0) {
+  const places = pendingPlaces(registry.records, ctx.nowMs);
+  if (places.length === 0) {
     out.push(line('none', t('insights.pending.none')));
-  } else {
-    out.push(line('tx', t('insights.pending.tx', { count: groups.size, old: oldTx })));
-    out.push(line('userop', t('insights.pending.userop', { count: ops, old: oldOps })));
-    out.push(line('note', t('insights.pending.note')));
+    return { ...base, lines: out };
   }
+  const waiting = places.reduce((n, p) => n + p.txWaiting + p.opWaiting + p.solWaiting, 0);
+  const old = places.reduce((n, p) => n + p.txOld + p.opOld + p.solOld, 0);
+  out.push(line('summary', t('insights.pending.summary', { waiting, old })));
+  let unknownAccount = false;
+  for (const p of places) {
+    const parts: string[] = [];
+    if (p.txWaiting > 0) parts.push(t('insights.pending.part.txWaiting', { count: p.txWaiting }));
+    if (p.txOld > 0) parts.push(t('insights.pending.part.txOld', { count: p.txOld }));
+    if (p.opWaiting > 0) parts.push(t('insights.pending.part.opWaiting', { count: p.opWaiting }));
+    if (p.opOld > 0) parts.push(t('insights.pending.part.opOld', { count: p.opOld }));
+    if (p.solWaiting > 0) parts.push(t('insights.pending.part.solWaiting', { count: p.solWaiting }));
+    if (p.solOld > 0) parts.push(t('insights.pending.part.solOld', { count: p.solOld }));
+    const name = pendingAccountName(p.account, ctx.pendingAccounts ?? []);
+    if (name === null) unknownAccount = true;
+    const account = name ?? t('insights.pending.otherAddress', { address: shortPendingAddress(p.account) });
+    out.push(line(`place:${p.chain}|${p.account}`, t('insights.pending.place', { network: networkDefaultFor(p.chain)?.label ?? p.chain, account, parts: parts.join('; ') })));
+  }
+  if (old > 0) out.push(line('old', t('insights.pending.oldNote')));
+  if (unknownAccount) out.push(line('other', t('insights.pending.otherNote', { max: MAX_PENDING_RECORDS })));
+  out.push(line('note', t('insights.pending.note')));
   return { ...base, lines: out };
+}
+
+/** One network and account with something on the pending list, counted as its Activity cards would list it. */
+export interface PendingPlace {
+  /** CAIP-2 id. */
+  chain: string;
+  /** The account the cards belong to: the sender (regular account, Solana) or the owner (smart account), as stored. */
+  account: string;
+  txWaiting: number;
+  txOld: number;
+  opWaiting: number;
+  opOld: number;
+  solWaiting: number;
+  solOld: number;
+}
+
+/**
+ * Every network and account the pending list holds a card for, through the
+ * cards' own selectors (nonceGroups, userOpsFor, solanaTransfersFor), sorted
+ * by network id and account so the lines keep one order.
+ */
+export function pendingPlaces(records: readonly PendingRecord[], nowMs: number): PendingPlace[] {
+  const keys = new Map<string, { chain: string; account: string }>();
+  for (const r of records) {
+    const account = r.kind === 'tx' ? r.from : r.kind === 'userop' ? r.owner : r.kind === 'solana' ? r.sender : null;
+    if (account === null) continue; // a resolved notice or a marker: never waiting
+    keys.set(`${r.chain}|${account}`, { chain: r.chain, account });
+  }
+  const places: PendingPlace[] = [];
+  for (const { chain, account } of keys.values()) {
+    const p: PendingPlace = { chain, account, txWaiting: 0, txOld: 0, opWaiting: 0, opOld: 0, solWaiting: 0, solOld: 0 };
+    for (const g of nonceGroups(records, chain, account)) {
+      if (nowMs - g.latest.sentAt > USEROP_UNKNOWN_AFTER_MS) p.txOld += 1;
+      else p.txWaiting += 1;
+    }
+    for (const op of userOpsFor(records, chain, account)) {
+      if (nowMs - op.sentAt >= USEROP_UNKNOWN_AFTER_MS) p.opOld += 1;
+      else p.opWaiting += 1;
+    }
+    for (const s of solanaTransfersFor(records, chain, account)) {
+      const unseen = solanaStatusFrom(null, s, nowMs);
+      if (unseen.state === 'not-seen' && unseen.dropped) p.solOld += 1;
+      else p.solWaiting += 1;
+    }
+    if (p.txWaiting + p.txOld + p.opWaiting + p.opOld + p.solWaiting + p.solOld > 0) places.push(p);
+  }
+  return places.sort((a, b) => (a.chain < b.chain ? -1 : a.chain > b.chain ? 1 : a.account < b.account ? -1 : a.account > b.account ? 1 : 0));
+}
+
+/** The account's name as Activity labels it (activityAccountLabels), or null when it is not an account in this wallet now. */
+function pendingAccountName(address: string, accounts: readonly { address: string; name: string }[]): string | null {
+  const evm = /^0x[0-9a-fA-F]{40}$/.test(address);
+  const found = accounts.find((a) => (evm ? a.address.toLowerCase() === address.toLowerCase() : a.address === address));
+  return found ? found.name : null;
+}
+
+/** An address as Activity's rows shorten it: "0x772e…F44F" for an EVM address, "9WMg…471n" for a Solana one. */
+function shortPendingAddress(address: string): string {
+  return /^0x[0-9a-fA-F]{40}$/.test(address) ? spokenShortAddress(address) : shortSolanaAddress(address);
 }
 
 /** One line per active network: the last check of its endpoint in this session, as Settings shows it. */
