@@ -18930,6 +18930,40 @@ same time (one device driver); fixes after each pass; 6 last. Subagents
 on Opus.
 
 ## Phase 25 progress
+- [x] Pass p25-emu1 finding 2 FIXED — ACTIVITY FILES SOLANA DEVNET NOTES
+      UNDER THE DEVNET ID (commit 9e2aa98; 3 files, +146 / −4 —
+      app/src/wallet/solana-activity.ts, screens/ActivityScreen.tsx,
+      scripts/check-spl-tokens.mjs 226 (was 207; five new in-suite mutants);
+      offline runner ALL GREEN in the CTO's isolated worktree on HEAD
+      d8d57c8: checkout 0 / apply 0 / 3 files, the staged patch id
+      092b78d9…f11c equal to the agent's, engine 1,351, app 11,551 across 67
+      suites, lint 0/0, tsc clean, check-activity 321 and check-notes 227
+      unchanged; the pre-commit scan clean; two hand mutants on the real
+      files caught and restored cmp-equal; not seen on a device). CAUSE:
+      ActivityScreen.tsx line 925 set noteNetwork = isEvmSlot ?
+      evmChain.caip2 : chainId, and on the Solana slot chainId is the
+      route's SOLANA_CHAIN_ID (mainnet) even with devnet on; that one value
+      fed findNote, the "Add note" check and the network it saved under,
+      the CSV's network and note columns and the CSV file name. FIX:
+      activitySlotNetwork(routeChainId, { evmSlot, evmCaip2, solanaDevnet })
+      — the EVM slot gets the active profile's id, the Solana mainnet route
+      id with devnet on gets the devnet id, every other slot keeps its own —
+      and noteNetwork comes from it; explorerChainId, network and
+      solanaNetwork were already right and are unchanged; no other screen
+      reads notes by the route id (grep); both send screens already key by
+      the endpoint's network (SolanaTokenSendScreen.tsx 195 / 233; the SOL
+      send at SendScreen.tsx 1911 uses endpoint.network.chainId — the CTO
+      checked), so the three now agree. NOT MIGRATED (stated): notes saved
+      under the mainnet id for mainnet transactions still show; a note
+      added from a devnet Activity row BEFORE this fix stays under the
+      mainnet id and no longer shows on that row (kept, not deleted). PINS,
+      with the live p24-solfix2 signature and the real notes module: a
+      devnet-keyed note shows on the devnet row and not on mainnet; the old
+      rule did not find it; "Add note" on a devnet row saves under the
+      devnet id; the CSV file name and network cell carry the devnet id and
+      the note column the note; mainnet as before; the screen's source uses
+      the new function and the old line is gone. UNVERIFIED (device): the
+      note "p25 emu1 max note" showing on the devnet row at the next pass.
 - [x] EMULATOR PASS p25-emu1 — MASKED SPEECH RE-CHECKED, THE SOLANA MAX AND
       THE 0-SOL REFUSAL LIVE, THE NFT GALLERY WITH THE ENS NAME TOKEN; ONE
       BUG (2026-11-09 03:57–~05:00 UTC, the driver cut once by the Opus
