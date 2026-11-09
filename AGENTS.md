@@ -19786,3 +19786,87 @@ chip's path re-read on the emulator for DEMO steps 51 and 52; the worktree
 helper's scratchpad path; a Token-2022 transfer and one with a non-zero
 transfer fee live; the readiness memo's Solana staged-path bullet, still a
 proposal.
+
+## Phase 26 plan (approved 2026-11-09 "you're approved to begin next phase"): the names renewed before they expire, lending on Arbitrum Sepolia, the Solana token layer completed, the carry-overs
+
+The Chairperson approved the next phase without naming a scope (the
+approval reached a session whose context was full, so it is acted on
+here, three hours later). This plan is the CTO's proposal, recorded before
+any code; it can be redirected at any time and nothing in wave 1 is hard
+to undo. Selection rule as before: features not started or built-only
+that need no outside input and can be shown on the emulator, the
+account-abstraction angle first, plus the carry-overs the phase 25 status
+left open. The one time-critical item comes first: the wallet's two ENS
+names expire on 2026-11-24 and the app has no renew flow. Still
+input-gated and carried as they are: phase 24 item 2 (the
+mainnet-readiness track) and the Tropic Square Stage 3. On hold by the
+Chairperson: a Spanish reviewer, the fiat off-ramp provider, the
+disclosure decision; the address-screening slice waits on the section 9
+answers in docs/ADDRESS_SCREENING.md.
+
+0. Housekeeping by the CTO: the 30-odd scratchpad worktrees of phases
+   23–25 whose patches are all in HEAD removed after a diff check (wt-app,
+   wt-verify and wt-ios2 kept); the worktree helper taking its scratchpad
+   folder from the environment instead of the first session's path; the
+   record of the two +20 USDC deposits of 4 November and the 0.01 test
+   ETH on Account 1 — the Chairperson wrote on 2026-11-04 "I'll add a few
+   sepETH and sepUSDC if I have time" (session 3da3082d), so they are most
+   likely the Chairperson's, which the record now says.
+1. ENS renewal (feature 75; TIME-CRITICAL): the registrar's renew path
+   read from contracts-v2 at 07e55a05 (IETHRenewer, the oracle's renewal
+   price in USDC, the exact approval, the expiry after renewal), encoded
+   and tested in packages/chains-evm/src/ens-register.ts, exercised by
+   ens-register-smoke.mjs in a dry run and then LIVE on
+   smart.shibawalletdemo.eth's parent shibawalletdemo.eth from the dev EOA;
+   then the Handle screen's "Renew" flow (the price quoted, the exact
+   approve, renew, from the regular account or one batch from the smart
+   account, the new expiry read back) and an expiry line with the date on
+   the handle card; proven live by renewing qzv7hk2wmt.eth from Account 1
+   and xk9fdq4rvz.eth from the Kernel through the app, before 2026-11-24.
+2. Supply USDC to Aave v3 on Arbitrum Sepolia (feature 61, the
+   test-network demonstration docs/LENDING_VAULTS.md recommends; the CTO's
+   call under the open-scope approval — test networks only, reversible,
+   the Chairperson can strike it): an engine module with Aave's pinned
+   Arbitrum Sepolia addresses from bgd-labs/aave-address-book at d4c2848e
+   (the pool, the USDC reserve's aToken, the data provider), the reserve's
+   live state read before every quote (active, not frozen, not paused,
+   the cap and the liquidity), supply and withdraw encoders with exact
+   approvals, the aToken balance as the position; a dry run and a live
+   leg by script from the dev EOA (which holds 37 USDC there); then a
+   "Lend" screen modelled on Staking — an exact approve plus supply from
+   the regular account, one batch from the smart account, withdraw back
+   to the same account, no borrowing, Aave's pinned pool named on the risk
+   card, a readiness row (test networks only, enforced), the residuals of
+   LENDING_VAULTS.md section 7.4 stated on screen; proven live in-app on
+   Arbitrum Sepolia (Account 1 holds 1 USDC there, the Kernel 0.745441).
+3. The Solana token layer completed (feature 43): (a) a Token-2022 mint
+   with a transfer fee created ON DEVNET by the dev wallet by script — a
+   lab asset with no value, the CTO's call — so TransferCheckedWithFee
+   and the fee row are proven live by script and then in-app with Account
+   1 holding some; (b) a Solana scope in the spending-policy engine so a
+   Solana token send counts against a limit, or the plain reason recorded
+   if the engine cannot take one honestly; (c) the pending card's waiting
+   and dropped states and the duplicate-send refusal seen live, with the
+   emulator's network switched off right after the approval if that is
+   what it takes.
+4. Carry-overs (no inputs): the waiting-list entries of an account that
+   was removed are forgotten when the account is removed (the design
+   question of 448fc2c, decided: a removed account's pending records go
+   with it, said in the removal dialog); the Dogecoin card offers no Send
+   while no endpoint is configured; DEMO steps 51 and 52 re-read for the
+   exact Settings label and the P&L chip's path; the iOS "Account name"
+   nickname tag in the Simulator.
+5. Research only: Bitcoin-native assets (feature 42, Ordinals and Runes)
+   — what the UTXO engine would need to avoid spending inscribed sats and
+   to show Runes balances, read from the ord sources and the Runes
+   specification, with a go / no-go for a testnet slice; a document.
+6. Leadership refresh at the end: feature rows, the shareable page,
+   DEMO.md, the threat model, the readiness memo.
+
+Waves: 1 — (A) item 1's engine and script, (B) item 2's engine and
+script, (C) item 3a by script, (D) item 4's code, (E) item 5's document,
+in parallel on disjoint files; item 0 by the CTO alongside; 2 — the app
+halves of items 1, 2 and 3 and item 3b; then the emulator passes one
+driver at a time, item 1's first; 6 last. Subagents on Opus.
+
+## Phase 26 progress
