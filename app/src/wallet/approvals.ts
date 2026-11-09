@@ -19,8 +19,9 @@ import {
 import { formatUnits, groupThousands } from './balances.ts';
 import { prepareEvmSend, sendEvm, type EvmSendQuote, type SendResult } from './send.ts';
 import { erc20TransferReturnedFalse } from './send-erc20.ts';
-import { groupNftsByCollection } from './nfts.ts';
+import { groupNftsByCollection, pinnedCollectionTitle } from './nfts.ts';
 import { simulationTransport } from './simulation.ts';
+import { narrowedWindowFrom } from './token-history.ts';
 import { approxDuration, type AddressTag } from './risk.ts';
 import { findExactContact, type Contact } from './contacts.ts';
 import { knownTokensForChain } from './tokens.ts';
@@ -57,6 +58,19 @@ import { sanitizeEndpointMessage } from '../config/endpoint-probe.ts';
  * says plainly that older approvals are not shown and that an
  * archive-capable endpoint (Settings → Network endpoints) is needed for
  * them. Nothing is guessed about blocks that were not searched.
+ *
+ * WINDOW SIZE LIMITS (phase 25 polish; emulator pass p25-emu1). Some
+ * endpoints refuse a window for its SIZE and state their own limit:
+ * Sepolia's Pocket default answered "query block range exceeds server
+ * limit, narrow your filter: 5000" to the 9,000-block window of "Search
+ * older with another endpoint", so that search could never succeed there.
+ * When every failing query of a window states such a limit
+ * (token-history.ts logRangeLimitFrom reads only the recorded wordings,
+ * never a guessed one) and it is smaller than the window, the SAME window's
+ * range is asked once more with windows of that size, and the scan keeps
+ * the smaller size for its later steps (ApprovalScan.windowBlocks). A step
+ * still scans the same number of windows, so with smaller windows a step
+ * covers fewer blocks; the range note states what was searched.
  *
  * STATE (always live). Logs are history, not state: OpenZeppelin v5 and
  * Tether spend allowances down without an Approval event (engine caveat).
@@ -225,12 +239,16 @@ export function approvalTokensForChain(tracked: FungibleAsset[], chainCaip2: str
  * Distinct collections from the NFT gallery's list. Collections the
  * indexer flags as spam are left out (and counted): they are not what a
  * user approves on purpose, and scanning them would multiply RPC calls.
+ * `chainCaip2` (the gallery's network) titles a collection the wallet pins
+ * as the gallery does (nfts.ts nftCollectionTitle); readLiveApprovals also
+ * applies that title from the scan's own network, so a caller that passes
+ * no network still shows it on the approval cards.
  */
-export function collectionsFromNfts(nfts: OwnedNft[]): {
+export function collectionsFromNfts(nfts: OwnedNft[], chainCaip2?: string): {
   collections: ApprovalCollectionRef[];
   spamSkipped: number;
 } {
-  const groups = groupNftsByCollection(nfts);
+  const groups = groupNftsByCollection(nfts, chainCaip2);
   return {
     collections: groups.filter((g) => !g.spam).map((g) => ({ address: g.contract, title: g.title })),
     spamSkipped: groups.filter((g) => g.spam).length,
@@ -264,6 +282,11 @@ export interface ApprovalScan {
   refused: { fromBlock: bigint; toBlock: bigint; message: string } | null;
   /** True when the scan reached block 0. */
   exhausted: boolean;
+  /**
+   * The window size, when an endpoint's own refusal narrowed it below the
+   * configured window (see WINDOW SIZE LIMITS above); absent otherwise.
+   */
+  windowBlocks?: bigint;
 }
 
 interface Positioned {
@@ -324,12 +347,20 @@ export interface ApprovalScanOptions {
  * real logs). Returns a new scan object.
  */
 async function scanStep(scan: ApprovalScan, options: ApprovalScanOptions): Promise<ApprovalScan> {
-  const windowBlocks = options.windowBlocks ?? APPROVAL_WINDOW_BLOCKS;
+  const configured = options.windowBlocks ?? APPROVAL_WINDOW_BLOCKS;
+  let windowBlocks =
+    scan.windowBlocks !== undefined && scan.windowBlocks > 0n && scan.windowBlocks < configured
+      ? scan.windowBlocks
+      : configured;
   const windows = options.windows ?? APPROVAL_STEP_WINDOWS;
   let next: ApprovalScan = { ...scan, refused: null };
+  let retried = false;
   for (let i = 0; i < windows && next.scannedFromBlock > 0n; i++) {
     const toBlock = next.scannedFromBlock - 1n;
     const fromBlock = toBlock + 1n > windowBlocks ? toBlock + 1n - windowBlocks : 0n;
+    // Kept so that a narrowed retry of this range starts from the same
+    // records and counts (the contracts that did answer are asked again).
+    const beforeWindow = next;
     const tasks: (() => Promise<{ error?: string }>)[] = [
       ...next.tokens.map((token) => async () => {
         try {
@@ -372,6 +403,22 @@ async function scanStep(scan: ApprovalScan, options: ApprovalScanOptions): Promi
     ];
     const outcomes = await runLimited(tasks, APPROVAL_SCAN_CONCURRENCY);
     const failure = outcomes.find((o) => o.error !== undefined);
+    // A refusal for the window's SIZE with the endpoint's own limit: the
+    // same range is asked once more with windows of that size (one retry
+    // per step; the smaller size is kept for the rest of the scan).
+    const narrowed = failure && !retried
+      ? narrowedWindowFrom(
+          outcomes.flatMap((o) => (o.error !== undefined ? [o.error] : [])),
+          toBlock - fromBlock + 1n,
+        )
+      : null;
+    if (narrowed !== null) {
+      retried = true;
+      windowBlocks = narrowed;
+      next = { ...beforeWindow, windowBlocks: narrowed };
+      i -= 1;
+      continue;
+    }
     if (failure) {
       next = { ...next, refused: { fromBlock, toBlock, message: failure.error! } };
       break;
@@ -572,7 +619,10 @@ export async function readLiveApprovals(
       chainCaip2: scan.chainCaip2,
       owner: record.owner,
       contract: record.collection,
-      title: collection.title,
+      // A collection the wallet pins (ENS's .eth registry on its network)
+      // gets the gallery's title, not the indexer's "Unnamed collection"
+      // (phase 25 polish; the honesty-half follow-up).
+      title: pinnedCollectionTitle(scan.chainCaip2, record.collection) ?? collection.title,
       operator: record.operator,
       loggedApproved: record.approved,
       loggedBlock: record.blockNumber,

@@ -549,6 +549,69 @@ check('extending against the same endpoint stays refused, range unchanged', scan
   check('alternate endpoint: the older approval is now found (USDC/DRAINER at head-12000)', elsewhere.erc20.some((r) => r.spender === DRAINER && r.token === USDC));
   check('alternate notes', SEARCH_OLDER_ELSEWHERE_TITLE === 'Search older with another endpoint' && /another built-in endpoint \(b\.example\)/.test(alternateSearchNote('b.example', false)) && /also refused/.test(alternateSearchNote('b.example', true)));
 }
+// Phase 25 polish (pass p25-emu1 finding 4): Sepolia's Pocket default
+// refuses a window larger than 5,000 blocks with its own limit in the text
+// (read live 2026-11-09: 9,000 refused, 5,000 and 5,001 served, also 20,000
+// and 60,000 blocks behind the head). The refused range is asked once more
+// with windows of that size, and the scan keeps the smaller size.
+{
+  const POCKET_TEXT = 'query block range exceeds server limit, narrow your filter: 5000';
+  const pocketLike = (limit, { refuseAll = false } = {}) => {
+    const log = [];
+    const tp = async (method, params) => {
+      if (method === 'eth_getLogs') {
+        log.push(params[0]);
+        const span = BigInt(params[0].toBlock) - BigInt(params[0].fromBlock) + 1n;
+        // Thrown exactly as simulationTransport throws a JSON-RPC error.
+        if (refuseAll || span > limit) throw new Error(`RPC error -32602: ${POCKET_TEXT} (eth_getLogs)`);
+      }
+      const saved = node.depth;
+      node.depth = null; // this endpoint serves older logs (as Pocket did)
+      try {
+        return rpcResult(method, params);
+      } finally {
+        node.depth = saved;
+      }
+    };
+    return { tp, log };
+  };
+  const spanOf = (f) => BigInt(f.toBlock) - BigInt(f.fromBlock) + 1n;
+  const { tp, log } = pocketLike(5_000n);
+  const elsewhere = await extendApprovalScan(scan, { transport: tp });
+  check('window limit: the alternate search now succeeds on a 5,000-block endpoint',
+    elsewhere.refused === null && elsewhere.scannedFromBlock === before - 40_000n && elsewhere.windowBlocks === 5_000n,
+    `${elsewhere.scannedFromBlock} ${elsewhere.windowBlocks} ${elsewhere.refused?.message}`);
+  check('window limit: one round at 9,000 blocks (refused), then every query at 5,000',
+    log.length === 3 + 8 * 3 && log.slice(0, 3).every((f) => spanOf(f) === 9_000n)
+    && log.slice(3).every((f) => spanOf(f) === 5_000n), String(log.length));
+  check('window limit: the narrowed retry starts at the refused window\'s top block',
+    log.length > 3 && BigInt(log[3].toBlock) === before - 1n && BigInt(log[3].fromBlock) === before - 5_000n);
+  check('window limit: the older approval is found through the narrowed windows (USDC/DRAINER at head-12000)',
+    elsewhere.erc20.some((r) => r.spender === DRAINER && r.token === USDC));
+  check('window limit: the retried range keeps one record per (token, spender)',
+    elsewhere.erc20.filter((r) => r.spender === DRAINER).length === 1);
+  const { tp: tp2, log: log2 } = pocketLike(5_000n);
+  const further = await extendApprovalScan(elsewhere, { transport: tp2 });
+  check('window limit: a later step keeps 5,000-block windows (no 9,000 query, no retry)',
+    log2.length === 8 * 3 && log2.every((f) => spanOf(f) === 5_000n) && further.scannedFromBlock === before - 80_000n);
+  const { tp: tp3, log: log3 } = pocketLike(5_000n, { refuseAll: true });
+  const refusedAgain = await extendApprovalScan(scan, { transport: tp3 });
+  check('window limit: only ONE retry — a refused narrowed window stops the step',
+    log3.length === 6 && refusedAgain.refused !== null && refusedAgain.refused.fromBlock === before - 5_000n
+    && refusedAgain.scannedFromBlock === before && refusedAgain.refused.message.includes(POCKET_TEXT));
+  // A depth refusal (no stated size limit) is never retried with smaller windows.
+  const depthLog = [];
+  const depthOnly = async (method, params) => {
+    if (method === 'eth_getLogs') {
+      depthLog.push(params[0]);
+      throw new Error('RPC error 4444: pruned history unavailable (eth_getLogs)');
+    }
+    return rpcResult(method, params);
+  };
+  const pruned = await extendApprovalScan(scan, { transport: depthOnly });
+  check('window limit: a pruned-history refusal is not retried (one window asked)',
+    depthLog.length === 3 && depthLog.every((f) => spanOf(f) === 9_000n) && pruned.refused !== null && pruned.windowBlocks === undefined);
+}
 // Which candidate is "another": after the current one first, never around an override.
 {
   const list = ['https://a.example', 'https://b.example', 'https://c.example'];
@@ -598,6 +661,41 @@ node.depth = null;
   check('Sepolia: the USDC → Permit2 allowance is found through the known token list', permit2 !== undefined && permit2.contract === SEP_USDC);
   check('…and shown as "Unlimited USDC" (live allowance = max uint256)', permit2 && isUnlimitedNow(permit2) && describeApprovalAmount(permit2, false) === 'Unlimited USDC');
   check('…within the default 72,000-block step (40,000 blocks back)', s.scannedFromBlock <= HEAD - 40_000n);
+}
+
+// Phase 25 polish (the honesty-half follow-up): an operator approval on ENS's
+// pinned .eth registry is titled as the gallery titles it, "ENS names (ENSv2
+// .eth registry)", not the indexer's "Unnamed collection". Only that contract
+// on Ethereum Sepolia; a look-alike, or the same address on another network,
+// keeps the title it was given.
+{
+  node = defaultNode();
+  node.chainId = '0xaa36a7';
+  const REGISTRY = getAddress(ENS_V2_SEPOLIA.ethRegistry);
+  const lookAlike = getAddress((REGISTRY.slice(0, -1) + (REGISTRY.slice(-1).toLowerCase() === '4' ? '5' : '4')).toLowerCase());
+  const ENS_TITLE = 'ENS names (ENSv2 .eth registry)';
+  node.logs = [operatorLog(REGISTRY, MARKET, true, HEAD - 50n, 71), operatorLog(lookAlike, MARKET, true, HEAD - 60n, 72)];
+  node.operators[`${REGISTRY}|${ME}|${MARKET}`.toLowerCase()] = true;
+  node.operators[`${lookAlike}|${ME}|${MARKET}`.toLowerCase()] = true;
+  const unnamed = (a) => `Unnamed collection (${a.slice(0, 6)}…${a.slice(-4)})`;
+  const ownedOf = (contract) => ({ contract, tokenId: 1n, standard: 'erc1155', balance: 1n, name: null, description: null, collectionName: null, contractName: null, contractSymbol: null, tokenUri: null, metadataMissing: false, media: {}, spam: null });
+  // What ApprovalsScreen builds today (no network passed): the indexer's titles.
+  const fromScreen = collectionsFromNfts([ownedOf(REGISTRY), ownedOf(lookAlike)]).collections;
+  const scanFor = async (chainCaip2) => startApprovalScan({ transport, owner: ME, chainCaip2, tokens: [], collections: fromScreen, windows: 1 });
+  const sepItems = await readLiveApprovals(transport, await scanFor(SEPOLIA));
+  const reg = sepItems.find((i) => i.contract.toLowerCase() === REGISTRY.toLowerCase());
+  const look = sepItems.find((i) => i.contract.toLowerCase() === lookAlike.toLowerCase());
+  check('Approvals: the ENS .eth registry\'s operator approval is titled "ENS names (ENSv2 .eth registry)" on Sepolia',
+    reg?.title === ENS_TITLE, reg?.title);
+  check('…a look-alike one hex digit off keeps "Unnamed collection"', look?.title === unnamed(lookAlike), look?.title);
+  const mainItems = await readLiveApprovals(transport, await scanFor(MAINNET));
+  check('…the same address on mainnet keeps "Unnamed collection"',
+    mainItems.find((i) => i.contract.toLowerCase() === REGISTRY.toLowerCase())?.title === unnamed(REGISTRY));
+  check('collectionsFromNfts with the network titles the registry as the gallery does',
+    collectionsFromNfts([ownedOf(REGISTRY)], SEPOLIA).collections[0]?.title === ENS_TITLE
+    && collectionsFromNfts([ownedOf(REGISTRY)]).collections[0]?.title === unnamed(REGISTRY));
+  check('the Approvals title is the gallery\'s own i18n entry (nft.ens.collection)',
+    reg?.title === (await import('../src/i18n/index.ts')).t('nft.ens.collection'));
 }
 
 // ---------------------------------------------------------------------------

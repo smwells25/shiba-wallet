@@ -35,6 +35,7 @@ import {
   loadNfts,
   nftAssetIdString,
   nftDisplayName,
+  nftTileSpokenLabel,
   shortContract,
   standardLabel,
   type NftCollectionGroup,
@@ -332,11 +333,7 @@ export function NftsScreen({ navigation }: Props) {
             <Pressable
               key={assetId}
               accessibilityRole="button"
-              accessibilityLabel={
-                nft.standard === 'erc1155'
-                  ? `${nftDisplayName(nft, evmChain.caip2)}, ${hideAmounts ? 'amount hidden' : `${nft.balance.toString()} copies`}`
-                  : nftDisplayName(nft, evmChain.caip2)
-              }
+              accessibilityLabel={nftTileSpokenLabel(nft, evmChain.caip2, hideAmounts)}
               accessibilityHint="Opens the NFT details"
               onPress={() => navigation.navigate('NftDetail', { assetId })}
               style={({ pressed }) => [styles.tile, { opacity: pressed ? 0.75 : 1 }]}

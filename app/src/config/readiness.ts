@@ -571,10 +571,12 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
     status: 'testnet-only',
     reason:
       // Reworded on 2026-11-08 after passes p24-unblock and p24-solfix2 (the
-      // live devnet sends); the id is on the i18n fixture's "new" list, so the
-      // English and Spanish entries changed in place (en.ts, es.ts).
-      'Solana token transfers through this wallet’s token layer have been sent only on Solana devnet (three ' +
-      'transfers of 1 USDC or 1 EURC between two accounts of this wallet on 2026-11-08 UTC, two of them creating ' +
+      // live devnet sends), and again in the phase 25 polish without a count
+      // or a single date, which went stale with every further send (a fourth
+      // went on 2026-11-09); the id is on the i18n fixture's "new" list, so
+      // the English and Spanish entries changed in place (en.ts, es.ts).
+      'Solana token transfers through this wallet’s token layer have been sent only on Solana devnet (USDC and ' +
+      'EURC transfers between two accounts of this wallet, from 2026-11-08 UTC, two of them creating ' +
       'the recipient’s token account), never on Solana mainnet; no Token-2022 token and no token with a non-zero ' +
       'transfer fee has been sent. Token-2022 tokens whose extensions this wallet cannot show honestly (a ' +
       'transfer hook, non-transferable, paused, an adjusted display amount or an unknown extension) are refused by ' +

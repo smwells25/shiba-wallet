@@ -639,5 +639,47 @@ console.log('check-home: phase 25 item 0c — the Solana card hides Send at a re
     !wired(home.replace('{item.chainId === SOLANA_CHAIN_ID && !solSendLinkShown(balances[item.chainId]) ? null : (', '{false ? null : (')));
 }
 
+// Phase 25 polish (the risk-overview follow-up): a "Risk overview" link in
+// Home's Portfolio / Price alerts / Inbox row, built like its neighbours
+// (cardLink: spokenLinkText for the label, localize for the hint), for every
+// account kind the Insights route admits.
+console.log('check-home: the Risk overview link');
+{
+  const home = source('../src/screens/HomeScreen.tsx');
+  const { t, setActiveLanguage, activeLanguage } = await import('../src/i18n/index.ts');
+  const { spokenLinkText } = await import('../src/a11y.ts');
+  const { WATCH_ONLY_ALLOWED_ROUTES, MULTISIG_ALLOWED_ROUTES, watchOnlyRouteRefusal, multisigRouteRefusal } = await import('../src/wallet/watch-only.ts');
+  const LINK = "{cardLink('insights', 'Risk overview', () => navigation.navigate('Insights'), 'Lists what the wallet already knows about where your value sits and what could put it at risk; makes no network request')}";
+  const INBOX = "{cardLink('inbox', inboxLinkText(inboxUnread), () => navigation.navigate('Inbox'),";
+  const inRow = (src) => {
+    const rowStart = src.indexOf("{cardLink('portfolio', 'Portfolio'");
+    const rowEnd = src.indexOf('</View>', rowStart);
+    const linkAt = src.indexOf(LINK);
+    return rowStart > 0 && linkAt > src.indexOf(INBOX) && linkAt < rowEnd &&
+      !/(watchOnly|multisig|noKey|imported)\s*\?[^}]*Risk overview/.test(src.slice(rowStart, rowEnd)) &&
+      (src.match(/navigation\.navigate\('Insights'\)/g) ?? []).length === 1;
+  };
+  check('Home: the Risk overview link is in the Portfolio / Price alerts / Inbox row, after Inbox, unconditional, the only way into Insights (source)', inRow(home));
+  check('…mutant caught: the link removed', !inRow(home.replace(LINK, '')));
+  check('…mutant caught: the link put behind a watch-only condition',
+    !inRow(home.replace(LINK, `{watchOnly ? null : ${LINK.slice(1, -1)}}`)));
+  check('…mutant caught: the link opening Portfolio instead',
+    !inRow(home.replace(LINK, LINK.replace("navigate('Insights')", "navigate('Portfolio')"))));
+  check('the link text and hint are the i18n entries Portfolio and Settings use (insights.open, insights.open.hint)',
+    t('insights.open') === 'Risk overview' &&
+      t('insights.open.hint') === 'Lists what the wallet already knows about where your value sits and what could put it at risk; makes no network request');
+  check('spoken label "Risk overview" in English', spokenLinkText('Risk overview') === 'Risk overview');
+  const before = activeLanguage();
+  setActiveLanguage('es');
+  const esLabel = spokenLinkText('Risk overview');
+  const esText = t('insights.open');
+  setActiveLanguage(before);
+  check('…and in Spanish the link speaks the Spanish entry (localize finds the English text)',
+    esLabel === esText && esLabel !== 'Risk overview', esLabel);
+  check('the Insights route is on both read-only allow lists (watch-only and multisig accounts can open it)',
+    WATCH_ONLY_ALLOWED_ROUTES.includes('Insights') && MULTISIG_ALLOWED_ROUTES.includes('Insights') &&
+      watchOnlyRouteRefusal('Insights') === null && multisigRouteRefusal('Insights') === null);
+}
+
 console.log(`\ncheck-home: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

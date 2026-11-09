@@ -12,8 +12,9 @@
 // addresses spoken in words), the memory-only snapshots (keyed by profile,
 // accounts, network and owner), config/networks.ts peekEndpointHealth (no
 // probe, overrides named), the source pins (the route, the Portfolio button,
-// the Settings row, the Approvals and Portfolio hand-overs, no HomeScreen
-// edit, no request of the module's or the screen's own), and ends with
+// the Settings row, the Approvals and Portfolio hand-overs, one HomeScreen
+// link (added by the phase 25 polish, pinned in check-home), no request of
+// the module's or the screen's own), and ends with
 // mutants written from scratch copies of insights.ts (never git checkout).
 //
 //   export PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH"
@@ -405,7 +406,9 @@ console.log('check-insights: source pins (the route, the entries, no request of 
     /if \(!plan \|\| !summary \|\| loading \|\| pending > 0\) return;\s+recordPortfolioSnapshot\(\{\s+profile: activeStoreProfile\(\)\.id,\s+key: portfolioSnapshotKey\(/.test(portfolio));
   check('Settings → Privacy: the row after "Open the inbox"', /navigation\.navigate\('Inbox'\)\} \/>\n\s+<Button title=\{t\('insights\.open'\)\} variant="secondary" accessibilityHint=\{t\('insights\.open\.hint'\)\} onPress=\{\(\) => navigation\.navigate\('Insights'\)\} \/>/.test(settings));
   check('Approvals hands over every shown list, keyed by profile, network and owner', /if \(state\.status !== 'ok' \|\| !owner\) return;\s+recordApprovalsSnapshot\(\{\s+profile: activeStoreProfile\(\)\.id,\s+chainCaip2: state\.scan\.chainCaip2,\s+owner,/.test(approvals));
-  check('HomeScreen is not edited by this slice (no Insights link there)', !home.includes('Insights') && !home.includes('insights.'));
+  // The phase 25 polish added the Home link this slice left out; its pins
+  // are in check-home.mjs. Here: exactly one way into Insights from Home.
+  check('HomeScreen: exactly one Insights link (the polish slice\'s; pinned in check-home)', (home.match(/navigation\.navigate\('Insights'\)/g) ?? []).length === 1);
   check('the module makes no request and writes nothing (no fetch, transport, endpoint lookup, probe, store write or signer)',
     !/\bfetch\(|Transport|getEndpoint|getAllEndpoints|probeEndpoint|resolve\(|writeStoreItem|setItem|signWith|requireLocalAuth|eth_/.test(mod));
   check('the screen makes no request: no balance, price, approvals scan or endpoint resolution, nothing that signs',

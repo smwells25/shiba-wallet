@@ -798,5 +798,33 @@ console.log('ENS name tokens (pass p25-emu1):');
       !/2026-11-24/.test(warn({ read: { kind: 'unread' } })));
 }
 
+// Phase 25 polish (pass p25-emu1 finding 5): the gallery tile of one ERC-1155
+// copy was spoken "qzv7hk2wmt.eth, 1 copies". The label now says "1 copy" for
+// exactly one and "N copies" otherwise; the visible "× N" is unchanged.
+console.log('gallery tile labels (pass p25-emu1 finding 5):');
+{
+  const { nftTileSpokenLabel } = await import('../src/wallet/nfts.ts');
+  const { ENS_V2_SEPOLIA } = await import('@shiba-wallet/chains-evm');
+  const SEP = 'eip155:11155111';
+  const tok = (standard, balance, name = 'qzv7hk2wmt.eth') => ({
+    contract: ENS_V2_SEPOLIA.ethRegistry, tokenId: 5n, standard, balance, name, description: null, collectionName: null,
+    contractName: null, contractSymbol: null, tokenUri: null, metadataMissing: false, media: {}, spam: null,
+  });
+  check('one ERC-1155 copy is spoken "1 copy"', nftTileSpokenLabel(tok('erc1155', 1n), SEP, false) === 'qzv7hk2wmt.eth, 1 copy',
+    nftTileSpokenLabel(tok('erc1155', 1n), SEP, false));
+  check('more than one is spoken "N copies" (2 and 12)', nftTileSpokenLabel(tok('erc1155', 2n), SEP, false) === 'qzv7hk2wmt.eth, 2 copies'
+    && nftTileSpokenLabel(tok('erc1155', 12n), SEP, false) === 'qzv7hk2wmt.eth, 12 copies');
+  check('zero is plural too ("0 copies")', nftTileSpokenLabel(tok('erc1155', 0n), SEP, false) === 'qzv7hk2wmt.eth, 0 copies');
+  check('Hide amounts: "amount hidden", never a count', nftTileSpokenLabel(tok('erc1155', 1n), SEP, true) === 'qzv7hk2wmt.eth, amount hidden');
+  check('an ERC-721 token is spoken by its name alone', nftTileSpokenLabel(tok('erc721', 1n), SEP, false) === 'qzv7hk2wmt.eth');
+  check('a nameless token uses the display name (the pinned collection title and the id)',
+    nftTileSpokenLabel(tok('erc1155', 1n, null), SEP, false) === 'ENS names (ENSv2 .eth registry) #5, 1 copy');
+  const screen = readFileSync(new URL('../src/screens/NftsScreen.tsx', import.meta.url), 'utf8');
+  check('NftsScreen speaks the tile through nftTileSpokenLabel and no longer builds "copies" itself (source)',
+    screen.includes('accessibilityLabel={nftTileSpokenLabel(nft, evmChain.caip2, hideAmounts)}') && !screen.includes('copies`'));
+  check('the visible "× N" under the tile is unchanged (source)',
+    screen.includes("× {hideAmounts ? '••••' : nft.balance.toString()}"));
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

@@ -35,13 +35,28 @@ import type { JsonRpcTransport } from '@shiba-wallet/chains-evm';
  * the endpoint's own error text verbatim. Any error on a window counts,
  * not only a recognised wording: refusal messages differ between
  * providers, and a deeper window failing after a shallower one succeeded
- * is the depth limit in practice. The wallet does not retry with smaller
- * windows: the refusal above depends on how far back fromBlock lies, so a
- * halved second window (fromBlock 13,499 behind the head) would be refused
- * just the same and would only add load on a free public endpoint. Only
- * eth_blockNumber failing on the first page is thrown, because then the
+ * is the depth limit in practice. The wallet does not retry a DEPTH refusal
+ * with smaller windows: that refusal depends on how far back fromBlock lies,
+ * so a halved second window (fromBlock 13,499 behind the head) would be
+ * refused just the same and would only add load on a free public endpoint.
+ * Only eth_blockNumber failing on the first page is thrown, because then the
  * endpoint answered nothing at all and the screen's retryable error state
  * is the honest answer.
+ *
+ * ENDPOINT WINDOW LIMITS (phase 25 polish). Some endpoints refuse a window
+ * because it spans too MANY blocks, and say how many they allow. No default
+ * endpoint's documentation states an eth_getLogs block-range limit (checked
+ * 2026-11-09: https://api.pocket.network/, https://docs.pocket.network/
+ * foundation/api-portal/ and https://www.publicnode.com/ name none), so the
+ * limit is taken only from the endpoint's own refusal, and only from the two
+ * wordings recorded from default endpoints (logRangeLimitFrom below): when a
+ * window is refused and every failing query's text states a limit smaller
+ * than the window, the SAME page is asked again ONCE with windows of that
+ * many blocks, and later pages keep the smaller window (the cursor carries
+ * it). The bounded lookback stays the same number of blocks
+ * (windowBlocks × maxWindows of the configured window), so with smaller
+ * windows more pages reach the same depth and the last one is clipped at
+ * the bound.
  *
  * WHICH TOKEN. Every entry names the contract that emitted its Transfer log
  * (HistoryEntry.contract, lowercased; phase 23 item 8), which is always the
@@ -50,6 +65,49 @@ import type { JsonRpcTransport } from '@shiba-wallet/chains-evm';
  * `omitted` as 'log-from-another-contract', because labelling it with the
  * tracked token's symbol and decimals would be false.
  */
+
+/**
+ * The eth_getLogs block-range limit an endpoint states in its own refusal,
+ * or null. Only two wordings are read, each recorded from a default
+ * endpoint of this wallet, and only the number the endpoint itself gives:
+ *  - "query block range exceeds server limit, narrow your filter: 5000"
+ *    (JSON-RPC -32602; https://eth-sepolia-testnet.api.pocket.network, seen
+ *    in emulator pass p25-emu1 on 2026-11-09 and re-read 2026-11-09 14:59
+ *    UTC, when a window of 9,000 blocks was refused while windows of 5,000
+ *    and 5,001 blocks were served, also 20,000 and 60,000 blocks behind the
+ *    head);
+ *  - "eth_getLogs is limited to a 1,000 range" (JSON-RPC -32614;
+ *    https://sepolia.base.org, observed 2026-10-03, recorded in
+ *    config/evm-chain.ts).
+ * Any other text, including pruned-history and archive refusals (a depth
+ * limit, not a size limit), returns null. A limit is applied as that many
+ * blocks INCLUSIVE (toBlock − fromBlock = limit − 1), which satisfies an
+ * endpoint that counts either way.
+ */
+export function logRangeLimitFrom(message: string): bigint | null {
+  const match =
+    /query block range exceeds server limit, narrow your filter: ([0-9][0-9,]*)/.exec(message) ??
+    /eth_getLogs is limited to a ([0-9][0-9,]*) range/.exec(message);
+  if (!match) return null;
+  const limit = BigInt(match[1]!.replace(/,/g, ''));
+  return limit > 0n ? limit : null;
+}
+
+/**
+ * The window to retry a refused window with: the smallest limit stated by
+ * the failing queries, when EVERY failing query states one and it is smaller
+ * than the window used; otherwise null (no retry).
+ */
+export function narrowedWindowFrom(messages: readonly string[], windowBlocks: bigint): bigint | null {
+  if (messages.length === 0) return null;
+  let smallest: bigint | null = null;
+  for (const message of messages) {
+    const limit = logRangeLimitFrom(message);
+    if (limit === null) return null;
+    if (smallest === null || limit < smallest) smallest = limit;
+  }
+  return smallest !== null && smallest < windowBlocks ? smallest : null;
+}
 
 export interface TrackedTokenRef {
   /** ERC-20 contract address. */
@@ -125,6 +183,11 @@ interface Cursor {
   served: number;
   /** Head block of the first page, as a decimal string. */
   head?: string;
+  /**
+   * The window size in blocks, as a decimal string, when an endpoint's own
+   * refusal narrowed it below the configured window (logRangeLimitFrom).
+   */
+  w?: string;
 }
 
 /**
@@ -174,6 +237,14 @@ export function tokenLogsTransport(url: string, fetchFn?: typeof fetch): JsonRpc
   };
 }
 
+function refusalText(error: unknown): string {
+  if (error instanceof Error) {
+    const { rpcMessage } = error as Error & { rpcMessage?: unknown };
+    return typeof rpcMessage === 'string' ? rpcMessage : error.message;
+  }
+  return String(error);
+}
+
 function refusalFrom(error: unknown, fromBlock: bigint, toBlock: bigint): TokenLogsRefusal {
   if (error instanceof Error) {
     const { rpcMessage, code } = error as Error & { rpcMessage?: unknown; code?: unknown };
@@ -189,9 +260,9 @@ function refusalFrom(error: unknown, fromBlock: bigint, toBlock: bigint): TokenL
 
 export function tokenLogsHistoryProvider(config: TokenLogsConfig): TokenLogsHistoryProvider {
   const transport = config.transport ?? tokenLogsTransport(config.rpcUrl);
-  const windowBlocks = config.windowBlocks ?? 9_000n;
+  const configuredWindow = config.windowBlocks ?? 9_000n;
   const maxWindows = config.maxWindows ?? 8;
-  const lookbackBlocks = windowBlocks * BigInt(maxWindows);
+  const lookbackBlocks = configuredWindow * BigInt(maxWindows);
   const me = config.walletAddress.toLowerCase();
 
   return {
@@ -199,12 +270,19 @@ export function tokenLogsHistoryProvider(config: TokenLogsConfig): TokenLogsHist
       let toBlock: bigint;
       let served: number;
       let headBlock: bigint;
+      let headKnown = true;
+      let windowBlocks = configuredWindow;
       if (cursorRaw) {
         const cursor = parseCursor(cursorRaw);
         toBlock = BigInt(cursor.to);
         served = cursor.served;
+        if (cursor.w !== undefined) {
+          const w = BigInt(cursor.w);
+          if (w > 0n && w < configuredWindow) windowBlocks = w;
+        }
         // Cursors from before the head was recorded: the window above this
         // one is the best available upper bound.
+        headKnown = cursor.head !== undefined;
         headBlock = cursor.head !== undefined ? BigInt(cursor.head) : toBlock + windowBlocks;
       } else {
         // Thrown on failure: with no head block the endpoint answered
@@ -217,7 +295,14 @@ export function tokenLogsHistoryProvider(config: TokenLogsConfig): TokenLogsHist
         headBlock = toBlock;
         served = 0;
       }
-      const fromBlock = toBlock >= windowBlocks ? toBlock - windowBlocks + 1n : 0n;
+      // The lowest block the bounded lookback reaches (a fixed number of
+      // blocks below the head, whatever window size the endpoint allows).
+      const lookbackFloor = headKnown && headBlock + 1n > lookbackBlocks ? headBlock + 1n - lookbackBlocks : 0n;
+      const windowFrom = (size: bigint): bigint => {
+        const from = toBlock >= size ? toBlock - size + 1n : 0n;
+        return headKnown && from < lookbackFloor && lookbackFloor <= toBlock ? lookbackFloor : from;
+      };
+      let fromBlock = windowFrom(windowBlocks);
       // Lowest block answered by the windows already served (null on the
       // first page, where nothing has been answered yet).
       const answeredBefore = cursorRaw ? toBlock + 1n : null;
@@ -227,12 +312,12 @@ export function tokenLogsHistoryProvider(config: TokenLogsConfig): TokenLogsHist
       // count is user-curated and small, and each query is contract-
       // filtered per the endpoint's requirements. allSettled so that every
       // query has finished before the window is judged.
-      const outcomes = await Promise.allSettled(
+      const queryWindow = (from: bigint) => Promise.allSettled(
         config.tokens.map(async (token) => {
           const transfers = await getErc20Transfers(transport, {
             address: config.walletAddress,
             token: token.address,
-            fromBlock,
+            fromBlock: from,
             toBlock,
           });
           // The log's own emitting address (getErc20Transfers reads it from
@@ -243,8 +328,7 @@ export function tokenLogsHistoryProvider(config: TokenLogsConfig): TokenLogsHist
           // `omitted`, reason 'log-from-another-contract').
           const wanted = token.address.toLowerCase();
           const own = transfers.filter((t) => t.token.toLowerCase() === wanted);
-          foreignLogs += transfers.length - own.length;
-          return own.map((t): HistoryEntry => {
+          return { foreign: transfers.length - own.length, entries: own.map((t): HistoryEntry => {
             const from = t.from.toLowerCase();
             const to = t.to.toLowerCase();
             return {
@@ -265,13 +349,26 @@ export function tokenLogsHistoryProvider(config: TokenLogsConfig): TokenLogsHist
               // convention.
               contract: t.token.toLowerCase(),
             };
-          });
+          }) };
         }),
       );
 
-      const failure = outcomes.find(
-        (o): o is PromiseRejectedResult => o.status === 'rejected',
+      let outcomes = await queryWindow(fromBlock);
+      const rejected = (list: typeof outcomes) =>
+        list.filter((o): o is PromiseRejectedResult => o.status === 'rejected');
+      // A refusal for the window's SIZE, with the endpoint's own limit:
+      // the same page is asked once more with windows of that size.
+      const narrowed = narrowedWindowFrom(
+        rejected(outcomes).map((o) => refusalText(o.reason)),
+        toBlock - fromBlock + 1n,
       );
+      if (narrowed !== null) {
+        windowBlocks = narrowed;
+        fromBlock = windowFrom(windowBlocks);
+        outcomes = await queryWindow(fromBlock);
+      }
+
+      const failure = rejected(outcomes)[0];
       if (failure) {
         // The window does not count: its partial results are dropped so
         // that "answered from block N" stays exactly true, and paging stops
@@ -288,13 +385,18 @@ export function tokenLogsHistoryProvider(config: TokenLogsConfig): TokenLogsHist
         };
       }
 
+      for (const o of outcomes) if (o.status === 'fulfilled') foreignLogs += o.value.foreign;
       const entries = outcomes
-        .flatMap((o) => (o.status === 'fulfilled' ? o.value : []))
+        .flatMap((o) => (o.status === 'fulfilled' ? o.value.entries : []))
         .sort((a, b) => (b.blockHeight ?? 0) - (a.blockHeight ?? 0));
 
       const nextServed = served + 1;
       const reachedGenesis = fromBlock === 0n;
-      const exhausted = reachedGenesis || nextServed >= maxWindows;
+      // With a known head the bound is in blocks (the same depth whatever
+      // window size the endpoint allows); a cursor from before the head was
+      // recorded keeps the old count of windows.
+      const exhausted =
+        reachedGenesis || (headKnown ? fromBlock <= lookbackFloor : nextServed >= maxWindows);
       const coverage: TokenLogsCoverage = {
         headBlock,
         answeredFromBlock: fromBlock,
@@ -313,6 +415,7 @@ export function tokenLogsHistoryProvider(config: TokenLogsConfig): TokenLogsHist
                 to: (fromBlock - 1n).toString(),
                 served: nextServed,
                 head: headBlock.toString(),
+                ...(windowBlocks < configuredWindow ? { w: windowBlocks.toString() } : {}),
               } satisfies Cursor),
             }),
       };
@@ -326,11 +429,13 @@ function parseCursor(raw: string): Cursor {
     if (parsed.v === 1 && typeof parsed.to === 'string' && /^[0-9]+$/.test(parsed.to)) {
       const head =
         typeof parsed.head === 'string' && /^[0-9]+$/.test(parsed.head) ? parsed.head : undefined;
+      const w = typeof parsed.w === 'string' && /^[1-9][0-9]*$/.test(parsed.w) ? parsed.w : undefined;
       return {
         v: 1,
         to: parsed.to,
         served: Number(parsed.served) || 0,
         ...(head !== undefined ? { head } : {}),
+        ...(w !== undefined ? { w } : {}),
       };
     }
   } catch {

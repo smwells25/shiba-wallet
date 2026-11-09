@@ -466,6 +466,19 @@ export function nftDisplayName(nft: OwnedNft, chainCaip2?: string): string {
   return `${collection} #${formatTokenId(nft.tokenId)}`;
 }
 
+/**
+ * The gallery tile's spoken label: the display name, and for an ERC-1155
+ * token its count — "1 copy" for exactly one, "N copies" otherwise, or
+ * "amount hidden" under Hide amounts (pass p25-emu1 finding 5: one copy was
+ * spoken "1 copies"). The visible "× N" under the tile is unchanged.
+ */
+export function nftTileSpokenLabel(nft: OwnedNft, chainCaip2: string, hideAmounts: boolean): string {
+  const name = nftDisplayName(nft, chainCaip2);
+  if (nft.standard !== 'erc1155') return name;
+  if (hideAmounts) return `${name}, amount hidden`;
+  return `${name}, ${nft.balance.toString()} ${nft.balance === 1n ? 'copy' : 'copies'}`;
+}
+
 // ---------------------------------------------------------------------------
 // ENS names held as NFTs (phase 25, emulator pass p25-emu1)
 // ---------------------------------------------------------------------------
@@ -521,6 +534,17 @@ export function nftCollectionTitle(nft: OwnedNft, chainCaip2?: string): string {
     sanitizeNftText(nft.contractName) ??
     `Unnamed collection (${shortContract(nft.contract)})`
   );
+}
+
+/**
+ * The title the wallet itself gives a collection it pins, or null: "ENS
+ * names (ENSv2 .eth registry)" for ENS's pinned .eth registry on its
+ * network (isEnsNameRegistry), the same title nftCollectionTitle gives it.
+ * For callers that hold only an address, not an OwnedNft (the Approvals
+ * screen's operator approvals; phase 25 polish).
+ */
+export function pinnedCollectionTitle(chainCaip2: string, contract: string): string | null {
+  return isEnsNameRegistry(chainCaip2, contract) ? t('nft.ens.collection') : null;
 }
 
 export function standardLabel(standard: OwnedNft['standard']): string {

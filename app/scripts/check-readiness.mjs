@@ -264,8 +264,11 @@ for (const id of ['eoa-send', 'tokens', 'nft', 'swap', 'walletconnect', 'dogecoi
   // Reworded on 2026-11-08 after the live devnet sends of passes p24-unblock
   // and p24-solfix2: the reason names what was sent (devnet only) and what was
   // not (no Token-2022 token, no non-zero transfer fee), never "any network".
-  check('spl-tokens reason: sent only on Solana devnet (three transfers, dated); no Token-2022 or fee-bearing token sent; Token-2022 extensions refused by class; Solana devnet only',
-    /have been sent only on Solana devnet \(three transfers of 1 USDC or 1 EURC between two accounts of this wallet on 2026-11-08 UTC/.test(f.reason) &&
+  // Phase 25 polish: without a count or a single date ("three transfers … on
+  // 2026-11-08" went stale with the fourth send on 2026-11-09).
+  check('spl-tokens reason: sent only on Solana devnet (USDC and EURC, from a date, no count); no Token-2022 or fee-bearing token sent; Token-2022 extensions refused by class; Solana devnet only',
+    /have been sent only on Solana devnet \(USDC and EURC transfers between two accounts of this wallet, from 2026-11-08 UTC, two of them creating the recipient’s token account\), never on Solana mainnet;/.test(f.reason) &&
+      !/\b(one|two|three|four|five) transfers? of\b/.test(f.reason) && !/ on 2026-11-08 UTC/.test(f.reason) &&
       /never on Solana mainnet; no Token-2022 token and no token with a non-zero transfer fee has been sent\./.test(f.reason) &&
       !/any network yet/.test(f.reason) && /refused by class/.test(f.reason) && /only on Solana devnet\.$/.test(f.reason), f.reason);
 }

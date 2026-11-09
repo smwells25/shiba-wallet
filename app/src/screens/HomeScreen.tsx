@@ -1112,11 +1112,16 @@ export function HomeScreen({ navigation }: Props) {
         ListFooterComponent={
           <View>
           {/* Phase 20 item 1: the portfolio (net worth, profit and loss) and
-              the price alerts, read-only for every kind of account. */}
+              the price alerts, read-only for every kind of account. Phase 25
+              polish: the risk overview beside them (read-only and
+              request-free; on both the watch-only and the multisig allow
+              lists), its text and hint the i18n entries insights.open and
+              insights.open.hint that Portfolio and Settings already use. */}
           <View style={styles.linkRow}>
             {cardLink('portfolio', 'Portfolio', () => navigation.navigate('Portfolio'), 'Net worth and profit and loss')}
             {cardLink('price-alerts', 'Price alerts', () => navigation.navigate('PriceAlerts'), 'Price alerts and watchlist')}
             {cardLink('inbox', inboxLinkText(inboxUnread), () => navigation.navigate('Inbox'), 'Reminders, alerts, requests from connected apps that the wallet sent, speed-ups and cancellations')}
+            {cardLink('insights', 'Risk overview', () => navigation.navigate('Insights'), 'Lists what the wallet already knows about where your value sits and what could put it at risk; makes no network request')}
           </View>
           {/* Feature 12 (ADR D9): an imported Ethereum key has no Bitcoin,
               Dogecoin or Solana address; those networks are shown as not

@@ -11,6 +11,8 @@
  *   nothing is signed or sent).
  */
 import {
+  logRangeLimitFrom,
+  narrowedWindowFrom,
   tokenLogsCoverageOf,
   tokenLogsHistoryProvider,
   tokenLogsTransport,
@@ -312,6 +314,154 @@ const twoTokens = [
   const legacy = await p.getHistory(ME, JSON.stringify({ v: 1, to: '90999', served: 1 }));
   check('legacy cursor accepted', Array.isArray(legacy.entries)
     && tokenLogsCoverageOf(legacy).answeredFromBlock === 82_000n);
+}
+
+// ---------------------------------------------------------------------------
+// Endpoint WINDOW limits (phase 25 polish): an endpoint that refuses a window
+// for its SIZE and states its own limit gets the same page once more with
+// windows of that size. The wording is Pocket's Sepolia endpoint's, read
+// live in pass p25-emu1 and again on 2026-11-09 (9,000 blocks refused;
+// 5,000 and 5,001 served, also 20,000 and 60,000 blocks behind the head).
+// ---------------------------------------------------------------------------
+console.log('check-token-history: endpoint window limits');
+const POCKET_RANGE_TEXT = 'query block range exceeds server limit, narrow your filter: 5000';
+const BASE_RANGE_TEXT = 'eth_getLogs is limited to a 1,000 range';
+check('range limit: Pocket wording read as 5000', logRangeLimitFrom(POCKET_RANGE_TEXT) === 5000n);
+check('range limit: read inside the transport message too',
+  logRangeLimitFrom(`RPC error -32602: ${POCKET_RANGE_TEXT} (eth_getLogs)`) === 5000n);
+check('range limit: Base wording read as 1000 (comma removed)', logRangeLimitFrom(BASE_RANGE_TEXT) === 1000n);
+check('range limit: a pruned-history refusal is not a size limit',
+  logRangeLimitFrom('pruned history unavailable') === null);
+check('range limit: the archive refusal is not a size limit', logRangeLimitFrom(REFUSAL_TEXT) === null);
+check('range limit: an unrecorded wording is not parsed (no guessing)',
+  logRangeLimitFrom('ranges over 10000 blocks are not supported on free plan') === null
+  && logRangeLimitFrom('block range too large: 2000') === null && logRangeLimitFrom('') === null);
+check('range limit: zero is not a limit', logRangeLimitFrom('query block range exceeds server limit, narrow your filter: 0') === null);
+check('narrowed window: every failure states a smaller limit', narrowedWindowFrom([POCKET_RANGE_TEXT, BASE_RANGE_TEXT], 9_000n) === 1000n);
+check('narrowed window: one failure without a limit means no retry',
+  narrowedWindowFrom([POCKET_RANGE_TEXT, REFUSAL_TEXT], 9_000n) === null);
+check('narrowed window: a limit not smaller than the window means no retry',
+  narrowedWindowFrom(['query block range exceeds server limit, narrow your filter: 9000'], 9_000n) === null);
+check('narrowed window: no failures means no retry', narrowedWindowFrom([], 9_000n) === null);
+
+function rangeLimitedFetch({ limit, refuseEvenNarrow = false }) {
+  const log = [];
+  const fetchFn = async (_url, init) => {
+    const req = JSON.parse(init.body);
+    log.push(req);
+    const reply = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
+    if (req.method === 'eth_blockNumber') return reply(200, { jsonrpc: '2.0', id: req.id, result: '0x' + HEAD.toString(16) });
+    if (req.method === 'eth_getLogs') {
+      const filter = req.params[0];
+      const from = BigInt(filter.fromBlock);
+      const to = BigInt(filter.toBlock);
+      if (to - from + 1n > limit || refuseEvenNarrow) {
+        return reply(200, { jsonrpc: '2.0', id: req.id, error: { code: -32602, message: `query block range exceeds server limit, narrow your filter: ${limit}` } });
+      }
+      const out = [];
+      if (filter.address === USDC && filter.topics[2] === addressTopic(ME)) {
+        for (const n of [99_990, 85_000]) {
+          if (BigInt(n) >= from && BigInt(n) <= to) out.push(makeLog(USDC, n, 1, OTHER, ME, '0x1e8480'));
+        }
+      }
+      if (filter.address === DAI && filter.topics[2] === addressTopic(ME)) {
+        if (from <= 85_500n && to >= 85_500n) out.push(makeLog(DAI, 85_500, 2, OTHER, ME, '0x01'));
+      }
+      return reply(200, { jsonrpc: '2.0', id: req.id, result: out });
+    }
+    return reply(200, { jsonrpc: '2.0', id: req.id, error: { code: -32601, message: 'method not found' } });
+  };
+  return { fetchFn, log };
+}
+const spanOf = (r) => BigInt(r.params[0].toBlock) - BigInt(r.params[0].fromBlock) + 1n;
+
+// (h) The Pocket case: the default 9,000-block window refused, the same
+// page asked once more with 5,000-block windows, and later pages keep them.
+{
+  const { fetchFn, log } = rangeLimitedFetch({ limit: 5_000n });
+  const p = tokenLogsHistoryProvider({
+    rpcUrl: 'http://fake', walletAddress: ME, tokens: twoTokens,
+    transport: tokenLogsTransport('http://fake', fetchFn),
+  });
+  const first = await p.getHistory(ME);
+  const cov = tokenLogsCoverageOf(first);
+  const firstLogs = log.filter((r) => r.method === 'eth_getLogs');
+  check('window limit: page 1 answered after one narrowed retry', first.entries.length === 1
+    && first.entries[0].blockHeight === 99_990 && cov.stop === undefined && cov.refusal === undefined);
+  check('window limit: page 1 asked 9,000 blocks once, then 5,000 blocks once',
+    firstLogs.length === 8 && firstLogs.slice(0, 4).every((r) => spanOf(r) === 9_000n)
+    && firstLogs.slice(4).every((r) => spanOf(r) === 5_000n));
+  check('window limit: answered depth is the narrowed window', cov.answeredFromBlock === 95_001n);
+  check('window limit: the cursor carries the narrowed window', JSON.parse(first.nextCursor).w === '5000');
+  const before = log.length;
+  const second = await p.getHistory(ME, first.nextCursor);
+  const secondLogs = log.slice(before).filter((r) => r.method === 'eth_getLogs');
+  check('window limit: page 2 uses 5,000 blocks from the start (no 9,000 query, no retry)',
+    secondLogs.length === 4 && secondLogs.every((r) => spanOf(r) === 5_000n)
+    && tokenLogsCoverageOf(second).answeredFromBlock === 90_001n);
+  // Page through to the bound: the lookback stays 72,000 blocks.
+  let page = second;
+  let pages = 2;
+  const found = [...first.entries, ...second.entries];
+  while (page.nextCursor) {
+    page = await p.getHistory(ME, page.nextCursor);
+    found.push(...page.entries);
+    pages += 1;
+  }
+  const last = tokenLogsCoverageOf(page);
+  check('window limit: the bound is still 72,000 blocks, the last window clipped at it',
+    pages === 15 && last.stop === 'lookback-limit' && last.answeredFromBlock === 28_001n
+    && last.lookbackBlocks === 72_000n, `${pages} ${last.answeredFromBlock}`);
+  check('window limit: every logs query after the first refusal spans at most 5,000 blocks',
+    log.filter((r) => r.method === 'eth_getLogs').slice(4).every((r) => spanOf(r) <= 5_000n));
+  check('window limit: older entries found through the narrowed windows',
+    found.some((e) => e.blockHeight === 85_000) && found.some((e) => e.assetSymbol === 'DAI' && e.blockHeight === 85_500));
+  check('window limit: the lookback note names 72000 blocks',
+    tokenLogsCoverageNote(last).note.includes('most recent 72000 blocks')
+    && tokenLogsCoverageNote(last).note.includes('from block 28001 to 100000'));
+}
+
+// (i) Only ONE retry: an endpoint that refuses the narrowed window too stops
+// paging with the narrowed window's refusal, after exactly two rounds.
+{
+  const { fetchFn, log } = rangeLimitedFetch({ limit: 5_000n, refuseEvenNarrow: true });
+  const p = tokenLogsHistoryProvider({
+    rpcUrl: 'http://fake', walletAddress: ME, tokens: twoTokens,
+    transport: tokenLogsTransport('http://fake', fetchFn),
+  });
+  const first = await p.getHistory(ME);
+  const cov = tokenLogsCoverageOf(first);
+  const logs = log.filter((r) => r.method === 'eth_getLogs');
+  check('window limit: a second refusal is not retried again', logs.length === 8
+    && cov.stop === 'refused' && first.nextCursor === undefined);
+  check('window limit: the refusal names the narrowed window and the endpoint text',
+    cov.refusal.fromBlock === 95_001n && cov.refusal.toBlock === 100_000n
+    && cov.refusal.message === POCKET_RANGE_TEXT && cov.refusal.code === -32602);
+}
+
+// (j) A stated limit no smaller than the window: no retry, refused as before.
+{
+  const { fetchFn, log } = rangeLimitedFetch({ limit: 9_000n, refuseEvenNarrow: true });
+  const p = tokenLogsHistoryProvider({
+    rpcUrl: 'http://fake', walletAddress: ME, tokens: twoTokens,
+    transport: tokenLogsTransport('http://fake', fetchFn),
+  });
+  const first = await p.getHistory(ME);
+  check('window limit: a limit equal to the window is not retried',
+    log.filter((r) => r.method === 'eth_getLogs').length === 4
+    && tokenLogsCoverageOf(first).stop === 'refused');
+}
+
+// (k) A malformed narrowed window in a cursor is ignored (the configured one is used).
+{
+  const { fetchFn, log } = rangeLimitedFetch({ limit: 20_000n });
+  const p = tokenLogsHistoryProvider({
+    rpcUrl: 'http://fake', walletAddress: ME, tokens: twoTokens,
+    transport: tokenLogsTransport('http://fake', fetchFn),
+  });
+  await p.getHistory(ME, JSON.stringify({ v: 1, to: '90999', served: 1, head: '100000', w: 'x' }));
+  check('window limit: a malformed w is ignored',
+    log.filter((r) => r.method === 'eth_getLogs').every((r) => spanOf(r) === 9_000n));
 }
 
 console.log('check-token-history: source selection');
