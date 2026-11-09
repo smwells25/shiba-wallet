@@ -35,7 +35,7 @@ import {
   type TransferFeeConfig,
 } from '@shiba-wallet/chains-solana';
 import { isFeatureAllowed, readinessReason } from '../config/readiness.ts';
-import { formatBalanceDisplay, parseUnits } from './balances.ts';
+import { formatBalanceDisplay, formatUnits, parseUnits } from './balances.ts';
 import { maskAmount } from '../config/prefs.ts';
 
 /**
@@ -401,6 +401,61 @@ export function splSendLinkShown(state: SplRowState | undefined, sendOffered: bo
   );
 }
 
+/**
+ * The amount "Max" fills in on the Solana token send's form (phase 24
+ * follow-up): the owner's whole ASSOCIATED token account balance, the one
+ * account a send uses (the engine's quote sends only from it), read from the
+ * same row state Home reads (loadSplTokenRows). The network fee and any new
+ * account's rent are paid in SOL, not in the token, so nothing is held back
+ * from the token amount; the quote still refuses when the account's SOL
+ * cannot cover them.
+ *
+ * The text is the exact balance in the mint's own decimals
+ * (formatUnits with every fractional digit kept), not Home's display form:
+ * formatBalanceDisplay cuts the fraction at 6 digits and shows a non-zero
+ * balance below that as "< 0.000001", neither of which is the full balance
+ * or a parseable amount. For a token with 6 decimals or fewer (every token
+ * this wallet knows) and a balance of at least 0.000001 the two are the same
+ * text. Tokens held in other token accounts of the mint are never counted.
+ * A 0 balance gives "0" (Review then refuses it: "Enter an amount greater
+ * than zero."). Null — Max offers nothing — before the row is read, when the
+ * read failed, and when the mint now reports other decimals than were
+ * stored at Track time (the amount would not parse with the stored ones and
+ * the quote refuses such a send anyway).
+ */
+export function splMaxAmountText(state: SplRowState | undefined): string | null {
+  if (state === undefined || state.status !== 'ok' || state.decimalsChanged) return null;
+  return formatUnits(state.associated, state.decimals, state.decimals);
+}
+
+/** The line under the form when Max could not read the balance. */
+export function splMaxUnavailableLine(state: SplRowState | undefined): string {
+  if (state !== undefined && state.status === 'ok' && state.decimalsChanged) {
+    return 'Max is not available: the mint now reports other decimals than were recorded when this token was tracked. Remove the token and track it again.';
+  }
+  return 'Max could not read this account’s token balance just now. Type the amount, or try Max again.';
+}
+
+/**
+ * Reads the one row Max needs, with the same function Home's rows use
+ * (loadSplTokenRows: the owner's token accounts on both programs, the
+ * associated account's balance, the mint's own decimals). A failure of the
+ * listing itself becomes an error row.
+ */
+export async function readSplMaxRow(
+  client: SolanaRpcClient,
+  owner: string,
+  token: FungibleAsset,
+  networkChainId: string,
+): Promise<SplRowState> {
+  try {
+    const { rows } = await loadSplTokenRows(client, owner, [token], networkChainId);
+    return rows[formatAssetId(token.assetId)] ?? { status: 'error', message: 'The token could not be read.' };
+  } catch (e) {
+    return { status: 'error', message: e instanceof Error ? e.message : 'The token could not be read.' };
+  }
+}
+
 /** The line under a row whose mint balance sits partly outside the associated account. */
 export function splOutsideLine(amountDisplay: string, symbol: string, accounts: number): string {
   return (
@@ -474,6 +529,9 @@ export async function quoteSplSend(
     mint: params.token.assetId.reference,
     amount,
     expectedDecimals: params.token.decimals,
+    // The engine's not-enough-SOL refusal names the coin as this network's
+    // screens do: "test SOL" on devnet, "SOL" on mainnet.
+    nativeSymbol: splNativeSymbol(params.caip2),
   });
   return { caip2: params.caip2, owner: params.owner, recipient: params.recipient.trim(), symbol: params.token.symbol, url: params.url, quote };
 }

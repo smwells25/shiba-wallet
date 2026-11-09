@@ -13,15 +13,19 @@ import { useTheme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
 import { SOLANA_CHAIN_ID, notifySendAccepted } from '../wallet/send';
 import { SolanaDevnetBanner } from '../components/SolanaDevnetBanner';
+import { NOTE_VIEW_SCROLL_PROPS, TransactionNoteField, dismissKeyboardThenClose } from '../components/TransactionNoteField';
 import { listSolanaTokens } from '../wallet/tokens';
 import {
   SOLANA_SLOT_CHAIN_ID,
   quoteSplSend,
+  readSplMaxRow,
   runSplSend,
   secondReadUrl,
   solanaClient,
   solanaNetworkLabel,
   splConfirmRows,
+  splMaxAmountText,
+  splMaxUnavailableLine,
   splSendFormIntro,
   splSendScreenTitle,
   splOutcomeLines,
@@ -56,6 +60,13 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
   const [quote, setQuote] = useState<SplSendQuote | null>(null);
   const [error, setError] = useState<{ message: string; technical: string | null } | null>(null);
   const [outcome, setOutcome] = useState<SplSendOutcome | null>(null);
+  // The network the transaction was sent on, captured when it was sent, so
+  // the private note is filed under that network even if the Solana slot is
+  // switched afterwards (the Bridge and Staking success views do the same).
+  const [sentNetwork, setSentNetwork] = useState<string | null>(null);
+  // Max: reading the balance, and the sentence when it could not be used.
+  const [maxBusy, setMaxBusy] = useState(false);
+  const [maxNote, setMaxNote] = useState<string | null>(null);
 
   // The endpoint serving the Solana slot now, and the token from ITS list.
   useEffect(() => {
@@ -112,6 +123,22 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
   const url = endpoint.url;
   const label = solanaNetworkLabel(endpoint.network.chainId);
 
+  // Max fills in the whole associated-account balance, read fresh from the
+  // same row Home shows (wallet/spl-tokens.ts splMaxAmountText): the fee and
+  // any rent are paid in SOL, so nothing is held back from the token amount.
+  const fillMax = async () => {
+    setMaxNote(null);
+    setMaxBusy(true);
+    try {
+      const row = await readSplMaxRow(solanaClient(url), owner, token, endpoint.network.chainId);
+      const text = splMaxAmountText(row);
+      if (text === null) setMaxNote(splMaxUnavailableLine(row));
+      else setAmountText(text);
+    } finally {
+      setMaxBusy(false);
+    }
+  };
+
   const review = async () => {
     setError(null);
     setPhase('quoting');
@@ -157,6 +184,7 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
         quote,
       );
       setOutcome(result);
+      setSentNetwork(quote.caip2);
       setPhase('success');
     } catch (e) {
       setPhase('confirm');
@@ -166,7 +194,7 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
 
   if (phase === 'success' && outcome && quote) {
     return (
-      <ScrollView key="spl-send-success" style={screenStyle(theme)} contentContainerStyle={styles.content}>
+      <ScrollView key="spl-send-success" style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
         <SolanaDevnetBanner chainId={SOLANA_CHAIN_ID} />
         <Text accessibilityRole="header" style={[styles.title, { color: theme.success }]}>Sent ✓</Text>
         <Text style={[styles.hint, { color: theme.textMuted }]}>Transaction signature</Text>
@@ -179,7 +207,8 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
             ? 'Look the signature up in a Solana block explorer.'
             : 'No devnet block explorer link has been verified for this wallet; the signature above identifies the transaction.'}
         </Text>
-        <Button title="Done" onPress={() => navigation.goBack()} />
+        {sentNetwork ? <TransactionNoteField network={sentNetwork} txid={outcome.signature} userOpHash={null} /> : null}
+        <Button title="Done" onPress={() => dismissKeyboardThenClose(() => navigation.goBack())} />
       </ScrollView>
     );
   }
@@ -254,6 +283,14 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
         keyboardType="decimal-pad"
         style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
       />
+      {maxBusy ? (
+        <ActivityIndicator color={theme.textMuted} />
+      ) : (
+        <Button title="Max" variant="secondary" onPress={() => void fillMax()} disabled={phase === 'quoting'} />
+      )}
+      {maxNote ? (
+        <Text accessibilityLiveRegion="polite" style={[styles.hint, { color: theme.textMuted }]}>{maxNote}</Text>
+      ) : null}
       {error ? (
         <Text accessibilityLiveRegion="polite" style={[styles.hint, { color: theme.danger }]}>{error.message}</Text>
       ) : null}

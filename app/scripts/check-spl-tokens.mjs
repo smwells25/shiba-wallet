@@ -49,6 +49,7 @@ const PRICES = await import('../src/wallet/prices.ts');
 const HISTORY = await import('../src/wallet/history.ts');
 const READINESS = await import('../src/config/readiness.ts');
 const { STORE_KEYS } = await import('../src/wallet/store-keys.ts');
+const SOURCE_SPL_EARLY = () => readFileSync(SPL_PATH, 'utf8');
 
 const MUTANT_DIR_EARLY = join(dirname(fileURLToPath(import.meta.url)), `.mutants-solana-activity-${process.pid}`);
 process.on('exit', () => rmSync(MUTANT_DIR_EARLY, { recursive: true, force: true }));
@@ -496,7 +497,12 @@ const quoteOn = (chain, over = {}) =>
     quoteOn(fakeChain({ extraAccounts: { [CAROL.address]: { owner: SPL_TOKEN_PROGRAM, data: tokenAccountBytes({ mint: USDC, owner: BOB.address, amount: 1n }), lamports: 1n } } }), { recipient: CAROL.address }));
   check('quote refused (a recipient that is itself a token account) with the engine’s sentence', tokenAccountAsWallet?.message === SPL_QUOTE_SENTENCES.recipientIsTokenAccount, tokenAccountAsWallet?.message);
   const poor = await rejection(() => quoteOn(fakeChain({ lamports: 1000n })));
-  check('quote refused when SOL cannot cover the fee and the new account’s rent', poor?.message === SPL_QUOTE_SENTENCES.notEnoughSol('2044280', '1000'), poor?.message);
+  // Phase 24 follow-up: on devnet the engine's refusal names the coin as the
+  // devnet screens do ("test SOL"); quoteSplSend passes splNativeSymbol.
+  check('quote refused when test SOL cannot cover the fee and the new account’s rent (devnet: "test SOL")',
+    poor?.message === SPL_QUOTE_SENTENCES.notEnoughSol('2044280', '1000', 'test SOL') &&
+      poor?.message === 'Not enough test SOL for this transfer: it needs 2044280 lamports for the network fee and any new account\'s rent, and the account holds 1000 lamports.',
+    poor?.message);
   const noSource = await rejection(() => quoteOn(fakeChain({ aliceUsdc: null })));
   check('quote refused when the associated account does not exist', noSource?.message === SPL_QUOTE_SENTENCES.noSourceAccount('this token'), noSource?.message);
   // The engine's wording (phase 24 follow-up): "holds no <SYMBOL>" for a
@@ -1024,6 +1030,89 @@ async function appHistoryOf(owner, mints) {
 check(`solana-activity.ts with the p24-solfix2 mutant: all caught (${solactCaught} of ${solactMutants})`, solactMutants >= 4 && solactCaught === solactMutants);
 
 // ---------------------------------------------------------------------------
+console.log('check-spl-tokens: phase 24 follow-ups (the coin in the not-enough-SOL refusal, Max, the note on the Sent view)');
+// ---------------------------------------------------------------------------
+{
+  // Item 1: the coin's name comes from splNativeSymbol; mainnet keeps "SOL".
+  check('splNativeSymbol: "test SOL" on devnet, "SOL" on mainnet',
+    SPL.splNativeSymbol(DEVNET) === 'test SOL' && SPL.splNativeSymbol(SOLANA_MAINNET_CAIP2) === 'SOL');
+  check('the engine’s default wording is unchanged: "Not enough SOL…"',
+    SPL_QUOTE_SENTENCES.notEnoughSol('5000', '0') ===
+      'Not enough SOL for this transfer: it needs 5000 lamports for the network fee and any new account\'s rent, and the account holds 0 lamports.');
+  // A send on mainnet stops at the readiness gate before the engine is
+  // asked, so the mainnet sentence is read through the engine's quote with
+  // the coin quoteSplSend would pass there.
+  const { quoteSplTokenTransfer } = await import('@shiba-wallet/chains-solana');
+  const mainnetPoor = await rejection(() =>
+    quoteSplTokenTransfer(fakeChain({ lamports: 1000n }).client, {
+      caip2: SOLANA_MAINNET_CAIP2, owner: ALICE.address, recipient: BOB.address, mint: USDC, amount: 1_000_000n,
+      nativeSymbol: SPL.splNativeSymbol(SOLANA_MAINNET_CAIP2),
+    }));
+  check('mainnet: "Not enough SOL for this transfer…", exact',
+    mainnetPoor?.message === 'Not enough SOL for this transfer: it needs 2044280 lamports for the network fee and any new account\'s rent, and the account holds 1000 lamports.',
+    mainnetPoor?.message);
+  check('quoteSplSend hands the network’s coin to the engine', SOURCE_SPL_EARLY().includes('    nativeSymbol: splNativeSymbol(params.caip2),\n'));
+}
+{
+  // Item 2: Max = the whole associated-account balance, from Home's row state.
+  const okRow = (associated, extra = {}) => ({ status: 'ok', associated, outside: 0n, outsideAccounts: 0, decimals: 6, sendRefusal: null, decimalsChanged: false, networkChainId: DEVNET, ...extra });
+  check('Max: 19 USDC held → "19"', SPL.splMaxAmountText(okRow(19_000_000n)) === '19');
+  check('Max: every base unit kept → "18.123456"', SPL.splMaxAmountText(okRow(18_123_456n)) === '18.123456');
+  check('Max: a balance below 0.000001 of a 9-decimal token is its exact figure, not Home’s "< 0.000001"',
+    SPL.splMaxAmountText(okRow(7n, { decimals: 9 })) === '0.000000007');
+  check('Max: a 0 balance gives "0"', SPL.splMaxAmountText(okRow(0n)) === '0');
+  check('Max: tokens in other token accounts are not counted (associated 1, outside 5 → "0.000001")',
+    SPL.splMaxAmountText(okRow(1n, { outside: 5_000_000n, outsideAccounts: 1 })) === '0.000001');
+  check('Max: nothing before the row is read, on a read error, or when the decimals changed',
+    SPL.splMaxAmountText(undefined) === null && SPL.splMaxAmountText({ status: 'error', message: 'x' }) === null &&
+      SPL.splMaxAmountText(okRow(5n, { decimalsChanged: true })) === null);
+  check('Max unavailable lines, exact',
+    SPL.splMaxUnavailableLine({ status: 'error', message: 'x' }) === 'Max could not read this account’s token balance just now. Type the amount, or try Max again.' &&
+      SPL.splMaxUnavailableLine(okRow(5n, { decimalsChanged: true })) ===
+        'Max is not available: the mint now reports other decimals than were recorded when this token was tracked. Remove the token and track it again.');
+  // Through the real row reader: Alice holds 5 USDC in her associated
+  // account and 0.25 USDC in another token account of the same mint.
+  const extra = base58.encode(new Uint8Array(32).fill(41));
+  const chain = fakeChain({ extraAccounts: { [extra]: { owner: SPL_TOKEN_PROGRAM, data: tokenAccountBytes({ mint: USDC, owner: ALICE.address, amount: 250_000n }), lamports: 1n } } });
+  const row = await SPL.readSplMaxRow(chain.client, ALICE.address, usdcDevnet, DEVNET);
+  check('Max through loadSplTokenRows: "5" (the associated account), not "5.25" (every account)',
+    row.status === 'ok' && SPL.splMaxAmountText(row) === '5', JSON.stringify(row, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)));
+  check('…and Home’s balance line reads the same 5 for that row', SPL.splManageBalanceLine(row, 'USDC', false) === 'Balance: 5 USDC');
+  const q = await quoteOn(fakeChain(), { amountText: SPL.splMaxAmountText(row) });
+  check('…the Max amount quotes the whole associated balance (5,000,000 base units)', q.quote.amount === 5_000_000n);
+  const zero = await SPL.readSplMaxRow(fakeChain({ aliceUsdc: null }).client, ALICE.address, usdcDevnet, DEVNET);
+  const zeroText = SPL.splMaxAmountText(zero);
+  const zeroQuote = await rejection(() => quoteOn(fakeChain({ aliceUsdc: null }), { amountText: zeroText }));
+  check('…no associated account: Max "0", and Review refuses it ("Enter an amount greater than zero.")',
+    zeroText === '0' && zeroQuote?.message === SPL_QUOTE_SENTENCES.zeroAmount, zeroQuote?.message);
+  const broken = await SPL.readSplMaxRow({ getTokenAccountsByOwnerBase64: async () => { throw new Error('down'); } }, ALICE.address, usdcDevnet, DEVNET);
+  check('…a failed listing becomes an error row (Max offers nothing)', broken.status === 'error' && SPL.splMaxAmountText(broken) === null);
+  const screen = readFileSync(resolve(HERE, '../src/screens/SolanaTokenSendScreen.tsx'), 'utf8');
+  check('the send form has a "Max" button that reads the row fresh and fills the amount',
+    screen.includes('<Button title="Max" variant="secondary" onPress={() => void fillMax()}') &&
+      screen.includes('const row = await readSplMaxRow(solanaClient(url), owner, token, endpoint.network.chainId);') &&
+      screen.includes('const text = splMaxAmountText(row);') &&
+      screen.includes('if (text === null) setMaxNote(splMaxUnavailableLine(row));\n      else setAmountText(text);'));
+}
+{
+  // Item 3: the private note on the Sent view, as on Bridge and Handle.
+  const screen = readFileSync(resolve(HERE, '../src/screens/SolanaTokenSendScreen.tsx'), 'utf8');
+  check('the Sent view renders TransactionNoteField with the network captured at sending and the signature',
+    screen.includes("import { NOTE_VIEW_SCROLL_PROPS, TransactionNoteField, dismissKeyboardThenClose } from '../components/TransactionNoteField';") &&
+      screen.includes('{sentNetwork ? <TransactionNoteField network={sentNetwork} txid={outcome.signature} userOpHash={null} /> : null}'));
+  check('…the network is captured from the quote when the send succeeds',
+    screen.includes('      setOutcome(result);\n      setSentNetwork(quote.caip2);\n      setPhase(\'success\');'));
+  check('…the Sent view’s ScrollView spreads NOTE_VIEW_SCROLL_PROPS',
+    screen.includes('<ScrollView key="spl-send-success" style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>'));
+  check('…Done closes through dismissKeyboardThenClose (one tap saves and closes)',
+    screen.includes('<Button title="Done" onPress={() => dismissKeyboardThenClose(() => navigation.goBack())} />') &&
+      !screen.includes('<Button title="Done" onPress={() => navigation.goBack()} />'));
+  const NOTES = await import('../src/wallet/notes.ts');
+  const SIG = '4abaH22978MmD5yX8PE32kLoRFQrZtAD1j147fkxJ5E241iTQ9M1hgZAouhHGhpXprZTw595eVXQf6pBkUZh442f';
+  check('notes.ts accepts the Solana devnet network and keeps a signature exactly (the note’s key)',
+    NOTES.normalizeNoteNetwork(DEVNET) === DEVNET && NOTES.normalizeTxId(DEVNET, SIG) === SIG && NOTES.normalizeTxId(SOLANA_MAINNET_CAIP2, SIG) === SIG);
+}
+
 console.log('check-spl-tokens: mutants of wallet/spl-tokens.ts are caught');
 // ---------------------------------------------------------------------------
 const SOURCE = readFileSync(SPL_PATH, 'utf8');
@@ -1158,6 +1247,24 @@ let caught = 0;
   const ok = M.splManageBalanceLine({ status: 'ok', associated: 19_000_000n, outside: 0n, outsideAccounts: 0, decimals: 6, sendRefusal: null, decimalsChanged: false, networkChainId: DEVNET }, 'USDC', true) === 'Balance: 19 USDC';
   caught += ok ? 1 : 0;
   check('mutant caught: a Manage Solana tokens balance visible under Hide amounts', ok);
+}
+{
+  // M15 (phase 24 follow-up, item 1): the coin not handed to the engine → devnet says "SOL" again.
+  const M = await mutant('    nativeSymbol: splNativeSymbol(params.caip2),\n', '');
+  const e = await rejection(() => M.quoteSplSend(fakeChain({ lamports: 1000n }).client, { caip2: DEVNET, url: 'https://devnet.example', owner: ALICE.address, recipient: BOB.address, token: usdcDevnet, amountText: '1.5' }));
+  const ok = e?.message?.startsWith('Not enough SOL for this transfer:') === true;
+  caught += ok ? 1 : 0;
+  check('mutant caught: "Not enough SOL" on devnet where the screens say "test SOL"', ok);
+}
+{
+  // M16 (item 2): Max counting every token account of the mint, not only the associated one.
+  const M = await mutant('  return formatUnits(state.associated, state.decimals, state.decimals);', '  return formatUnits(state.associated + state.outside, state.decimals, state.decimals);');
+  const extra = base58.encode(new Uint8Array(32).fill(41));
+  const chain = fakeChain({ extraAccounts: { [extra]: { owner: SPL_TOKEN_PROGRAM, data: tokenAccountBytes({ mint: USDC, owner: ALICE.address, amount: 250_000n }), lamports: 1n } } });
+  const row = await M.readSplMaxRow(chain.client, ALICE.address, usdcDevnet, DEVNET);
+  const ok = M.splMaxAmountText(row) === '5.25';
+  caught += ok ? 1 : 0;
+  check('mutant caught: Max filling in the total across all token accounts ("5.25") instead of the associated one', ok);
 }
 check(`at least six mutants, all caught (${caught} of ${mutants})`, mutants >= 6 && caught === mutants);
 

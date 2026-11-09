@@ -560,9 +560,11 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
   // wallet/spl-tokens.ts, which holds the gate). Appended at the end of the
   // table. Evidence: W1 / W2 (the device conditions every send shares: the
   // transfer is signed by the phrase account's Solana key after the device
-  // check), W9 (the switchboard that enforces this row) and W13 (every fact
-  // the quote decides on is read from one RPC provider). Listing and reading
-  // tracked Solana tokens is not gated: only the send is.
+  // check), W9 (the switchboard that enforces this row), W13 (every fact
+  // the quote decides on is read from one RPC provider) and T-93 (the
+  // threat-model row for Solana tokens: what the token layer verifies and
+  // its residuals). Listing and reading tracked Solana tokens is not gated:
+  // only the send is.
   {
     id: 'spl-tokens',
     title: 'Solana token sends (SPL Token and Token-2022)',
@@ -573,7 +575,7 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
       'transfer hook, non-transferable, paused, an adjusted display amount or an unknown extension) are refused by ' +
       'class, and a token with a transfer-fee setting is sent only with the fee shown before you approve. This wallet ' +
       'offers Solana token sends only on Solana devnet.',
-    evidence: ['W1', 'W2', 'W9', 'W13'],
+    evidence: ['W1', 'W2', 'W9', 'W13', 'T-93'],
     enforced: true,
   },
 ];

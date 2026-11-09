@@ -616,6 +616,42 @@ describe('quoteSplTokenTransfer', () => {
     }))).code).toBe('decimals-changed');
   });
 
+  it('names the network\'s coin in the not-enough-SOL refusal: "SOL" by default, "test SOL" when asked', async () => {
+    // The default (no nativeSymbol) keeps the sentence every older caller
+    // and the mainnet path show, byte for byte.
+    expect(SPL_QUOTE_SENTENCES.notEnoughSol('2044280', '100')).toBe(
+      'Not enough SOL for this transfer: it needs 2044280 lamports for the network fee and any new account\'s rent, and the account holds 100 lamports.',
+    );
+    expect(SPL_QUOTE_SENTENCES.notEnoughSol('2044280', '100', 'test SOL')).toBe(
+      'Not enough test SOL for this transfer: it needs 2044280 lamports for the network fee and any new account\'s rent, and the account holds 100 lamports.',
+    );
+    const poor = () => fakeClient(chainWith(mintBytes({}), CLASSIC), { balance: 100n }).client;
+    const ask = (caip2: string, nativeSymbol?: string) =>
+      quoteSplTokenTransfer(poor(), {
+        caip2, owner: sender.address, recipient: recipient.address, mint: MINT, amount: 1_000_000n,
+        ...(nativeSymbol === undefined ? {} : { nativeSymbol }),
+      });
+    expect(await refusal(ask(SOLANA_DEVNET_CAIP2, 'test SOL'))).toEqual({
+      code: 'not-enough-sol',
+      message: 'Not enough test SOL for this transfer: it needs 2044280 lamports for the network fee and any new account\'s rent, and the account holds 100 lamports.',
+    });
+    expect(await refusal(ask(SOLANA_MAINNET_CAIP2, 'SOL'))).toEqual({
+      code: 'not-enough-sol',
+      message: 'Not enough SOL for this transfer: it needs 2044280 lamports for the network fee and any new account\'s rent, and the account holds 100 lamports.',
+    });
+    // Without nativeSymbol the quote says "SOL" whatever the network.
+    expect((await refusal(ask(SOLANA_MAINNET_CAIP2))).message.startsWith('Not enough SOL for this transfer:')).toBe(true);
+  });
+
+  it('records the mainnet USDC mint as read on-chain', () => {
+    // Read on 2026-11-09 with getAccountInfo on two mainnet endpoints:
+    // classic SPL Token, 82 bytes, 6 decimals, initialized (tokenTransfer.ts
+    // records the read). The table's fields stay as they were.
+    const usdc = KNOWN_SOLANA_TOKENS.find((t) => t.caip2 === SOLANA_MAINNET_CAIP2 && t.symbol === 'USDC');
+    expect(usdc).toMatchObject({ mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', decimals: 6, program: 'spl-token' });
+    expect(usdc?.source).toBe('Circle, USDC contract addresses (Solana), fetched 2026-11-07; read on mainnet 2026-11-09');
+  });
+
   it('reads no epoch for a plain mint and skips creation when the account exists', async () => {
     const dest = tokenAccountBytes({ mint: MINT, owner: recipient.address, amount: 0n });
     const { client, calls } = fakeClient(chainWith(mintBytes({}), CLASSIC, { dest }));

@@ -140,7 +140,13 @@ export interface KnownSolanaToken {
  *   fetched 2026-11-07, row "Solana Devnet"). Token-2022, 6 decimals.
  * - USDC on mainnet EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v: Circle's
  *   same page, row "Solana" (also the CAIP-19 namespace document's example).
- *   NOT read on-chain by this slice.
+ *   Read on mainnet with getAccountInfo (base64, finalized) on 2026-11-09
+ *   02:48 UTC at slot 467155464 on api.mainnet-beta.solana.com and
+ *   solana-rpc.publicnode.com, byte-identical answers: owned by the classic
+ *   SPL Token program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA, 82 bytes,
+ *   6 decimals, initialized, with a mint authority and a freeze authority
+ *   set (parseMint and classifyMint: plain, no extensions). Its metadata
+ *   (name and symbol) was not read.
  * - EURC on devnet AND on mainnet, HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr:
  *   Circle's "EURC contract addresses" page
  *   (https://developers.circle.com/stablecoins/eurc-contract-addresses,
@@ -188,7 +194,7 @@ export const KNOWN_SOLANA_TOKENS: readonly KnownSolanaToken[] = Object.freeze([
     name: 'USD Coin',
     decimals: 6,
     program: 'spl-token',
-    source: 'Circle, USDC contract addresses (Solana), fetched 2026-11-07; not read on-chain',
+    source: 'Circle, USDC contract addresses (Solana), fetched 2026-11-07; read on mainnet 2026-11-09',
   },
   {
     caip2: SOLANA_DEVNET_CAIP2,
@@ -357,8 +363,11 @@ export const SPL_QUOTE_SENTENCES = Object.freeze({
     "The recipient's token account is set up for confidential transfers; this wallet cannot tell whether it accepts a plain transfer, so it does not send.",
   destinationMismatch:
     "The recipient's associated token account does not hold this token for this recipient. Nothing was sent.",
-  notEnoughSol: (needed: string, held: string): string =>
-    `Not enough SOL for this transfer: it needs ${needed} lamports for the network fee and any new account's rent, and the account holds ${held} lamports.`,
+  // nativeSymbol names the network's coin as the wallet shows it: "SOL" on
+  // mainnet (the default, so every older call reads as before) and
+  // "test SOL" on devnet. The amounts stay in lamports either way.
+  notEnoughSol: (needed: string, held: string, nativeSymbol: string = 'SOL'): string =>
+    `Not enough ${nativeSymbol} for this transfer: it needs ${needed} lamports for the network fee and any new account's rent, and the account holds ${held} lamports.`,
 });
 
 /**
@@ -549,9 +558,15 @@ export async function quoteSplTokenTransfer(
     mint: string;
     amount: bigint;
     expectedDecimals?: number;
+    /**
+     * The network's coin as the wallet names it in sentences ("SOL" on
+     * mainnet, "test SOL" on devnet). Only the not-enough-SOL refusal uses
+     * it; when absent the sentence says "SOL" as before.
+     */
+    nativeSymbol?: string;
   },
 ): Promise<SplTokenTransferQuote> {
-  const { caip2, owner, recipient, mint, amount, expectedDecimals } = params;
+  const { caip2, owner, recipient, mint, amount, expectedDecimals, nativeSymbol } = params;
   if (amount <= 0n) throw new SplTokenRefusal('zero-amount', SPL_QUOTE_SENTENCES.zeroAmount);
 
   const profile = await readMintProfile(client, mint);
@@ -664,7 +679,7 @@ export async function quoteSplTokenTransfer(
   if (held < lamportsNeeded) {
     throw new SplTokenRefusal(
       'not-enough-sol',
-      SPL_QUOTE_SENTENCES.notEnoughSol(lamportsNeeded.toString(), held.toString()),
+      SPL_QUOTE_SENTENCES.notEnoughSol(lamportsNeeded.toString(), held.toString(), nativeSymbol ?? 'SOL'),
     );
   }
 

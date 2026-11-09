@@ -254,8 +254,10 @@ for (const id of ['eoa-send', 'tokens', 'nft', 'swap', 'walletconnect', 'dogecoi
 // the layer yet and that Token-2022 extensions are refused by class.
 {
   const f = featureReadiness('spl-tokens');
-  check('spl-tokens is testnet-only, enforced, evidence W1 W2 W9 W13',
-    f.status === 'testnet-only' && f.enforced === true && f.evidence.join() === 'W1,W2,W9,W13', JSON.stringify(f));
+  check('spl-tokens is testnet-only, enforced, evidence W1 W2 W9 W13 T-93',
+    f.status === 'testnet-only' && f.enforced === true && f.evidence.join() === 'W1,W2,W9,W13,T-93', JSON.stringify(f));
+  check('spl-tokens: the reviewer line names the Solana tokens threat-model row T-93',
+    readinessEvidenceLine(f) === 'Checklist and findings: W1, W2, W9, W13, T-93.', readinessEvidenceLine(f));
   check('spl-tokens: allowed on Solana devnet only, refused on Solana mainnet and Ethereum mainnet',
     isFeatureAllowed('spl-tokens', 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1') && !isFeatureAllowed('spl-tokens', 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp') &&
       !isFeatureAllowed('spl-tokens', MAINNET) && isTestNetwork('solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1') && !isTestNetwork('solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'));
