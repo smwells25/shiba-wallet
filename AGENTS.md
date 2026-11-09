@@ -18857,3 +18857,76 @@ live; the pending list and spending limits for the Solana token send; the
 Solana mainnet SOL card offering Send at 0 SOL; the "Account name" field's
 Passwords bar on iOS (a cosmetic decision); the readiness memo's Solana
 staged-path proposal.
+
+## Phase 25 plan (started 2026-11-08 on "please begin next phase"): what the wallet already holds, shown and measured — NFTs live, a risk overview, a gains report, the Solana send finished, and the next research
+
+The Chairperson said to begin without naming a scope, so this plan is
+the CTO's proposal, recorded before any code; it can be redirected at
+any time and nothing in wave 1 is hard to undo. Selection rule as before:
+features not started or built-only that need no outside input and can be
+shown on the emulator, the account-abstraction angle first, plus the
+carry-overs the phase 24 status left open. Still input-gated and carried
+as they are: phase 24 item 2 (the mainnet-readiness track — a release
+signing key, the audit firm, budget and C1 scope, the git tag) and the
+Tropic Square Stage 3 (the section 12.1 answers, the chip read on the
+board). On hold by the Chairperson: a Spanish reviewer, the fiat
+off-ramp provider, the disclosure decision.
+
+0. Carry-overs: (a) an emulator re-check of this session's slices under
+   TalkBack — masked amounts spoken as "(amount hidden)" on the preview,
+   approvals, spending-limit, Send, Swap and staking screens; the Solana
+   token send's Max, its note field and the devnet "test SOL" refusal
+   live; (b) the Solana token send listed under "Pending on this phone"
+   with a signature-keyed record and a status poll (the registry is
+   EVM-shaped today), and spending limits counting it where the policy
+   engine allows — or a plain statement of why not; (c) the Solana
+   mainnet SOL card offering Send at 0 SOL (the rule Home already applies
+   to a 0 token balance); (d) the import screen's "Account name" field
+   and iOS's Passwords bar (a tag, if one exists that fits a name).
+1. NFTs proven live (features 39, 40, 41): the wallet now OWNS NFTs on
+   Ethereum Sepolia — the ENSv2 .eth registry's ERC-1155 name tokens for
+   qzv7hk2wmt.eth (Account 1) and xk9fdq4rvz.eth (the Kernel) — so the
+   gallery, the detail screen and the spam rule can be exercised with
+   real holdings through the saved indexer, and an ERC-1155 send of a
+   name token between two of this wallet's own accounts can be tried,
+   AFTER reading from ENS's contracts-v2 sources exactly what moving that
+   token does to the name's ownership and records (nothing sent until
+   that is established and stated on the confirm).
+2. Portfolio insights and risk overview (feature 99): one read-only screen
+   built only from data the wallet already reads — concentration by asset
+   and network, outstanding token approvals (unlimited ones first), the
+   phrase's protection state and the app lock, open or unknown
+   broadcasts, stale default endpoints, watched versus owned addresses,
+   test versus main networks — each line with its source and the honesty
+   rules of the portfolio screen (nothing invented where a read failed);
+   no new request beyond what Portfolio and Approvals make.
+3. A gains report (feature 84, the report half): a second export beside
+   the activity CSV — per asset, the realised and unrealised figures of
+   the profit-and-loss engine (average cost; the fees assumption; every
+   gap stated as a row, never a number), labelled an estimate and not tax
+   advice; the same RFC 4180 and formula-defusal rules as the CSV.
+4. Research only: lending and yield vaults on the test networks (features
+   61, 62) — which Aave v3 market and which ERC-4626 vaults exist on
+   Sepolia or the other profiles, read on-chain and from the protocols'
+   own deployment pages; what a smart-account deposit and withdraw would
+   need; what a CallPolicy could pin; a document with a go / no-go for a
+   stake-like slice.
+5. Research only: optional outbound address screening (feature 86) — the
+   public sanctions list's digital-currency addresses as a pinned
+   snapshot, how a warn-only check would run on the confirm screens,
+   what it can and cannot claim, and the compliance questions that are
+   the Chairperson's; and token-bound accounts (feature 45, ERC-6551) —
+   the registry's deployment verified on the wallet's networks and what
+   the wallet's ERC-1155 name tokens can and cannot do with it; two
+   documents, no code.
+6. Leadership refresh at the end: feature rows, the shareable page,
+   DEMO.md, the threat model, the readiness memo.
+
+Waves: 1 — (A) item 0b (pending-transactions.ts, spl-tokens.ts, the
+Solana send screen), (B) item 2 (a new screen and wallet module), (C)
+item 3 (notes.ts, pnl.ts), (D) item 4 and (E) item 5 (docs only), in
+parallel on disjoint files; the emulator pass for items 0a and 1 at the
+same time (one device driver); fixes after each pass; 6 last. Subagents
+on Opus.
+
+## Phase 25 progress
