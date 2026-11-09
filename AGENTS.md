@@ -18930,6 +18930,55 @@ same time (one device driver); fixes after each pass; 6 last. Subagents
 on Opus.
 
 ## Phase 25 progress
+- [x] Phase 25 polish — A LOG WINDOW THE ENDPOINT ALLOWS, AN UNDATED
+      READINESS REASON, "1 copy", THE REGISTRY'S TITLE ON APPROVALS, A HOME
+      LINK TO THE RISK OVERVIEW (commit 3da568a; 14 files, +546 / −39;
+      check-token-history 83 (was 59), check-approvals 307 (294), check-nfts
+      179 (171), check-home 132 (124), check-readiness and check-insights
+      pins changed in place; offline runner ALL GREEN in the CTO's isolated
+      worktree on HEAD 2139b10: checkout 0 / apply 0 / 14 files, the staged
+      patch id 2b200033…59cc equal to the agent's, engine 1,351, app 11,644
+      across 67 suites, lint 0/0, tsc clean; the pre-commit scan clean; one
+      hand mutant per item (two on token-history.ts) caught and restored
+      from byte copies; not seen on a device). (1) CORRECTION TO THE BRIEF:
+      the "search older" that failed in pass p25-emu1 was the APPROVALS
+      screen's "Search older with another endpoint", not Activity's
+      fallback (which has no such search). No default endpoint documents an
+      eth_getLogs range limit (api.pocket.network, docs.pocket.network's API
+      portal page and publicnode.com read 2026-11-09); a read-only probe of
+      Pocket's Sepolia endpoint refused 9,000 blocks with "-32602 query
+      block range exceeds server limit, narrow your filter: 5000" and served
+      5,000 and 5,001 blocks (also 5,000-block windows 20,000 and 60,000
+      blocks back). FIX: logRangeLimitFrom reads a limit ONLY from the two
+      recorded refusal wordings (Pocket's "narrow your filter: N" and Base
+      Sepolia's "eth_getLogs is limited to a 1,000 range"), a refused window
+      is asked once more at that size and the smaller size is kept for the
+      rest of the scan (token-history.ts carries it in the cursor as w;
+      approvals.ts as ApprovalScan.windowBlocks); pruned-history 4444 is a
+      depth refusal and is never retried; Activity's 72,000-block lookback
+      and the Approvals step of 8 windows unchanged (so a 5,000-block window
+      covers 40,000 per step); the other defaults' limits not established,
+      their windows left alone. (2) readiness.ts / en.ts / es.ts: "…have been
+      sent only on Solana devnet (USDC and EURC transfers between two
+      accounts of this wallet, from 2026-11-08 UTC, two of them creating the
+      recipient's token account), never on Solana mainnet; …" — every other
+      clause byte for byte; check-readiness's regex now refuses a count or a
+      single date; check-i18n has no exact pin of this entry but caught the
+      en.ts mutant. (3) nftTileSpokenLabel: "1 copy" for one, "N copies"
+      otherwise, "amount hidden" under Hide amounts; the visible "× N"
+      unchanged. (4) approvals.ts pinnedCollectionTitle gives the ENSv2 .eth
+      registry the gallery's title on Sepolia only (readLiveApprovals applies
+      it from the scan's own network because ApprovalsScreen passes none;
+      collectionsFromNfts takes an optional network). (5) HomeScreen: "Risk
+      overview" after Inbox in the Portfolio / Price alerts / Inbox row,
+      reusing insights.open and insights.open.hint, with no account-kind
+      condition (the route is on both allow lists); check-insights, outside
+      the agent's list, pinned "no Insights link on Home" and now pins
+      exactly one. Agent slip: one suite output written to /tmp and deleted
+      at once. UNVERIFIED (device): the Approvals search against live Pocket
+      through the app, Activity's narrowed paging, the tile label under
+      TalkBack, the four-link row's width, the Spanish lengths; Pocket's
+      limit may differ between its backends.
 - [x] Item 1, the honesty half — THE NFT SCREENS SAY WHEN A TOKEN IS THE ENS
       NAME ITSELF (commit e34a0e2; 13 files, one new —
       app/src/components/EnsNameTokenNotice.tsx; wallet/nfts.ts, send-nft.ts,
