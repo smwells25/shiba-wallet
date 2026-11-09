@@ -18701,6 +18701,60 @@ arrive; 6 last. Subagents on Opus.
       patch was applied into it, so one check-spl-tokens check failed there
       on the old dist until `npm run build` — a worktree that takes a patch
       touching packages/ must rebuild its dist before running app suites.
+- [x] THE IMPORT-KEY FIELD KEPT OUT OF iOS PASSWORD AUTOFILL, SEEN IN THE
+      SIMULATOR (commit 0f58ef5; 3 files, +59 / −8 — app/src/screens/
+      ImportKeyScreen.tsx, app/scripts/check-key-import.mjs 249 (was 247; two
+      new in-suite mutants), docs/DURESS_WALLET.md; offline runner ALL GREEN
+      in the CTO's isolated worktree on ccdc61c plus the 0e3ffc3 patch (the
+      content of HEAD 0e3ffc3): checkout 0 / apply 0 / 9 files, the staged
+      patch id 00e848dc…9702 equal to the agent's, engine 1,351, app 11,297
+      across 66 suites, lint 0/0, tsc clean; the pre-commit scan clean; two
+      hand mutants on the real screen file caught and restored cmp-equal; the
+      agent's own first after-run saw the same chains-solana stress timeout
+      (5,270 ms against 5,000 at load ~34; 99 / 99 alone) that 0e3ffc3 now
+      widens). THE FIELD: textContentType "none" → "oneTimeCode" with secure
+      entry and every other prop kept, and a comment giving 84deacd's facts
+      (RCTTextInputUtils.mm 188–189 maps "none" to an empty content type;
+      Apple's Password AutoFill page: untagged fields are typed by
+      heuristics; oneTimeCode mapped at line 216; a private key is not a
+      one-time code — the tag only keeps a password manager's saved copy
+      away from it; seen in the iOS 26.5 Simulator only). THE PIN now reads
+      the key field's own props, not the whole screen: plain secureTextEntry,
+      autocorrect / autocomplete / autofill / spell-check off, "oneTimeCode"
+      and no "none". THE DOCS: DURESS_WALLET section 8.2 says "oneTimeCode"
+      with the reason (84deacd, pass p24-iosfix2), its ImportKeyScreen line
+      reference 171–177 (was 153–159), and its pinned-props list now matches
+      check-duress.mjs (it had been missing autoCapitalize="none" and
+      maxLength={256}). THE SIMULATOR (the Debug dev client already built
+      from 377d68a in wt-ios2; a THROWAWAY wallet with no phrase word printed —
+      a filter hid every OCR line holding a BIP-39 word; Metro 8083 with lazy
+      bundling off; the Connect Hardware Keyboard option unticked): CONTROL at
+      af4fcf0 content (the served bundle confirmed "none") — focusing the key
+      field raised the keyboard with iOS's "Passwords" bar above it, no
+      "Use Strong Password?" sheet (screenshots ctl1 / ctl2 / ctl2s in the
+      session scratchpad p24-ioskey/shots); WITH THE FIX (Metro restarted
+      with --clear, the served bundle confirmed "oneTimeCode") — the keyboard
+      with no Passwords bar and no sheet on two separate focuses, three typed
+      letters as three dots, the screen's own invalid-key message (fix1 …
+      fix5s). NEW FINDING, left: the "Account name (optional)" field above
+      the key field still shows the Passwords bar (name1s.png) — most likely
+      iOS reads it as the user-name half of a login beside the secure field
+      (an inference; whether it did so before the change was not checked);
+      not a secret field, so a tag is a cosmetic decision for a later pass.
+      Observation: the keyboard covers the key field itself while it is
+      focused, in the control and with the fix. CLEAN-UP: the throwaway
+      wiped in-app (onboarding shown), the phrase file deleted with rm -P,
+      Metro 8083 stopped, the device deleted, Simulator quit (its process
+      terminated; AppleScript quit did not take); Metro 8081 and the Android
+      emulator untouched; wt-ios2 left with the five 84deacd files at af4fcf0
+      content (equal to 84deacd) plus this patch unstaged plus its prebuild
+      edits; the Simulator's "Connect Hardware Keyboard" left UNTICKED —
+      tick it again before a pass that needs it. Slips: one tap hit the dev
+      Tools bubble (the dev menu, nothing changed); a scroll search ran past
+      the tool's time limit while only scrolling and ended at the wipe
+      button, tapped on purpose for the clean-up. UNVERIFIED: a real iPhone,
+      a hardware keyboard, VoiceOver, Paste or Scan into the field, a release
+      build.
 
 ## Phase 24 status (2026-11-08)
 
@@ -18787,3 +18841,19 @@ at 0 SOL; mainnet USDC's Solana mint not read on-chain; the threat-model
 ratings of T-91 to T-93 and F-85 to F-89; the readiness row spl-tokens could
 cite T-93 among its evidence; the readiness memo's Solana staged-path bullet
 is a proposal awaiting the Chairperson.
+
+ADDENDUM (2026-11-08, later the same day): of the follow-ups above, these
+are now done and recorded in the entries just before this section — the
+dfb5eba iOS fixes seen in the Simulator (pass p24-ios2) with the one
+remaining sheet fixed (84deacd) and the import-key field tagged the same
+way ({h}); masked amounts spoken as "(amount hidden)" on every remaining
+screen (0fbebc7); the engine's not-enough-SOL refusal naming the devnet
+coin, Max and a private note on the Solana token send, T-93 on the
+spl-tokens readiness row and the mainnet USDC mint read once (c781efa); the
+spl-tokens readiness reason naming the live devnet sends (0e3ffc3); the
+threat-model ratings of T-91 to T-93 and F-85 to F-89 (bfbebba). Still
+open from that list: a Token-2022 transfer and one with a non-zero fee
+live; the pending list and spending limits for the Solana token send; the
+Solana mainnet SOL card offering Send at 0 SOL; the "Account name" field's
+Passwords bar on iOS (a cosmetic decision); the readiness memo's Solana
+staged-path proposal.
