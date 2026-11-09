@@ -27,7 +27,9 @@ export function dismissKeyboardThenClose(close: () => void): void {
  * "Note (private, this phone only)" on the success screens (feature 87,
  * wallet/notes.ts): Send (both success views), Swap (both success views),
  * Sessions (the progress view after an install, a revoke, a test operation
- * or a recurring payment) and the WalletConnect sent view.
+ * or a recurring payment), the WalletConnect sent view, Staking (both
+ * success views), Bridge (the sent view), the wallet handle's sent view and
+ * the Solana token send's sent view.
  *
  * Saved when the field loses focus, on the keyboard's Done and when the
  * screen goes away; an unchanged text is not saved again. The view around

@@ -570,8 +570,13 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
     title: 'Solana token sends (SPL Token and Token-2022)',
     status: 'testnet-only',
     reason:
-      'No Solana token transfer through this wallet’s token layer has been sent on any network yet: the transfers ' +
-      'are built and checked offline only. Token-2022 tokens whose extensions this wallet cannot show honestly (a ' +
+      // Reworded on 2026-11-08 after passes p24-unblock and p24-solfix2 (the
+      // live devnet sends); the id is on the i18n fixture's "new" list, so the
+      // English and Spanish entries changed in place (en.ts, es.ts).
+      'Solana token transfers through this wallet’s token layer have been sent only on Solana devnet (three ' +
+      'transfers of 1 USDC or 1 EURC between two accounts of this wallet on 2026-11-08 UTC, two of them creating ' +
+      'the recipient’s token account), never on Solana mainnet; no Token-2022 token and no token with a non-zero ' +
+      'transfer fee has been sent. Token-2022 tokens whose extensions this wallet cannot show honestly (a ' +
       'transfer hook, non-transferable, paused, an adjusted display amount or an unknown extension) are refused by ' +
       'class, and a token with a transfer-fee setting is sent only with the fee shown before you approve. This wallet ' +
       'offers Solana token sends only on Solana devnet.',

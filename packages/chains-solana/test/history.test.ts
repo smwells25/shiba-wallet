@@ -528,5 +528,5 @@ describe('followed token accounts (pass p24-solfix2)', () => {
       for (let i = 1; i < seen.length; i++) expect(all.get(seen[i]!)!).toBeLessThanOrEqual(all.get(seen[i - 1]!)!);
       expect(perPage.every((n) => n <= SOLANA_HISTORY_MAX_SIGNATURE_REQUESTS)).toBe(true);
     }
-  });
+  }, 20_000); // 30 rounds: 4.3 s with a host load average of 76 (verify run, 2026-11-08); the 5 s default timed out once under three concurrent runners
 });

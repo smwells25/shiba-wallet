@@ -261,8 +261,13 @@ for (const id of ['eoa-send', 'tokens', 'nft', 'swap', 'walletconnect', 'dogecoi
   check('spl-tokens: allowed on Solana devnet only, refused on Solana mainnet and Ethereum mainnet',
     isFeatureAllowed('spl-tokens', 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1') && !isFeatureAllowed('spl-tokens', 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp') &&
       !isFeatureAllowed('spl-tokens', MAINNET) && isTestNetwork('solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1') && !isTestNetwork('solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'));
-  check('spl-tokens reason: no transfer sent on any network yet; Token-2022 extensions refused by class; Solana devnet only',
-    /has been sent on any network yet/.test(f.reason) && /refused by class/.test(f.reason) && /only on Solana devnet\.$/.test(f.reason), f.reason);
+  // Reworded on 2026-11-08 after the live devnet sends of passes p24-unblock
+  // and p24-solfix2: the reason names what was sent (devnet only) and what was
+  // not (no Token-2022 token, no non-zero transfer fee), never "any network".
+  check('spl-tokens reason: sent only on Solana devnet (three transfers, dated); no Token-2022 or fee-bearing token sent; Token-2022 extensions refused by class; Solana devnet only',
+    /have been sent only on Solana devnet \(three transfers of 1 USDC or 1 EURC between two accounts of this wallet on 2026-11-08 UTC/.test(f.reason) &&
+      /never on Solana mainnet; no Token-2022 token and no token with a non-zero transfer fee has been sent\./.test(f.reason) &&
+      !/any network yet/.test(f.reason) && /refused by class/.test(f.reason) && /only on Solana devnet\.$/.test(f.reason), f.reason);
 }
 check('dogecoin-send names W6 (the one real broadcast)', featureReadiness('dogecoin-send').evidence.includes('W6'));
 check('swap names W7 (a live 0x quote)', featureReadiness('swap').evidence.includes('W7'));
