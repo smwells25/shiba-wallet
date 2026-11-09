@@ -15,7 +15,7 @@
 // React-free with explicit .ts extensions, so scripts/check-spl-tokens.mjs
 // runs this exact file under Node's type stripping.
 import type { FungibleAsset, HistoryEntry } from '@shiba-wallet/core';
-import { KNOWN_SOLANA_TOKENS } from '@shiba-wallet/chains-solana';
+import { KNOWN_SOLANA_TOKENS, SOLANA_DEVNET_CAIP2, SOLANA_MAINNET_CAIP2 } from '@shiba-wallet/chains-solana';
 import { t } from '../i18n/index.ts';
 import { maskAmount } from '../config/prefs.ts';
 import { formatUnits } from './balances.ts';
@@ -117,4 +117,28 @@ export function solanaActivitySentence(
  */
 export function isSolanaTokenCompanion(entry: HistoryEntry, entries: readonly HistoryEntry[]): boolean {
   return entry.contract === undefined && entries.some((other) => other.id === entry.id && other.contract !== undefined);
+}
+
+/**
+ * The CAIP-2 id of the network an Activity slot's transactions are actually
+ * on, which is the network its transaction notes are keyed by (wallet/
+ * notes.ts keys a note by network + transaction id) and the network the CSV
+ * export names. The EVM slot follows the active EVM profile. The Solana slot
+ * is listed under the mainnet id even while Settings → Developer → "Use
+ * Solana devnet" is on, so on devnet it is the DEVNET id: the Solana token
+ * send and the SOL send save their notes under the devnet id, and a note
+ * saved there must show on the Activity row of the same transaction (emulator
+ * pass p25-emu1, 2026-11-09: the screen used the route's mainnet id, so the
+ * note never showed, "Add note" filed it under mainnet and the CSV file name
+ * said mainnet). Every other slot is its own chain. Notes saved earlier under
+ * the mainnet id belong to mainnet transactions and are read there unchanged;
+ * nothing is migrated.
+ */
+export function activitySlotNetwork(
+  routeChainId: string,
+  options: { evmSlot: boolean; evmCaip2: string; solanaDevnet: boolean },
+): string {
+  if (options.evmSlot) return options.evmCaip2;
+  if (routeChainId === SOLANA_MAINNET_CAIP2 && options.solanaDevnet) return SOLANA_DEVNET_CAIP2;
+  return routeChainId;
 }

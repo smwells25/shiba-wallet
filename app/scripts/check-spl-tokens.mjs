@@ -1473,5 +1473,119 @@ let caught = 0;
 }
 check(`at least six mutants, all caught (${caught} of ${mutants})`, mutants >= 6 && caught === mutants);
 
+// ---------------------------------------------------------------------------
+// Pass p25-emu1 (2026-11-09): a note typed on the Solana token send's Sent view
+// is saved under the DEVNET id (SolanaTokenSendScreen keys it by quote.caip2),
+// but Activity read notes by the route's MAINNET id, so the note never showed,
+// "Add note" on a devnet row filed it under mainnet, and the CSV file name said
+// mainnet. Activity now keys notes, the CSV's network and its file name by
+// solana-activity.ts activitySlotNetwork (the slot's ACTIVE network).
+console.log('check-spl-tokens: Activity notes and the CSV keyed by the active Solana network (pass p25-emu1)');
+{
+  const NOTES = await import('../src/wallet/notes.ts');
+  const SIG = '4abaH22978MmD5yX8PE32kLoRFQrZtAD1j147fkxJ5E241iTQ9M1hgZAouhHGhpXprZTw595eVXQf6pBkUZh442f';
+  const ACCOUNT_1 = 'EK5jKrBRwvQXXsSERGN6jEoYaofE2PNiZWQoaCLtrYPv';
+  const sendSrc = readFileSync(resolve(HERE, '../src/wallet/send.ts'), 'utf8');
+  check('the helper\'s ids equal the app\'s: mainnet = send.ts SOLANA_CHAIN_ID, devnet = defaults.ts SOLANA_DEVNET_CAIP2 and the devnet network entry',
+    sendSrc.includes(`export const SOLANA_CHAIN_ID = '${SOLANA_MAINNET_CAIP2}';`) && DEFAULTS.SOLANA_DEVNET_CAIP2 === ENGINE_DEVNET &&
+      DEFAULTS.SOLANA_DEVNET_NETWORK.chainId === ENGINE_DEVNET && DEVNET === ENGINE_DEVNET);
+  const slot = (S, chain, devnet, evmCaip2 = 'eip155:11155111') =>
+    S.activitySlotNetwork(chain, { evmSlot: chain === 'eip155:1', evmCaip2, solanaDevnet: devnet });
+  check('the Solana slot with devnet on is keyed by the devnet id; off, by mainnet',
+    slot(SOLACT, SOLANA_MAINNET_CAIP2, true) === DEVNET && slot(SOLACT, SOLANA_MAINNET_CAIP2, false) === SOLANA_MAINNET_CAIP2);
+  check('the EVM slot follows the active EVM profile whatever the devnet switch says',
+    slot(SOLACT, 'eip155:1', true) === 'eip155:11155111' && slot(SOLACT, 'eip155:1', false, 'eip155:1') === 'eip155:1');
+  const BTC = 'bip122:000000000019d6689c085ae165831e93';
+  check('the Bitcoin and Dogecoin slots stay on their own chain with devnet on', slot(SOLACT, BTC, true) === BTC);
+
+  // The screen's three uses, run through the real notes module.
+  const store = memoryStore();
+  // 1. A note saved where the Solana token send saves it (quote.caip2 = devnet) shows on the devnet row.
+  await NOTES.saveNote(DEVNET, { txid: SIG }, 'p25 devnet token send', { store });
+  const index1 = NOTES.indexNotes((await NOTES.loadNotes(store)).notes);
+  const shown = (S, devnet) => NOTES.findNote(index1, slot(S, SOLANA_MAINNET_CAIP2, devnet), SIG, [])?.text ?? null;
+  check('a note saved under the devnet id shows on the devnet Activity row', shown(SOLACT, true) === 'p25 devnet token send');
+  check('the same note does not show on the mainnet slot (it belongs to a devnet transaction)', shown(SOLACT, false) === null);
+  check('the old rule (the route\'s mainnet id) is the bug: it did not find the note', NOTES.findNote(index1, SOLANA_MAINNET_CAIP2, SIG, []) === null);
+  // 2. "Add note" on a devnet row saves under the network the screen holds: the devnet id.
+  const store2 = memoryStore();
+  const addNetwork = slot(SOLACT, SOLANA_MAINNET_CAIP2, true);
+  check('"Add note" is offered on a devnet row (the signature is a valid id on the devnet network)', NOTES.normalizeTxId(addNetwork, SIG) === SIG);
+  await NOTES.saveNote(addNetwork, { txid: SIG, userOpHash: null }, 'added from Activity', { store: store2 });
+  const book2 = await NOTES.loadNotes(store2);
+  const index2 = NOTES.indexNotes(book2.notes);
+  check('"Add note" on a devnet row files the note under the devnet id, not mainnet',
+    book2.notes.length === 1 && book2.notes[0].network === DEVNET && NOTES.findNote(index2, DEVNET, SIG, [])?.text === 'added from Activity' &&
+      NOTES.findNote(index2, SOLANA_MAINNET_CAIP2, SIG, []) === null);
+  // 3. The CSV: its file name and network cell carry the devnet id, and its note column finds the note.
+  const csvNetwork = slot(SOLACT, SOLANA_MAINNET_CAIP2, true);
+  const fileName = NOTES.activityExportFileName(csvNetwork, ACCOUNT_1, new Date('2026-11-09T12:00:00Z'));
+  check('the CSV file name carries the devnet id when devnet is on',
+    fileName === 'shiba-activity_solana-EtWTRABZaYq6iMfeYKouRu166VU2xqa1_EK5jKr-rYPv_2026-11-09.csv', fileName);
+  const csvRows = NOTES.activityExportRows({
+    network: csvNetwork,
+    networkLabel: 'Solana devnet',
+    entries: [{ id: SIG, timestamp: 1_793_000_000, confirmed: true, direction: 'out', amount: 0n, assetAmount: 1_000_000n, assetDecimals: 6, assetSymbol: 'USDC', contract: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU', fee: 5000n }],
+    nativeSymbol: 'test SOL',
+    nativeDecimals: 9,
+    notes: index1,
+    explorerUrlFor: () => null,
+    tokenIdWord: 'mint',
+  });
+  check('the CSV names the devnet network and carries the note in its note column',
+    csvRows.length === 1 && csvRows[0][0] === `Solana devnet (${DEVNET})` && csvRows[0][csvRows[0].length - 1] === 'p25 devnet token send', JSON.stringify(csvRows[0]));
+  // The mainnet case unchanged: a note saved earlier under the mainnet id for a mainnet transaction.
+  const store3 = memoryStore();
+  await NOTES.saveNote(SOLANA_MAINNET_CAIP2, { txid: SIG }, 'a mainnet note', { store: store3 });
+  const index3 = NOTES.indexNotes((await NOTES.loadNotes(store3)).notes);
+  check('mainnet unchanged: with devnet off a note saved under the mainnet id shows, and the file name says mainnet',
+    NOTES.findNote(index3, slot(SOLACT, SOLANA_MAINNET_CAIP2, false), SIG, [])?.text === 'a mainnet note' &&
+      NOTES.activityExportFileName(slot(SOLACT, SOLANA_MAINNET_CAIP2, false), ACCOUNT_1, new Date('2026-11-09T12:00:00Z')) ===
+        'shiba-activity_solana-5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp_EK5jKr-rYPv_2026-11-09.csv');
+
+  // The screen uses the helper for every note and CSV use, and the old rule is gone.
+  const activityNotesPinned = (src) =>
+    src.includes('const noteNetwork = activitySlotNetwork(chainId, { evmSlot: isEvmSlot, evmCaip2: evmChain.caip2, solanaDevnet });') &&
+    !src.includes('const noteNetwork = isEvmSlot ? evmChain.caip2 : chainId;') &&
+    src.includes('findNote(noteIndex, noteNetwork, id,') &&
+    src.includes('      network: noteNetwork,\n      networkLabel,') &&
+    src.includes('fileName: () => activityExportFileName(noteNetwork, account.address),') &&
+    src.includes('normalizeTxId(noteNetwork, item.id)') &&
+    src.includes('                      network: noteNetwork,\n') &&
+    !/findNote\([^)]*\bchainId\b/.test(src) && !/activityExportFileName\(\s*chainId/.test(src);
+  const activitySrc = readFileSync(resolve(HERE, '../src/screens/ActivityScreen.tsx'), 'utf8');
+  check('ActivityScreen keys its notes, the "Add note" target, the CSV network and file name by activitySlotNetwork', activityNotesPinned(activitySrc));
+  // Source mutant: the old rule restored in the screen.
+  const oldRule = activitySrc.replace(
+    'const noteNetwork = activitySlotNetwork(chainId, { evmSlot: isEvmSlot, evmCaip2: evmChain.caip2, solanaDevnet });',
+    'const noteNetwork = isEvmSlot ? evmChain.caip2 : chainId;',
+  );
+  const okS = oldRule !== activitySrc && !activityNotesPinned(oldRule);
+  solactMutants += 1;
+  solactCaught += okS ? 1 : 0;
+  check('mutant caught: ActivityScreen keying Solana notes by the route\'s mainnet id again', okS);
+  // Source mutant: the CSV file name named by the route id.
+  const fileMutant = activitySrc.replace('activityExportFileName(noteNetwork, account.address)', 'activityExportFileName(chainId, account.address)');
+  const okF = fileMutant !== activitySrc && !activityNotesPinned(fileMutant);
+  solactMutants += 1;
+  solactCaught += okF ? 1 : 0;
+  check('mutant caught: the CSV file name taken from the route\'s chain id', okF);
+
+  // Mutants of the helper itself.
+  const N1 = await solactMutant('  if (routeChainId === SOLANA_MAINNET_CAIP2 && options.solanaDevnet) return SOLANA_DEVNET_CAIP2;\n', '');
+  const okN1 = NOTES.findNote(index1, slot(N1, SOLANA_MAINNET_CAIP2, true), SIG, []) === null;
+  solactCaught += okN1 ? 1 : 0;
+  check('mutant caught: the devnet switch ignored (the devnet note does not show)', okN1);
+  const N2 = await solactMutant('  if (routeChainId === SOLANA_MAINNET_CAIP2 && options.solanaDevnet) return', '  if (options.solanaDevnet) return');
+  const okN2 = slot(N2, BTC, true) !== BTC;
+  solactCaught += okN2 ? 1 : 0;
+  check('mutant caught: the devnet id applied to a non-Solana slot', okN2);
+  const N3 = await solactMutant('  if (options.evmSlot) return options.evmCaip2;\n', '');
+  const okN3 = slot(N3, 'eip155:1', true) !== 'eip155:11155111';
+  solactCaught += okN3 ? 1 : 0;
+  check('mutant caught: the EVM slot no longer following the active EVM profile', okN3);
+  check(`pass p25-emu1 mutants all caught (${solactCaught} of ${solactMutants} solana-activity and source mutants in total)`, solactCaught === solactMutants);
+}
+
 console.log(`\ncheck-spl-tokens: ${passed} passed, ${failed} failed (${mutants} mutants)`);
 process.exit(failed === 0 ? 0 : 1);

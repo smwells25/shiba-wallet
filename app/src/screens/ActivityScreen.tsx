@@ -43,6 +43,7 @@ import {
 } from '../wallet/history';
 import { EVM_CHAIN_ID, SOLANA_CHAIN_ID } from '../wallet/send';
 import {
+  activitySlotNetwork,
   isSolanaTokenCompanion,
   labelSolanaEntry,
   solanaActivitySentence,
@@ -920,9 +921,12 @@ export function ActivityScreen({ navigation, route }: Props) {
 
   // Transaction notes (feature 87, wallet/notes.ts) are keyed by the network
   // the transaction is on: the active EVM profile for the EVM slot (as the
-  // contacts and the decoder), the chain itself otherwise. Re-read on focus
-  // so a note saved on the Send success screen shows on return.
-  const noteNetwork = isEvmSlot ? evmChain.caip2 : chainId;
+  // contacts and the decoder), Solana devnet for the Solana slot while
+  // devnet is on (the token and SOL sends save their notes there; pass
+  // p25-emu1), the chain itself otherwise. The same id names the network in
+  // the CSV export and its file name. Re-read on focus so a note saved on
+  // the Send success screen shows on return.
+  const noteNetwork = activitySlotNetwork(chainId, { evmSlot: isEvmSlot, evmCaip2: evmChain.caip2, solanaDevnet });
   const [noteBook, setNoteBook] = useState<NoteBook | null>(null);
   const [notesVersion, setNotesVersion] = useState(0);
   const reloadNotes = useCallback(() => {
