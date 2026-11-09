@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, StyleSheet, Text, View } from 'react-native';
 import { Button } from '../components';
+import { shareTextFile } from '../components/RecordFileActions';
+import { useI18n } from '../i18n/useI18n';
 import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
 import type { FungibleAsset } from '@shiba-wallet/core';
@@ -28,6 +30,7 @@ import {
   type PnlTokenAsset,
 } from '../wallet/pnl';
 import type { PortfolioSlot } from '../wallet/portfolio';
+import { ACTIVITY_CSV_MIME_TYPE, ACTIVITY_CSV_UTI, GAINS_EXPORT_DIRECTORY, gainsCsv, gainsExportFileName } from '../wallet/notes';
 
 /** The intro of the profit-and-loss section. */
 export const PNL_INTRO =
@@ -151,6 +154,8 @@ function PnlPanel({
 }) {
   const theme = useTheme();
   const { hideAmounts, showFiat } = usePrefs();
+  const { t, tx } = useI18n();
+  const [exporting, setExporting] = useState(false);
   const slot = subject.slot;
   const token = subject.kind === 'token' ? subject.asset : null;
   const priceId = token ? token.priceId : nativePriceAssetId(slot.slot, slot.networkChainId)!;
@@ -280,6 +285,41 @@ function PnlPanel({
         ? computeTokenPnl({ ...common, asset: token })
         : computeNativePnl({ ...common, asset: { priceId, symbol, decimals } });
 
+  // The gains report (phase 25 item 3): formats the result on screen, as
+  // computed above, with nothing recomputed and no request made; Hide
+  // amounts does not apply to the file (the note under the button says so).
+  const exportGains = () => {
+    if (!result) return;
+    setExporting(true);
+    const contents = gainsCsv({
+      result,
+      asset: token ?? { priceId, symbol, decimals },
+      network: slot.networkChainId,
+      networkLabel: slot.label,
+      account: address,
+      smartAccount: smartAddress,
+      prices,
+      entriesLoaded: entries.length,
+      hasMore,
+      nowMs,
+    });
+    shareTextFile({
+      directory: GAINS_EXPORT_DIRECTORY,
+      fileName: () => gainsExportFileName(slot.networkChainId, token ?? { symbol }),
+      contents: () => contents,
+      mimeType: ACTIVITY_CSV_MIME_TYPE,
+      UTI: ACTIVITY_CSV_UTI,
+      dialogTitle: t('pnl.export.dialog'),
+      unavailableMessage: t('pnl.export.unavailable'),
+    }).then(
+      () => setExporting(false),
+      (e: unknown) => {
+        setExporting(false);
+        Alert.alert(tx('File not shared'), e instanceof Error ? e.message : String(e));
+      },
+    );
+  };
+
   return (
     <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
       {activeAccount.watchOnly ? <Text style={[styles.hint, { color: theme.warningText }]}>{PNL_WATCHED_NOTE}</Text> : null}
@@ -320,6 +360,17 @@ function PnlPanel({
             </Text>
           ))
         : null}
+      {result ? (
+        <View style={styles.exportBlock}>
+          <Button
+            title={exporting ? tx('Preparing the file…') : t('pnl.export')}
+            variant="secondary"
+            disabled={exporting}
+            onPress={exportGains}
+          />
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{t('pnl.export.note')}</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -334,4 +385,5 @@ const styles = StyleSheet.create({
   figure: { flexDirection: 'row', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 },
   figureLabel: { fontSize: 14 },
   figureText: { fontSize: 14, fontWeight: '600', fontVariant: ['tabular-nums'] },
+  exportBlock: { gap: 6, marginTop: 4 },
 });

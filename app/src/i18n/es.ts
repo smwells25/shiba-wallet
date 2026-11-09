@@ -2041,4 +2041,9 @@ export const es: Readonly<Partial<Record<StringId, string>>> = {
   'activity.solana.nativeOut': 'En la misma transacción también salieron {amount} {symbol} de esta cuenta, además de la comisión de red (una transferencia de tokens puede pagar el alquiler de la nueva cuenta de token del destinatario)',
   'activity.solana.nativeIn': 'En la misma transacción también llegaron {amount} {symbol} a esta cuenta',
   'activity.row.feeHidden': 'comisión oculta',
+  // ---- Phase 25 item 3: the gains report's export button on the profit-and-loss panel (screens/PortfolioViews.tsx; the file itself is English, wallet/notes.ts gainsCsv) ----
+  'pnl.export': 'Exportar el informe de ganancias (.csv)',
+  'pnl.export.note': 'Exporta estas cifras como un archivo .csv mediante el menú de compartir: cada compra y venta contada con el precio usado, los totales, y cada laguna y suposición como una fila de texto. El archivo contiene la dirección de la cuenta, los importes exactos y las cifras en dólares estadounidenses en texto legible, aunque Ocultar importes esté activado. Las cifras son estimaciones para tu información, no registros fiscales ni contables. La copia temporal en este teléfono se borra un minuto después de cerrarse el menú de compartir.',
+  'pnl.export.dialog': 'Guardar el informe de ganancias',
+  'pnl.export.unavailable': 'Compartir archivos no está disponible en este dispositivo, así que no se pudo exportar el informe de ganancias.',
 };

@@ -6,6 +6,8 @@ import type { KeyValueStore } from './tokens.ts';
 import { sanitizeDisplayName } from './names.ts';
 import { formatUnits } from './balances.ts';
 import { isSmartAccountEntry } from './smart-account-history.ts';
+import { PNL_ESTIMATE_NOTE, pnlFigureLines, pnlHistoryLoadedLine, pnlMethodNote, toleranceText, type PnlAsset, type PnlPriceHistory, type PnlResult, type PnlTokenAsset } from './pnl.ts';
+import { moneyCents, type Money } from './portfolio.ts';
 
 /**
  * Transaction notes and receipts (feature 87).
@@ -686,4 +688,214 @@ export function activityExportFileName(network: string, address: string, now: Da
 export function closeNoteView(dismissKeyboard: () => void, close: () => void): void {
   dismissKeyboard();
   close();
+}
+
+// ---------------------------------------------------------------------------
+// Gains report (phase 25 item 3, feature 84 — the report half)
+// ---------------------------------------------------------------------------
+//
+// A second export beside the activity CSV, offered on the profit-and-loss
+// panel once a result (native coin or tracked token) has been worked out.
+// It FORMATS what pnl.ts computePnl already returned and recomputes nothing:
+// the transaction rows are the result's `counted` entries (each with the
+// CoinGecko point the pool used), the summary rows are pnlFigureLines (the
+// panel's own lines, never masked: Hide amounts does not apply to a file
+// the user exports), and every gap and note is a row of text, never a
+// number. Same CSV rules as the activity export: RFC 4180 (every field
+// quoted, quotes doubled, CRLF), OWASP's formula defusal on every cell, the
+// same share-and-delete-after-a-minute rule (RecordFileActions
+// shareTextFile) and the same MIME type and UTI. The text is English in
+// every language, like the activity export.
+
+export const GAINS_EXPORT_DIRECTORY = 'gains-export';
+
+/** One column set for every row (RFC 4180 asks for the same number of fields on every line). */
+export const GAINS_CSV_HEADER: readonly string[] = [
+  'section',
+  'item',
+  'date (UTC)',
+  'asset',
+  'direction',
+  'amount',
+  'price (US dollars per whole unit)',
+  'price point time (UTC)',
+  'price point distance',
+  'value (US dollars)',
+  'average cost before the sale (US dollars per whole unit)',
+  'realised profit or loss (US dollars)',
+  'transaction id',
+  'text',
+];
+
+/** The report header's sentence on rounding and the apostrophe (pinned by check-pnl). */
+export const GAINS_FIGURES_NOTE =
+  'Every amount is exact. Each US dollar figure is rounded to the cent on its own, so a column of them may not add up ' +
+  'to the totals, which are the exact totals rounded once. A figure below zero starts with a minus sign, which this ' +
+  'file marks with a leading apostrophe (as it does for any cell starting with =, +, -, @, a tab or a line break) so that a spreadsheet ' +
+  'cannot read it as a formula.';
+
+export interface GainsReportInput {
+  /** What computeNativePnl / computeTokenPnl returned for the figures on screen. */
+  result: PnlResult;
+  /** The asset it was worked out for; a token carries its contract. */
+  asset: PnlAsset | PnlTokenAsset;
+  /** CAIP-2 id of the network ("eip155:1"). */
+  network: string;
+  /** Its display label ("Ethereum"). */
+  networkLabel: string;
+  /** The account whose history was loaded. */
+  account: string;
+  /** Its smart account when that history was merged in, else null. */
+  smartAccount: string | null;
+  /** The price history the engine was given (only its granularity is read here). */
+  prices: PnlPriceHistory;
+  /** The number of history entries loaded, and whether older ones can still be searched. */
+  entriesLoaded: number;
+  hasMore: boolean;
+  /** The engine's clock for this result (Unix ms). */
+  nowMs: number;
+}
+
+/** "2026-10-12T01:00:00Z"; milliseconds kept only when not zero (a vendor point can carry them). */
+function isoUtc(ms: number): string {
+  return new Date(ms).toISOString().replace(/\.000Z$/, 'Z');
+}
+
+/** "0 s", "12 min 5 s", "2 h 0 min 0 s", then whether the point is before or after the transaction. */
+export function priceDistanceText(pointMs: number, txMs: number): string {
+  const totalSec = Math.round(Math.abs(pointMs - txMs) / 1000);
+  if (totalSec === 0) return '0 s (at the transaction’s time)';
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  const span = h > 0 ? `${h} h ${m} min ${s} s` : m > 0 ? `${m} min ${s} s` : `${s} s`;
+  return `${span} ${pointMs < txMs ? 'before' : 'after'} the transaction`;
+}
+
+/** US dollars rounded to the cent (moneyCents, half away from zero): "1633.33", "-0.27", "0.00". */
+export function usdDecimal(m: Money): string {
+  const cents = moneyCents(m);
+  const a = (cents < 0n ? -cents : cents).toString().padStart(3, '0');
+  return `${cents < 0n ? '-' : ''}${a.slice(0, -2)}.${a.slice(-2)}`;
+}
+
+function gainsAssetCell(asset: PnlAsset | PnlTokenAsset): string {
+  return 'contract' in asset ? tokenAssetCell(asset.symbol, asset.contract) : asset.symbol;
+}
+
+function priceSourceText(input: GainsReportInput): string {
+  const lead = 'CoinGecko’s US dollar price history, read from its free service, which serves the past 365 days';
+  if (input.result.kind === 'ok' && input.result.counted.length === 0) {
+    return `${lead}; no price history was needed, because no purchase or sale was counted.`;
+  }
+  if (input.prices.status !== 'ok') return `${lead}; no price history was used for this report (the rows below say why).`;
+  const g = input.prices.granularity;
+  const points = g === '5-minute' ? 'points every 5 minutes' : `${g} points`;
+  return (
+    `${lead}; ${points} for this range. Each transaction is valued at the point nearest to its time, never more than ` +
+    `${toleranceText(g)} away; the point used and its distance are in each transaction row.`
+  );
+}
+
+/** Every row of the report (without the column header), in file order. */
+export function gainsReportRows(input: GainsReportInput): string[][] {
+  const cols = GAINS_CSV_HEADER.length;
+  const row = (section: string, item: string, cells: Partial<Record<number, string>> = {}): string[] => {
+    const out = new Array<string>(cols).fill('');
+    out[0] = section;
+    out[1] = item;
+    for (const [k, v] of Object.entries(cells)) out[Number(k)] = v ?? '';
+    return out;
+  };
+  const TEXT = cols - 1;
+  const { result, asset } = input;
+  const kind = 'contract' in asset ? 'token' : 'native';
+  const assetCell = gainsAssetCell(asset);
+  const rows: string[][] = [
+    row('report', 'Report', { [TEXT]: `Shiba Wallet gains report: profit and loss for ${asset.symbol}` }),
+    row('report', 'Estimate', { [TEXT]: PNL_ESTIMATE_NOTE }),
+    row('report', 'Account', {
+      [TEXT]: input.smartAccount ? `${input.account} and its smart account ${input.smartAccount}` : input.account,
+    }),
+    row('report', 'Network', { [TEXT]: `${input.networkLabel} (${input.network})` }),
+    row('report', 'Asset', { 3: assetCell, [TEXT]: assetCell }),
+    row('report', 'Method', { [TEXT]: pnlMethodNote(kind, asset.symbol) }),
+    row('report', 'Price source', { [TEXT]: priceSourceText(input) }),
+    row('report', 'History', { [TEXT]: pnlHistoryLoadedLine(input.entriesLoaded, input.hasMore) }),
+    row('report', 'Worked out', { 2: isoUtc(input.nowMs), [TEXT]: `The figures were worked out at ${isoUtc(input.nowMs)}.` }),
+    row('report', 'Figures', { [TEXT]: GAINS_FIGURES_NOTE }),
+    row('report', 'Result', {
+      [TEXT]:
+        result.kind === 'ok'
+          ? `Worked out from ${result.purchases === 1 ? '1 purchase' : `${result.purchases} purchases`} and ${result.sales === 1 ? '1 sale' : `${result.sales} sales`}.`
+          : 'Not worked out: the gap rows below say what is missing, and no figure is given.',
+    }),
+  ];
+  if (result.kind === 'ok') {
+    for (const c of result.counted) {
+      const sale = c.kind === 'sale';
+      rows.push(
+        row('transaction', sale ? 'Sale' : 'Purchase', {
+          2: isoUtc(c.timestampSec * 1000),
+          3: assetCell,
+          4: sale ? 'Sent (counted as a sale)' : 'Received (counted as a purchase)',
+          5: formatUnits(c.amount, asset.decimals, asset.decimals),
+          6: c.price,
+          7: isoUtc(c.priceTimeMs),
+          8: priceDistanceText(c.priceTimeMs, c.timestampSec * 1000),
+          9: usdDecimal(c.value),
+          10: c.averageCostBefore ? usdDecimal(c.averageCostBefore) : '',
+          11: c.realised ? usdDecimal(c.realised) : '',
+          12: c.id,
+          [TEXT]: sale
+            ? 'Proceeds: the amount at the price shown. The realised profit or loss is the proceeds minus the average cost of the amount sold.'
+            : 'Cost: the amount at the price shown.',
+        }),
+      );
+    }
+    // The panel's own figure lines, in its order, unmasked; the value column
+    // carries the same Money rounded to the cent.
+    const values: Record<string, Money | null> = {
+      'Value at today’s price': result.marketValue,
+      'Cost of what is held': result.costBasis,
+      'Average cost': result.averageCost,
+      'Unrealised profit or loss': result.unrealised,
+      'Realised profit or loss': result.realised,
+      'Assumed network fees (not in realised)': result.assumedFeesCost,
+    };
+    for (const line of pnlFigureLines(result, asset, false)) {
+      const cells: Partial<Record<number, string>> = { 3: line.label === 'Counted' ? '' : assetCell, [TEXT]: line.text };
+      if (line.label === 'Held now') cells[5] = formatUnits(result.held, asset.decimals, asset.decimals);
+      const money = values[line.label];
+      if (money) cells[9] = usdDecimal(money);
+      if (line.label === 'Assumed network fees (not in realised)') {
+        cells[5] = formatUnits(result.assumedFees, asset.decimals, asset.decimals);
+        cells[TEXT] = result.assumedFeesNote ? `${line.text}. ${result.assumedFeesNote}` : line.text;
+      }
+      rows.push(row('summary', line.label, cells));
+    }
+  } else {
+    for (const reason of result.reasons) rows.push(row('gap', 'Gap', { [TEXT]: reason }));
+  }
+  for (const note of result.notes) rows.push(row('note', 'Note', { [TEXT]: note }));
+  return rows;
+}
+
+/** The whole gains report: the column header, then every row. */
+export function gainsCsv(input: GainsReportInput): string {
+  return csvDocument([GAINS_CSV_HEADER, ...gainsReportRows(input)]);
+}
+
+/**
+ * shiba-gains_<network>_<asset>_<date>.csv, e.g.
+ * shiba-gains_eip155-1_ETH_2026-10-12.csv or, for a token,
+ * shiba-gains_eip155-1_USDC-0xa0b8-eb48_2026-10-25.csv (the short contract,
+ * since a symbol alone can be claimed by any contract). Only letters, digits
+ * and hyphens appear between the underscores.
+ */
+export function gainsExportFileName(network: string, asset: Pick<PnlTokenAsset, 'symbol'> & { contract?: string }, now: Date = new Date()): string {
+  const safe = (text: string) => text.replace(/[^A-Za-z0-9-]/g, '-');
+  const part = asset.contract ? `${asset.symbol}-${asset.contract.slice(0, 6)}-${asset.contract.slice(-4)}` : asset.symbol;
+  const date = now.toISOString().slice(0, 10);
+  return `shiba-gains_${safe(network)}_${safe(part)}_${date}.csv`;
 }

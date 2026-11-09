@@ -12,8 +12,12 @@
 // second slice: a tracked token's price history by contract (the request,
 // the cache keyed by contract, the recorded keyless USDC answer in
 // packages/prices/test/fixtures driving exact token figures), which tokens
-// get a button (pnlTokenChoices) and the panel's source. Ends with mutants
-// written from scratch copies of pnl.ts and prices.ts, each caught.
+// get a button (pnlTokenChoices) and the panel's source. Phase 25 item 3:
+// the gains report — the counted purchases and sales on the result, the
+// file's header block byte for byte, its transaction, summary (the panel's
+// own lines), gap and note rows, the defusal, the file name and the panel's
+// export button. Ends with mutants written from scratch copies of pnl.ts,
+// prices.ts and notes.ts, each caught.
 //
 //   export PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH"
 //   node scripts/check-pnl.mjs
@@ -22,6 +26,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as L from '../src/wallet/pnl.ts';
+import * as N from '../src/wallet/notes.ts';
 import { formatMoney, moneyEquals, moneyOf, moneySub, moneySum } from '../src/wallet/portfolio.ts';
 import { fetchPriceHistory, historySourceFor, resetPriceHistoryCache, resetSharedPriceProvider } from '../src/wallet/prices.ts';
 
@@ -478,6 +483,29 @@ const amt = (base) => ({ n: base, d: U });
     // 1,200/1,500 of it held = $1,199.49…; realised 300 × 0.99968485… − $299.87… = +$0.03…;
     // value 1,200 × $0.9998 = $1,199.76; unrealised +$0.26994… → +$0.27.
     JSON.stringify(['1200 USDC', '$1,199.76', '$1,199.49', '$1.00 per USDC', '+$0.27', '+$0.03', '2 purchases, 1 sale']), JSON.stringify(ur.kind === 'ok' && L.pnlFigureLines(ur, USDC_ASSET, false).map((l) => l.text)));
+  // Phase 25 item 3: the gains report of the recorded USDC case (its rows are the result's counted entries).
+  {
+    const usdcCsv = N.gainsCsv({
+      result: ur, asset: USDC_ASSET, network: 'eip155:1', networkLabel: 'Ethereum', account: ME, smartAccount: null,
+      prices: usdcInput.prices, entriesLoaded: usdcEntries.length, hasMore: false, nowMs: NOW_T,
+    });
+    const rowsU = usdcCsv.split('\r\n').filter((l) => l !== '').map((l) => l.slice(1, -1).split('","'));
+    const txU = rowsU.filter((x) => x[0] === 'transaction');
+    const cell = `USDC (contract ${USDC})`;
+    check('gains report (USDC): the counted entries carry the fixture’s digits and points, oldest first',
+      ur.kind === 'ok' && ur.counted.map((c) => `${c.kind}:${c.id}:${c.price}:${c.priceTimeMs}`).join() ===
+        `purchase:0xu1:0.9995026714754317:${tA * 1000},purchase:0xu2:0.9997198080018516:${tB * 1000},sale:0xu3:0.9996848575625291:${tC * 1000}`);
+    check('gains report (USDC): three transaction rows naming the exact contract, the exact amounts and the CoinGecko digits',
+      txU.length === 3 && txU.every((x) => x[3] === cell) && txU.map((x) => `${x[5]}|${x[6]}`).join() ===
+        '1000|0.9995026714754317,500|0.9997198080018516,300|0.9996848575625291' && rowsU.find((x) => x[1] === 'Asset')[13] === cell, JSON.stringify(txU));
+    check('gains report (USDC): the sale’s average cost before it and its realised figure are the result’s, to the cent',
+      ur.kind === 'ok' && txU[2][9] === N.usdDecimal(ur.counted[2].value) && txU[2][10] === '1.00' && txU[2][11] === N.usdDecimal(ur.realised) && txU[2][11] === '0.03');
+    check('gains report (USDC): the token method sentence and the summary lines the panel shows, no assumed-fees row',
+      rowsU.find((x) => x[1] === 'Method')[13] === L.pnlMethodNote('token', 'USDC') &&
+        JSON.stringify(rowsU.filter((x) => x[0] === 'summary').map((x) => x[13])) ===
+          JSON.stringify(L.pnlFigureLines(ur, USDC_ASSET, false).map((l) => N.defuseFormula(l.text))) &&
+        !rowsU.some((x) => x[1] === 'Assumed network fees (not in realised)'));
+  }
   check('the notes name the contract counted and the coin left out', ur.kind === 'ok' &&
     ur.notes.includes(`Only transfers of the tracked USDC contract ${USDC} are counted.`) &&
     ur.notes.includes('1 transfer of the network’s own coin or of other tokens is not part of these USDC figures.'), JSON.stringify(ur.notes));
@@ -606,6 +634,170 @@ console.log('check-pnl: an empty first page is not "older ones exist" (pass p20b
 }
 
 // ===========================================================================
+console.log('check-pnl: the gains report (phase 25 item 3, feature 84 — the report half)');
+// ===========================================================================
+// The engine's result now carries every counted purchase and sale as the
+// pool valued it (PnlCountedEntry) and the assumed-fees note; notes.ts
+// gainsCsv formats that result and recomputes nothing. Pinned here: the
+// counted entries of the native base case and of the recorded USDC case,
+// the file's header block byte for byte, the transaction, summary, gap and
+// note rows, the formula defusal and RFC 4180 quoting on every cell, the
+// file name, that the summary rows are the panel's own figure lines, that
+// Hide amounts does not reach the file, and that exporting changes no
+// figure. Mutants at the end of the file.
+const big = (_k, v) => (typeof v === 'bigint' ? `${v}n` : v);
+const snapshot = (x) => JSON.stringify(x, big);
+const ETH_ASSET = { priceId: 'eip155:1/slip44:60', symbol: 'ETH', decimals: 18 };
+const gainsInput = (result, extra = {}) => ({
+  result,
+  asset: ETH_ASSET,
+  network: 'eip155:1',
+  networkLabel: 'Ethereum',
+  account: ME,
+  smartAccount: SMART,
+  prices: base.prices,
+  entriesLoaded: baseEntries.length,
+  hasMore: false,
+  nowMs: NOW,
+  ...extra,
+});
+const parseCsv = (text) => {
+  // Every field is quoted (RFC 4180): split on CRLF, then on "," between quoted fields.
+  const lines = text.split('\r\n');
+  return { lines, rows: lines.filter((l) => l !== '').map((l) => l.slice(1, -1).split('","').map((f) => f.replace(/""/g, '"'))) };
+};
+{
+  check('the native result carries every counted purchase and sale, oldest first (two purchases, one sale; the own transfer not counted)',
+    r.kind === 'ok' && r.counted.length === 3 && r.counted.map((c) => `${c.kind}:${c.id}`).join() === 'purchase:0x1,purchase:0x2,sale:0x3', snapshot(r.kind === 'ok' && r.counted));
+  const [c1, c2, c3] = r.kind === 'ok' ? r.counted : [];
+  check('…each with its exact amount, the CoinGecko digits used and the point’s time (on the hour, nearest the transaction)',
+    c1.amount === 2n * ETH && c1.price === '2000' && c1.priceTimeMs === t1 * 1000 &&
+      c2.amount === ETH && c2.price === '3000' && c2.priceTimeMs === t2 * 1000 &&
+      c3.amount === (3n * ETH) / 2n && c3.price === '4000' && c3.priceTimeMs === t3 * 1000 && c3.timestampSec === t3);
+  check('…a purchase’s value is its cost, with no sale fields', moneyEquals(c1.value, usd(4000n)) && moneyEquals(c2.value, usd(3000n)) &&
+    c1.averageCostBefore === null && c1.costOfSold === null && c1.realised === null);
+  check('…the sale: proceeds $6,000, average cost before it $2,333.33… per ETH, cost of the 1.5 sold $3,500, realised +$2,500 (= the result’s realised, its only sale)',
+    moneyEquals(c3.value, usd(6000n)) && moneyEquals(c3.averageCostBefore, usd(7000n, 3n)) && moneyEquals(c3.costOfSold, usd(3500n)) &&
+      moneyEquals(c3.realised, usd(2500n)) && moneyEquals(c3.realised, r.realised));
+  check('…the assumed-fees note is on the result and is the very note in its notes', r.kind === 'ok' && r.assumedFeesNote !== null &&
+    r.assumedFeesNote.startsWith('0.1 ETH that the loaded history shows as received is no longer held') && r.notes.includes(r.assumedFeesNote));
+  check('…the method and estimate sentences are the exported constants, at the head of the notes (unchanged text)', r.kind === 'ok' &&
+    r.notes[0] === L.pnlMethodNote('native', 'ETH') && r.notes[4] === L.PNL_ESTIMATE_NOTE &&
+    L.PNL_ESTIMATE_NOTE === 'These figures are estimates for your information, not tax or accounting records.' &&
+    L.pnlMethodNote('native', 'ETH') === 'Method: average cost. Each purchase adds coins and their cost to one pool; each sale, and each fee, removes coins at the pool’s average cost.');
+  check('…an ok result’s keys are the old ones plus counted and assumedFeesNote only', r.kind === 'ok' &&
+    JSON.stringify(Object.keys(r)) === JSON.stringify(['kind', 'held', 'costBasis', 'averageCost', 'marketValue', 'unrealised', 'realised', 'assumedFees', 'assumedFeesCost', 'purchases', 'sales', 'notes', 'counted', 'assumedFeesNote']));
+
+  const before = snapshot(r);
+  const csv = N.gainsCsv(gainsInput(r));
+  check('exporting changes no figure of the result (deep-equal before and after)', snapshot(r) === before);
+  const { lines, rows } = parseCsv(csv);
+  check('RFC 4180: CRLF after every line incl. the last, every field quoted, the same 14 fields on every line',
+    csv.endsWith('\r\n') && !/[^\r]\n/.test(csv) && lines[lines.length - 1] === '' &&
+      rows.every((row) => row.length === 14) && lines.filter((l) => l !== '').every((l) => l.startsWith('"') && l.endsWith('"')));
+  check('the column header line, byte for byte', lines[0] ===
+    '"section","item","date (UTC)","asset","direction","amount","price (US dollars per whole unit)","price point time (UTC)","price point distance","value (US dollars)","average cost before the sale (US dollars per whole unit)","realised profit or loss (US dollars)","transaction id","text"', lines[0]);
+  const E = `,${new Array(11).fill('""').join(',')},`;
+  check('the header block, byte for byte (report, estimate, account, network, asset, method, price source, history, time, figures, result)',
+    lines[1] === `"report","Report"${E}"Shiba Wallet gains report: profit and loss for ETH"` &&
+      lines[2] === `"report","Estimate"${E}"These figures are estimates for your information, not tax or accounting records."` &&
+      lines[3] === `"report","Account"${E}"${ME} and its smart account ${SMART}"` &&
+      lines[4] === `"report","Network"${E}"Ethereum (eip155:1)"` &&
+      lines[5] === '"report","Asset","","ETH","","","","","","","","","","ETH"' &&
+      lines[6] === `"report","Method"${E}"Method: average cost. Each purchase adds coins and their cost to one pool; each sale, and each fee, removes coins at the pool’s average cost."` &&
+      lines[7] === `"report","Price source"${E}"CoinGecko’s US dollar price history, read from its free service, which serves the past 365 days; hourly points for this range. Each transaction is valued at the point nearest to its time, never more than 3 hours away; the point used and its distance are in each transaction row."` &&
+      lines[8] === `"report","History"${E}"4 entries of history loaded, which is all of it."` &&
+      lines[9] === '"report","Worked out","2026-10-12T02:00:00Z","","","","","","","","","","","The figures were worked out at 2026-10-12T02:00:00Z."' &&
+      lines[10] === `"report","Figures"${E}"${N.GAINS_FIGURES_NOTE}"` &&
+      lines[11] === `"report","Result"${E}"Worked out from 2 purchases and 1 sale."`, lines.slice(1, 12).join('\n'));
+  const tx = rows.filter((row) => row[0] === 'transaction');
+  check('one transaction row per counted entry, oldest first', tx.length === 3 && tx.map((x) => x[12]).join() === '0x1,0x2,0x3');
+  check('a purchase row: date, asset, direction, exact amount, the price digits, the point and its distance, the cost',
+    JSON.stringify(tx[0]) === JSON.stringify(['transaction', 'Purchase', new Date(t1 * 1000).toISOString().replace('.000Z', 'Z'), 'ETH', 'Received (counted as a purchase)', '2', '2000',
+      new Date(t1 * 1000).toISOString().replace('.000Z', 'Z'), '0 s (at the transaction’s time)', '4000.00', '', '', '0x1', 'Cost: the amount at the price shown.']), JSON.stringify(tx[0]));
+  check('the sale row: proceeds, the average cost before it and its realised gain against that cost',
+    tx[2][1] === 'Sale' && tx[2][4] === 'Sent (counted as a sale)' && tx[2][5] === '1.5' && tx[2][6] === '4000' && tx[2][9] === '6000.00' &&
+      tx[2][10] === '2333.33' && tx[2][11] === '2500.00' &&
+      tx[2][13] === 'Proceeds: the amount at the price shown. The realised profit or loss is the proceeds minus the average cost of the amount sold.', JSON.stringify(tx[2]));
+  const summary = rows.filter((row) => row[0] === 'summary');
+  const panelLines = L.pnlFigureLines(r, ETH_ASSET, false);
+  // The text column holds the panel's own text; a signed figure ("+$1,633.33") starts with "+", so the
+  // shared formula defusal gives it a leading apostrophe in the file, as for every cell.
+  check('the summary rows ARE the panel’s figure lines, label and text, in its order (held, value, cost, average, unrealised, realised, fees, counted)',
+    summary.length === panelLines.length && summary.every((row, i) => row[1] === panelLines[i].label && (row[1] === 'Assumed network fees (not in realised)' ? row[13].startsWith(`${panelLines[i].text}. `) : row[13] === N.defuseFormula(panelLines[i].text))),
+    JSON.stringify(summary.map((x) => [x[1], x[13]])));
+  check('…a signed figure keeps its sign in the file, defused: "\'+$1,633.33" and "\'+$2,500.00"', summary[4][13] === "'+$1,633.33" && summary[5][13] === "'+$2,500.00");
+  check('…with the exact held amount and each US dollar figure to the cent',
+    JSON.stringify(summary.map((x) => [x[5], x[9]])) === JSON.stringify([['1.4', ''], ['', '4900.00'], ['', '3266.67'], ['', '2333.33'], ['', '1633.33'], ['', '2500.00'], ['0.1', '233.33'], ['', '']]), JSON.stringify(summary.map((x) => [x[5], x[9]])));
+  check('…the assumed-fees row states its assumption in the row itself',
+    summary[6][13] === `0.1 ETH, cost $233.33. ${r.assumedFeesNote}` && summary[6][13].includes('If that assumption is wrong, these figures are wrong.'));
+  check('every note follows as a row of text, and an ok result has no gap row',
+    JSON.stringify(rows.filter((row) => row[0] === 'note').map((x) => x[13])) === JSON.stringify(r.notes) && !rows.some((row) => row[0] === 'gap'));
+  check('Hide amounts never reaches the file: no mask in it, and the exporter takes no hidden flag',
+    !csv.includes('••••') && !/hidden|hideAmounts/.test(readFileSync(join(HERE, '..', 'src/wallet/notes.ts'), 'utf8').split('// Gains report (phase 25')[1] ?? 'hidden'));
+
+  // A loss: the formula defusal marks a figure below zero with an apostrophe; RFC 4180 doubles a quote.
+  const lossEntries = [entry('0x9', t3, 'out', ETH, SHOP), entry('0x8', t1, 'in', 2n * ETH, EXCHANGE)];
+  const loss = L.computeNativePnl({ ...base, entries: lossEntries, prices: { status: 'ok', points: points.map((p) => ({ ...p, price: p.timeMs < (t3 - H / 2) * 1000 ? '2000' : '1500' })), granularity: 'hourly' }, balance: ETH });
+  const lossRows = parseCsv(N.gainsCsv(gainsInput(loss, { entriesLoaded: 2 }))).rows;
+  const lossSale = lossRows.find((x) => x[1] === 'Sale');
+  check('a loss: the sale’s realised −$500 is written "-500.00", defused to "\'-500.00" (OWASP), as are the summary’s negative figures',
+    loss.kind === 'ok' && lossSale[11] === "'-500.00" && lossRows.find((x) => x[1] === 'Realised profit or loss')[9] === "'-500.00" &&
+      lossRows.find((x) => x[1] === 'Realised profit or loss')[13] === '−$500.00', JSON.stringify(lossSale));
+  const hostile = L.computeNativePnl({ ...base, entries: [entry('=HYPERLINK("http://x")', t1, 'in', ETH, EXCHANGE)], balance: ETH, smartAccount: null });
+  const hostileCsv = N.gainsCsv(gainsInput(hostile, { smartAccount: null, entriesLoaded: 1 }));
+  check('a hostile transaction id is defused and its quotes doubled: "\'=HYPERLINK(""http://x"")"',
+    hostile.kind === 'ok' && hostileCsv.includes('"\'=HYPERLINK(""http://x"")"') && !hostileCsv.includes(',"=HYPERLINK'));
+
+  // A gap result: one row per gap, as text, never a number.
+  const gapResult = L.computeNativePnl({ ...base, hasMore: true, balance: null });
+  const gapRows = parseCsv(N.gainsCsv(gainsInput(gapResult, { hasMore: true }))).rows;
+  const gaps = gapRows.filter((x) => x[0] === 'gap');
+  check('a gap result: one "gap" row per reason the engine gave, the sentence in the text column and every other cell empty',
+    gapResult.kind === 'gap' && gaps.length === gapResult.reasons.length && gaps.length >= 2 &&
+      gaps.every((row, i) => row[1] === 'Gap' && row[13] === gapResult.reasons[i] && row.slice(2, 13).every((cell) => cell === '')), JSON.stringify(gaps));
+  check('…no transaction or summary row, the result row says no figure is given, the notes still follow',
+    !gapRows.some((x) => x[0] === 'transaction' || x[0] === 'summary') &&
+      gapRows.find((x) => x[1] === 'Result')[13] === 'Not worked out: the gap rows below say what is missing, and no figure is given.' &&
+      JSON.stringify(gapRows.filter((x) => x[0] === 'note').map((x) => x[13])) === JSON.stringify(gapResult.notes) &&
+      gapRows.find((x) => x[1] === 'History')[13] === '4 entries of history loaded; older ones exist.');
+  check('…the estimate sentence and the method head a gap report too',
+    gapRows[2][1] === 'Estimate' && gapRows[2][13] === L.PNL_ESTIMATE_NOTE && gapRows[6][1] === 'Method' && gapRows[6][13] === L.pnlMethodNote('native', 'ETH'));
+  const noPrices = L.computeNativePnl({ ...base, prices: { status: 'failed', message: 'HTTP 503' } });
+  check('…a report whose price history failed says no price history was used',
+    parseCsv(N.gainsCsv(gainsInput(noPrices, { prices: { status: 'failed', message: 'HTTP 503' } }))).rows.find((x) => x[1] === 'Price source')[13] ===
+      'CoinGecko’s US dollar price history, read from its free service, which serves the past 365 days; no price history was used for this report (the rows below say why).');
+  const noTrades = L.computeNativePnl({ ...base, entries: [], balance: 0n, prices: { status: 'not-requested' } });
+  check('…an ok result with nothing counted says no price history was needed',
+    noTrades.kind === 'ok' && noTrades.counted.length === 0 &&
+      parseCsv(N.gainsCsv(gainsInput(noTrades, { prices: { status: 'not-requested' }, entriesLoaded: 0 }))).rows.find((x) => x[1] === 'Price source')[13].endsWith('no price history was needed, because no purchase or sale was counted.'));
+
+  const offHour = L.computeNativePnl({ ...base, entries: [entry('0xoff', t1 + 1_200, 'in', ETH, EXCHANGE)], balance: ETH, smartAccount: null });
+  const offRow = parseCsv(N.gainsCsv(gainsInput(offHour, { smartAccount: null, entriesLoaded: 1 }))).rows.find((x) => x[0] === 'transaction');
+  check('a transaction 20 minutes after the hour: the point used is the hour before, and the row says so ("20 min 0 s before the transaction")',
+    offHour.kind === 'ok' && offHour.counted[0].priceTimeMs === t1 * 1000 && offRow[7] === new Date(t1 * 1000).toISOString().replace('.000Z', 'Z') &&
+      offRow[8] === '20 min 0 s before the transaction' && N.priceDistanceText(0, 7_265_000) === '2 h 1 min 5 s before the transaction' &&
+      N.priceDistanceText(90_000, 0) === '1 min 30 s after the transaction', JSON.stringify(offRow));
+  check('usdDecimal rounds to the cent half away from zero, a minus sign below zero, no grouping',
+    N.usdDecimal(usd(9800n, 3n)) === '3266.67' && N.usdDecimal(usd(-1n, 200n)) === '-0.01' && N.usdDecimal(usd(1n, 1000n)) === '0.00' && N.usdDecimal(usd(1234567n)) === '1234567.00');
+  check('the file name: shiba-gains_<network>_<asset>_<date>.csv, a token with its short contract',
+    N.gainsExportFileName('eip155:1', { symbol: 'ETH' }, new Date(NOW)) === 'shiba-gains_eip155-1_ETH_2026-10-12.csv' &&
+      N.gainsExportFileName('eip155:1', { symbol: 'USDC', contract: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48' }, new Date(NOW_T)) === 'shiba-gains_eip155-1_USDC-0xa0b8-eb48_2026-10-25.csv' &&
+      N.gainsExportFileName('eip155:1', { symbol: 'U/S D' }, new Date(NOW)) === 'shiba-gains_eip155-1_U-S-D_2026-10-12.csv');
+  const panel = readFileSync(join(HERE, '..', 'src/screens/PortfolioViews.tsx'), 'utf8');
+  check('the panel offers the export only once a result is worked out, ok or gap (never while it is loading)',
+    panel.includes("{result ? (\n        <View style={styles.exportBlock}>") && panel.includes('    if (!result) return;'));
+  check('…it formats the result on screen: gainsCsv with the same result, asset, prices, loaded count and clock, and no Hide amounts flag',
+    panel.includes('    const contents = gainsCsv({\n      result,\n      asset: token ?? { priceId, symbol, decimals },') &&
+      panel.includes('      prices,\n      entriesLoaded: entries.length,\n      hasMore,\n      nowMs,\n    });') &&
+      !/gainsCsv\(\{[^}]*hide/i.test(panel));
+  check('…through the shared share-and-delete helper, in its own directory, with the activity CSV’s MIME type and UTI and the gains file name',
+    panel.includes('      directory: GAINS_EXPORT_DIRECTORY,') && panel.includes('      mimeType: ACTIVITY_CSV_MIME_TYPE,\n      UTI: ACTIVITY_CSV_UTI,') &&
+      panel.includes('fileName: () => gainsExportFileName(slot.networkChainId, token ?? { symbol }),') && N.GAINS_EXPORT_DIRECTORY === 'gains-export');
+  check('…and its note says the file is in clear text even under Hide amounts (pnl.export.note)', panel.includes("{t('pnl.export.note')}"));
+}
+
+// ===========================================================================
 console.log('Mutation checks (scratch copies of pnl.ts)');
 // ===========================================================================
 const MUTANT_DIR = join(HERE, `.mutants-pnl-${process.pid}`);
@@ -694,6 +886,40 @@ async function importMutant(from, to, relPath = 'src/wallet/pnl.ts', more = []) 
     check('mutant (the history cache keyed without the contract: another contract’s prices used) is caught',
       urls.length === 1 && daiRes.status === 'ok' && daiRes.points.length === 49);
   }
+}
+
+// Phase 25 item 3: mutants of the gains report (pnl.ts's counted entries; notes.ts's exporter).
+{
+  const ETHA = { priceId: 'eip155:1/slip44:60', symbol: 'ETH', decimals: 18 };
+  const inputFor = (res, more = {}) => ({ result: res, asset: ETHA, network: 'eip155:1', networkLabel: 'Ethereum', account: ME, smartAccount: SMART, prices: base.prices, entriesLoaded: 4, hasMore: false, nowMs: NOW, ...more });
+  const g1 = await importMutant('    counted.push({ ...row, kind: \'sale\', averageCostBefore: moneyScale(cost, wholeUnit, qty), costOfSold: costOut, realised: saleRealised });',
+    '    counted.push({ ...row, kind: \'sale\', averageCostBefore: moneyScale(cost, wholeUnit, qty), costOfSold: costOut, realised: null });');
+  const rg1 = g1.computeNativePnl(base);
+  check('mutant (a sale’s realised figure not recorded) is caught', rg1.kind === 'ok' && rg1.counted[2].realised === null && !N.gainsCsv(inputFor(rg1)).includes('"2333.33","2500.00","0x3"'));
+  const g2 = await importMutant('      else priced.push({ entry: e, price: point.price, priceTimeMs: point.timeMs });', '      else priced.push({ entry: e, price: point.price, priceTimeMs: e.timestamp! * 1000 });');
+  const rg2 = g2.computeNativePnl({ ...base, entries: [entry('0xoff', t1 + 1_200, 'in', ETH, EXCHANGE)], balance: ETH, smartAccount: null });
+  check('mutant (the transaction’s own time reported as the price point’s) is caught', rg2.kind === 'ok' && rg2.counted[0].priceTimeMs !== t1 * 1000);
+  const g7 = await importMutant('    counted,\n    assumedFeesNote,\n', '    counted,\n    assumedFeesNote: null,\n');
+  const rg7 = g7.computeNativePnl(base);
+  check('mutant (the assumed-fees note not kept on the result: the fees row loses its assumption) is caught',
+    rg7.kind === 'ok' && !N.gainsCsv(inputFor(rg7)).includes('cost $233.33. 0.1 ETH that the loaded history'));
+  const NOTES = 'src/wallet/notes.ts';
+  const g3 = await importMutant('  return csvDocument([GAINS_CSV_HEADER, ...gainsReportRows(input)]);',
+    "  return [GAINS_CSV_HEADER, ...gainsReportRows(input)].map((row) => row.map((v) => `\"${v}\"`).join(',')).join('\\r\\n') + '\\r\\n';", NOTES);
+  const hostileM = L.computeNativePnl({ ...base, entries: [entry('=HYPERLINK("http://x")', t1, 'in', ETH, EXCHANGE)], balance: ETH, smartAccount: null });
+  check('mutant (the gains file bypassing the shared defusal and quoting) is caught', !g3.gainsCsv(inputFor(hostileM, { smartAccount: null })).includes('"\'=HYPERLINK(""http://x"")"'));
+  const g4 = await importMutant('    for (const line of pnlFigureLines(result, asset, false)) {', '    for (const line of pnlFigureLines(result, asset, true)) {', NOTES);
+  check('mutant (Hide amounts applied to the file’s summary) is caught', g4.gainsCsv(inputFor(r)).includes('••••'));
+  const g5 = await importMutant("    for (const reason of result.reasons) rows.push(row('gap', 'Gap', { [TEXT]: reason }));", '    void result.reasons;', NOTES);
+  const gapM = L.computeNativePnl({ ...base, hasMore: true, balance: null });
+  check('mutant (the gap rows dropped) is caught', gapM.kind === 'gap' && !g5.gainsCsv(inputFor(gapM)).includes('"gap","Gap"'));
+  const g6 = await importMutant("    row('report', 'Estimate', { [TEXT]: PNL_ESTIMATE_NOTE }),\n", '', NOTES);
+  check('mutant (the estimate sentence missing from the header block) is caught', !g6.gainsCsv(inputFor(r)).split('\r\n')[2].includes(L.PNL_ESTIMATE_NOTE));
+  const g8 = await importMutant('  const part = asset.contract ? `${asset.symbol}-${asset.contract.slice(0, 6)}-${asset.contract.slice(-4)}` : asset.symbol;', '  const part = asset.symbol;', NOTES);
+  check('mutant (the token’s short contract dropped from the file name) is caught',
+    g8.gainsExportFileName('eip155:1', { symbol: 'USDC', contract: USDC }, new Date(NOW_T)) === 'shiba-gains_eip155-1_USDC_2026-10-25.csv');
+  const g9 = await importMutant('  const cents = moneyCents(m);\n  const a =', '  const cents = (m.n * 100n) / m.d;\n  const a =', NOTES);
+  check('mutant (US dollar figures truncated instead of rounded to the cent) is caught', g9.usdDecimal(usd(9800n, 3n)) === '3266.66');
 }
 
 console.log(`\nformatMoney sanity: ${formatMoney(usd(2500n), { hidden: false, signed: true })}`);

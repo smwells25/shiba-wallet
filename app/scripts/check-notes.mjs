@@ -11,9 +11,11 @@
 // linked, or through the decoded row's UserOperation hashes), the CSV
 // format (RFC 4180 quoting with CRLF line ends; OWASP's CSV-injection
 // defusal), exact amounts, the export's row set (exactly the loaded
-// entries), the file name, and mutation checks that break the sanitizer,
-// the formula defusal, the read-only rule, the link and the export's row
-// set.
+// entries), the file name, the gains report's shape (phase 25 item 3: its
+// column header, the shared CSV rules, a gap result's rows, its file name
+// and directory), and mutation checks that break the sanitizer, the formula
+// defusal, the read-only rule, the link, the export's row set and the gains
+// report's columns and directory.
 //
 // Run from the app directory:
 //
@@ -648,6 +650,44 @@ check('NOTE_PRIVACY_LINE, exactly: not sent anywhere, deleted with the wallet, i
 }
 
 // ---------------------------------------------------------------------------
+console.log('Gains report (phase 25 item 3): the CSV rules it shares with the activity export');
+// ---------------------------------------------------------------------------
+// The figures and rows themselves are pinned in check-pnl (with the engine's
+// results); here, the file's shape: the column header, the shared quoting
+// and defusal, a gap result's rows, the file name and the shared MIME type.
+const GAP_RESULT = {
+  kind: 'gap',
+  reasons: ['Profit and loss cannot be worked out for ETH: the current balance could not be read. Pull down to try again.', '=SUM(A1:A9) is not a reason'],
+  notes: ['A "quoted" note.'],
+};
+const GAINS_INPUT = {
+  result: GAP_RESULT, asset: { priceId: 'eip155:1/slip44:60', symbol: 'ETH', decimals: 18 }, network: 'eip155:1', networkLabel: 'Ethereum',
+  account: '0x0000000000000000000000000000000000000001', smartAccount: null, prices: { status: 'not-requested' }, entriesLoaded: 0, hasMore: false,
+  nowMs: Date.UTC(2026, 10, 8, 12, 0, 0),
+};
+const gainsHeaderOk = (mod) => JSON.stringify(mod.GAINS_CSV_HEADER) === JSON.stringify(['section', 'item', 'date (UTC)', 'asset', 'direction', 'amount',
+  'price (US dollars per whole unit)', 'price point time (UTC)', 'price point distance', 'value (US dollars)', 'average cost before the sale (US dollars per whole unit)',
+  'realised profit or loss (US dollars)', 'transaction id', 'text']) && mod.gainsReportRows(GAINS_INPUT).every((r) => r.length === 14);
+const gainsDirOk = (mod) => mod.GAINS_EXPORT_DIRECTORY === 'gains-export' && mod.GAINS_EXPORT_DIRECTORY !== mod.ACTIVITY_EXPORT_DIRECTORY;
+{
+  check('gains: the column header, exactly 14 columns in order, and every row 14 fields', gainsHeaderOk(notes));
+  const doc = notes.gainsCsv(GAINS_INPUT);
+  check('gains: the document is csvDocument of the header and the rows (the same quoting, defusal and CRLF as the activity export)',
+    doc === csvDocument([notes.GAINS_CSV_HEADER, ...notes.gainsReportRows(GAINS_INPUT)]) && doc.endsWith('\r\n'));
+  check('gains: a gap row starting with "=" is defused, a quote in a note is doubled',
+    doc.includes('"gap","Gap","","","","","","","","","","","","\'=SUM(A1:A9) is not a reason"') && doc.includes('"note","Note","","","","","","","","","","","","A ""quoted"" note."'));
+  check('gains: a gap report has a gap row per reason, no transaction or summary row, and every row 14 fields',
+    notes.gainsReportRows(GAINS_INPUT).filter((r) => r[0] === 'gap').length === 2 &&
+      !notes.gainsReportRows(GAINS_INPUT).some((r) => r[0] === 'transaction' || r[0] === 'summary') &&
+      notes.gainsReportRows(GAINS_INPUT).every((r) => r.length === 14));
+  check('gains: the file name, the export directory, and the activity CSV’s MIME type and UTI (shared, not copied)',
+    notes.gainsExportFileName('eip155:1', { symbol: 'ETH' }, new Date(GAINS_INPUT.nowMs)) === 'shiba-gains_eip155-1_ETH_2026-11-08.csv' &&
+      gainsDirOk(notes) &&
+      notes.ACTIVITY_CSV_MIME_TYPE === 'text/csv' && notes.ACTIVITY_CSV_UTI === 'public.comma-separated-values-text');
+  check('gains: the time row is ISO UTC', notes.gainsReportRows(GAINS_INPUT).find((r) => r[1] === 'Worked out')[2] === '2026-11-08T12:00:00Z');
+}
+
+// ---------------------------------------------------------------------------
 console.log('Mutation checks');
 // ---------------------------------------------------------------------------
 const MUTANT_DIR = join(HERE, `.mutants-notes-${process.pid}`);
@@ -747,6 +787,10 @@ async function importMutant(from, to) {
   check('mutant (the per-entry counterparty ignored) is caught', m9.activityExportRows(solanaInput(m9))[0][7] === 'from-the-transaction-id');
   const m10 = await importMutant("export function tokenAssetCell(symbol: string, contract: string | undefined, word: 'contract' | 'mint' = 'contract'): string {", "export function tokenAssetCell(symbol: string, contract: string | undefined, _word: 'contract' | 'mint' = 'contract', word = 'contract'): string {");
   check('mutant (the mint called a contract) is caught', m10.activityExportRows(solanaInput(m10))[0][4].includes('(contract '));
+  const m11 = await importMutant("  'realised profit or loss (US dollars)',\n", '');
+  check('mutant (a gains column dropped) is caught', !gainsHeaderOk(m11));
+  const m12 = await importMutant("export const GAINS_EXPORT_DIRECTORY = 'gains-export';", "export const GAINS_EXPORT_DIRECTORY = ACTIVITY_EXPORT_DIRECTORY;");
+  check('mutant (the gains file written to the activity export\'s directory, whose next export would sweep it) is caught', !gainsDirOk(m12));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

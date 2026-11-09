@@ -2040,4 +2040,9 @@ export const en = {
   'activity.solana.nativeOut': 'In the same transaction, {amount} {symbol} also left this account besides the network fee (a token transfer can pay rent for the recipient’s new token account)',
   'activity.solana.nativeIn': 'In the same transaction, {amount} {symbol} also arrived in this account',
   'activity.row.feeHidden': 'fee hidden',
+  // ---- Phase 25 item 3: the gains report's export button on the profit-and-loss panel (screens/PortfolioViews.tsx; the file itself is English, wallet/notes.ts gainsCsv) ----
+  'pnl.export': 'Export gains report (.csv)',
+  'pnl.export.note': 'Exports these figures as a .csv file through the share sheet: every counted purchase and sale with the price used, the totals, and every gap and assumption as a row of text. The file contains the account’s address, exact amounts and US dollar figures in clear text, even while Hide amounts is on. The figures are estimates for your information, not tax or accounting records. The temporary copy on this phone is deleted a minute after the share sheet closes.',
+  'pnl.export.dialog': 'Save the gains report',
+  'pnl.export.unavailable': 'Sharing files is not available on this device, so the gains report could not be exported.',
 } as const;

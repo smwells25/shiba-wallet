@@ -12970,7 +12970,11 @@
   "activity.solana.unknownToken",
   "activity.solana.nativeOut",
   "activity.solana.nativeIn",
-  "activity.row.feeHidden"
+  "activity.row.feeHidden",
+  "pnl.export",
+  "pnl.export.note",
+  "pnl.export.dialog",
+  "pnl.export.unavailable"
  ],
  "changed": {
   "activity.note.privacy": {

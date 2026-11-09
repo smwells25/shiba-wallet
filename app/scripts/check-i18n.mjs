@@ -288,6 +288,8 @@ const UNBLOCK_FIX_NEW = ['home.solanaToken.send', 'home.solanaToken.send.hint', 
   'activity.solana.received', 'activity.solana.receivedUnnamed', 'activity.solana.unknownToken', 'activity.solana.nativeOut', 'activity.solana.nativeIn'];
 // Pass p24-solfix2 finding A: an Activity row speaks its fee; under Hide amounts "fee hidden".
 const SOLHIST_NEW = ['activity.row.feeHidden'];
+// Phase 25 item 3: the gains report's export button, its note, its share-sheet title and its refusal (the profit-and-loss panel).
+const GAINS_NEW = ['pnl.export', 'pnl.export.note', 'pnl.export.dialog', 'pnl.export.unavailable'];
 {
   const p = fixtureProblems(en, FIXTURE);
   check(`every English entry is the text the app showed at ${FIXTURE.base} (${Object.keys(FIXTURE.literal).length} literals, ${Object.keys(FIXTURE.template).length} templates by their static parts, ${Object.keys(FIXTURE.composite).length} composites) or listed as new (${FIXTURE.new.length})`,
@@ -305,15 +307,36 @@ const SOLHIST_NEW = ['activity.row.feeHidden'];
   // broadcast sentences (an HTTP 5xx or a dropped connection, not a timeout).
   const BROADCAST_OPEN_NEW = ['broadcast.open.title', 'broadcast.tx.open', 'broadcast.tx.openUnlisted', 'broadcast.userop.open',
     'broadcast.userop.openUnlisted', 'broadcast.open'];
-  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the Solana token-send readiness row, the wallet handle\'s, the six open-outcome broadcast sentences, the co-signer card\'s numbered Scan label, the eight period words of the hygiene slice, the four Bridge lines of pass p23-mint, the five lines of the p23-build fixes, the three Bridge lines of pass p23-bridge-recheck and the three navigation-bar lines of pass p23-navbar and the three iOS-pass lines (two iOS reminder notes, the "an" scanner sentence) and the five lines of the Solana-pass fix slice (the Solana devnet banner, the Solana token-fee line, the Solana devnet readiness line, two Max-lowering sentences) and the two smart-account Max-lowering sentences of the trim slice and the devnet form of the Solana token-fee line (pass p24-recheck) and the nine lines of the p24-unblock fixes (the Solana token Send link and its hint, seven Solana Activity sentences)',
-    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || SPL_TOKENS_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id) || NAVBAR_FIX_NEW.includes(id) || IOS_FIX_NEW.includes(id) || SOLANA_FIX_NEW.includes(id) || AA_TRIM_NEW.includes(id) || RECHECK_FIX_NEW.includes(id) || UNBLOCK_FIX_NEW.includes(id) || SOLHIST_NEW.includes(id)) &&
+  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the Solana token-send readiness row, the wallet handle\'s, the six open-outcome broadcast sentences, the co-signer card\'s numbered Scan label, the eight period words of the hygiene slice, the four Bridge lines of pass p23-mint, the five lines of the p23-build fixes, the three Bridge lines of pass p23-bridge-recheck and the three navigation-bar lines of pass p23-navbar and the three iOS-pass lines (two iOS reminder notes, the "an" scanner sentence) and the five lines of the Solana-pass fix slice (the Solana devnet banner, the Solana token-fee line, the Solana devnet readiness line, two Max-lowering sentences) and the two smart-account Max-lowering sentences of the trim slice and the devnet form of the Solana token-fee line (pass p24-recheck) and the nine lines of the p24-unblock fixes (the Solana token Send link and its hint, seven Solana Activity sentences) and the hidden-fee word of an Activity row and the four gains-report lines of phase 25 item 3',
+    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || SPL_TOKENS_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id) || NAVBAR_FIX_NEW.includes(id) || IOS_FIX_NEW.includes(id) || SOLANA_FIX_NEW.includes(id) || AA_TRIM_NEW.includes(id) || RECHECK_FIX_NEW.includes(id) || UNBLOCK_FIX_NEW.includes(id) || SOLHIST_NEW.includes(id) || GAINS_NEW.includes(id)) &&
       BUILD_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && BRIDGE_RECHECK_NEW.every((id) => FIXTURE.new.includes(id)) &&
       LOCK_KIND_NEW.every((id) => FIXTURE.new.includes(id)) && COLD_AA_NEW.every((id) => FIXTURE.new.includes(id)) && SPL_TOKENS_NEW.every((id) => FIXTURE.new.includes(id)) &&
       BROADCAST_OPEN_NEW.every((id) => FIXTURE.new.includes(id)) && THIRD_PASS_NEW.every((id) => FIXTURE.new.includes(id)) && PERIOD_NEW.every((id) => FIXTURE.new.includes(id)) &&
       BRIDGE_MINT_NEW.every((id) => FIXTURE.new.includes(id)) && NAVBAR_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && IOS_FIX_NEW.every((id) => FIXTURE.new.includes(id)) &&
       SOLANA_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && AA_TRIM_NEW.every((id) => FIXTURE.new.includes(id)) &&
       RECHECK_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && UNBLOCK_FIX_NEW.every((id) => FIXTURE.new.includes(id)) &&
-      SOLHIST_NEW.every((id) => FIXTURE.new.includes(id)));
+      SOLHIST_NEW.every((id) => FIXTURE.new.includes(id)) && GAINS_NEW.every((id) => FIXTURE.new.includes(id)));
+  // Phase 25 item 3: the four gains-report lines, English and Spanish exact, no placeholders, and each one used by the panel.
+  {
+    const WANT_EN = {
+      'pnl.export': 'Export gains report (.csv)',
+      'pnl.export.note': 'Exports these figures as a .csv file through the share sheet: every counted purchase and sale with the price used, the totals, and every gap and assumption as a row of text. The file contains the account’s address, exact amounts and US dollar figures in clear text, even while Hide amounts is on. The figures are estimates for your information, not tax or accounting records. The temporary copy on this phone is deleted a minute after the share sheet closes.',
+      'pnl.export.dialog': 'Save the gains report',
+      'pnl.export.unavailable': 'Sharing files is not available on this device, so the gains report could not be exported.',
+    };
+    const WANT_ES = {
+      'pnl.export': 'Exportar el informe de ganancias (.csv)',
+      'pnl.export.note': 'Exporta estas cifras como un archivo .csv mediante el menú de compartir: cada compra y venta contada con el precio usado, los totales, y cada laguna y suposición como una fila de texto. El archivo contiene la dirección de la cuenta, los importes exactos y las cifras en dólares estadounidenses en texto legible, aunque Ocultar importes esté activado. Las cifras son estimaciones para tu información, no registros fiscales ni contables. La copia temporal en este teléfono se borra un minuto después de cerrarse el menú de compartir.',
+      'pnl.export.dialog': 'Guardar el informe de ganancias',
+      'pnl.export.unavailable': 'Compartir archivos no está disponible en este dispositivo, así que no se pudo exportar el informe de ganancias.',
+    };
+    const panelSrc = readFileSync(join(APP, 'src/screens/PortfolioViews.tsx'), 'utf8');
+    const gainsOk = (e, sp) => GAINS_NEW.every((id) => e[id] === WANT_EN[id] && sp[id] === WANT_ES[id] && !/[{}]/.test(e[id]) && !/[{}]/.test(sp[id]));
+    check('phase 25 item 3: the four gains-report lines, English and Spanish exact, with no placeholders',
+      gainsOk(en, es) && GAINS_NEW.every((id) => panelSrc.includes(`t('${id}')`)));
+    check('…mutant caught: a Spanish gains line missing', !gainsOk(en, { ...es, 'pnl.export.dialog': undefined }));
+    check('…mutant caught: the English note changed by one character', !gainsOk({ ...en, 'pnl.export.note': en['pnl.export.note'].replace('Hide amounts', 'Hide amount') }, es));
+  }
   check('the changed entries are exactly the transaction-notes line (reworded for the records backup), the watch-only notice (reworded for the off-line signer), the bridge readiness reason (CCTP sent, phase 23), the records-backup note (smart-account recovery records, pass p23-build) the three CCTP time sentences (the measured spread, pass p23-bridge-recheck) and the inbox intro and empty line (what is listed, phase 24 item 4) and the inbox PIN note and the two inbox link hints (the same rewording, the Solana-pass fix slice), each with its reason',
     JSON.stringify(Object.keys(FIXTURE.changed ?? {})) === JSON.stringify(['activity.note.privacy', 'notice.watchOnly', 'readiness.bridge.reason', 'recordsBackup.what', ...CCTP_TIME_CHANGED, ...INBOX_WORDING_CHANGED, ...INBOX_NOTES_CHANGED]) &&
       en['activity.note.privacy'] === 'Notes are kept on this phone and are not sent anywhere. They are deleted when the wallet is wiped. A records backup (Settings → Records backup) includes them, and your recovery phrase restores them from it. Hide amounts does not hide them.');

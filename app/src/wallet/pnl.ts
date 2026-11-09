@@ -67,6 +67,12 @@ import type { SmartAccountHistoryStatus } from './smart-account-history.ts';
  *    TOKEN_PNL_UNSUPPORTED_REASON below; the screen never offers such a
  *    token, so that sentence is reached only by a caller outside it.
  *
+ *  - The gains report (phase 25 item 3): an ok result also carries every
+ *    counted purchase and sale (PnlCountedEntry: the CoinGecko point used,
+ *    the value, and for a sale the average cost before it and its realised
+ *    figure) and the assumed-fees note, so notes.ts gainsCsv formats the
+ *    result without recomputing anything. No figure changed with it.
+ *
  * Exact: amounts are bigints, money is an exact fraction (portfolio.ts
  * Money), rounded to the cent only for display. Free of React Native
  * imports so scripts/check-pnl.mjs runs the exact code.
@@ -85,6 +91,54 @@ import type { SmartAccountHistoryStatus } from './smart-account-history.ts';
 export const TOKEN_PNL_UNSUPPORTED_REASON =
   'its network is not a main network for which this wallet reads CoinGecko’s price history of tokens (a main ' +
   'network with a CoinGecko asset platform mapped for it), so there is no price at the time of its transfers.';
+
+/**
+ * The last of the notes above every computed result (computePnl), and the
+ * sentence the gains report repeats word for word in its header
+ * (notes.ts gainsCsv), so the screen and the file never word it apart.
+ */
+export const PNL_ESTIMATE_NOTE = 'These figures are estimates for your information, not tax or accounting records.';
+
+/**
+ * The method sentence: the first note of a computed result, and the gains
+ * report's "Method" row. Native coins remove fees at average cost; a token
+ * pays none.
+ */
+export function pnlMethodNote(kind: 'native' | 'token', sym: string): string {
+  return kind === 'native'
+    ? 'Method: average cost. Each purchase adds coins and their cost to one pool; each sale, and each fee, removes coins at ' +
+        'the pool’s average cost.'
+    : `Method: average cost. Each purchase adds ${sym} and its cost to one pool; each sale removes ${sym} at the pool’s ` +
+        `average cost. Network fees are paid in the network’s own coin, not in ${sym}, and are not part of these figures.`;
+}
+
+/**
+ * One counted purchase or sale of an ok result (phase 25 item 3, the gains
+ * report): what the average-cost pool did with it, exactly as computePnl
+ * worked it out, so the report formats these values and recomputes nothing.
+ */
+export interface PnlCountedEntry {
+  /** The transaction id the history listed. */
+  id: string;
+  /** Unix seconds of the transaction. */
+  timestampSec: number;
+  /** A transfer in from someone else counts as a purchase; out to someone else, as a sale. */
+  kind: 'purchase' | 'sale';
+  /** The exact amount moved, in base units. */
+  amount: bigint;
+  /** US dollars per whole unit, the CoinGecko point's own digits. */
+  price: string;
+  /** The time of the CoinGecko point used (Unix ms, as the vendor reported it). */
+  priceTimeMs: number;
+  /** amount × price: the cost of a purchase, the proceeds of a sale. */
+  value: Money;
+  /** A sale only: the pool's average cost per whole unit just before the sale; null for a purchase. */
+  averageCostBefore: Money | null;
+  /** A sale only: the average cost of the amount sold; null for a purchase. */
+  costOfSold: Money | null;
+  /** A sale only: value − costOfSold, the realised profit or loss of this sale; null for a purchase. */
+  realised: Money | null;
+}
 
 export interface PnlAsset {
   /** The mainnet CAIP-19 id CoinGecko prices it under. */
@@ -156,10 +210,14 @@ export type PnlResult =
       sales: number;
       /** The rules and counts behind the figures, as sentences. */
       notes: string[];
+      /** Every counted purchase and sale, oldest first, as the pool valued it (the gains report's rows). */
+      counted: PnlCountedEntry[];
+      /** The note stating the assumed-fees assumption (also in `notes`), or null when no fees were assumed. */
+      assumedFeesNote: string | null;
     };
 
-/** The tolerance in words, for the notes. */
-function toleranceText(granularity: HistoryGranularity): string {
+/** The tolerance in words, for the notes (and the gains report's price-source row). */
+export function toleranceText(granularity: HistoryGranularity): string {
   const ms = HISTORY_POINT_TOLERANCE_MS[granularity];
   return ms >= 3_600_000 ? `${ms / 3_600_000} hours` : `${ms / 60_000} minutes`;
 }
@@ -573,14 +631,14 @@ function computePnl(input: PnlInput, mode: PnlMode): PnlResult {
   const ordered = [...external].sort(
     (a, b) => a.timestamp! - b.timestamp! || (a.blockHeight ?? 0) - (b.blockHeight ?? 0),
   );
-  const priced: { entry: HistoryEntry; price: string }[] = [];
+  const priced: { entry: HistoryEntry; price: string; priceTimeMs: number }[] = [];
   let noPoint = 0;
   if (input.prices.status === 'ok') {
     const tolerance = HISTORY_POINT_TOLERANCE_MS[granularity];
     for (const e of ordered) {
       const point = nearestPricePoint(points, e.timestamp! * 1000, tolerance);
       if (!point) noPoint += 1;
-      else priced.push({ entry: e, price: point.price });
+      else priced.push({ entry: e, price: point.price, priceTimeMs: point.timeMs });
     }
     if (noPoint > 0) {
       reasons.push(
@@ -599,13 +657,18 @@ function computePnl(input: PnlInput, mode: PnlMode): PnlResult {
   let realised: Money = ZERO_MONEY;
   let purchases = 0;
   let sales = 0;
-  for (const { entry, price } of priced) {
+  const counted: PnlCountedEntry[] = [];
+  let wholeUnit = 1n;
+  for (let i = 0; i < decimals; i++) wholeUnit *= 10n;
+  for (const { entry, price, priceTimeMs } of priced) {
     const amount = amountOf(entry)!;
     const value = moneyOf(amount, decimals, price);
+    const row = { id: entry.id, timestampSec: entry.timestamp!, amount, price, priceTimeMs, value };
     if (entry.direction === 'in') {
       qty += amount;
       cost = moneyAdd(cost, value);
       purchases += 1;
+      counted.push({ ...row, kind: 'purchase', averageCostBefore: null, costOfSold: null, realised: null });
       continue;
     }
     // 'out' to someone else: a sale at that time's price.
@@ -622,7 +685,9 @@ function computePnl(input: PnlInput, mode: PnlMode): PnlResult {
       };
     }
     const costOut = moneyScale(cost, amount, qty);
-    realised = moneyAdd(realised, moneySub(value, costOut));
+    const saleRealised = moneySub(value, costOut);
+    counted.push({ ...row, kind: 'sale', averageCostBefore: moneyScale(cost, wholeUnit, qty), costOfSold: costOut, realised: saleRealised });
+    realised = moneyAdd(realised, saleRealised);
     cost = moneySub(cost, costOut);
     qty -= amount;
     sales += 1;
@@ -643,6 +708,7 @@ function computePnl(input: PnlInput, mode: PnlMode): PnlResult {
   }
   let assumedFees = 0n;
   let assumedFeesCost: Money = ZERO_MONEY;
+  let assumedFeesNote: string | null = null;
   if (qty > balance && mode.kind === 'token') {
     // Network fees are paid in the native coin, never in a token.
     return {
@@ -661,11 +727,11 @@ function computePnl(input: PnlInput, mode: PnlMode): PnlResult {
     assumedFeesCost = moneyScale(cost, assumedFees, qty);
     cost = moneySub(cost, assumedFeesCost);
     qty = balance;
-    notes.push(
+    assumedFeesNote =
       `${formatBalanceDisplay(assumedFees, decimals)} ${sym} that the loaded history shows as received is no longer held, and no ` +
-        'listed transfer explains it. The wallet assumes it paid network fees (the history does not list fees) and removes it ' +
-        'at its average cost. Fees are not counted in realised profit or loss. If that assumption is wrong, these figures are wrong.',
-    );
+      'listed transfer explains it. The wallet assumes it paid network fees (the history does not list fees) and removes it ' +
+      'at its average cost. Fees are not counted in realised profit or loss. If that assumption is wrong, these figures are wrong.';
+    notes.push(assumedFeesNote);
   }
 
   const quote = input.currentQuote!;
@@ -677,11 +743,7 @@ function computePnl(input: PnlInput, mode: PnlMode): PnlResult {
   const age = staleNoteFor(quote, input.nowMs);
   const quoteTime = quote.updatedAtMs ?? quote.fetchedAtMs;
   notes.unshift(
-    mode.kind === 'native'
-      ? 'Method: average cost. Each purchase adds coins and their cost to one pool; each sale, and each fee, removes coins at ' +
-          'the pool’s average cost.'
-      : `Method: average cost. Each purchase adds ${sym} and its cost to one pool; each sale removes ${sym} at the pool’s ` +
-          `average cost. Network fees are paid in the network’s own coin, not in ${sym}, and are not part of these figures.`,
+    pnlMethodNote(mode.kind, sym),
     `Receiving ${sym} from someone else counts as buying it, and sending ${sym} to someone else counts as selling it, at ` +
       'CoinGecko’s US dollar price at that time: the wallet cannot see what you actually paid or were paid.',
     `The price at a transaction’s time is CoinGecko’s price nearest to it (${granularity === 'daily' ? 'daily' : granularity === 'hourly' ? 'hourly' : 'every 5 minutes'} for ` +
@@ -689,7 +751,7 @@ function computePnl(input: PnlInput, mode: PnlMode): PnlResult {
     `Unrealised profit or loss uses today’s CoinGecko price${
       quoteTime !== undefined ? ` (${age ?? `from ${describeAge(Math.max(60_000, input.nowMs - quoteTime))}`})` : ''
     }.`,
-    'These figures are estimates for your information, not tax or accounting records.',
+    PNL_ESTIMATE_NOTE,
   );
   return {
     kind: 'ok',
@@ -704,6 +766,8 @@ function computePnl(input: PnlInput, mode: PnlMode): PnlResult {
     purchases,
     sales,
     notes,
+    counted,
+    assumedFeesNote,
   };
 }
 
