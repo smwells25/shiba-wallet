@@ -9,7 +9,7 @@ import { useTheme } from '../theme';
 import { usePrefs } from '../wallet/PrefsContext';
 import { useWallet } from '../wallet/WalletContext';
 import { appLockKind, appPinPresence } from '../wallet/duress';
-import { storageProtection } from '../wallet/storage';
+import { loadPublicAccount, storageProtection } from '../wallet/storage';
 import { loadPendingRegistry } from '../wallet/pending-transactions';
 import { listSpendingScopes } from '../wallet/spending-policy';
 import { loadPriceAlerts } from '../wallet/price-alerts';
@@ -22,8 +22,10 @@ import {
   buildInsightSections,
   latestApprovalsSnapshot,
   latestPortfolioSnapshot,
+  pendingSolanaAccounts,
   portfolioSnapshotKey,
   readInsights,
+  type PendingSolanaAccounts,
   type InsightLink,
   type InsightReads,
   type InsightSection,
@@ -95,16 +97,45 @@ export function InsightsScreen({ navigation }: Props) {
   // The pending section names each account as Activity does
   // (activityAccountLabels: the accounts with a key, the watched ones — a
   // cold-signed send is recorded under the watched address — and the
-  // multisigs, by EVM address), plus the active account's Solana address, the
-  // only Solana address this screen knows without deriving one.
+  // multisigs, by EVM address), plus every recovery-phrase account's Solana
+  // address (pass p26-emu1 finding 1): the active account's as derived, the
+  // others' from the public-address cache, as the Portfolio screen reads
+  // them — no prompt, no network request.
   const solanaAddress = accounts.find((a) => a.chainId === SOLANA_CHAIN_ID)?.address ?? null;
+  const activeIndex = activeAccount?.index ?? null;
+  const [solanaAccounts, setSolanaAccounts] = useState<PendingSolanaAccounts | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      void pendingSolanaAccounts({
+        accounts: accountList.map((a) => ({ index: a.index, name: a.name, imported: a.imported })),
+        active: activeIndex === null ? null : { index: activeIndex, solanaAddress },
+        loadCached: loadPublicAccount,
+        solanaSlot: SOLANA_CHAIN_ID,
+      }).then((found) => {
+        if (!cancelled) setSolanaAccounts(found);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }, [accountList, activeIndex, solanaAddress]),
+  );
   const pendingAccounts = [
     ...activityAccountLabels(
       [...accountList, ...watchOnlyAccounts].map((a) => ({ name: a.name, evmAddress: a.evmAddress, index: a.index })),
       multisigAccounts.flatMap((m) => (m.evmAddress ? [{ address: m.evmAddress, label: m.name }] : [])),
     ).map((l) => ({ address: l.address, name: l.label })),
-    ...(activeAccount && solanaAddress ? [{ address: solanaAddress, name: activeAccount.name }] : []),
+    ...(solanaAccounts
+      ? solanaAccounts.labels
+      : activeAccount && solanaAddress
+        ? [{ address: solanaAddress, name: activeAccount.name }]
+        : []),
   ];
+  // Until the cache has been read, every other phrase account counts as not
+  // on record, so no Solana entry is called "not an account" too early.
+  const pendingSolanaUncached = solanaAccounts
+    ? solanaAccounts.uncached
+    : accountList.filter((a) => !a.imported && a.index !== activeIndex).map((a) => a.name);
   const portfolioKey = portfolioSnapshotKey([...accountList, ...watchOnlyAccounts, ...multisigAccounts], evmChain.caip2);
 
   const sections: InsightSection[] | null = reads
@@ -129,6 +160,7 @@ export function InsightsScreen({ navigation }: Props) {
           appLock: { on: lockOn, kind: lockKind },
           autoLockMs,
           pendingAccounts,
+          pendingSolanaUncached,
         },
       })
     : null;

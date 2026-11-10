@@ -14,9 +14,8 @@ import { listTokens } from '../wallet/tokens';
 import { getAaConfig } from '../wallet/aa';
 import { historySmartAccountFor } from '../wallet/activity-sentences';
 import { loadPublicAccount } from '../wallet/storage';
-import { DEFAULT_NETWORKS } from '../config/defaults';
+import { resolveActiveNetworks } from '../config/defaults';
 import { EVM_CHAIN_ID } from '../wallet/send';
-import { nativePriceAssetId } from '../wallet/prices';
 import {
   PORTFOLIO_FIAT_OFF_NOTE,
   PORTFOLIO_NOT_COUNTED_NOTE,
@@ -33,6 +32,7 @@ import {
   portfolioGapLines,
   portfolioPriceIds,
   portfolioPriceSourceLine,
+  portfolioSlotsFor,
   runPortfolioReads,
   spokenMoney,
   valueText,
@@ -142,25 +142,21 @@ async function readTask(task: PortfolioReadTask): Promise<PortfolioReadResult> {
 export function PortfolioScreen({ navigation }: Props) {
   const theme = useTheme();
   const { t } = useI18n();
-  const { hideAmounts, showFiat, evmChain } = usePrefs();
+  const { hideAmounts, showFiat, evmChain, solanaDevnet } = usePrefs();
   const { accounts, activeAccount, accountList, watchOnlyAccounts, multisigAccounts } = useWallet();
 
+  // Each slot as the network that serves it now (pass p26-emu1 finding 2):
+  // with "Use Solana devnet" on, the Solana slot is Solana devnet (test SOL,
+  // no value), never Solana mainnet.
   const slots: PortfolioSlot[] = useMemo(
     () =>
-      DEFAULT_NETWORKS.map((n) =>
-        n.kind === 'evm-jsonrpc'
-          ? {
-              slot: n.chainId,
-              networkChainId: evmChain.caip2,
-              label: evmChain.label,
-              symbol: evmChain.displaySymbol,
-              decimals: 18,
-              testnet: evmChain.testnet,
-              evm: true,
-            }
-          : { slot: n.chainId, networkChainId: n.chainId, label: n.label, symbol: n.symbol, decimals: n.decimals, testnet: false, evm: false },
-      ),
-    [evmChain.caip2, evmChain.label, evmChain.displaySymbol, evmChain.testnet],
+      portfolioSlotsFor(resolveActiveNetworks(null, solanaDevnet), {
+        caip2: evmChain.caip2,
+        label: evmChain.label,
+        displaySymbol: evmChain.displaySymbol,
+        testnet: evmChain.testnet,
+      }),
+    [evmChain.caip2, evmChain.label, evmChain.displaySymbol, evmChain.testnet, solanaDevnet],
   );
 
   const [plan, setPlan] = useState<PortfolioPlan | null>(null);
@@ -360,7 +356,8 @@ export function PortfolioScreen({ navigation }: Props) {
       </Section>
 
       <PnlSection
-        slots={slots.filter((s) => nativePriceAssetId(s.slot, s.networkChainId) !== null)}
+        slots={slots}
+        solanaDevnet={solanaDevnet}
         accounts={accounts}
         activeAccount={activeAccount}
         evmCaip2={evmChain.caip2}

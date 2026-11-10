@@ -20570,3 +20570,64 @@ driver at a time, item 1's first; 6 last. Subagents on Opus.
       netem left, the guest helpers removed; Metro node 2556 on 8081 from
       wt-app at 549cf24 with only that reverse; qemu 86708 (PRI 55) with
       caffeinate 86986, the window in front.
+- [x] Pass p26-emu1 findings FIXED (commit below; 16 files, +544 / −38, no
+      new file, no engine change; check-insights 142 (was 126), check-pnl 206
+      (192), check-spl-tokens 269 (250; mutants 26 → 30), check-i18n 209 with
+      its new-entries rule extended; offline runner ALL GREEN in the CTO's
+      isolated worktree on HEAD 8ed971d: checkout 0 / apply 0 / 16 files, the
+      staged patch id 9dd5fe8d…aaa8 equal to the file's and the agent's,
+      engine 1,415, app 12,010 across 68 suites, lint 0/0, tsc clean; the
+      pre-commit scan at the commit; 13 in-suite and 8 hand mutants caught;
+      not seen on a device). (1) RISK OVERVIEW LABELS — cause: InsightsScreen
+      95–107 knew only the ACTIVE account's Solana address, so insights.ts
+      called every other Solana address "(not an account in this wallet
+      now)"; fix: pendingSolanaAccounts() follows the Portfolio screen's rule
+      — the active account's address from the wallet, every other
+      recovery-phrase account's from loadPublicAccount (storage.ts
+      1404–1419), no prompt, no request, imported accounts skipped; an
+      address not in the cache is NAMED rather than guessed: "{address} (it
+      matches none of the Solana addresses this phone has on record; the
+      Solana address of {accounts} is not on record here, so it may be one of
+      those)" plus a note; the old form and note stay for addresses that
+      truly match no account and for EVM addresses; the p26-emu1 line now
+      reads "Solana devnet, Account 1: Solana token sends waiting: 1." (2)
+      THE P&L OFFER OVER DEVNET — a safety fix; ROOT CAUSE: PortfolioScreen
+      148–164 built every non-EVM slot as mainnet, ignoring solanaDevnet, and
+      passed nativePriceAssetId while useHistory followed the switch to
+      devnet; fix in two parts — portfolio.ts portfolioSlotsFor() and the
+      screen building its slots from resolveActiveNetworks(null,
+      solanaDevnet), and pnl.ts pnlNativeOffer() NEVER offering the Solana
+      slot while devnet is on even if the slot still claims mainnet
+      (PNL_SOLANA_SLOT pinned equal to send.ts's SOLANA_CHAIN_ID); the
+      sentence "Profit and loss for SOL is not offered while Solana devnet is
+      on: devnet SOL has no price." (pnl.solanaDevnet); SIDE EFFECT, accepted:
+      with devnet on, the Portfolio's Solana holding now shows as Solana
+      devnet / test SOL / no value where before that read was dropped as a
+      "failed read" (portfolio.ts 498–501). (3) THE WITHHELD FEE — Home
+      fixed: SplRowState.withheld read from the associated account's
+      TransferFeeAmount extension through the engine's decodeTransferFeeAmount
+      (a malformed extension makes the row "could not be read"); the line
+      "0.02 SFEE is withheld in this token account as the issuer's transfer
+      fee; it is not yours to send.", masked by Hide amounts and spoken
+      "(amount hidden)"; the ACTIVITY half NOT built — the engine fetches
+      transactions with encoding json (history.ts 387–389) and HistoryEntry
+      carries no fee field, so the recipient's row would need one request
+      per row or an engine change (recorded, a follow-up). (4) The Review's
+      base-unit fee cap was the ENGINE's SPL_SENTENCES.feeNote
+      (tokenExtensions.ts 616–617); the app's splQuoteNotes() recognises that
+      note exactly and rewrites the cap in tokens: "The issuer charges a
+      transfer fee of 100 basis points (at most 1 SFEE per transfer), taken
+      out of the amount the recipient receives. The issuer can change the
+      fee; a change takes effect two epochs after it is made."; every other
+      note unchanged. Three new ids (insights.pending.solanaUncached and
+      .solanaUncachedNote through insightsNew; pnl.solanaDevnet through a
+      new EMU1_FIX_NEW) with Spanish drafts; Home's line and the fee note
+      English literals, as those files are. LEFT: the Activity half of (3);
+      withheld tokens in non-associated accounts not mentioned; findings 5
+      and 6 (design notes). EMULATOR CHECKS QUEUED: with Account 2 active
+      the overview names Account 1's Solana send at once; mainnet plus
+      devnet on → no SOL chip and the new sentence, Solana shown as devnet
+      test SOL, devnet off → the chip back; Account 2's Home on devnet with
+      the SFEE withheld line, masked and spoken under Hide amounts; a fresh
+      SFEE Review saying "(at most 1 SFEE per transfer)"; Spanish and
+      TalkBack on the new lines.

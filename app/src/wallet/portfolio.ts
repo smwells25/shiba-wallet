@@ -196,6 +196,38 @@ export interface PortfolioSlot {
   evm: boolean;
 }
 
+/**
+ * The portfolio's network slots, one per launch chain, each resolved to the
+ * network that serves it NOW (pass p26-emu1 finding 2): the EVM slot from the
+ * active EVM profile, the other slots from config/defaults.ts
+ * resolveActiveNetworks — so while Settings → Developer → "Use Solana devnet"
+ * is on, the Solana slot is served by Solana devnet ("Solana devnet",
+ * "test SOL", a test network) instead of claiming Solana mainnet as it did
+ * before (PortfolioScreen built every non-EVM slot from its mainnet entry,
+ * so the profit-and-loss section offered "SOL on Solana" over devnet
+ * history). A non-EVM slot is a test network exactly when another network
+ * than its own mainnet id serves it (resolveActiveNetworks swaps only the
+ * Solana slot, to devnet). Pure: the screen passes the resolved list in.
+ */
+export function portfolioSlotsFor(
+  networks: readonly { slot: string; network: { chainId: string; kind: string; label: string; symbol: string; decimals: number } }[],
+  evm: { caip2: string; label: string; displaySymbol: string; testnet: boolean },
+): PortfolioSlot[] {
+  return networks.map(({ slot, network }) =>
+    network.kind === 'evm-jsonrpc'
+      ? { slot, networkChainId: evm.caip2, label: evm.label, symbol: evm.displaySymbol, decimals: 18, testnet: evm.testnet, evm: true }
+      : {
+          slot,
+          networkChainId: network.chainId,
+          label: network.label,
+          symbol: network.symbol,
+          decimals: network.decimals,
+          testnet: network.chainId !== slot,
+          evm: false,
+        },
+  );
+}
+
 export interface PortfolioAsset {
   /** CAIP-19 id on the network that serves it. */
   id: string;

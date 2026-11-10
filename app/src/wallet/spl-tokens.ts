@@ -13,6 +13,7 @@ import { base58 } from '@scure/base';
 import { formatAssetId } from '@shiba-wallet/core';
 import type { DerivedAccount, FungibleAsset } from '@shiba-wallet/core';
 import {
+  EXT,
   KNOWN_SOLANA_TOKENS,
   SOLANA_DEVNET_CAIP2,
   SOLANA_MAINNET_CAIP2,
@@ -20,6 +21,7 @@ import {
   SolanaRpcClient,
   SplTokenRefusal,
   compileMessage,
+  decodeTransferFeeAmount,
   findSolanaLookAlike,
   formatBaseUnits,
   httpTransport,
@@ -32,6 +34,7 @@ import {
   type MintProfile,
   type SignatureStatus,
   type SplTokenTransferQuote,
+  type TokenExtension,
   type TransferFeeConfig,
 } from '@shiba-wallet/chains-solana';
 import { isFeatureAllowed, readinessReason } from '../config/readiness.ts';
@@ -326,6 +329,13 @@ export type SplRowState =
       outsideAccounts: number;
       /** The mint's own decimals (the display uses them). */
       decimals: number;
+      /**
+       * Base units held back in the associated token account as the issuer's
+       * transfer fee (its TransferFeeAmount extension, decoded by the engine's
+       * decodeTransferFeeAmount); 0 when the account has none. Not part of
+       * `associated` and never sendable by the owner (pass p26-emu1 finding 3).
+       */
+      withheld: bigint;
       /** The engine's refusal when this token cannot be sent, else null. */
       sendRefusal: string | null;
       /** True when the mint's decimals differ from the ones stored at Track time. */
@@ -357,12 +367,15 @@ export async function loadSplTokenRows(
     try {
       const profile = await readMintProfile(client, mint);
       let associated = 0n;
+      let withheld = 0n;
       let outside = 0n;
       let outsideAccounts = 0;
       for (const entry of listing.accounts) {
         if (entry.account.mint !== mint) continue;
-        if (entry.isAssociated) associated += entry.account.amount;
-        else {
+        if (entry.isAssociated) {
+          associated += entry.account.amount;
+          withheld += splWithheldAmount(entry.account.extensions);
+        } else {
           outside += entry.account.amount;
           outsideAccounts += 1;
         }
@@ -370,6 +383,7 @@ export async function loadSplTokenRows(
       rows[id] = {
         status: 'ok',
         associated,
+        withheld,
         outside,
         outsideAccounts,
         decimals: profile.parsed.decimals,
@@ -471,6 +485,34 @@ export async function readSplMaxRow(
   } catch (e) {
     return { status: 'error', message: e instanceof Error ? e.message : 'The token could not be read.' };
   }
+}
+
+/**
+ * The issuer's transfer fee withheld in a token account (pass p26-emu1
+ * finding 3): the withheld_amount of its TransferFeeAmount extension, which a
+ * TransferCheckedWithFee adds to the RECIPIENT's account (token-2022 at
+ * 5170695d, program/src/processor.rs 570–592; the engine's
+ * decodeTransferFeeAmount cites transfer_fee/mod.rs 176–181); 0 when the
+ * account has no such extension. A malformed extension throws (the row is
+ * then "could not be read" rather than a guessed figure).
+ */
+export function splWithheldAmount(extensions: readonly TokenExtension[]): bigint {
+  const ext = extensions.find((e) => e.type === EXT.TransferFeeAmount);
+  return ext ? decodeTransferFeeAmount(ext).withheldAmount : 0n;
+}
+
+/**
+ * The line under a Solana token row whose associated account holds tokens
+ * withheld as the issuer's transfer fee: the recipient of a fee-charging
+ * transfer otherwise sees only the smaller amount that arrived (pass
+ * p26-emu1: Account 2 read "Balance 1.98 SFEE" with nothing about the 0.02
+ * SFEE withheld in its own account). The withdraw-withheld authority can
+ * withdraw them and anyone can harvest them to the mint (the engine's
+ * decodeTransferFeeAmount note, transfer_fee/instruction.rs 100–135); the
+ * owner cannot send them.
+ */
+export function splWithheldLine(amountDisplay: string, symbol: string): string {
+  return `${amountDisplay} ${symbol} is withheld in this token account as the issuer’s transfer fee; it is not yours to send.`;
 }
 
 /** The line under a row whose mint balance sits partly outside the associated account. */
@@ -624,6 +666,38 @@ export interface ConfirmRow {
 
 function lamportsText(lamports: bigint, nativeSymbol: string): string {
   return `${lamports} lamports (${formatBaseUnits(lamports, 9)} ${nativeSymbol})`;
+}
+
+/**
+ * The transfer-fee note beside a quote, worded with the fee's cap in the
+ * token's own units ("at most 1 SFEE per transfer"), as the read-back's
+ * splTransferFeeLine says "(1 SFEE max)" (pass p26-emu1 finding 4: the
+ * Review showed the engine's "at most 1000000 base units per transfer").
+ */
+export function splFeeNoteText(basisPoints: number, maximumText: string): string {
+  return (
+    `The issuer charges a transfer fee of ${basisPoints} basis points (at most ${maximumText} per transfer), taken out of ` +
+    'the amount the recipient receives. The issuer can change the fee; a change takes effect two epochs after it is made.'
+  );
+}
+
+/**
+ * The quote's notes as the Review shows them: the engine's notes unchanged,
+ * except its transfer-fee note (SPL_SENTENCES.feeNote, which names the cap in
+ * base units), recognised by exact equality for one of the mint's two rates
+ * and re-worded by splFeeNoteText with the cap formatted in the token's own
+ * decimals and the tracked symbol. The engine is not edited (packages/ stays
+ * as it is); any other note, and a fee note that matches neither rate, is
+ * shown as the engine wrote it.
+ */
+export function splQuoteNotes(q: Pick<SplSendQuote, 'symbol' | 'quote'>): string[] {
+  const fee = q.quote.profile.classification.transferFee;
+  if (fee === null) return [...q.quote.notes];
+  const rates = [fee.olderTransferFee, fee.newerTransferFee].filter((r) => r.basisPoints !== 0);
+  return q.quote.notes.map((note) => {
+    const rate = rates.find((r) => note === SPL_SENTENCES.feeNote(r.basisPoints, r.maximumFee.toString()));
+    return rate ? splFeeNoteText(rate.basisPoints, `${formatBaseUnits(rate.maximumFee, q.quote.decimals)} ${q.symbol}`) : note;
+  });
 }
 
 /** The confirm view's rows, in order. Every figure is the quote's own. */

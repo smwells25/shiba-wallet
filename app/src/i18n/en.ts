@@ -2311,4 +2311,10 @@ export const en = {
   'lend.error.notQuoted': 'Not quoted',
   'lend.error.aaveTitle': 'Aave refused this',
   'lend.error.technical': 'Technical detail: {detail}',
+  // Pass p26-emu1 fixes (findings 1 and 2): the risk overview's pending line for a Solana entry while some recovery-phrase
+  // account's Solana address is not on this phone's record (wallet/insights.ts), and the profit-and-loss section's sentence
+  // when the SOL button is withheld because Solana devnet is on (screens/PortfolioViews.tsx, wallet/pnl.ts pnlNativeOffer).
+  'insights.pending.solanaUncached': '{address} (it matches none of the Solana addresses this phone has on record; the Solana address of {accounts} is not on record here, so it may be one of those)',
+  'insights.pending.solanaUncachedNote': 'The wallet keeps each recovery-phrase account’s public addresses on this phone once it has worked them out, normally when the wallet opens. Until an account’s Solana address is on record, a Solana entry sent from that account cannot be named here.',
+  'pnl.solanaDevnet': 'Profit and loss for SOL is not offered while Solana devnet is on: devnet SOL has no price.',
 } as const;

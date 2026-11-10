@@ -13231,7 +13231,10 @@
   "lend.refusal.networkChanged",
   "lend.error.notQuoted",
   "lend.error.aaveTitle",
-  "lend.error.technical"
+  "lend.error.technical",
+  "insights.pending.solanaUncached",
+  "insights.pending.solanaUncachedNote",
+  "pnl.solanaDevnet"
  ],
  "changed": {
   "activity.note.privacy": {

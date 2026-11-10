@@ -258,8 +258,62 @@ export interface InsightContext {
    * watched accounts and the multisigs by EVM address; the active account's
    * Solana address too). The pending section names each account by it; an
    * address not in it is not an account in this wallet now. Absent = none.
+   * Since pass p26-emu1 (finding 1) the Solana addresses are every
+   * recovery-phrase account's, from pendingSolanaAccounts below.
    */
   pendingAccounts?: readonly { address: string; name: string }[];
+  /**
+   * The recovery-phrase accounts whose Solana address this phone has no
+   * record of right now (pendingSolanaAccounts' `uncached`, by name). While
+   * any is listed, a Solana entry that matches no known address may still be
+   * one of them, so it is NOT called "not an account in this wallet now".
+   * Absent = none.
+   */
+  pendingSolanaUncached?: readonly string[];
+}
+
+/** Every recovery-phrase account's Solana address the screen could find, and the accounts whose address it could not. */
+export interface PendingSolanaAccounts {
+  labels: { address: string; name: string }[];
+  uncached: string[];
+}
+
+/**
+ * The Solana address of every recovery-phrase account, for naming the
+ * pending list's Solana entries (pass p26-emu1 finding 1: with Account 2
+ * active, Account 1's own Solana devnet send read "EK5j…rYPv (not an account
+ * in this wallet now)", because only the active account's Solana address was
+ * known here). Follows the Portfolio screen's rule (PortfolioScreen
+ * accountInputs): the active account's address as the wallet derived it,
+ * every other phrase account's from the public-address cache
+ * (storage.ts loadPublicAccount, which WalletContext writes whenever it works
+ * out an account's addresses, normally at launch), read without a prompt and
+ * with no network request; an imported account has no Solana address (ADR
+ * D9), and a watched or multi-signature account is never in the list. An
+ * account whose cache entry is missing or unreadable is reported by name in
+ * `uncached` instead of being guessed. A Solana address is the same on
+ * mainnet and devnet (one key, m/44'/501'/index'/0'), and the cache keys it
+ * by the Solana slot's id (`solanaSlot`, wallet/send.ts SOLANA_CHAIN_ID).
+ */
+export async function pendingSolanaAccounts(args: {
+  accounts: readonly { index: number; name: string; imported: boolean }[];
+  active: { index: number; solanaAddress: string | null } | null;
+  loadCached: (index: number) => Promise<readonly { chainId: string; address: string }[] | null>;
+  solanaSlot: string;
+}): Promise<PendingSolanaAccounts> {
+  const out: PendingSolanaAccounts = { labels: [], uncached: [] };
+  for (const a of args.accounts) {
+    if (a.imported) continue;
+    if (args.active && args.active.index === a.index && args.active.solanaAddress) {
+      out.labels.push({ address: args.active.solanaAddress, name: a.name });
+      continue;
+    }
+    const cached = await args.loadCached(a.index).catch(() => null);
+    const address = cached?.find((c) => c.chainId === args.solanaSlot)?.address ?? null;
+    if (address) out.labels.push({ address, name: a.name });
+    else out.uncached.push(a.name);
+  }
+  return out;
 }
 
 function line(id: string, text: string): InsightLine {
@@ -476,6 +530,8 @@ export function pendingSection(reads: Pick<InsightReads, 'pending'>, ctx: Insigh
   const old = places.reduce((n, p) => n + p.txOld + p.opOld + p.solOld, 0);
   out.push(line('summary', t('insights.pending.summary', { waiting, old })));
   let unknownAccount = false;
+  let uncachedSolana = false;
+  const uncached = ctx.pendingSolanaUncached ?? [];
   for (const p of places) {
     const parts: string[] = [];
     if (p.txWaiting > 0) parts.push(t('insights.pending.part.txWaiting', { count: p.txWaiting }));
@@ -485,12 +541,22 @@ export function pendingSection(reads: Pick<InsightReads, 'pending'>, ctx: Insigh
     if (p.solWaiting > 0) parts.push(t('insights.pending.part.solWaiting', { count: p.solWaiting }));
     if (p.solOld > 0) parts.push(t('insights.pending.part.solOld', { count: p.solOld }));
     const name = pendingAccountName(p.account, ctx.pendingAccounts ?? []);
-    if (name === null) unknownAccount = true;
-    const account = name ?? t('insights.pending.otherAddress', { address: shortPendingAddress(p.account) });
+    // A Solana address that matches no known one while some phrase account's
+    // Solana address is not on record may be that account's: it is said so,
+    // never called "not an account in this wallet now" (pass p26-emu1 finding 1).
+    const maybeUncached = name === null && !isEvmAddress(p.account) && uncached.length > 0;
+    if (name === null && !maybeUncached) unknownAccount = true;
+    if (maybeUncached) uncachedSolana = true;
+    const account =
+      name ??
+      (maybeUncached
+        ? t('insights.pending.solanaUncached', { address: shortPendingAddress(p.account), accounts: uncached.join(', ') })
+        : t('insights.pending.otherAddress', { address: shortPendingAddress(p.account) }));
     out.push(line(`place:${p.chain}|${p.account}`, t('insights.pending.place', { network: networkDefaultFor(p.chain)?.label ?? p.chain, account, parts: parts.join('; ') })));
   }
   if (old > 0) out.push(line('old', t('insights.pending.oldNote')));
   if (unknownAccount) out.push(line('other', t('insights.pending.otherNote', { max: MAX_PENDING_RECORDS })));
+  if (uncachedSolana) out.push(line('solana-uncached', t('insights.pending.solanaUncachedNote')));
   out.push(line('note', t('insights.pending.note')));
   return { ...base, lines: out };
 }
@@ -543,8 +609,12 @@ export function pendingPlaces(records: readonly PendingRecord[], nowMs: number):
 }
 
 /** The account's name as Activity labels it (activityAccountLabels), or null when it is not an account in this wallet now. */
+function isEvmAddress(address: string): boolean {
+  return /^0x[0-9a-fA-F]{40}$/.test(address);
+}
+
 function pendingAccountName(address: string, accounts: readonly { address: string; name: string }[]): string | null {
-  const evm = /^0x[0-9a-fA-F]{40}$/.test(address);
+  const evm = isEvmAddress(address);
   const found = accounts.find((a) => (evm ? a.address.toLowerCase() === address.toLowerCase() : a.address === address));
   return found ? found.name : null;
 }

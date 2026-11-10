@@ -29,6 +29,7 @@ import {
   solanaClient,
   solanaNetworkLabel,
   splConfirmRows,
+  splQuoteNotes,
   splMaxAmountText,
   splMaxUnavailableLine,
   splSendFormIntro,
@@ -255,7 +256,7 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
             <Text selectable style={[styles.rowValue, { color: theme.text }]}>{row.value}</Text>
           </View>
         ))}
-        {quote.quote.notes.map((note) => (
+        {splQuoteNotes(quote).map((note) => (
           <Text key={note} style={[styles.hint, { color: theme.text }]}>{note}</Text>
         ))}
         <SolanaSpendingPolicyNotice

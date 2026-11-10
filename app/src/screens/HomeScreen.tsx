@@ -55,6 +55,7 @@ import {
   splSendLinkShown,
   solSendLinkShown,
   splSkippedLine,
+  splWithheldLine,
   type SplRowState,
 } from '../wallet/spl-tokens';
 import { useAccountDelegation } from '../wallet/useDelegation';
@@ -375,6 +376,8 @@ function SolanaTokenRow({
     if (state.outside > 0n) {
       lines.push(splOutsideLine(maskAmount(formatBalanceDisplay(state.outside, state.decimals), hidden), token.symbol, state.outsideAccounts));
     }
+    // The issuer's transfer fee withheld in this account (pass p26-emu1 finding 3).
+    if (state.withheld > 0n) lines.push(splWithheldLine(maskAmount(formatBalanceDisplay(state.withheld, state.decimals), hidden), token.symbol));
     if (state.sendRefusal !== null) lines.push(splCannotSendLine(state.sendRefusal));
     if (state.decimalsChanged) lines.push(splDecimalsChangedLine(token.decimals, state.decimals));
   }

@@ -9,7 +9,7 @@ import {
 // Explicit .ts extensions: scripts/check-pnl.mjs loads this module under
 // Node's type stripping, which resolves relative specifiers literally.
 import { formatBalanceDisplay } from './balances.ts';
-import { describeAge, historySourceFor, staleNoteFor, tokenPriceAssetId, PRICE_HISTORY_MAX_DAYS } from './prices.ts';
+import { describeAge, historySourceFor, nativePriceAssetId, staleNoteFor, tokenPriceAssetId, PRICE_HISTORY_MAX_DAYS } from './prices.ts';
 import { ZERO_MONEY, formatMoney, moneyAdd, moneyOf, moneyReduce, moneySub, type Money } from './portfolio.ts';
 import type { SmartAccountHistoryStatus } from './smart-account-history.ts';
 
@@ -351,6 +351,51 @@ export function pnlTokenChoices(tokens: readonly FungibleAsset[], activeEvmCaip2
     out.push(chosen.asset);
   }
   return out;
+}
+
+/**
+ * The Solana slot's stable id (the mainnet CAIP-2 id the accounts and the
+ * Activity route carry, also while Settings → Developer → "Use Solana
+ * devnet" swaps the network underneath: config/defaults.ts
+ * resolveActiveNetworks). Written out here so this module stays free of the
+ * Solana engine; scripts/check-pnl.mjs pins it equal to wallet/send.ts
+ * SOLANA_CHAIN_ID.
+ */
+export const PNL_SOLANA_SLOT = 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp';
+
+/** A network slot as the profit-and-loss section sees it (wallet/portfolio.ts PortfolioSlot). */
+export interface PnlNativeSlot {
+  slot: string;
+  networkChainId: string;
+}
+
+/**
+ * The network slots the profit-and-loss section offers a native-coin button
+ * for (pass p26-emu1 finding 2, a safety fix): a slot whose network is a
+ * MAIN network with a price (prices.ts nativePriceAssetId: the slot served by
+ * its own mainnet id) and on which the active account has an address — and
+ * NEVER the Solana slot while Solana devnet is on. The panel loads the
+ * history of the network that serves the slot now (useHistory resolves it
+ * through getEndpoint, which follows the devnet switch), so offering SOL
+ * there would load devnet history and value test SOL at CoinGecko's mainnet
+ * price; the pass saw exactly that (12 devnet entries, only its gap
+ * sentences stopped a figure). The second rule holds even when a caller
+ * hands in a Solana slot still labelled as mainnet.
+ *
+ * `solanaDevnetNote` is true when the Solana button was withheld for that
+ * reason (devnet on and the account has a Solana address), so the section
+ * says why in one sentence (en.ts pnl.solanaDevnet).
+ */
+export function pnlNativeOffer<S extends PnlNativeSlot>(
+  slots: readonly S[],
+  options: { solanaDevnet: boolean; accountSlots: readonly string[] },
+): { slots: S[]; solanaDevnetNote: boolean } {
+  const held = (s: S) => options.accountSlots.includes(s.slot);
+  const withheld = (s: S) => options.solanaDevnet && s.slot === PNL_SOLANA_SLOT;
+  return {
+    slots: slots.filter((s) => held(s) && !withheld(s) && nativePriceAssetId(s.slot, s.networkChainId) !== null),
+    solanaDevnetNote: slots.some((s) => held(s) && withheld(s)),
+  };
 }
 
 /**

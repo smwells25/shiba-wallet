@@ -567,6 +567,89 @@ async function importMutant(from, to) {
   check(`${mutantCount} mutants written and each caught above`, mutantCount >= 19);
 }
 
+// Pass p26-emu1 finding 1: with Account 2 active, Account 1's own Solana devnet send read "Solana devnet, EK5j…rYPv (not an
+// account in this wallet now)" — only the active account's Solana address was known. Every recovery-phrase account's Solana
+// address now comes from the public-address cache (the Portfolio screen's rule), read with no prompt and no request; an
+// account whose address is not cached is named, and an unmatched Solana entry is then never called "not an account".
+console.log('check-insights: every phrase account\'s Solana address names its pending entries (pass p26-emu1 finding 1)');
+{
+  const SOLANA_SLOT = 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp';
+  const SOL_A2 = '9WMgKdmRJBZy8WQ6Q9T6VjJN4wyT9jQenDvfvLFe471n';
+  const STRANGER = '6TgSKzjg3SQSeqrDR95D7RNncYh63FPzRcDWX6T4455t'; // the dev devnet wallet (packages/chains-solana/test/fixtures/devnet-fee-mint-2026-11-09.json), not an account here
+  const cache = {
+    0: [{ chainId: 'eip155:1', address: A(1) }, { chainId: SOLANA_SLOT, address: SOL_A1 }],
+    1: [{ chainId: 'eip155:1', address: ACC2 }, { chainId: SOLANA_SLOT, address: SOL_A2 }],
+  };
+  const asked = [];
+  const loadCached = async (index) => {
+    asked.push(index);
+    return cache[index] ?? null;
+  };
+  const accounts = [
+    { index: 0, name: 'Account 1', imported: false },
+    { index: 1, name: 'Account 2', imported: false },
+    { index: 2147483648, name: 'Imported 1 (imported key)', imported: true },
+  ];
+  const realFetch = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = async () => {
+    requests += 1;
+    throw new Error('no request expected');
+  };
+  const found = await I.pendingSolanaAccounts({ accounts, active: { index: 1, solanaAddress: SOL_A2 }, loadCached, solanaSlot: SOLANA_SLOT });
+  check('Account 2 active: Account 1\'s Solana address from the cache, Account 2\'s as derived; the imported account and the active one are never read',
+    JSON.stringify(found) === JSON.stringify({ labels: [{ address: SOL_A1, name: 'Account 1' }, { address: SOL_A2, name: 'Account 2' }], uncached: [] }) &&
+      JSON.stringify(asked) === '[0]', found);
+  const solCtx = (f, over = {}) => ctx({ pendingAccounts: [{ address: A(1), name: 'Account 1' }, ...f.labels], pendingSolanaUncached: f.uncached, ...over });
+  const solText = (records, f, over) => texts(I.pendingSection({ pending: { status: 'ok', value: { records, readOnly: false } } }, solCtx(f, over)));
+  const a1send = sol('5sigA1', NOW - MIN); // sender SOL_A1 (Account 1)
+  const lines1 = solText([a1send], found);
+  check('the p26-emu1 case: Account 1\'s devnet send, Account 2 active → "Solana devnet, Account 1: Solana token sends waiting: 1." and no other-address note',
+    lines1[1] === 'Solana devnet, Account 1: Solana token sends waiting: 1.' && !lines1.includes(en['insights.pending.otherNote'].replace('{max}', '64')) && !lines1.some((l) => l.includes('not an account')), lines1);
+  const stranger = { ...sol('5sigX', NOW - MIN), sender: STRANGER };
+  const lines2 = solText([stranger], found);
+  check('an address that truly matches no account (every phrase account\'s Solana address known) keeps "(not an account in this wallet now)" and its note',
+    lines2[1] === 'Solana devnet, 6TgS…455t (not an account in this wallet now): Solana token sends waiting: 1.' && lines2.includes(en['insights.pending.otherNote'].replace('{max}', '64')) &&
+      !lines2.includes(en['insights.pending.solanaUncachedNote']), lines2);
+  asked.length = 0;
+  const partial = await I.pendingSolanaAccounts({ accounts, active: { index: 1, solanaAddress: SOL_A2 }, loadCached: async (i) => (asked.push(i), null), solanaSlot: SOLANA_SLOT });
+  check('an account whose cache entry is missing is reported by name, not guessed', JSON.stringify(partial) === JSON.stringify({ labels: [{ address: SOL_A2, name: 'Account 2' }], uncached: ['Account 1'] }), partial);
+  const failing = await I.pendingSolanaAccounts({ accounts, active: null, loadCached: async () => { throw new Error('secure store unavailable'); }, solanaSlot: SOLANA_SLOT });
+  check('a cache read that fails counts as not on record (never throws)', JSON.stringify(failing) === JSON.stringify({ labels: [], uncached: ['Account 1', 'Account 2'] }), failing);
+  const lines3 = solText([a1send], partial);
+  check('a Solana entry while some account\'s Solana address is not on record: named as possibly that account, NOT "not an account in this wallet now", with its own note and without the other-address note',
+    lines3[1] === 'Solana devnet, EK5j…rYPv (it matches none of the Solana addresses this phone has on record; the Solana address of Account 1 is not on record here, so it may be one of those): Solana token sends waiting: 1.' &&
+      lines3.includes(en['insights.pending.solanaUncachedNote']) && !lines3.includes(en['insights.pending.otherNote'].replace('{max}', '64')), lines3);
+  const lines4 = solText([tx(h('a'), '1', NOW - MIN, 'send', A(8), SEPOLIA_ID)], partial);
+  check('…an EVM address that matches no account is still "not an account in this wallet now" (EVM addresses are all known)',
+    lines4[1].startsWith('Ethereum Sepolia, 0x0000…0008 (not an account in this wallet now):') && !lines4.includes(en['insights.pending.solanaUncachedNote']), lines4);
+  check('zero network requests to name the accounts', requests === 0);
+  globalThis.fetch = realFetch;
+  check('the cache entry is read by the Solana slot\'s id (a Solana address is one key on mainnet and devnet)', found.labels[0].address === SOL_A1 && cache[0][0].address !== SOL_A1);
+  const screen = read('src/screens/InsightsScreen.tsx');
+  const screenPin = (src) =>
+    src.includes('loadCached: loadPublicAccount,') && src.includes('solanaSlot: SOLANA_CHAIN_ID,') && src.includes('pendingSolanaUncached,') &&
+    src.includes(': accountList.filter((a) => !a.imported && a.index !== activeIndex).map((a) => a.name);') &&
+    src.includes('? solanaAccounts.labels') &&
+    read('src/screens/PortfolioScreen.tsx').includes('const cached = await loadPublicAccount(a.index).catch(() => null);');
+  check('the screen reads the cache the Portfolio way (loadPublicAccount, the Solana slot id), labels every account found and passes the not-cached names on (source)', screenPin(screen));
+  check('…mutant caught: the screen back on the active account\'s Solana address alone', !screenPin(screen.replace('? solanaAccounts.labels', '? []')));
+  const run = async (M, f) => texts(M.pendingSection({ pending: { status: 'ok', value: { records: [a1send], readOnly: false } } }, solCtx(f)));
+  const n1 = await importMutant('    if (a.imported) continue;\n', '');
+  const r1 = await n1.pendingSolanaAccounts({ accounts, active: { index: 1, solanaAddress: SOL_A2 }, loadCached: async (i) => cache[i] ?? null, solanaSlot: SOLANA_SLOT });
+  check('mutant caught: an imported account looked up (and reported as not on record)', r1.uncached.includes('Imported 1 (imported key)'));
+  const n2 = await importMutant('    const maybeUncached = name === null && !isEvmAddress(p.account) && uncached.length > 0;', '    const maybeUncached = false;');
+  check('mutant caught: an entry from an account not on record called "not an account in this wallet now"', (await run(n2, partial))[1].includes('(not an account in this wallet now)'));
+  const n3 = await importMutant('    const address = cached?.find((c) => c.chainId === args.solanaSlot)?.address ?? null;', '    const address = cached?.[0]?.address ?? null;');
+  const r3 = await n3.pendingSolanaAccounts({ accounts, active: { index: 1, solanaAddress: SOL_A2 }, loadCached: async (i) => cache[i] ?? null, solanaSlot: SOLANA_SLOT });
+  check('mutant caught: the cache read without the Solana slot (Account 1 labelled by its EVM address)', (await run(n3, r3))[1] !== 'Solana devnet, Account 1: Solana token sends waiting: 1.');
+  const n4 = await importMutant('    if (args.active && args.active.index === a.index && args.active.solanaAddress) {', '    if (false) {');
+  const r4 = await n4.pendingSolanaAccounts({ accounts, active: { index: 1, solanaAddress: SOL_A2 }, loadCached: async (i) => (i === 0 ? cache[0] : null), solanaSlot: SOLANA_SLOT });
+  check('mutant caught: the active account\'s derived address ignored (Account 2 reported as not on record)', r4.uncached.includes('Account 2'));
+  const n5 = await importMutant("  if (uncachedSolana) out.push(line('solana-uncached', t('insights.pending.solanaUncachedNote')));\n", '');
+  check('mutant caught: the not-on-record note dropped', !(await run(n5, partial)).includes(en['insights.pending.solanaUncachedNote']));
+}
+
 // Phase 26 item 4: DEMO.md step 51 names the screens' own labels — Portfolio's "Risk overview" button, and in Settings → Privacy
 // (the section titled SCREEN_PROTECTION_TITLE = "Privacy", ending before the app-lock section) the "Risk overview" button
 // directly after "Open the inbox" — so the walk-through cannot drift from the app.

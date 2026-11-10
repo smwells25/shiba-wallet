@@ -2312,4 +2312,8 @@ export const es: Readonly<Partial<Record<StringId, string>>> = {
   'lend.error.notQuoted': 'No cotizado',
   'lend.error.aaveTitle': 'Aave lo rechazó',
   'lend.error.technical': 'Detalle técnico: {detail}',
+  // Pass p26-emu1 fixes (findings 1 and 2). Spanish drafts, pending a native reviewer.
+  'insights.pending.solanaUncached': '{address} (no coincide con ninguna de las direcciones de Solana que este teléfono tiene registradas; la dirección de Solana de {accounts} no está registrada aquí, así que puede ser una de esas)',
+  'insights.pending.solanaUncachedNote': 'La billetera guarda en este teléfono las direcciones públicas de cada cuenta de la frase de recuperación una vez que las ha calculado, normalmente al abrirse. Mientras la dirección de Solana de una cuenta no esté registrada, una entrada de Solana enviada desde esa cuenta no se puede nombrar aquí.',
+  'pnl.solanaDevnet': 'Las ganancias y pérdidas de SOL no se ofrecen mientras Solana devnet está activada: el SOL de devnet no tiene precio.',
 };

@@ -23,6 +23,7 @@ import {
   computeTokenPnl,
   pnlFigureLines,
   pnlHistoryLoadedLine,
+  pnlNativeOffer,
   pnlPriceRange,
   pnlTokenChipTitle,
   pnlTokenChoices,
@@ -56,25 +57,31 @@ function subjectKey(subject: PnlSubject): string {
 
 /**
  * The profit-and-loss section (feature 97) under the portfolio: one button
- * per priced network slot the active account has an address on, then one
- * per tracked token pnlTokenChoices offers on the active EVM network (only
- * a main network: a test network's slot is never in `slots` and its tokens
- * have no price id); the panel loads only after a button is pressed.
+ * per priced network slot the active account has an address on
+ * (pnl.ts pnlNativeOffer: a main network with a price, and never the Solana
+ * slot while Solana devnet is on — pass p26-emu1 finding 2), then one per
+ * tracked token pnlTokenChoices offers on the active EVM network (only a
+ * main network: a test network's tokens have no price id); the panel loads
+ * only after a button is pressed.
  */
 export function PnlSection({
   slots,
+  solanaDevnet,
   accounts,
   activeAccount,
   evmCaip2,
 }: {
   slots: PortfolioSlot[];
+  solanaDevnet: boolean;
   accounts: ChainAccount[];
   activeAccount: AccountView | null;
   evmCaip2: string;
 }) {
   const theme = useTheme();
+  const { t } = useI18n();
   const [chosen, setChosen] = useState<string | null>(null);
-  const usable = slots.filter((s) => accounts.some((a) => a.chainId === s.slot));
+  const offer = pnlNativeOffer(slots, { solanaDevnet, accountSlots: accounts.map((a) => a.chainId) });
+  const usable = offer.slots;
   // The EVM slot, only when it is priced now (a main network) and the account has an address on it.
   const evmSlot = usable.find((s) => s.evm && s.networkChainId === evmCaip2) ?? null;
   const hasEvmSlot = evmSlot !== null;
@@ -104,6 +111,7 @@ export function PnlSection({
       </Text>
       <Text style={[styles.hint, { color: theme.textMuted }]}>{PNL_INTRO}</Text>
       {usable.length === 0 ? <Text style={[styles.hint, { color: theme.textMuted }]}>{PNL_NO_SLOTS}</Text> : null}
+      {offer.solanaDevnetNote ? <Text style={[styles.hint, { color: theme.textMuted }]}>{t('pnl.solanaDevnet')}</Text> : null}
       <View style={styles.chips}>
         {subjects.map((x) => {
           const key = subjectKey(x);

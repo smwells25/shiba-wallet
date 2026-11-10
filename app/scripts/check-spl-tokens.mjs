@@ -1330,7 +1330,7 @@ let caught = 0;
 }
 {
   // M5: a non-associated account counted as sendable.
-  const M = await mutant('        if (entry.isAssociated) associated += entry.account.amount;', '        if (true) associated += entry.account.amount;');
+  const M = await mutant('        if (entry.isAssociated) {\n          associated += entry.account.amount;', '        if (true) {\n          associated += entry.account.amount;');
   const extra = CAROL.address;
   const chain = fakeChain({ extraAccounts: { [extra]: { owner: SPL_TOKEN_PROGRAM, data: tokenAccountBytes({ mint: USDC, owner: ALICE.address, amount: 250_000n }), lamports: 1n } } });
   const { rows } = await M.loadSplTokenRows(chain.client, ALICE.address, [usdcDevnet], DEVNET);
@@ -1821,6 +1821,91 @@ console.log('check-spl-tokens: phase 26 item 3b — a Solana token send checked 
     views.includes('{splSpendingUncoveredNote(symbol, chain)}') && views.includes('setReadouts(r.readouts.filter((x) => x.policy.token === mint));') &&
       views.includes('evaluateSolanaTokenSend({ chain, owner, mint, amount })') && views.includes('{splSpendingFeeNote(chain)}'));
   check(`phase 26 item 3b: every wallet/spl-tokens.ts mutant of this file caught (${caught} of ${mutants})`, caught === mutants);
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-spl-tokens: the issuer\'s transfer fee — withheld in the recipient\'s account, and its cap in tokens (pass p26-emu1 findings 3 and 4)');
+// ---------------------------------------------------------------------------
+// The recorded devnet fee mint (packages/chains-solana/test/fixtures/devnet-fee-mint-2026-11-09.json, phase 26 item 3a):
+// SFEE, Token-2022, 6 decimals, 100 basis points capped at 1 SFEE; Account 2's associated account AWFg…yYKJ holds 990,000 with
+// 10,000 WITHHELD (its TransferFeeAmount extension); Account 1's 8jZR…fkwL holds 10,000,000 with nothing withheld.
+{
+  const FEE = JSON.parse(readFileSync(resolve(HERE, '../../packages/chains-solana/test/fixtures/devnet-fee-mint-2026-11-09.json'), 'utf8'));
+  const A11Y = await import('../src/a11y.ts');
+  const { formatBalanceDisplay: formatBal } = await import('../src/wallet/balances.ts');
+  const SFEE = FEE.mint;
+  const ACCOUNT1 = 'EK5jKrBRwvQXXsSERGN6jEoYaofE2PNiZWQoaCLtrYPv';
+  const ACCOUNT2 = '9WMgKdmRJBZy8WQ6Q9T6VjJN4wyT9jQenDvfvLFe471n';
+  const extra = Object.fromEntries(
+    Object.entries(FEE.accounts).map(([addr, acc]) => [addr, { owner: acc.owner, data: base64.decode(acc.dataBase64), lamports: BigInt(acc.lamports) }]),
+  );
+  const feeChain = () => fakeChain({ extraAccounts: extra });
+  const sfee = SPL.trackedAssetFor({ caip2: DEVNET, mint: SFEE, decimals: 6 }, 'SFEE', 'Shiba Fee Test');
+  const id = formatAssetId(sfee.assetId);
+  const { rows: rows2 } = await SPL.loadSplTokenRows(feeChain().client, ACCOUNT2, [sfee], DEVNET);
+  const r2 = rows2[id];
+  check('Account 2 (the recipient): the sendable balance is 990,000 and 10,000 is reported as withheld, read from its account\'s TransferFeeAmount',
+    r2.status === 'ok' && r2.associated === 990_000n && r2.withheld === 10_000n, r2);
+  const { rows: rows1 } = await SPL.loadSplTokenRows(feeChain().client, ACCOUNT1, [sfee, usdcDevnet], DEVNET);
+  check('Account 1 (the sender) has nothing withheld; a classic SPL token account has no such extension (0)',
+    rows1[id].status === 'ok' && rows1[id].withheld === 0n && rows1[id].associated === 10_000_000n);
+  const homeLine = (row, hidden) => (row.withheld > 0n ? SPL.splWithheldLine(PREFS.maskAmount(formatBal(row.withheld, row.decimals), hidden), 'SFEE') : null);
+  check('Home\'s line under the SFEE row: exact', homeLine(r2, false) === '0.01 SFEE is withheld in this token account as the issuer’s transfer fee; it is not yours to send.', homeLine(r2, false));
+  check('…under Hide amounts the figure is masked, and spoken "(amount hidden)"',
+    homeLine(r2, true) === '•••• SFEE is withheld in this token account as the issuer’s transfer fee; it is not yours to send.' &&
+      A11Y.spokenMaskedText(homeLine(r2, true)).startsWith('(amount hidden) SFEE is withheld'));
+  check('…and no line where nothing is withheld', homeLine(rows1[id], false) === null);
+  const home = readFileSync(resolve(HERE, '../src/screens/HomeScreen.tsx'), 'utf8');
+  const homePin = (src) =>
+    src.includes('if (state.withheld > 0n) lines.push(splWithheldLine(maskAmount(formatBalanceDisplay(state.withheld, state.decimals), hidden), token.symbol));') &&
+    src.includes('<Text key={line} accessibilityLabel={spokenMaskedText(line)}');
+  check('HomeScreen draws the withheld line among the Solana token row\'s lines, spoken through spokenMaskedText (source)', homePin(home));
+  check('…mutant caught: Home no longer draws the line', !homePin(home.replace('if (state.withheld > 0n) lines.push(splWithheldLine(', 'if (false) lines.push(splWithheldLine(')));
+  check('splWithheldAmount: 0 with no TransferFeeAmount extension, the decoded amount with one', SPL.splWithheldAmount([]) === 0n &&
+    SPL.splWithheldAmount([{ type: 2, name: 'TransferFeeAmount', data: Uint8Array.of(0x10, 0x27, 0, 0, 0, 0, 0, 0) }]) === 10_000n);
+  // Finding 4: the Review's fee note named the cap in base units.
+  const q = await SPL.quoteSplSend(feeChain().client, { caip2: DEVNET, url: 'x', owner: ACCOUNT1, recipient: ACCOUNT2, token: sfee, amountText: '1' });
+  const engineNote = SPL_SENTENCES.feeNote(100, '1000000');
+  const reviewNote = 'The issuer charges a transfer fee of 100 basis points (at most 1 SFEE per transfer), taken out of the amount the recipient receives. The issuer can change the fee; a change takes effect two epochs after it is made.';
+  const notes = SPL.splQuoteNotes(q);
+  check('the engine\'s note names the cap in base units (what the pass saw) …', q.quote.notes.includes(engineNote) && engineNote.includes('(at most 1000000 base units per transfer)'));
+  check('… the Review shows it in tokens, as the read-back does ("1 SFEE")', notes.includes(reviewNote) && !notes.some((n) => n.includes('base units per transfer')) && notes.length === q.quote.notes.length,
+    notes);
+  const config = q.quote.profile.classification.transferFee;
+  check('…the same "1 SFEE" the read-back line says', SPL.splTransferFeeLine(config, 6, 'SFEE') === 'Transfer fee: 100 basis points (1 SFEE max) — shown again on every send.' &&
+    reviewNote.includes('(at most 1 SFEE per transfer)'));
+  check('every other note is shown as the engine wrote it, in order', JSON.stringify(notes.filter((n) => n !== reviewNote)) === JSON.stringify(q.quote.notes.filter((n) => n !== engineNote)));
+  check('a mint with no fee: the notes unchanged', JSON.stringify(SPL.splQuoteNotes({ symbol: 'X', quote: { notes: ['a', engineNote], profile: { classification: { transferFee: null } } } })) === JSON.stringify(['a', engineNote]));
+  const screen = readFileSync(resolve(HERE, '../src/screens/SolanaTokenSendScreen.tsx'), 'utf8');
+  check('the Review renders splQuoteNotes(quote), not the engine\'s notes directly (source)', screen.includes('{splQuoteNotes(quote).map((note) => (') && !screen.includes('quote.quote.notes.map'));
+  {
+    const M = await mutant('          withheld += splWithheldAmount(entry.account.extensions);\n', '');
+    const { rows } = await M.loadSplTokenRows(feeChain().client, ACCOUNT2, [sfee], DEVNET);
+    const ok = rows[id].withheld !== 10_000n;
+    caught += ok ? 1 : 0;
+    check('mutant caught (p26-emu1 finding 3): the withheld amount not read → Home says nothing about it', ok);
+  }
+  {
+    const M = await mutant('  const ext = extensions.find((e) => e.type === EXT.TransferFeeAmount);', '  const ext = extensions.find((e) => e.type === EXT.TransferFeeConfig);');
+    const { rows } = await M.loadSplTokenRows(feeChain().client, ACCOUNT2, [sfee], DEVNET);
+    const ok = rows[id].status !== 'ok' || rows[id].withheld !== 10_000n;
+    caught += ok ? 1 : 0;
+    check('mutant caught (p26-emu1 finding 3): the wrong extension read for the withheld amount', ok);
+  }
+  {
+    const M = await mutant("    return rate ? splFeeNoteText(rate.basisPoints, `${formatBaseUnits(rate.maximumFee, q.quote.decimals)} ${q.symbol}`) : note;",
+      "    return rate ? splFeeNoteText(rate.basisPoints, `${rate.maximumFee} base units`) : note;");
+    const ok = !M.splQuoteNotes(q).includes(reviewNote);
+    caught += ok ? 1 : 0;
+    check('mutant caught (p26-emu1 finding 4): the cap shown in base units again', ok);
+  }
+  {
+    const M = await mutant('  const rates = [fee.olderTransferFee, fee.newerTransferFee].filter((r) => r.basisPoints !== 0);', '  const rates: typeof fee.newerTransferFee[] = [];');
+    const ok = M.splQuoteNotes(q).includes(engineNote);
+    caught += ok ? 1 : 0;
+    check('mutant caught (p26-emu1 finding 4): the engine\'s fee note no longer recognised (base units shown)', ok);
+  }
+  check('…every mutant of this file caught, the p26-emu1 ones included', caught === mutants);
 }
 
 console.log(`\ncheck-spl-tokens: ${passed} passed, ${failed} failed (${mutants} mutants)`);

@@ -943,6 +943,64 @@ console.log('check-pnl: DEMO step 52 names the exact labels (phase 26 item 4)');
   check('…mutant caught: the chip titled by the symbol alone', !ok(demo, views.replace('? `${x.slot.symbol} on ${x.slot.label}`', '? `${x.slot.symbol}`')));
 }
 
+// Pass p26-emu1 finding 2 (a safety fix): with Solana devnet on, the "SOL on Solana" button loaded the DEVNET history and
+// would have valued test SOL at CoinGecko's mainnet price (PortfolioScreen built the Solana slot from its mainnet entry
+// whatever the devnet switch said). Profit and loss for SOL is offered only while the Solana slot is on mainnet.
+console.log('check-pnl: no SOL profit and loss while Solana devnet is on (pass p26-emu1 finding 2)');
+{
+  const { en } = await import('../src/i18n/en.ts');
+  const { es } = await import('../src/i18n/es.ts');
+  const { resolveActiveNetworks, SOLANA_DEVNET_CAIP2 } = await import('../src/config/defaults.ts');
+  const { portfolioSlotsFor } = await import('../src/wallet/portfolio.ts');
+  const { SOLANA_CHAIN_ID, EVM_CHAIN_ID } = await import('../src/wallet/send.ts');
+  const { nativePriceAssetId } = await import('../src/wallet/prices.ts');
+  const EVM = { caip2: 'eip155:1', label: 'Ethereum', displaySymbol: 'ETH', testnet: false };
+  const slotsFor = (devnet) => portfolioSlotsFor(resolveActiveNetworks(null, devnet), EVM);
+  const ALL = slotsFor(false).map((x) => x.slot);
+  const offered = (o) => o.slots.map((x) => x.slot).join();
+  check('PNL_SOLANA_SLOT is the Solana slot id the accounts carry (wallet/send.ts SOLANA_CHAIN_ID)', L.PNL_SOLANA_SLOT === SOLANA_CHAIN_ID);
+  const on = L.pnlNativeOffer(slotsFor(true), { solanaDevnet: true, accountSlots: ALL });
+  check('devnet ON: no SOL button (ETH, BTC and DOGE still offered) and the sentence is said',
+    !on.slots.some((x) => x.slot === SOLANA_CHAIN_ID) && on.slots.length === 3 && on.slots.some((x) => x.slot === EVM_CHAIN_ID) && on.solanaDevnetNote === true, offered(on));
+  const off = L.pnlNativeOffer(slotsFor(false), { solanaDevnet: false, accountSlots: ALL });
+  check('devnet OFF: the SOL button as before (served by Solana mainnet), no sentence',
+    off.slots.some((x) => x.slot === SOLANA_CHAIN_ID && x.networkChainId === SOLANA_CHAIN_ID) && off.slots.length === 4 && off.solanaDevnetNote === false, offered(off));
+  const oldShape = slotsFor(false); // the old builder: the Solana slot labelled mainnet whatever the switch
+  const guard = L.pnlNativeOffer(oldShape, { solanaDevnet: true, accountSlots: ALL });
+  check('a Solana slot still labelled mainnet is withheld too while devnet is on (the second rule)', !guard.slots.some((x) => x.slot === SOLANA_CHAIN_ID) && guard.solanaDevnetNote === true);
+  const noSol = L.pnlNativeOffer(slotsFor(true), { solanaDevnet: true, accountSlots: ALL.filter((x) => x !== SOLANA_CHAIN_ID) });
+  check('an account with no Solana address (an imported key) gets no devnet sentence', noSol.solanaDevnetNote === false && !noSol.slots.some((x) => x.slot === SOLANA_CHAIN_ID));
+  const sol = slotsFor(true).find((x) => x.slot === SOLANA_CHAIN_ID);
+  check('with devnet on the portfolio\'s Solana slot is served by Solana devnet: "Solana devnet", "test SOL", a test network, no price id',
+    sol.networkChainId === SOLANA_DEVNET_CAIP2 && sol.label === 'Solana devnet' && sol.symbol === 'test SOL' && sol.testnet === true && nativePriceAssetId(sol.slot, sol.networkChainId) === null, sol);
+  check('every other slot is unchanged by the switch (EVM from the active profile, Bitcoin and Dogecoin on their own ids)',
+    JSON.stringify(slotsFor(true).filter((x) => x.slot !== SOLANA_CHAIN_ID)) === JSON.stringify(slotsFor(false).filter((x) => x.slot !== SOLANA_CHAIN_ID)) &&
+      slotsFor(false).every((x) => (x.evm ? x.networkChainId === 'eip155:1' : x.networkChainId === x.slot && x.testnet === false)));
+  // The panel's history comes from useHistory(slot.slot), which follows the switch (resolveActiveNetworks): with devnet on the
+  // Solana slot IS devnet, so the only safe rule is never to offer it — and every offered native slot is served by its own id.
+  check('the history source of an offered slot is never the devnet id: with devnet on the Solana slot would resolve to devnet, and it is not offered',
+    resolveActiveNetworks(null, true).find((n) => n.slot === SOLANA_CHAIN_ID).network.chainId === SOLANA_DEVNET_CAIP2 &&
+      [on, off, guard].every((o) => o.slots.every((x) => x.networkChainId !== SOLANA_DEVNET_CAIP2 && nativePriceAssetId(x.slot, x.networkChainId) !== null)));
+  check('the sentence: English exact, a Spanish draft', en['pnl.solanaDevnet'] === 'Profit and loss for SOL is not offered while Solana devnet is on: devnet SOL has no price.' &&
+    typeof es['pnl.solanaDevnet'] === 'string' && es['pnl.solanaDevnet'] !== en['pnl.solanaDevnet']);
+  const views = readFileSync(join(HERE, '..', 'src', 'screens', 'PortfolioViews.tsx'), 'utf8');
+  const screen = readFileSync(join(HERE, '..', 'src', 'screens', 'PortfolioScreen.tsx'), 'utf8');
+  const wired = (v, sc) =>
+    v.includes('const offer = pnlNativeOffer(slots, { solanaDevnet, accountSlots: accounts.map((a) => a.chainId) });') && v.includes('const usable = offer.slots;') &&
+    v.includes("{offer.solanaDevnetNote ? <Text style={[styles.hint, { color: theme.textMuted }]}>{t('pnl.solanaDevnet')}</Text> : null}") &&
+    sc.includes('portfolioSlotsFor(resolveActiveNetworks(null, solanaDevnet), {') && sc.includes('solanaDevnet={solanaDevnet}') && !sc.includes('networkChainId: n.chainId');
+  check('the section offers through pnlNativeOffer with the switch, says the sentence, and the screen builds its slots from the switch (source)', wired(views, screen));
+  check('…mutant caught: the section back on its own slot filter', !wired(views.replace('const usable = offer.slots;', 'const usable = slots.filter((s) => accounts.some((a) => a.chainId === s.slot));'), screen));
+  const o1 = await importMutant('  const withheld = (s: S) => options.solanaDevnet && s.slot === PNL_SOLANA_SLOT;', '  const withheld = (_s: S) => false;');
+  check('mutant caught: the devnet rule removed (a Solana slot still labelled mainnet offered while devnet is on)',
+    o1.pnlNativeOffer(oldShape, { solanaDevnet: true, accountSlots: ALL }).slots.some((x) => x.slot === SOLANA_CHAIN_ID));
+  const o2 = await importMutant('    solanaDevnetNote: slots.some((s) => held(s) && withheld(s)),', '    solanaDevnetNote: false,');
+  check('mutant caught: SOL withheld with no sentence saying why', o2.pnlNativeOffer(slotsFor(true), { solanaDevnet: true, accountSlots: ALL }).solanaDevnetNote === false);
+  const o3 = await importMutant('          networkChainId: network.chainId,\n', '          networkChainId: slot,\n', 'src/wallet/portfolio.ts');
+  const o3sol = o3.portfolioSlotsFor(resolveActiveNetworks(null, true), EVM).find((x) => x.slot === SOLANA_CHAIN_ID);
+  check('mutant caught: the portfolio\'s Solana slot claiming mainnet while devnet is on (the old builder)', nativePriceAssetId(o3sol.slot, o3sol.networkChainId) !== null);
+}
+
 console.log(`\nformatMoney sanity: ${formatMoney(usd(2500n), { hidden: false, signed: true })}`);
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
