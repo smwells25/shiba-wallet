@@ -38,6 +38,8 @@ import { isFeatureAllowed, readinessReason } from '../config/readiness.ts';
 import { formatBalanceDisplay, formatUnits, parseUnits } from './balances.ts';
 import { maskAmount } from '../config/prefs.ts';
 import type { BroadcastRecordState, PendingSolanaRecord, SolanaTransferLike } from './pending-transactions.ts';
+import type { BroadcastSpendState } from './broadcast-spend.ts';
+import { t } from '../i18n/index.ts';
 
 /**
  * The Solana slot's id: the mainnet CAIP-2 id the accounts, routes and
@@ -552,15 +554,67 @@ export async function quoteSplSend(
 }
 
 /**
- * Shown on the Solana token send's confirm (phase 25 item 0b): the spending
- * limits (wallet/spending-policy.ts) are scoped to an EVM chain and an
- * Ethereum address — its scopeKey refuses any chain id that is not
- * eip155:<n>, and the rules it evaluates come from the EVM engine — so a
- * Solana token send is never counted against a limit, and the confirm says
- * so instead of leaving it to be assumed.
+ * The Solana token send's confirm sentences about spending limits (phase 26
+ * item 3b; until then the confirm said limits were for Ethereum networks
+ * only, which was true while wallet/spending-policy.ts scopeKey refused any
+ * chain id but eip155:<n>). Since then a Solana scope holds limits on Solana
+ * tokens, keyed by mint (components/SpendingPolicyViews.tsx
+ * SolanaSpendingPolicyNotice shows them): with no limit on this send's
+ * token for this account and network the confirm says it is not counted
+ * (splSpendingUncoveredNote); with one, it shows the limit and says the
+ * network fee and rent, paid in SOL, are never counted against a token
+ * limit (splSpendingFeeNote).
  */
-export const SPL_SPENDING_LIMITS_NOTE =
-  'Spending limits (Settings) are set for Ethereum networks only, so this send is not counted against any limit.';
+export function splSpendingUncoveredNote(symbol: string, caip2: string): string {
+  return t('spendingSol.confirm.uncovered', { symbol, network: solanaNetworkLabel(caip2) });
+}
+
+/** Beside a Solana token limit on the confirm: the fee and rent are SOL, never counted against a token limit. */
+export function splSpendingFeeNote(caip2: string): string {
+  return t('spendingSol.confirm.feeNote', { coin: splNativeSymbol(caip2) });
+}
+
+/** One Solana token send as the spending limits see it (spending-policy.ts SolanaSpendInput). */
+export interface SplSpendInput {
+  chain: string;
+  owner: string;
+  mint: string;
+  /** The transferChecked amount, which leaves the sender's token account (the fee is SOL and is not part of it). */
+  amount: bigint;
+}
+
+/** The limits' answer before the device check (spending-policy.ts SpendingCheck, structurally). */
+export interface SplSpendingCheck {
+  status: 'no-policy' | 'allowed' | 'blocked' | 'unreadable';
+  title?: string | null;
+  message?: string | null;
+}
+
+/**
+ * The spending limits as runSplSend uses them (spending-policy.ts
+ * solanaSpendingGate in the app): the check before the device check, the
+ * count before the broadcast under the signature, its release after a
+ * definite refusal when this attempt created it, the re-key when the node
+ * returned another signature. An open outcome keeps the count.
+ */
+export interface SplSpendingGate {
+  check: (input: SplSpendInput) => Promise<SplSpendingCheck>;
+  record: (input: SplSpendInput, ref: string) => Promise<BroadcastSpendState>;
+  release: (input: SplSpendInput, ref: string) => Promise<void>;
+  accepted: (input: SplSpendInput, ref: string, acceptedRef: string) => Promise<void>;
+}
+
+/** Over a spending limit, or the limits could not be read: refused before the device check; nothing was signed. */
+export class SplSpendingLimitError extends Error {
+  readonly title: string;
+  readonly detail: string;
+  constructor(title: string, detail: string) {
+    super(`${title}\n\n${detail}`);
+    this.name = 'SplSpendingLimitError';
+    this.title = title;
+    this.detail = detail;
+  }
+}
 
 /** One labelled row of the confirm view. */
 export interface ConfirmRow {
@@ -656,6 +710,14 @@ export interface SplSendDeps {
     forget: (key: { chain: string; signature: string }) => Promise<void>;
     openLike: (like: SolanaTransferLike, nowMs: number) => Promise<PendingSolanaRecord | null>;
   };
+  /**
+   * The spending limits (phase 26 item 3b; spending-policy.ts
+   * solanaSpendingGate in the app — the send screen always passes it). When
+   * given, the send is checked before the device check (over a limit, or
+   * unreadable limits: refused, nothing signed) and counted under its
+   * signature before the broadcast. Absent: nothing is checked or counted.
+   */
+  spending?: SplSpendingGate;
   /** Clock (Unix milliseconds) for the record's sent time; Date.now by default. */
   now?: () => number;
   /** How long to wait for confirmation on the sending endpoint (default 60 s). */
@@ -767,6 +829,23 @@ export async function runSplSend(deps: SplSendDeps, q: SplSendQuote): Promise<Sp
     open = null;
   }
   if (open) throw new SplSendStillPendingError(q.symbol);
+  // Spending limits (phase 26 item 3b): before the device check, so a send
+  // over a limit never reaches the prompt or the key.
+  const spendInput: SplSpendInput = { chain: q.caip2, owner: q.owner, mint: q.quote.mint, amount: q.quote.amount };
+  if (deps.spending) {
+    let check: SplSpendingCheck;
+    try {
+      check = await deps.spending.check(spendInput);
+    } catch {
+      check = { status: 'unreadable', title: null, message: null };
+    }
+    if (check.status === 'blocked') {
+      throw new SplSpendingLimitError(check.title ?? 'Over your spending limit', `${check.message ?? ''}\n\n${t('spendingSol.notSigned')}`.trim());
+    }
+    if (check.status === 'unreadable') {
+      throw new SplSpendingLimitError(check.title ?? 'Spending limits could not be checked', check.message ?? t('spendingSol.checkFailed'));
+    }
+  }
   const auth = await deps.requireAuth(splApprovalPromptTitle(q));
   if (!auth.ok) throw new SplSendCancelledError(auth.message);
   const signature = await deps.signWith(SOLANA_SLOT_CHAIN_ID, q.owner, async (signer) => {
@@ -793,16 +872,36 @@ export async function runSplSend(deps: SplSendDeps, q: SplSendQuote): Promise<Sp
     } catch {
       state = 'failed';
     }
+    // Counted against the spending limits BEFORE the broadcast, under the
+    // signature (./broadcast-spend.ts rule 1); best effort: a failure to
+    // write the count never blocks the send.
+    let spendState: BroadcastSpendState = 'none';
+    if (deps.spending) {
+      try {
+        spendState = await deps.spending.record(spendInput, record.signature);
+      } catch {
+        spendState = 'failed';
+      }
+    }
+    let returned: string;
     try {
-      return await deps.client.sendTransaction(signed.wireBytes);
+      returned = await deps.client.sendTransaction(signed.wireBytes);
     } catch (e) {
       if (isDefiniteSendRefusal(e)) {
         if (state === 'created') await deps.pending.forget({ chain: record.chain, signature: record.signature }).catch(() => undefined);
+        // A definite refusal releases only what THIS attempt counted (rule 2).
+        if (spendState === 'created') await deps.spending!.release(spendInput, record.signature).catch(() => undefined);
         throw e;
       }
+      // An open outcome keeps the count (rule 3).
       handedOverQuotes.add(q);
       throw new SplBroadcastOutcomeUnknownError(record.signature, state !== 'failed', e instanceof Error ? e.message : String(e));
     }
+    // Accepted: the count stays, under the signature the node returned (rule 4).
+    if (deps.spending && (spendState === 'created' || spendState === 'existed') && returned !== record.signature) {
+      await deps.spending.accepted(spendInput, record.signature, returned).catch(() => undefined);
+    }
+    return returned;
   });
   // The broadcast was accepted: balances may have moved (best effort: a
   // failing listener never affects the send that was already made).

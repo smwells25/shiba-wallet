@@ -20283,3 +20283,79 @@ driver at a time, item 1's first; 6 last. Subagents on Opus.
       renewal batch from the Kernel. Docs left for the refresh:
       FEATURE_UNIVERSE row 75, THREAT_MODEL T-91 / T-94, WALLET_HANDLES
       section 14.
+- [x] Item 3b — A SOLANA SCOPE IN THE SPENDING LIMITS: a Solana token send is
+      checked before the device prompt and counted (commit below; 12 files,
+      +1,346 / −60, no new file; check-spending-policy 185 (was 144),
+      check-spl-tokens 250 (226), check-i18n 209 (208); the agent's patch
+      was cut against 549cf24 and REBASED onto 33cb7d7 by the CTO in the
+      verify worktree with a three-way apply — the only conflicts were the
+      two string tables' and the fixture's appended tails, resolved by
+      keeping both blocks in order (the fixture's last Renew entry gaining
+      its comma); the rebased patch id af19f56b…c0de equals what was
+      committed; the offline runner ALL GREEN on the resolved tree: engine
+      1,415, app 11,833 across 67 suites (= the Renew tree's 11,767 plus
+      this slice's 66), lint 0/0, tsc clean; the pre-commit scan at the
+      commit; 12 in-suite and 8 hand mutants caught; not seen on a device;
+      the agent was cut by the Opus session limit and resumed). THE
+      DECISION, path (a), from the code: everything that blocked Solana was
+      in the app — scopeKey / parseScopeKey refused any chain but eip155
+      (spending-policy.ts 263–274), the stored-entry validators required
+      0x + 40 hex tokens and the revivers EIP-55-checksummed every token —
+      while the ENGINE's validateSpendingPolicy / evaluateSpendingPolicy
+      (kernel-spending.ts 658–757) accept only 20-byte hex tokens and
+      compare them only for equality (743–756); so each Solana mint gets a
+      PER-CALL STAND-IN token (0x…01, 0x…02 in limit order, never the zero
+      address; solanaStandIns) for the engine call alone, mapped back to
+      the mint before anything is shown and never stored — sound because
+      the arithmetic compares tokens only for equality; base58 owners,
+      mints and signatures compared exactly (case-sensitive), EVM refs still
+      case-insensitive. THE COUNT is the quote's transferChecked amount
+      (what leaves the sender's token account); the fee and any rent are
+      lamports, a different asset, never counted against a token limit; a
+      Solana scope cannot hold a limit on SOL, "Send anyway" or fee
+      counting — a stored Solana limit with either flag, or a Solana fee
+      record, marks the store damaged (fail closed); evaluateBeforeSigning
+      refuses a Solana scope instead of reading it as EVM calls; runSplSend
+      checks after the duplicate-pending refusal and before requireAuth,
+      then counts inside signWith before sendTransaction under the
+      signature, through an injected gate (solanaSpendingGate, whose check
+      never throws) following broadcast-spend.ts's rules — written before
+      the broadcast, released on a definite refusal only when this attempt
+      created it, kept on an open outcome, moved to the node's signature if
+      it differs (broadcast-spend.ts itself unchanged). SCREENS: the
+      confirm's SolanaSpendingPolicyNotice — with no limit "No spending
+      limit (Settings → Spending limits) is set for {symbol} on {network}
+      for this account, so this send is not counted against any limit.",
+      with a limit the mint's readouts, the look-ahead warning, "The
+      network fee and any rent for a new token account are paid in {coin}
+      and are not counted against a token limit." and the honesty line;
+      the refusal over a limit (title "Over your spending limit"): "This
+      send would go over your spending limit for USDC: 1 USDC per 1 hour.
+      Already spent in this window: 0 USDC; this send: 2 USDC." + the
+      honesty sentence + "To send it, raise or remove the limit in Settings
+      → Spending limits (this app only)." + "Nothing was signed.";
+      Settings → Spending limits gains a Solana section for the active
+      account on Solana devnet only (the tracked Solana tokens, a limit, the
+      four window presets, Remove behind the device check, Add; no edit, no
+      "Send anyway", no fee switch); "Limits elsewhere" names Solana
+      networks; the explainer ends "Bitcoin and Dogecoin are not covered;
+      Solana tokens have their own section below."; the old
+      SPL_SPENDING_LIMITS_NOTE is gone; 26 spendingSol.* ids in a
+      BEGIN/END block (Spanish drafts); THREAT_MODEL T-93's spending-limit
+      sentence replaced. PINNED: a 1 USDC per hour limit on devnet USDC
+      refuses a 2 USDC send before any prompt (0 requireAuth, 0 signWith),
+      0.5 USDC allowed and counted once by signature, 0.6 USDC afterwards
+      refused, release on a definite refusal, kept on an open outcome, a
+      refusal never releasing a count it did not create, the SOL fee never
+      in a token record, unreadable limits or a throwing gate failing
+      closed, the 144 EVM checks unchanged. LEFT: Solana mainnet scopes
+      accepted by the engine, not offered on the screen; SOL itself not
+      limited; no edit and no custom window for a Solana limit; a dropped
+      or failed Solana send stays counted (the cautious side, as EVM); an
+      OLDER BUILD reading a store holding a Solana scope treats the whole
+      spending store as damaged until reset (the cfb9f39 caveat; a version
+      bump would not help); the risk overview's "active account" line names
+      only the EVM scope. EMULATOR CHECKS QUEUED (the agent's 9-step list):
+      a 1 USDC per hour limit on devnet USDC, a 2 USDC send refused before
+      any prompt, 0.5 USDC allowed and the readouts, 0.6 refused, the
+      no-limit sentence on SFEE, the Settings section, TalkBack.

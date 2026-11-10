@@ -1,5 +1,6 @@
 import { AsyncStorage, readStoreItem, removeStoreItem, writeStoreItem, STORE_KEYS } from './store-keys.ts';
 import type { RemovableKeyValueStore } from './store-keys.ts';
+import { base58 } from '@scure/base';
 import { toChecksumAddress as checksumBytes } from '@shiba-wallet/core';
 import type { FungibleAsset } from '@shiba-wallet/core';
 import {
@@ -21,6 +22,7 @@ import type {
   SpendingPolicyRule,
   SpendingRecord,
 } from '@shiba-wallet/chains-evm';
+import { SOLANA_DEVNET_CAIP2, SOLANA_MAINNET_CAIP2 } from '@shiba-wallet/chains-solana';
 // Explicit .ts extensions: this module is imported by
 // scripts/check-spending-policy.mjs under Node's type stripping, which
 // resolves relative specifiers literally.
@@ -40,6 +42,7 @@ import { knownTokensForChain } from './tokens.ts';
 import { formatUnits, groupThousands } from './balances.ts';
 import { simulationTransport } from './simulation.ts';
 import { maskAmount } from '../config/prefs.ts';
+import { t } from '../i18n/index.ts';
 
 /**
  * App-enforced spending policy (phase 12 item 3; feature 19 at the honest
@@ -64,8 +67,36 @@ import { maskAmount } from '../config/prefs.ts';
  * owner is the active account's own Ethereum address — the key that signs
  * both its plain sends and its smart-account operations — so one policy
  * covers what leaves the EOA AND what leaves its smart account (both are
- * the same user-facing account). Bitcoin, Dogecoin and Solana are not
- * covered (the engine's rules are EVM addresses).
+ * the same user-facing account). Bitcoin and Dogecoin are not covered.
+ *
+ * SOLANA (phase 26 item 3b). A second kind of scope: (Solana CAIP-2 chain —
+ * mainnet or devnet, the two ids @shiba-wallet/chains-solana names —, the
+ * account's own Solana address, base58), holding limits on Solana TOKENS
+ * only, keyed by the mint (base58, kept exactly as written: base58 is
+ * case-sensitive, so owner, mint and signature are never lower-cased). What
+ * counts is the token amount a Solana token send takes out of the sender's
+ * associated token account (wallet/spl-tokens.ts: the quote's `amount`, the
+ * transferChecked amount; an issuer's transfer fee is withheld from what the
+ * recipient receives, not added to it). The network fee and any rent are
+ * lamports — SOL, a different asset — and are never counted against a
+ * token limit; a limit on SOL itself cannot be saved in a Solana scope, nor
+ * "Send anyway", nor "count network fees". The engine's rules take 20-byte
+ * hex tokens only (packages/chains-evm/src/kernel-spending.ts
+ * requireAddress), so every engine call for a Solana scope maps the scope's
+ * mints to STAND-IN tokens (0x…01, 0x…02, in the order of the scope's
+ * limits; solanaStandIns) for that call alone and maps the entries back to
+ * the mint before anything is returned; nothing stand-in is ever stored. The
+ * engine's arithmetic only compares tokens for equality, so the decision is
+ * the same one it would make on the mints. A Solana send is checked by
+ * evaluateSolanaTokenSend before the device check and counted under its
+ * signature by solanaSpendingGate (record before the broadcast, release on a
+ * definite refusal when this attempt created the records, kept on an open
+ * outcome, re-keyed if the node returned another signature) — the
+ * ./broadcast-spend.ts rules, wired through wallet/spl-tokens.ts runSplSend.
+ * An OLDER build of this app reading a store that holds a Solana scope
+ * finds a key it cannot parse and treats the whole store as damaged (it
+ * then signs nothing until the limits are reset); a version bump would not
+ * avoid that, since an older build refuses any other version too.
  *
  * WHAT COUNTS. The outflows of the transaction or operation from the
  * address that sends it: from the balance-change simulation (eth_simulateV1
@@ -134,7 +165,7 @@ export const SPENDING_SCREEN_EXPLAINER =
   'account. Amounts come from the balance-change preview when the network supports it, ' +
   'otherwise from the transaction itself. Network fees count only if you switch that on for ' +
   'the network’s own coin. Only sends made in this app while a limit exists are counted. ' +
-  'Bitcoin, Dogecoin and Solana are not covered.';
+  'Bitcoin and Dogecoin are not covered; Solana tokens have their own section below.';
 
 /** Why on-chain limits are not offered (phase 11 item 1 finding). */
 export const SPENDING_NO_ONCHAIN_NOTE =
@@ -178,9 +209,9 @@ export const MAX_SPENDING_RECORDS = 2000;
 export const STAGE_TTL_MS = 15 * 60 * 1000;
 
 export interface SpendingScope {
-  /** CAIP-2 EVM chain id, e.g. 'eip155:11155111'. */
+  /** CAIP-2 EVM chain id, e.g. 'eip155:11155111', or a Solana CAIP-2 id (isSolanaScopeChain). */
   chain: string;
-  /** The account's own EOA address (owner of its smart account). */
+  /** The account's own EOA address (owner of its smart account), or its Solana address (base58) in a Solana scope. */
   owner: string;
 }
 
@@ -261,6 +292,10 @@ export function nowSeconds(): number {
 
 /** The storage key of one account+network. */
 export function scopeKey(scope: SpendingScope): string {
+  if (isSolanaScopeChain(scope.chain)) {
+    if (!isSolanaKey(scope.owner)) throw new Error(`Not a Solana address: ${scope.owner}`);
+    return `${scope.chain}|${scope.owner}`;
+  }
   if (!/^eip155:[1-9][0-9]*$/.test(scope.chain)) throw new Error(`Not an EVM chain id: ${scope.chain}`);
   if (!ADDRESS.test(scope.owner)) throw new Error(`Not an address: ${scope.owner}`);
   return `${scope.chain}|${scope.owner.toLowerCase()}`;
@@ -269,8 +304,62 @@ export function scopeKey(scope: SpendingScope): string {
 function parseScopeKey(key: string): SpendingScope | null {
   const [chain, owner, extra] = key.split('|');
   if (extra !== undefined || !chain || !owner) return null;
+  if (isSolanaScopeChain(chain)) return isSolanaKey(owner) ? { chain, owner } : null;
   if (!/^eip155:[1-9][0-9]*$/.test(chain) || !ADDRESS.test(owner)) return null;
   return { chain, owner: toChecksumAddress(owner) };
+}
+
+/** The Solana networks a spending scope may name (phase 26 item 3b): mainnet and devnet. */
+export const SOLANA_SPENDING_CHAINS: readonly string[] = [SOLANA_MAINNET_CAIP2, SOLANA_DEVNET_CAIP2];
+
+/** True for a Solana CAIP-2 id a spending scope may name. */
+export function isSolanaScopeChain(chain: string): boolean {
+  return SOLANA_SPENDING_CHAINS.includes(chain);
+}
+
+/** A base58 Solana public key (an owner or a mint): decodes to exactly 32 bytes and re-encodes to the same text. */
+export function isSolanaKey(text: unknown): text is string {
+  if (typeof text !== 'string' || text.length < 32 || text.length > 44) return false;
+  try {
+    const bytes = base58.decode(text);
+    return bytes.length === 32 && base58.encode(bytes) === text;
+  } catch {
+    return false;
+  }
+}
+
+/** A token as a scope's kind writes it: an EVM address (0x + 40 hex) or, in a Solana scope, a base58 mint. */
+function isScopeToken(scope: SpendingScope, token: unknown): token is string {
+  return isSolanaScopeChain(scope.chain) ? isSolanaKey(token) : typeof token === 'string' && ADDRESS.test(token);
+}
+
+/** A token as stored: EIP-55 for an EVM scope, exactly as written for a Solana mint. */
+function storedToken(scope: SpendingScope, token: string): string {
+  return isSolanaScopeChain(scope.chain) ? token : toChecksumAddress(token);
+}
+
+/** Two refs (hashes, userOpHashes or Solana signatures) of one scope: exact in a Solana scope (base58), case-insensitive otherwise. */
+function sameScopeRef(scope: SpendingScope, a: string, b: string): boolean {
+  return isSolanaScopeChain(scope.chain) ? a === b : a.toLowerCase() === b.toLowerCase();
+}
+
+/**
+ * The engine's view of a Solana scope's limits: each distinct mint gets a
+ * stand-in 20-byte token (0x…01, 0x…02, … in the order of the limits; never
+ * the zero address, which is the engine's native coin) for ONE engine call.
+ * `toEngine` maps a mint to its stand-in (undefined for a mint no limit
+ * names), `fromEngine` maps back.
+ */
+export function solanaStandIns(mints: readonly string[]): { toEngine: Map<string, string>; fromEngine: Map<string, string> } {
+  const toEngine = new Map<string, string>();
+  const fromEngine = new Map<string, string>();
+  for (const mint of mints) {
+    if (toEngine.has(mint)) continue;
+    const standIn = `0x${(toEngine.size + 1).toString(16).padStart(40, '0')}`;
+    toEngine.set(mint, standIn);
+    fromEngine.set(standIn, mint);
+  }
+  return { toEngine, fromEngine };
 }
 
 function sameToken(a: string, b: string): boolean {
@@ -358,13 +447,13 @@ export function spendingTokenOptions(
 
 type ReadOutcome<T> = { ok: true; data: Record<string, T[]> } | { ok: false; reason: 'damaged' | 'unreadable' };
 
-function isPolicyJson(v: unknown): v is Record<string, unknown> {
+function isPolicyJson(v: unknown, scope: SpendingScope): v is Record<string, unknown> {
   if (typeof v !== 'object' || v === null) return false;
   const p = v as Record<string, unknown>;
+  if (isSolanaScopeChain(scope.chain) && (p.allowOverride !== false || p.countFees !== false)) return false;
   return (
     typeof p.id === 'string' &&
-    typeof p.token === 'string' &&
-    ADDRESS.test(p.token) &&
+    isScopeToken(scope, p.token) &&
     typeof p.symbol === 'string' &&
     typeof p.decimals === 'number' &&
     Number.isInteger(p.decimals) &&
@@ -381,12 +470,12 @@ function isPolicyJson(v: unknown): v is Record<string, unknown> {
   );
 }
 
-function isRecordJson(v: unknown): v is Record<string, unknown> {
+function isRecordJson(v: unknown, scope: SpendingScope): v is Record<string, unknown> {
   if (typeof v !== 'object' || v === null) return false;
   const r = v as Record<string, unknown>;
+  if (isSolanaScopeChain(scope.chain) && r.kind !== 'transfer') return false;
   return (
-    typeof r.token === 'string' &&
-    ADDRESS.test(r.token) &&
+    isScopeToken(scope, r.token) &&
     typeof r.amount === 'string' &&
     /^[0-9]{1,78}$/.test(r.amount) &&
     typeof r.at === 'number' &&
@@ -399,8 +488,8 @@ function isRecordJson(v: unknown): v is Record<string, unknown> {
 async function readBlob<T>(
   store: KeyValueStore,
   key: string,
-  isEntry: (v: unknown) => boolean,
-  revive: (v: Record<string, unknown>) => T,
+  isEntry: (v: unknown, scope: SpendingScope) => boolean,
+  revive: (v: Record<string, unknown>, scope: SpendingScope) => T,
 ): Promise<ReadOutcome<T>> {
   let raw: string | null;
   try {
@@ -422,19 +511,20 @@ async function readBlob<T>(
   }
   const data: Record<string, T[]> = {};
   for (const [k, list] of Object.entries(top.entries as Record<string, unknown>)) {
-    if (!parseScopeKey(k) || !Array.isArray(list)) return { ok: false, reason: 'damaged' };
+    const scope = parseScopeKey(k);
+    if (!scope || !Array.isArray(list)) return { ok: false, reason: 'damaged' };
     // Strict: one malformed entry marks the whole store damaged, because a
     // limit that silently disappeared would stop limiting.
-    if (!list.every(isEntry)) return { ok: false, reason: 'damaged' };
-    data[k] = list.map((v) => revive(v as Record<string, unknown>));
+    if (!list.every((v) => isEntry(v, scope))) return { ok: false, reason: 'damaged' };
+    data[k] = list.map((v) => revive(v as Record<string, unknown>, scope));
   }
   return { ok: true, data };
 }
 
-function revivePolicy(p: Record<string, unknown>): SpendingPolicy {
+function revivePolicy(p: Record<string, unknown>, scope: SpendingScope): SpendingPolicy {
   return {
     id: p.id as string,
-    token: toChecksumAddress(p.token as string),
+    token: storedToken(scope, p.token as string),
     symbol: p.symbol as string,
     decimals: p.decimals as number,
     cap: BigInt(p.cap as string),
@@ -445,9 +535,9 @@ function revivePolicy(p: Record<string, unknown>): SpendingPolicy {
   };
 }
 
-function reviveRecord(r: Record<string, unknown>): SpendRecord {
+function reviveRecord(r: Record<string, unknown>, scope: SpendingScope): SpendRecord {
   return {
-    token: toChecksumAddress(r.token as string),
+    token: storedToken(scope, r.token as string),
     amount: BigInt(r.amount as string),
     at: r.at as number,
     kind: r.kind as 'transfer' | 'fee',
@@ -554,6 +644,21 @@ export function validatePolicyList(
     if (!p.symbol.trim()) throw new Error('The token has no symbol.');
   }
   if (policies.length === 0) return;
+  if (isSolanaScopeChain(scope.chain)) {
+    // The engine validates 20-byte hex tokens only, so the mints are checked
+    // here (exact base58: a tracked Solana token's mint, never the account
+    // itself) and the engine's cap, window and one-rule-per-(token, window)
+    // checks run on the stand-ins.
+    for (const p of policies) {
+      if (!isSolanaKey(p.token) || p.token === scope.owner || !knownTokens.includes(p.token)) {
+        throw new Error(t('spendingSol.err.token'));
+      }
+      if (p.allowOverride) throw new Error(t('spendingSol.err.override'));
+    }
+    const { toEngine } = solanaStandIns(policies.map((p) => p.token));
+    validateSpendingPolicy(policies.map((p) => ({ ...toRule(p), token: toEngine.get(p.token)! })));
+    return;
+  }
   validateSpendingPolicy(policies.map(toRule), {
     account: scope.owner,
     knownTokens: knownTokens.filter((t) => !sameToken(t, NATIVE_TOKEN)),
@@ -583,12 +688,17 @@ export async function saveSpendingPolicy(
     if (!read.ok) throw new SpendingStoreError(DAMAGED_WRITE_MESSAGE);
     const key = scopeKey(scope);
     const current = read.data[key] ?? [];
-    if (!ADDRESS.test(input.token)) throw new Error('Choose a token.');
+    if (isSolanaScopeChain(scope.chain)) {
+      // A Solana scope (phase 26 item 3b): Solana TOKEN limits only.
+      if (!isSolanaKey(input.token)) throw new Error(t('spendingSol.err.token'));
+      if (input.allowOverride) throw new Error(t('spendingSol.err.override'));
+      if (input.countFees) throw new Error(t('spendingSol.err.fees'));
+    } else if (!ADDRESS.test(input.token)) throw new Error('Choose a token.');
     const existing = input.id ? current.find((p) => p.id === input.id) : undefined;
     if (input.id && !existing) throw new Error('That limit no longer exists.');
     const policy: SpendingPolicy = {
       id: existing?.id ?? newPolicyId(),
-      token: toChecksumAddress(input.token),
+      token: storedToken(scope, input.token),
       symbol: input.symbol,
       decimals: input.decimals,
       cap: input.cap,
@@ -954,7 +1064,7 @@ export async function releaseSpend(options: {
       if (!historyRead.ok) return 0;
       const before = historyRead.data[key] ?? [];
       const kinds = options.kinds ?? ['transfer', 'fee'];
-      const after = before.filter((r) => !(sameRef(r.ref, options.ref) && kinds.includes(r.kind)));
+      const after = before.filter((r) => !(sameScopeRef(options.scope, r.ref, options.ref) && kinds.includes(r.kind)));
       if (after.length === before.length) return 0;
       await writeHistoryBlob(store, { ...historyRead.data, [key]: after });
       return before.length - after.length;
@@ -966,15 +1076,15 @@ export async function releaseSpend(options: {
 
 /** Moves a scope's records from one hash to another (the hash the node or bundler returned). Never throws. */
 async function rekeySpend(scope: SpendingScope, from: string, to: string, store: KeyValueStore): Promise<void> {
-  if (sameRef(from, to)) return;
+  if (sameScopeRef(scope, from, to)) return;
   try {
     const key = scopeKey(scope);
     await serialized(async () => {
       const historyRead = await readHistoryBlob(store);
       if (!historyRead.ok) return;
       const before = historyRead.data[key] ?? [];
-      if (!before.some((r) => sameRef(r.ref, from))) return;
-      const after = before.map((r) => (sameRef(r.ref, from) ? { ...r, ref: to } : r));
+      if (!before.some((r) => sameScopeRef(scope, r.ref, from))) return;
+      const after = before.map((r) => (sameScopeRef(scope, r.ref, from) ? { ...r, ref: to } : r));
       await writeHistoryBlob(store, { ...historyRead.data, [key]: after });
     });
   } catch {
@@ -1198,6 +1308,8 @@ export function overLimitSentence(policy: SpendingPolicy, entry: SpendingPolicyE
  * only if the node or bundler accepts the send).
  */
 export async function evaluateBeforeSigning(input: SpendingCheckInput): Promise<SpendingCheck> {
+  // EVM calls only: a Solana scope is checked by evaluateSolanaTokenSend.
+  if (isSolanaScopeChain(input.scope.chain)) throw new Error(`Not an EVM chain id: ${input.scope.chain}`);
   const store = input.store ?? AsyncStorage;
   const now = input.now ?? nowSeconds();
   const key = scopeKey(input.scope);
@@ -1318,7 +1430,17 @@ export async function spendingReadouts(
   const key = scopeKey(scope);
   const policies = policiesRead.data[key] ?? [];
   const history = historyRead.data[key] ?? [];
+  const solana = isSolanaScopeChain(scope.chain);
   const readouts = policies.map((policy) => {
+    if (solana) {
+      // Stand-in token for the engine (see solanaStandIns); exact mint match.
+      const standIn = solanaStandIns([policy.token]).toEngine.get(policy.token)!;
+      const relevant = history
+        .filter((r) => r.kind === 'transfer' && r.token === policy.token)
+        .map((r) => ({ token: standIn, amount: r.amount, at: r.at }));
+      const d = evaluateSpendingPolicy([{ ...toRule(policy), token: standIn }], relevant, [], now);
+      return { policy, spentInWindow: d.entries[0]!.spentInWindow };
+    }
     const relevant = history
       .filter((r) => policy.countFees || r.kind === 'transfer')
       .map((r) => ({ token: r.token, amount: r.amount, at: r.at }));
@@ -1339,4 +1461,170 @@ export function spentReadoutText(readout: SpendingReadout, hidden: boolean): str
 /** "0.1 ETH per 24 hours" — masked under Hide amounts. */
 export function policySummary(policy: SpendingPolicy, hidden: boolean): string {
   return `${maskAmount(formatSpendAmount(policy.cap, policy.decimals), hidden)} ${policy.symbol} per ${windowLabel(policy.windowSeconds)}`;
+}
+
+// ---------------------------------------------------------------------------
+// Solana token sends (phase 26 item 3b)
+// ---------------------------------------------------------------------------
+
+/** One Solana token send as the limits see it: the scope, the mint and the amount it takes out (base units). */
+export interface SolanaSpendInput {
+  /** A Solana CAIP-2 id (isSolanaScopeChain). */
+  chain: string;
+  /** The sending account's Solana address (base58). */
+  owner: string;
+  /** The token's mint (base58). */
+  mint: string;
+  /** The transferChecked amount: what leaves the sender's token account. */
+  amount: bigint;
+}
+
+function solanaScopeOf(input: SolanaSpendInput): SpendingScope {
+  if (!isSolanaScopeChain(input.chain)) throw new Error(`Not a Solana chain id: ${input.chain}`);
+  return { chain: input.chain, owner: input.owner };
+}
+
+/**
+ * The decision before the device check for a Solana token send: the
+ * scope's limits on this mint against the recorded sends in their windows
+ * plus this send's amount — the engine's evaluateSpendingPolicy on the
+ * stand-in tokens (solanaStandIns), entries mapped back to the mints. The
+ * network fee is never part of it (it is SOL; a Solana scope holds token
+ * limits only). Unreadable stored data fails closed, as for EVM sends.
+ * "Send anyway" is never offered (a Solana limit cannot allow it).
+ */
+export async function evaluateSolanaTokenSend(
+  input: SolanaSpendInput,
+  options: { store?: KeyValueStore; now?: number } = {},
+): Promise<SpendingCheck> {
+  const store = options.store ?? AsyncStorage;
+  const now = options.now ?? nowSeconds();
+  const scope = solanaScopeOf(input);
+  const key = scopeKey(scope);
+  const policiesRead = await readPolicyBlob(store);
+  if (!policiesRead.ok) {
+    return { status: 'unreadable', title: SPENDING_UNREADABLE_TITLE, message: SPENDING_UNREADABLE_MESSAGE };
+  }
+  const policies = policiesRead.data[key] ?? [];
+  if (!policies.some((p) => p.token === input.mint)) return { status: 'no-policy' };
+  const historyRead = await readHistoryBlob(store);
+  if (!historyRead.ok) {
+    return { status: 'unreadable', title: SPENDING_UNREADABLE_TITLE, message: SPENDING_UNREADABLE_MESSAGE };
+  }
+  const { toEngine, fromEngine } = solanaStandIns(policies.map((p) => p.token));
+  const history: SpendingRecord[] = (historyRead.data[key] ?? [])
+    .filter((r) => r.kind === 'transfer' && toEngine.has(r.token))
+    .map((r) => ({ token: toEngine.get(r.token)!, amount: r.amount, at: r.at }));
+  const outflows: Outflow[] = input.amount > 0n ? [{ token: input.mint, amount: input.amount }] : [];
+  const proposed = outflows.map((o) => ({ token: toEngine.get(o.token)!, amount: o.amount }));
+  const d = evaluateSpendingPolicy(
+    policies.map((p) => ({ ...toRule(p), token: toEngine.get(p.token)! })),
+    history,
+    proposed,
+    now,
+  );
+  const entries = d.entries.map((e) => ({ ...e, token: fromEngine.get(e.token.toLowerCase()) ?? e.token }));
+  const results = policies.map((policy, i) => ({ policy, entry: entries[i]! }));
+  const decision: SpendingPolicyDecision = { allowed: d.allowed, enforcement: 'client-side', entries };
+  if (decision.allowed) {
+    return { status: 'allowed', decision, results, basis: 'quote', outflows, overrideAllowed: false, title: null, message: null, note: null };
+  }
+  const exceeding = results.filter((r) => r.entry.exceeds);
+  const message = [
+    ...exceeding.map((r) => overLimitSentence(r.policy, r.entry)),
+    SPENDING_HONESTY_SENTENCE,
+    SPENDING_OVERRIDE_OFF_SENTENCE,
+  ].join('\n\n');
+  return {
+    status: 'blocked',
+    decision,
+    results,
+    basis: 'quote',
+    outflows,
+    overrideAllowed: false,
+    title: SPENDING_BLOCK_TITLE,
+    message,
+    note: null,
+  };
+}
+
+/**
+ * Counts a Solana token send under its signature (`ref`), BEFORE the
+ * broadcast: only while the scope has a limit on the mint, and nothing when
+ * records with this exact signature are already there ('existed'). Returns
+ * the ./broadcast-spend.ts state; never throws.
+ */
+export async function recordSolanaSpend(
+  input: SolanaSpendInput & { ref: string },
+  options: { store?: KeyValueStore; now?: number } = {},
+): Promise<BroadcastSpendState> {
+  const store = options.store ?? AsyncStorage;
+  try {
+    const scope = solanaScopeOf(input);
+    const key = scopeKey(scope);
+    return await serialized(async (): Promise<BroadcastSpendState> => {
+      const policiesRead = await readPolicyBlob(store);
+      if (!policiesRead.ok) return 'failed';
+      const policies = policiesRead.data[key] ?? [];
+      if (!policies.some((p) => p.token === input.mint)) return 'none';
+      const historyRead = await readHistoryBlob(store);
+      if (!historyRead.ok) return 'failed';
+      const before = historyRead.data[key] ?? [];
+      if (before.some((r) => r.ref === input.ref)) return 'existed';
+      if (input.amount <= 0n) return 'none';
+      const now = options.now ?? nowSeconds();
+      const fresh: SpendRecord = { token: input.mint, amount: input.amount, at: now, kind: 'transfer', ref: input.ref };
+      const merged = pruneRecords([...before, fresh], policies, now);
+      await writeHistoryBlob(store, { ...historyRead.data, [key]: merged });
+      return 'created';
+    });
+  } catch {
+    return 'failed';
+  }
+}
+
+/**
+ * What wallet/spl-tokens.ts runSplSend needs from the limits (its SplSpendingGate):
+ * the check before the device check, the count before the broadcast under
+ * the signature, its release after a definite refusal (only what this
+ * attempt created — runSplSend passes the state back), and the re-key when
+ * the node returned another signature. An open outcome keeps the count.
+ */
+export function solanaSpendingGate(options: { store?: KeyValueStore } = {}) {
+  const store = options.store ?? AsyncStorage;
+  return {
+    // Never throws: anything unexpected fails closed like unreadable data.
+    check: async (input: SolanaSpendInput, now?: number): Promise<SpendingCheck> => {
+      try {
+        return await evaluateSolanaTokenSend(input, { store, ...(now !== undefined ? { now } : {}) });
+      } catch {
+        return { status: 'unreadable', title: SPENDING_UNREADABLE_TITLE, message: SPENDING_UNREADABLE_MESSAGE };
+      }
+    },
+    record: (input: SolanaSpendInput, ref: string, now?: number) =>
+      recordSolanaSpend({ ...input, ref }, { store, ...(now !== undefined ? { now } : {}) }),
+    release: async (input: SolanaSpendInput, ref: string): Promise<void> => {
+      await releaseSpend({ scope: solanaScopeOf(input), ref, store });
+    },
+    accepted: (input: SolanaSpendInput, ref: string, acceptedRef: string) =>
+      rekeySpend(solanaScopeOf(input), ref, acceptedRef, store),
+  };
+}
+
+/**
+ * Tokens a Solana scope's limit may name: the network's tracked Solana
+ * tokens (tokens.ts listSolanaTokens), by mint — the same list is the
+ * `knownTokens` at save time. Never the network's coin.
+ */
+export function solanaSpendingTokenOptions(chain: string, tracked: readonly FungibleAsset[]): SpendingTokenOption[] {
+  const out: SpendingTokenOption[] = [];
+  const seen = new Set<string>();
+  for (const asset of tracked) {
+    if (asset.assetId.chainId !== chain || asset.assetId.namespace !== 'token') continue;
+    const mint = asset.assetId.reference;
+    if (!isSolanaKey(mint) || seen.has(mint)) continue;
+    seen.add(mint);
+    out.push({ token: mint, symbol: asset.symbol, decimals: asset.decimals, label: `${asset.symbol} · ${mint.slice(0, 4)}…${mint.slice(-4)}` });
+  }
+  return out;
 }

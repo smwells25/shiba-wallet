@@ -9,6 +9,7 @@ import {
   SPENDING_REVIEW_CHECKED_NOTE,
   SPENDING_SECTION_TITLE,
   evaluateBeforeSigning,
+  evaluateSolanaTokenSend,
   overLimitPreviewLines,
   policySummary,
   spendingInputForQuote,
@@ -22,6 +23,8 @@ import type { EvmSendQuote } from '../wallet/send';
 import type { Erc20SendQuote } from '../wallet/send-erc20';
 import type { NftSendQuote } from '../wallet/send-nft';
 import type { AaSendQuote } from '../wallet/aa';
+import { splSpendingFeeNote, splSpendingUncoveredNote } from '../wallet/spl-tokens';
+import { useI18n } from '../i18n/useI18n';
 
 /**
  * Screen side of the app-enforced spending policy (wallet/spending-policy.ts).
@@ -222,6 +225,95 @@ export function SpendingPolicyNotice({
             </Text>
           ))
         : null}
+      <Text style={[styles.muted, { color: theme.textMuted }]}>
+        {SPENDING_REVIEW_CHECKED_NOTE} {SPENDING_HONESTY_SENTENCE}
+      </Text>
+    </View>
+  );
+}
+
+/**
+ * The Solana token send's confirm card (phase 26 item 3b): this account's
+ * limits on THIS token on the Solana network in use, with what is already
+ * spent in each window (masked under Hide amounts), a look-ahead warning
+ * when the quoted amount alone already goes over one (no staging; the
+ * check on tap, wallet/spl-tokens.ts runSplSend, decides), and the sentence
+ * that the fee and rent, paid in SOL, are never counted against a token
+ * limit. With no limit on this token it says the send is not counted
+ * against any limit (splSpendingUncoveredNote) — the one sentence the
+ * confirm showed before, now true per token.
+ */
+export function SolanaSpendingPolicyNotice({
+  chain,
+  owner,
+  mint,
+  amount,
+  symbol,
+}: {
+  chain: string;
+  owner: string;
+  mint: string;
+  amount: bigint;
+  symbol: string;
+}) {
+  const theme = useTheme();
+  const { t } = useI18n();
+  const { hideAmounts } = usePrefs();
+  const [readouts, setReadouts] = useState<SpendingReadout[] | null>(null);
+  const [damaged, setDamaged] = useState(false);
+  const [lookAhead, setLookAhead] = useState<SpendingCheck | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const scope = { chain, owner };
+    Promise.all([spendingReadouts(scope), evaluateSolanaTokenSend({ chain, owner, mint, amount })]).then(
+      ([r, check]) => {
+        if (cancelled) return;
+        setReadouts(r.readouts.filter((x) => x.policy.token === mint));
+        setDamaged(r.damaged || check.status === 'unreadable');
+        setLookAhead(check);
+      },
+      () => {
+        if (!cancelled) setDamaged(true);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [chain, owner, mint, amount]);
+
+  if (readouts === null && !damaged) return null;
+  if (!damaged && readouts !== null && readouts.length === 0) {
+    return <Text style={[styles.muted, { color: theme.textMuted }]}>{splSpendingUncoveredNote(symbol, chain)}</Text>;
+  }
+  return (
+    <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+      <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>{SPENDING_SECTION_TITLE}</Text>
+      {damaged ? (
+        <Text style={[styles.line, { color: theme.danger }]}>{t('spendingSol.confirm.unreadable')}</Text>
+      ) : (
+        readouts!.map((r) => (
+          <Text
+            key={r.policy.id}
+            {...maskedSpokenProps(`${policySummary(r.policy, hideAmounts)}. ${spentReadoutText(r, hideAmounts)}.`)}
+            style={[styles.line, { color: theme.text }]}
+          >
+            {policySummary(r.policy, hideAmounts)}. {spentReadoutText(r, hideAmounts)}.
+          </Text>
+        ))
+      )}
+      {lookAhead
+        ? overLimitPreviewLines(lookAhead, hideAmounts).map((line) => (
+            <Text
+              key={line}
+              accessibilityLabel={spokenMaskedText(`Warning: ${line}`)}
+              style={[styles.warning, { color: theme.warningText, backgroundColor: theme.warningSurface, borderColor: theme.warningBorder }]}
+            >
+              {line}
+            </Text>
+          ))
+        : null}
+      <Text style={[styles.muted, { color: theme.textMuted }]}>{splSpendingFeeNote(chain)}</Text>
       <Text style={[styles.muted, { color: theme.textMuted }]}>
         {SPENDING_REVIEW_CHECKED_NOTE} {SPENDING_HONESTY_SENTENCE}
       </Text>

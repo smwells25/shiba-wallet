@@ -1088,7 +1088,8 @@ const aliceSigns = async (_c, _a, fn) => fn(ALICE);
     JSON.stringify(r));
   check('…exactly the ten fields of the strict parser, and it parses back', Object.keys(r).length === 10 && PENDING.validateRecord(r) !== null);
   check('the sentences the confirm and the outcome use, exact',
-    SPL.SPL_SPENDING_LIMITS_NOTE === 'Spending limits (Settings) are set for Ethereum networks only, so this send is not counted against any limit.' &&
+    SPL.splSpendingUncoveredNote('USDC', DEVNET) === 'No spending limit (Settings → Spending limits) is set for USDC on Solana devnet for this account, so this send is not counted against any limit.' &&
+      SPL.splSpendingFeeNote(DEVNET) === 'The network fee and any rent for a new token account are paid in test SOL and are not counted against a token limit.' &&
       SPL.splOutcomeUnknownSentence(true) ===
         'No usable answer came back from the network endpoint, so this wallet does not know whether the transaction was sent. It is listed under Pending on this phone, which checks it every 15 seconds; do not send it again until that list says what happened.');
 }
@@ -1171,15 +1172,24 @@ const aliceSigns = async (_c, _a, fn) => fn(ALICE);
     screen.includes('<SolanaPendingTransactionsSection owner={quote.owner} onlySignature={outcome.signature} />') &&
       screen.includes('{unknownSignature ? <SolanaPendingTransactionsSection owner={owner} onlySignature={unknownSignature} /> : null}') &&
       /if \(e instanceof SplBroadcastOutcomeUnknownError\) \{\s*\/\/[^\n]*\n[^\n]*\n[^\n]*\n\s*setQuote\(null\);/.test(screen));
-  check('…and the confirm says the send is not counted against a spending limit', screen.includes('{SPL_SPENDING_LIMITS_NOTE}'));
+  // Phase 26 item 3b: the confirm shows the Solana card (this token's limits, or the not-counted sentence) and the send
+  // passes the spending gate, so a limit on the token is checked and counted.
+  check('…and the confirm shows the Solana spending card for this send (the old Ethereum-only sentence is gone)',
+    screen.includes('<SolanaSpendingPolicyNotice\n          chain={quote.caip2}\n          owner={quote.owner}\n          mint={quote.quote.mint}\n          amount={quote.quote.amount}\n          symbol={quote.symbol}\n        />') &&
+      !screen.includes('SPL_SPENDING_LIMITS_NOTE') && !('SPL_SPENDING_LIMITS_NOTE' in SPL));
+  check('…and passes the spending gate (spending-policy.ts solanaSpendingGate) to runSplSend, and shows a limit refusal as written',
+    screen.includes("import { solanaSpendingGate } from '../wallet/spending-policy';") && screen.includes('spending: solanaSpendingGate(),') &&
+      screen.includes("e.name === 'SplSpendingLimitError'"));
   const SP = await import('../src/wallet/spending-policy.ts');
   let refused = false;
   try {
-    SP.scopeKey({ chain: DEVNET, owner: ALICE.address });
+    SP.scopeKey({ chain: 'solana:4uhcVJyU9pJkvQyS88uRDiswHXSCkY3z', owner: ALICE.address });
   } catch {
     refused = true;
   }
-  check('…which is true: the spending-limit scope refuses a Solana chain id (spending-policy.ts scopeKey)', refused);
+  check('…and the spending-limit scope takes Solana devnet and mainnet only (another Solana id is refused)',
+    refused && SP.scopeKey({ chain: DEVNET, owner: ALICE.address }) === `${DEVNET}|${ALICE.address}` &&
+      SP.scopeKey({ chain: SOLANA_MAINNET_CAIP2, owner: ALICE.address }) === `${SOLANA_MAINNET_CAIP2}|${ALICE.address}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -1418,10 +1428,11 @@ let caught = 0;
   check('mutant caught: Max filling in the total across all token accounts ("5.25") instead of the associated one', ok);
 }
 {
-  // M17 (phase 25 item 0b): the record written AFTER the broadcast.
+  // M17 (phase 25 item 0b): the record written AFTER the broadcast. (Phase 26 item 3b put the spending count between the
+  // record and the broadcast; the anchor spans both and moves the record past the send.)
   const M = await mutant(
-    "    try {\n      state = await deps.pending.record(record);\n    } catch {\n      state = 'failed';\n    }\n    try {\n      return await deps.client.sendTransaction(signed.wireBytes);",
-    "    try {\n      const sig = await deps.client.sendTransaction(signed.wireBytes);\n      state = await deps.pending.record(record);\n      return sig;",
+    "    try {\n      state = await deps.pending.record(record);\n    } catch {\n      state = 'failed';\n    }\n    // Counted against the spending limits BEFORE the broadcast, under the\n    // signature (./broadcast-spend.ts rule 1); best effort: a failure to\n    // write the count never blocks the send.\n    let spendState: BroadcastSpendState = 'none';\n    if (deps.spending) {\n      try {\n        spendState = await deps.spending.record(spendInput, record.signature);\n      } catch {\n        spendState = 'failed';\n      }\n    }\n    let returned: string;\n    try {\n      returned = await deps.client.sendTransaction(signed.wireBytes);",
+    "    // Counted against the spending limits BEFORE the broadcast, under the\n    // signature (./broadcast-spend.ts rule 1); best effort: a failure to\n    // write the count never blocks the send.\n    let spendState: BroadcastSpendState = 'none';\n    if (deps.spending) {\n      try {\n        spendState = await deps.spending.record(spendInput, record.signature);\n      } catch {\n        spendState = 'failed';\n      }\n    }\n    let returned: string;\n    try {\n      returned = await deps.client.sendTransaction(signed.wireBytes);\n      state = await deps.pending.record(record);",
   );
   const c = fakeChain();
   const rec = recorderOn(memoryStore(), c);
@@ -1585,6 +1596,231 @@ console.log('check-spl-tokens: Activity notes and the CSV keyed by the active So
   solactCaught += okN3 ? 1 : 0;
   check('mutant caught: the EVM slot no longer following the active EVM profile', okN3);
   check(`pass p25-emu1 mutants all caught (${solactCaught} of ${solactMutants} solana-activity and source mutants in total)`, solactCaught === solactMutants);
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-spl-tokens: phase 26 item 3b — a Solana token send checked and counted against a spending limit');
+// ---------------------------------------------------------------------------
+{
+  const SP = await import('../src/wallet/spending-policy.ts');
+  const SCOPE_SOL = { chain: DEVNET, owner: ALICE.address };
+  const NOW_S = 1_800_000_000;
+  /** A store with a 1 USDC per hour limit on devnet USDC for Alice's Solana address. */
+  async function limitedStore() {
+    const store = memoryStore();
+    await SP.saveSpendingPolicy(SCOPE_SOL, { token: USDC, symbol: 'USDC', decimals: 6, cap: 1_000_000n, windowSeconds: 3600 }, [USDC, EURC], { store, now: NOW_S });
+    return store;
+  }
+  /** The gate over `store` with every call logged; the clock pinned so the window is exact. */
+  function gateOn(store) {
+    const real = SP.solanaSpendingGate({ store });
+    const calls = [];
+    return {
+      calls,
+      gate: {
+        check: async (i) => (calls.push(['check', i.amount]), real.check(i, NOW_S)),
+        record: async (i, ref) => (calls.push(['record', ref]), real.record(i, ref, NOW_S)),
+        release: async (i, ref) => (calls.push(['release', ref]), real.release(i, ref)),
+        accepted: async (i, ref, to) => (calls.push(['accepted', ref, to]), real.accepted(i, ref, to)),
+      },
+    };
+  }
+  const records = async (store) => (await SP.listSpendRecords(SCOPE_SOL, store)).records;
+  const pendingStub = () => ({ record: async () => 'created', forget: async () => {}, openLike: async () => null });
+
+  // Over the limit: 2 USDC under a 1 USDC window → refused before ANY prompt or key use.
+  {
+    const store = await limitedStore();
+    const chain = fakeChain();
+    const q = await quoteOn(chain, { amountText: '2' });
+    const g = gateOn(store);
+    let auths = 0;
+    let signs = 0;
+    const e = await rejection(() =>
+      SPL.runSplSend(
+        { requireAuth: async () => ((auths += 1), { ok: true }), signWith: async (_c, _a, fn) => ((signs += 1), fn(ALICE)), client: chain.client, second: null, notifyAccepted: () => {}, pending: pendingStub(), spending: g.gate },
+        q,
+      ),
+    );
+    check('2 USDC under a 1 USDC per hour limit: refused (SplSpendingLimitError) before the device check — 0 prompts, 0 signWith (no vault read), nothing sent',
+      e?.name === 'SplSpendingLimitError' && auths === 0 && signs === 0 && chain.sent.length === 0 && !chain.log.includes('getLatestBlockhash'), e?.message);
+    check('…its text: the title, the over-limit sentence with exact amounts, the honesty sentence, the no-"Send anyway" sentence, "Nothing was signed."',
+      e?.title === SP.SPENDING_BLOCK_TITLE &&
+        e?.detail ===
+          [
+            'This send would go over your spending limit for USDC: 1 USDC per 1 hour. Already spent in this window: 0 USDC; this send: 2 USDC.',
+            SP.SPENDING_HONESTY_SENTENCE,
+            SP.SPENDING_OVERRIDE_OFF_SENTENCE,
+            'Nothing was signed.',
+          ].join('\n\n'),
+      e?.detail);
+    check('…and nothing was counted', (await records(store)).length === 0);
+  }
+  // Under the limit: 0.5 USDC is sent and counted once, under its signature, as exactly the token amount.
+  const store = await limitedStore();
+  const chain = fakeChain();
+  const g = gateOn(store);
+  const q = await quoteOn(chain, { amountText: '0.5' });
+  const outcome = await SPL.runSplSend(
+    { requireAuth: okAuth, signWith: aliceSigns, client: chain.client, second: null, sleep: async () => {}, notifyAccepted: () => {}, pending: pendingStub(), spending: g.gate },
+    q,
+  );
+  const r1 = await records(store);
+  check('0.5 USDC under the limit: sent, and counted BEFORE the broadcast (check, then record) under the transaction signature',
+    chain.sent.length === 1 && g.calls[0][0] === 'check' && g.calls[1][0] === 'record' && g.calls[1][1] === outcome.signature && !g.calls.some((c) => c[0] === 'release'));
+  check('…one record: kind transfer, the mint (exact base58), 500000 base units — the token amount only; the SOL fee is never counted against a token limit',
+    r1.length === 1 && r1[0].kind === 'transfer' && r1[0].token === USDC && r1[0].amount === 500_000n && r1[0].ref === outcome.signature && r1[0].at === NOW_S &&
+      q.quote.networkFeeLamports > 0n && r1.every((r) => r.kind !== 'fee'), JSON.stringify(r1, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)));
+  check('…counted once: the same signature recorded again is "existed" and adds nothing',
+    (await SP.solanaSpendingGate({ store }).record({ chain: DEVNET, owner: ALICE.address, mint: USDC, amount: 500_000n }, outcome.signature, NOW_S)) === 'existed' &&
+      (await records(store)).length === 1);
+  // The window adds up: 0.6 more would make 1.1 USDC in the hour.
+  {
+    const q2 = await quoteOn(chain, { amountText: '0.6' });
+    let auths = 0;
+    const e = await rejection(() =>
+      SPL.runSplSend({ requireAuth: async () => ((auths += 1), { ok: true }), signWith: aliceSigns, client: chain.client, second: null, notifyAccepted: () => {}, pending: pendingStub(), spending: gateOn(store).gate }, q2),
+    );
+    check('…then 0.6 USDC in the same hour (1.1 in all): refused before the prompt; "Already spent in this window: 0.5 USDC"',
+      e?.name === 'SplSpendingLimitError' && auths === 0 && /Already spent in this window: 0\.5 USDC; this send: 0\.6 USDC\./.test(e.detail) && chain.sent.length === 1, e?.message);
+  }
+  // A definite refusal releases what this attempt counted; an open outcome keeps it.
+  {
+    const s2 = await limitedStore();
+    const c2 = fakeChain();
+    const g2 = gateOn(s2);
+    const e = await rejection(async () =>
+      SPL.runSplSend({ requireAuth: okAuth, signWith: aliceSigns, client: failingSend(c2, () => new Error('RPC error -32002: Transaction simulation failed (sendTransaction)')), second: null, notifyAccepted: () => {}, pending: pendingStub(), spending: g2.gate }, await quoteOn(c2, { amountText: '0.5' })),
+    );
+    check('a definite refusal (a JSON-RPC error): the count this attempt created is released — no record left',
+      e?.message?.startsWith('RPC error -32002') && g2.calls.map((c) => c[0]).join(',') === 'check,record,release' && (await records(s2)).length === 0);
+    const s3 = await limitedStore();
+    const c3 = fakeChain();
+    const g3 = gateOn(s3);
+    const e3 = await rejection(async () =>
+      SPL.runSplSend({ requireAuth: okAuth, signWith: aliceSigns, client: failingSend(c3, () => new TypeError('fetch failed')), second: null, notifyAccepted: () => {}, pending: pendingStub(), spending: g3.gate }, await quoteOn(c3, { amountText: '0.5' })),
+    );
+    const kept = await records(s3);
+    check('an open outcome (no usable answer): the count stays — the send may have gone through',
+      e3?.name === 'SplBroadcastOutcomeUnknownError' && !g3.calls.some((c) => c[0] === 'release') && kept.length === 1 && kept[0].ref === e3.signature && kept[0].amount === 500_000n);
+    // A record that already existed (an earlier attempt) is never released by this attempt's refusal.
+    const s4 = await limitedStore();
+    const c4 = fakeChain();
+    const q4 = await quoteOn(c4, { amountText: '0.5' });
+    const real4 = SP.solanaSpendingGate({ store: s4 });
+    const pre = { check: (i) => real4.check(i, NOW_S), record: async () => 'existed', release: real4.release, accepted: real4.accepted };
+    let released = 0;
+    await rejection(async () =>
+      SPL.runSplSend({ requireAuth: okAuth, signWith: aliceSigns, client: failingSend(c4, () => new Error('RPC HTTP error 400 for sendTransaction')), second: null, notifyAccepted: () => {}, pending: pendingStub(), spending: { ...pre, release: async (...a) => ((released += 1), real4.release(...a)) } }, q4),
+    );
+    check('…and a refusal never releases a count it did not create ("existed")', released === 0);
+  }
+  // The node returning another signature re-keys the count, so it is still counted once.
+  {
+    const s5 = await limitedStore();
+    const c5 = fakeChain();
+    const inner = c5.client.transport;
+    const OTHER = base58.encode(new Uint8Array(64).fill(3));
+    const client = new SolanaRpcClient(async (m, p) => (m === 'sendTransaction' ? (await inner(m, p), OTHER) : inner(m, p)));
+    const out = await SPL.runSplSend({ requireAuth: okAuth, signWith: aliceSigns, client, second: null, sleep: async () => {}, notifyAccepted: () => {}, pending: pendingStub(), spending: gateOn(s5).gate }, await quoteOn(c5, { amountText: '0.5' }));
+    const rs = await records(s5);
+    check('a node that returns another signature: the count moves to it (one record, under the returned signature)', out.signature === OTHER && rs.length === 1 && rs[0].ref === OTHER);
+  }
+  // A token with no limit (EURC here): checked, not counted; the confirm says so.
+  {
+    const s6 = await limitedStore();
+    const real6 = SP.solanaSpendingGate({ store: s6 });
+    check('a token with no limit on it (EURC): "no-policy", and recording it adds nothing ("none")',
+      (await real6.check({ chain: DEVNET, owner: ALICE.address, mint: EURC, amount: 5_000_000n }, NOW_S)).status === 'no-policy' &&
+        (await real6.record({ chain: DEVNET, owner: ALICE.address, mint: EURC, amount: 5_000_000n }, 'sigEURC', NOW_S)) === 'none' &&
+        (await records(s6)).length === 0);
+  }
+  // Unreadable limits fail closed, before the prompt.
+  {
+    const bad = memoryStore();
+    await bad.setItem(STORE_KEYS.spendingPolicies.name, '{not json');
+    const c7 = fakeChain();
+    let auths = 0;
+    const e = await rejection(async () =>
+      SPL.runSplSend({ requireAuth: async () => ((auths += 1), { ok: true }), signWith: aliceSigns, client: c7.client, second: null, notifyAccepted: () => {}, pending: pendingStub(), spending: SP.solanaSpendingGate({ store: bad }) }, await quoteOn(c7, { amountText: '0.5' })),
+    );
+    check('unreadable stored limits: refused before the prompt with the app\'s unreadable sentence (fail closed)',
+      e?.name === 'SplSpendingLimitError' && e.title === SP.SPENDING_UNREADABLE_TITLE && e.detail === SP.SPENDING_UNREADABLE_MESSAGE && auths === 0 && c7.sent.length === 0);
+    const e2 = await rejection(async () =>
+      SPL.runSplSend({ requireAuth: async () => ((auths += 1), { ok: true }), signWith: aliceSigns, client: c7.client, second: null, notifyAccepted: () => {}, pending: pendingStub(), spending: { check: async () => { throw new Error('boom'); }, record: async () => 'none', release: async () => {}, accepted: async () => {} } }, await quoteOn(c7, { amountText: '0.5' })),
+    );
+    check('…and a gate that throws is treated the same way (refused, nothing signed)',
+      e2?.name === 'SplSpendingLimitError' && e2.detail === 'Spending limits could not be checked, so nothing was signed. Try again; if it keeps happening, open Settings → Spending limits (this app only) and reset them.' && auths === 0);
+  }
+  // Without the gate (older call sites): nothing is checked or counted — the screen always passes it (pinned above).
+  {
+    const s8 = await limitedStore();
+    const c8 = fakeChain();
+    await SPL.runSplSend({ requireAuth: okAuth, signWith: aliceSigns, client: c8.client, second: null, sleep: async () => {}, notifyAccepted: () => {}, pending: pendingStub() }, await quoteOn(c8, { amountText: '2' }));
+    check('no gate passed: the send goes through uncounted (so the screen must pass one — pinned in the screen source above)', c8.sent.length === 1 && (await records(s8)).length === 0);
+  }
+
+  // In-suite mutants of wallet/spl-tokens.ts.
+  {
+    const M = await mutant("    if (check.status === 'blocked') {", "    if (check.status === 'never') {");
+    const s = await limitedStore();
+    const c = fakeChain();
+    let auths = 0;
+    const q2 = await M.quoteSplSend(c.client, { caip2: DEVNET, url: 'x', owner: ALICE.address, recipient: BOB.address, token: usdcDevnet, amountText: '2' });
+    await rejection(() => M.runSplSend({ requireAuth: async () => ((auths += 1), { ok: true }), signWith: aliceSigns, client: c.client, second: null, sleep: async () => {}, notifyAccepted: () => {}, pending: pendingStub(), spending: gateOn(s).gate }, q2));
+    const ok = auths === 1 && c.sent.length === 1;
+    caught += ok ? 1 : 0;
+    check('mutant caught (3b): a blocked check ignored → the 2 USDC send reaches the prompt and the network', ok);
+  }
+  {
+    const M = await mutant('        spendState = await deps.spending.record(spendInput, record.signature);', '        spendState = "none";');
+    const s = await limitedStore();
+    const c = fakeChain();
+    const q2 = await M.quoteSplSend(c.client, { caip2: DEVNET, url: 'x', owner: ALICE.address, recipient: BOB.address, token: usdcDevnet, amountText: '0.5' });
+    await M.runSplSend({ requireAuth: okAuth, signWith: aliceSigns, client: c.client, second: null, sleep: async () => {}, notifyAccepted: () => {}, pending: pendingStub(), spending: gateOn(s).gate }, q2);
+    const ok = (await records(s)).length === 0;
+    caught += ok ? 1 : 0;
+    check('mutant caught (3b): the count before the broadcast removed → an accepted send is not counted', ok);
+  }
+  {
+    const M = await mutant("        if (spendState === 'created') await deps.spending!.release(spendInput, record.signature).catch(() => undefined);\n", '');
+    const s = await limitedStore();
+    const c = fakeChain();
+    const q2 = await M.quoteSplSend(c.client, { caip2: DEVNET, url: 'x', owner: ALICE.address, recipient: BOB.address, token: usdcDevnet, amountText: '0.5' });
+    await rejection(() => M.runSplSend({ requireAuth: okAuth, signWith: aliceSigns, client: failingSend(c, () => new Error('RPC error -32002: refused (sendTransaction)')), second: null, notifyAccepted: () => {}, pending: pendingStub(), spending: gateOn(s).gate }, q2));
+    const ok = (await records(s)).length === 1;
+    caught += ok ? 1 : 0;
+    check('mutant caught (3b): no release after a definite refusal → a refused send stays counted', ok);
+  }
+  {
+    const M = await mutant('      // An open outcome keeps the count (rule 3).\n', "      if (spendState === 'created') await deps.spending!.release(spendInput, record.signature).catch(() => undefined);\n");
+    const s = await limitedStore();
+    const c = fakeChain();
+    const q2 = await M.quoteSplSend(c.client, { caip2: DEVNET, url: 'x', owner: ALICE.address, recipient: BOB.address, token: usdcDevnet, amountText: '0.5' });
+    await rejection(() => M.runSplSend({ requireAuth: okAuth, signWith: aliceSigns, client: failingSend(c, () => new TypeError('fetch failed')), second: null, notifyAccepted: () => {}, pending: pendingStub(), spending: gateOn(s).gate }, q2));
+    const ok = (await records(s)).length === 0;
+    caught += ok ? 1 : 0;
+    check('mutant caught (3b): an open outcome released → a send that may have gone through is no longer counted', ok);
+  }
+  {
+    const M = await mutant("    if (check.status === 'unreadable') {", "    if (check.status === 'never') {");
+    const bad = memoryStore();
+    await bad.setItem(STORE_KEYS.spendingPolicies.name, '{not json');
+    const c = fakeChain();
+    let auths = 0;
+    const q2 = await M.quoteSplSend(c.client, { caip2: DEVNET, url: 'x', owner: ALICE.address, recipient: BOB.address, token: usdcDevnet, amountText: '0.5' });
+    await rejection(() => M.runSplSend({ requireAuth: async () => ((auths += 1), { ok: true }), signWith: aliceSigns, client: c.client, second: null, sleep: async () => {}, notifyAccepted: () => {}, pending: pendingStub(), spending: SP.solanaSpendingGate({ store: bad }) }, q2));
+    const ok = auths === 1;
+    caught += ok ? 1 : 0;
+    check('mutant caught (3b): unreadable limits no longer fail closed → the prompt is reached', ok);
+  }
+  check('phase 26 item 3b: the confirm\'s covered-case sentence names the coin of the network (test SOL on devnet, SOL on mainnet)',
+    SPL.splSpendingFeeNote(SOLANA_MAINNET_CAIP2) === 'The network fee and any rent for a new token account are paid in SOL and are not counted against a token limit.');
+  const views = readFileSync(resolve(HERE, '../src/components/SpendingPolicyViews.tsx'), 'utf8');
+  check('SolanaSpendingPolicyNotice: with no limit on this token it shows splSpendingUncoveredNote; with one, the readouts of THIS mint, the look-ahead, the fee note and the honesty sentence (source)',
+    views.includes('{splSpendingUncoveredNote(symbol, chain)}') && views.includes('setReadouts(r.readouts.filter((x) => x.policy.token === mint));') &&
+      views.includes('evaluateSolanaTokenSend({ chain, owner, mint, amount })') && views.includes('{splSpendingFeeNote(chain)}'));
+  check(`phase 26 item 3b: every wallet/spl-tokens.ts mutant of this file caught (${caught} of ${mutants})`, caught === mutants);
 }
 
 console.log(`\ncheck-spl-tokens: ${passed} passed, ${failed} failed (${mutants} mutants)`);

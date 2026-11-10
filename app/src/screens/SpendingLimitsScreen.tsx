@@ -8,9 +8,12 @@ import { useTheme } from '../theme';
 import { maskedSpokenProps } from '../a11y';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
-import { EVM_CHAIN_ID } from '../wallet/send';
+import { EVM_CHAIN_ID, SOLANA_CHAIN_ID } from '../wallet/send';
 import { requireLocalAuth } from '../wallet/biometric';
-import { listTokens } from '../wallet/tokens';
+import { listSolanaTokens, listTokens } from '../wallet/tokens';
+import { SOLANA_DEVNET_CAIP2 } from '../config/defaults';
+import { solanaNetworkLabel, splNativeSymbol } from '../wallet/spl-tokens';
+import { useI18n } from '../i18n/useI18n';
 import { formatUnits, parseUnits } from '../wallet/balances';
 import { evmProfileByCaip2 } from '../config/evm-chain';
 import {
@@ -23,6 +26,7 @@ import {
   SPENDING_RESET_PROMPT,
   SPENDING_SCREEN_EXPLAINER,
   WINDOW_PRESETS,
+  isSolanaScopeChain,
   listSpendingPolicies,
   listSpendingScopes,
   parseCustomWindow,
@@ -33,6 +37,7 @@ import {
   saveSpendingPolicy,
   spendingHistoryDamaged,
   spendingReadouts,
+  solanaSpendingTokenOptions,
   spendingTokenOptions,
   spentReadoutText,
   windowLabel,
@@ -56,8 +61,16 @@ export function SpendingLimitsScreen({ navigation }: Props) {
   const theme = useTheme();
   const fieldLabel = useFieldLabels();
   const { accounts, activeAccount } = useWallet();
-  const { evmChain, hideAmounts } = usePrefs();
+  const { evmChain, hideAmounts, solanaDevnet } = usePrefs();
   const owner = accounts.find((a) => a.chainId === EVM_CHAIN_ID)?.address ?? null;
+  // The Solana section's scope (phase 26 item 3b): the active account's
+  // Solana address on Solana devnet, the only network where this wallet
+  // offers Solana token sends (spl-tokens.ts splSendGate).
+  const solanaOwner = accounts.find((a) => a.chainId === SOLANA_CHAIN_ID)?.address ?? null;
+  const solanaScope = useMemo<SpendingScope | null>(
+    () => (solanaOwner && solanaDevnet ? { chain: SOLANA_DEVNET_CAIP2, owner: solanaOwner } : null),
+    [solanaOwner, solanaDevnet],
+  );
   const scope = useMemo<SpendingScope | null>(
     () => (owner ? { chain: evmChain.caip2, owner } : null),
     [owner, evmChain.caip2],
@@ -121,7 +134,9 @@ export function SpendingLimitsScreen({ navigation }: Props) {
         setDamaged(r.damaged || listing.damaged || historyDamaged || scopes.damaged);
         setElsewhere(
           scopes.scopes.filter(
-            (s) => !(s.scope.chain === scope.chain && s.scope.owner.toLowerCase() === scope.owner.toLowerCase()),
+            (s) =>
+              !(s.scope.chain === scope.chain && s.scope.owner.toLowerCase() === scope.owner.toLowerCase()) &&
+              !(solanaScope && s.scope.chain === solanaScope.chain && s.scope.owner === solanaScope.owner),
           ),
         );
         setLoaded(true);
@@ -136,7 +151,7 @@ export function SpendingLimitsScreen({ navigation }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [scope]);
+  }, [scope, solanaScope]);
 
   useEffect(reload, [reload]);
 
@@ -521,13 +536,15 @@ export function SpendingLimitsScreen({ navigation }: Props) {
         />
       )}
 
+      <SolanaLimitsSection scope={solanaScope} hasSolanaAccount={solanaOwner !== null} damaged={damaged} onChanged={reload} />
+
       {elsewhere.length > 0 ? (
         <>
           <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Limits elsewhere</Text>
           {elsewhere.map((s) => (
             <Text key={`${s.scope.chain}|${s.scope.owner}`} style={[styles.body, { color: theme.text }]}>
               {s.scope.owner.slice(0, 6)}…{s.scope.owner.slice(-4)} on{' '}
-              {evmProfileByCaip2(s.scope.chain)?.label ?? s.scope.chain}: {s.count} limit
+              {isSolanaScopeChain(s.scope.chain) ? solanaNetworkLabel(s.scope.chain) : (evmProfileByCaip2(s.scope.chain)?.label ?? s.scope.chain)}: {s.count} limit
               {s.count === 1 ? '' : 's'}
             </Text>
           ))}
@@ -537,6 +554,232 @@ export function SpendingLimitsScreen({ navigation }: Props) {
         </>
       ) : null}
     </ScrollView>
+  );
+}
+
+/**
+ * The Solana section (phase 26 item 3b): limits on Solana TOKENS for the
+ * active account's Solana address on Solana devnet, keyed by mint
+ * (wallet/spending-policy.ts, a Solana scope). Deliberately smaller than the
+ * EVM form: the network's tracked Solana tokens only (never SOL), the four
+ * window presets, no "Send anyway", no "count network fees" (the fee is SOL,
+ * a different asset), no edit — a limit is removed (after the device
+ * check, like every loosening) and added again. Shown only while Solana
+ * devnet is on: Solana token sends are offered nowhere else.
+ */
+function SolanaLimitsSection({
+  scope,
+  hasSolanaAccount,
+  damaged,
+  onChanged,
+}: {
+  scope: SpendingScope | null;
+  hasSolanaAccount: boolean;
+  damaged: boolean;
+  onChanged: () => void;
+}) {
+  const theme = useTheme();
+  const { t, tx } = useI18n();
+  const fieldLabel = useFieldLabels();
+  const { hideAmounts } = usePrefs();
+  const [tokens, setTokens] = useState<FungibleAsset[]>([]);
+  const [readouts, setReadouts] = useState<SpendingReadout[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
+  const [mint, setMint] = useState<string | null>(null);
+  const [capText, setCapText] = useState('');
+  const [windowSeconds, setWindowSeconds] = useState(86400);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const reload = useCallback(() => {
+    if (!scope) return;
+    let cancelled = false;
+    Promise.all([listSolanaTokens(scope.chain).catch(() => [] as FungibleAsset[]), spendingReadouts(scope)]).then(
+      ([list, r]) => {
+        if (cancelled) return;
+        setTokens(list);
+        setReadouts(r.readouts);
+        setLoaded(true);
+      },
+      () => {
+        if (!cancelled) setLoaded(true);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [scope]);
+  useEffect(reload, [reload]);
+
+  const options = useMemo(() => (scope ? solanaSpendingTokenOptions(scope.chain, tokens) : []), [scope, tokens]);
+  const chosen = options.find((o) => o.token === mint) ?? options[0] ?? null;
+
+  if (!hasSolanaAccount) {
+    return <Text style={[styles.hint, { color: theme.textMuted }]}>{t('spendingSol.noAccount')}</Text>;
+  }
+  if (!scope) {
+    return <Text style={[styles.hint, { color: theme.textMuted }]}>{t('spendingSol.devnetOnly')}</Text>;
+  }
+  const network = solanaNetworkLabel(scope.chain);
+  const coin = splNativeSymbol(scope.chain);
+
+  const onSave = async () => {
+    if (!chosen) return;
+    setFormError(null);
+    let cap: bigint;
+    try {
+      cap = parseUnits(capText.trim(), chosen.decimals);
+    } catch (e) {
+      setFormError(e instanceof Error ? e.message : t('spendingSol.capInvalid'));
+      return;
+    }
+    if (cap <= 0n) {
+      setFormError(t('spendingSol.capInvalid'));
+      return;
+    }
+    setBusy(true);
+    try {
+      await saveSpendingPolicy(
+        scope,
+        { token: chosen.token, symbol: chosen.symbol, decimals: chosen.decimals, cap, windowSeconds, allowOverride: false, countFees: false },
+        options.map((o) => o.token),
+      );
+      setFormOpen(false);
+      setCapText('');
+      reload();
+      onChanged();
+    } catch (e) {
+      setFormError(t('spendingSol.notSaved', { reason: e instanceof Error ? e.message : String(e) }));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onRemove = (p: SpendingPolicy) => {
+    Alert.alert(
+      t('spendingSol.remove.title', { symbol: p.symbol }),
+      t('spendingSol.remove.body', { summary: policySummary(p, hideAmounts), symbol: p.symbol, network }),
+      [
+        { text: tx('Cancel'), style: 'cancel' },
+        {
+          text: tx('Remove'),
+          style: 'destructive',
+          onPress: async () => {
+            // Removing a limit asks for the device check first, as on the EVM section.
+            const auth = await requireLocalAuth(SPENDING_REMOVE_PROMPT);
+            if (!auth.ok) {
+              Alert.alert(t('accounts.notRemoved'), auth.message);
+              return;
+            }
+            try {
+              await removeSpendingPolicy(scope, p.id);
+            } catch (e) {
+              Alert.alert(t('accounts.notRemoved'), e instanceof Error ? e.message : String(e));
+            }
+            reload();
+            onChanged();
+          },
+        },
+      ],
+    );
+  };
+
+  const inputStyle = [styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }];
+  return (
+    <>
+      <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>
+        {t('spendingSol.section.title', { network })}
+      </Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>
+        {t('spendingSol.intro', { address: `${scope.owner.slice(0, 4)}…${scope.owner.slice(-4)}`, network, coin })}
+      </Text>
+      {loaded && readouts.length === 0 && !damaged ? (
+        <Text style={[styles.body, { color: theme.textMuted }]}>{t('spendingSol.none', { network })}</Text>
+      ) : null}
+      {readouts.map((r) => (
+        <View key={r.policy.id} style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <Text accessibilityRole="header" {...maskedSpokenProps(policySummary(r.policy, hideAmounts))} style={[styles.cardTitle, { color: theme.text }]}>
+            {policySummary(r.policy, hideAmounts)}
+          </Text>
+          <Text {...maskedSpokenProps(spentReadoutText(r, hideAmounts))} style={[styles.body, { color: theme.text }]}>
+            {spentReadoutText(r, hideAmounts)}
+          </Text>
+          <Text style={[styles.mono, { color: theme.textMuted }]}>{t('spendingSol.mint', { mint: r.policy.token })}</Text>
+          <View style={styles.choiceRow}>
+            <Button title={tx('Remove')} variant="secondary" onPress={() => onRemove(r.policy)} style={styles.choiceButton} />
+          </View>
+        </View>
+      ))}
+      {formOpen && chosen ? (
+        <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>{t('spendingSol.newTitle')}</Text>
+          <Text style={[styles.label, { color: theme.textMuted }]}>{tx('Token')}</Text>
+          <View style={styles.choiceRow}>
+            {options.map((o) => (
+              <Button
+                key={o.token}
+                title={o.token === chosen.token ? `✓ ${o.label}` : o.label}
+                variant={o.token === chosen.token ? 'primary' : 'secondary'}
+                selected={o.token === chosen.token}
+                onPress={() => {
+                  setMint(o.token);
+                  setFormError(null);
+                }}
+                style={styles.choiceButton}
+              />
+            ))}
+          </View>
+          <Text {...fieldLabel('sol-limit', t('spendingSol.limitLabel', { symbol: chosen.symbol })).label} style={[styles.label, { color: theme.textMuted }]}>
+            {t('spendingSol.limitLabel', { symbol: chosen.symbol })}
+          </Text>
+          <TextInput
+            {...fieldLabel('sol-limit', t('spendingSol.limitLabel', { symbol: chosen.symbol })).input}
+            style={inputStyle}
+            value={capText}
+            onChangeText={(v) => {
+              setCapText(v);
+              setFormError(null);
+            }}
+            placeholder={t('spendingSol.limitPlaceholder', { symbol: chosen.symbol })}
+            placeholderTextColor={theme.textMuted}
+            keyboardType="decimal-pad"
+          />
+          <Text style={[styles.label, { color: theme.textMuted }]}>{t('spendingSol.window')}</Text>
+          <View style={styles.choiceRow}>
+            {WINDOW_PRESETS.map((w) => (
+              <Button
+                key={w.seconds}
+                title={windowSeconds === w.seconds ? `✓ ${w.label}` : w.label}
+                variant={windowSeconds === w.seconds ? 'primary' : 'secondary'}
+                selected={windowSeconds === w.seconds}
+                onPress={() => setWindowSeconds(w.seconds)}
+                style={styles.choiceButton}
+              />
+            ))}
+          </View>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{t('spendingSol.windowHint', { window: windowLabel(windowSeconds) })}</Text>
+          {formError ? <Text style={[styles.error, { color: theme.danger }]}>{formError}</Text> : null}
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{SPENDING_HONESTY_SENTENCE}</Text>
+          <Button title={busy ? tx('Saving…') : t('spendingSol.save')} onPress={() => void onSave()} disabled={busy || damaged} />
+          <Button title={tx('Cancel')} variant="secondary" onPress={() => setFormOpen(false)} />
+        </View>
+      ) : options.length === 0 ? (
+        loaded ? <Text style={[styles.hint, { color: theme.textMuted }]}>{t('spendingSol.noTokens', { network })}</Text> : null
+      ) : (
+        <Button
+          title={t('spendingSol.add')}
+          onPress={() => {
+            setMint(options[0]!.token);
+            setCapText('');
+            setWindowSeconds(86400);
+            setFormError(null);
+            setFormOpen(true);
+          }}
+          disabled={damaged || !loaded}
+        />
+      )}
+    </>
   );
 }
 

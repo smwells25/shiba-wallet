@@ -17,9 +17,10 @@ import { NOTE_VIEW_SCROLL_PROPS, TransactionNoteField, dismissKeyboardThenClose 
 import { listSolanaTokens } from '../wallet/tokens';
 import { pendingSolanaBroadcastRecorder } from '../wallet/pending-transactions';
 import { SolanaPendingTransactionsSection } from '../components/PendingTransactions';
+import { SolanaSpendingPolicyNotice } from '../components/SpendingPolicyViews';
+import { solanaSpendingGate } from '../wallet/spending-policy';
 import {
   SOLANA_SLOT_CHAIN_ID,
-  SPL_SPENDING_LIMITS_NOTE,
   SplBroadcastOutcomeUnknownError,
   quoteSplSend,
   readSplMaxRow,
@@ -188,6 +189,9 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
           second: secondUrl ? { url: secondUrl, client: solanaClient(secondUrl) } : null,
           notifyAccepted: notifySendAccepted,
           pending: pendingSolanaBroadcastRecorder(),
+          // Spending limits (phase 26 item 3b): checked before the device
+          // check, counted under the signature before the broadcast.
+          spending: solanaSpendingGate(),
         },
         quote,
       );
@@ -206,7 +210,9 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
         return;
       }
       setPhase('confirm');
-      const refusedBeforeSigning = e instanceof Error && (e.name === 'SplSendStillPendingError' || e.name === 'SplSendAlreadyHandedOverError');
+      const refusedBeforeSigning =
+        e instanceof Error &&
+        (e.name === 'SplSendStillPendingError' || e.name === 'SplSendAlreadyHandedOverError' || e.name === 'SplSpendingLimitError');
       setError({
         message: e instanceof Error ? (refusedBeforeSigning ? e.message : `Not sent. ${e.message}`) : 'Not sent.',
         technical: null,
@@ -252,7 +258,13 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
         {quote.quote.notes.map((note) => (
           <Text key={note} style={[styles.hint, { color: theme.text }]}>{note}</Text>
         ))}
-        <Text style={[styles.hint, { color: theme.textMuted }]}>{SPL_SPENDING_LIMITS_NOTE}</Text>
+        <SolanaSpendingPolicyNotice
+          chain={quote.caip2}
+          owner={quote.owner}
+          mint={quote.quote.mint}
+          amount={quote.quote.amount}
+          symbol={quote.symbol}
+        />
         {error ? (
           <Text accessibilityLiveRegion="polite" style={[styles.hint, { color: theme.danger }]}>{error.message}</Text>
         ) : null}

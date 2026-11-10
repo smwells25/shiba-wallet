@@ -665,15 +665,18 @@ console.log('the confirm screen warns before Send (finding 12):');
   // Phase 24: the notice's readout lines and its warning labels speak the mask in words.
   const NOTICE_LINE = '{...maskedSpokenProps(`${policySummary(r.policy, hideAmounts)}. ${spentReadoutText(r, hideAmounts)}.`)}';
   const NOTICE_WARN = 'accessibilityLabel={spokenMaskedText(`Warning: ${line}`)}';
-  const viewsPin = (src) => src.includes("import { maskedSpokenProps, spokenMaskedText } from '../a11y';") && src.includes(NOTICE_LINE) && src.includes(NOTICE_WARN);
-  check('SpendingPolicyNotice: the readout line spreads maskedSpokenProps and the warning label goes through spokenMaskedText (source)', viewsPin(views));
+  // Phase 26 item 3b: the Solana confirm card (SolanaSpendingPolicyNotice) renders the same two lines, so each appears twice.
+  const count = (src, needle) => src.split(needle).length - 1;
+  const viewsPin = (src) => src.includes("import { maskedSpokenProps, spokenMaskedText } from '../a11y';") && count(src, NOTICE_LINE) === 2 && count(src, NOTICE_WARN) === 2;
+  check('SpendingPolicyNotice and SolanaSpendingPolicyNotice: each readout line spreads maskedSpokenProps and each warning label goes through spokenMaskedText (source)', viewsPin(views));
   check('…mutant caught: the readout line without the helper', !viewsPin(views.replace(NOTICE_LINE, '')));
   check('…mutant caught: the warning label without spokenMaskedText', !viewsPin(views.replace(NOTICE_WARN, 'accessibilityLabel={`Warning: ${line}`}')));
   const limits = readFileSync(new globalThis.URL('../src/screens/SpendingLimitsScreen.tsx', import.meta.url), 'utf8');
   const LIM_TITLE = '{...maskedSpokenProps(policySummary(r.policy, hideAmounts))}';
   const LIM_BODY = '{...maskedSpokenProps(spentReadoutText(r, hideAmounts))}';
-  const limitsPin = (src) => src.includes(LIM_TITLE) && src.includes(LIM_BODY);
-  check('Spending limits screen: the card title and readout spread maskedSpokenProps (source)', limitsPin(limits));
+  // Phase 26 item 3b: the Solana section's limit cards spread the same props, so each appears twice.
+  const limitsPin = (src) => count(src, LIM_TITLE) === 2 && count(src, LIM_BODY) === 2;
+  check('Spending limits screen: the EVM and the Solana card titles and readouts spread maskedSpokenProps (source)', limitsPin(limits));
   check('…mutant caught: the readout without the helper', !limitsPin(limits.replace(LIM_BODY, '')));
   const send = readFileSync(new globalThis.URL('../src/screens/SendScreen.tsx', import.meta.url), 'utf8');
   const swap = readFileSync(new globalThis.URL('../src/screens/SwapScreen.tsx', import.meta.url), 'utf8');
@@ -746,6 +749,217 @@ console.log('check-spending-policy: counting before the broadcast (the bounded-b
   check('settled as cancelled: everything left of the losing broadcast is released, the included one kept',
     (await releaseSettledSpend(evt('cancelled'), s)) === 1 && (await refs(S7)).length === 0 && (await refs(S8)).length === 1);
   check('releaseSpend of an unknown hash removes nothing', (await releaseSpend({ scope: SCOPE, ref: `0x${'c0'.repeat(32)}`, store: s })) === 0);
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-spending-policy: phase 26 item 3b — a Solana scope (Solana token limits, keyed by mint)');
+// ---------------------------------------------------------------------------
+{
+  const SP = await import('../src/wallet/spending-policy.ts');
+  const { solanaKeyProvider } = await import('@shiba-wallet/core');
+  const { base58 } = await import('@scure/base');
+  const { readFileSync, writeFileSync, mkdirSync, rmSync } = await import('node:fs');
+  const { dirname, join, resolve } = await import('node:path');
+  const { fileURLToPath, pathToFileURL } = await import('node:url');
+  const DEVNET = 'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1';
+  const MAINNET_SOL = 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp';
+  const SOL_OWNER = solanaKeyProvider.deriveAccount(seed, 0, 0).address;
+  const USDC_MINT = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU';
+  const EURC_MINT = 'HzwqbKZw8HxMN6bF2yFZNrht3c2iXXzpKcFu7uBEDKtr';
+  const SOL_SCOPE = { chain: DEVNET, owner: SOL_OWNER };
+  const SOL_KNOWN = [USDC_MINT, EURC_MINT];
+  const sig = (b) => base58.encode(new Uint8Array(64).fill(b));
+  const input = (amount, mint = USDC_MINT) => ({ chain: DEVNET, owner: SOL_OWNER, mint, amount });
+  const usdcLimit = { token: USDC_MINT, symbol: 'USDC', decimals: 6, cap: 1_000_000n, windowSeconds: 3600 };
+
+  check('scopeKey: Solana devnet and mainnet keep the base58 owner exactly; another Solana id, a bad owner and a hex owner are refused',
+    SP.scopeKey(SOL_SCOPE) === `${DEVNET}|${SOL_OWNER}` && SP.scopeKey({ chain: MAINNET_SOL, owner: SOL_OWNER }) === `${MAINNET_SOL}|${SOL_OWNER}` &&
+      [
+        { chain: 'solana:4uhcVJyU9pJkvQyS88uRDiswHXSCkY3z', owner: SOL_OWNER },
+        { chain: DEVNET, owner: SOL_OWNER.toLowerCase() },
+        { chain: DEVNET, owner: OWNER },
+      ].every((scope) => { try { SP.scopeKey(scope); return false; } catch { return true; } }));
+  check('solanaStandIns: one 20-byte stand-in per distinct mint, in order, never the zero address (the engine\'s native coin)',
+    (() => { const m = SP.solanaStandIns([USDC_MINT, EURC_MINT, USDC_MINT]); return m.toEngine.size === 2 && m.toEngine.get(USDC_MINT) === `0x${'0'.repeat(39)}1` && m.toEngine.get(EURC_MINT) === `0x${'0'.repeat(39)}2` && m.fromEngine.get(`0x${'0'.repeat(39)}2`) === EURC_MINT; })());
+
+  // One store holding an EVM limit and a Solana limit: both read back; nothing else changes.
+  const s = memoryStore();
+  await saveSpendingPolicy(SCOPE, { token: NATIVE_TOKEN, symbol: 'test ETH', decimals: 18, cap: ETH, windowSeconds: 3600 }, KNOWN, { store: s, now: NOW });
+  const evmBlob = s.map.get('shiba-wallet.spending-policies.v1');
+  await saveSpendingPolicy(SOL_SCOPE, usdcLimit, SOL_KNOWN, { store: s, now: NOW });
+  const solList = await listSpendingPolicies(SOL_SCOPE, s);
+  const evmList = await listSpendingPolicies(SCOPE, s);
+  const scopes = await listSpendingScopes(s);
+  check('a Solana limit saves and reads back: the mint exactly as written (not lower-cased, not checksummed), no "Send anyway", no fees',
+    !solList.damaged && solList.policies.length === 1 && solList.policies[0].token === USDC_MINT && solList.policies[0].allowOverride === false && solList.policies[0].countFees === false);
+  check('…beside an EVM limit in the same store: both read back, the EVM entry byte-identical in the stored document',
+    !evmList.damaged && evmList.policies.length === 1 && evmList.policies[0].token === NATIVE_TOKEN &&
+      JSON.parse(s.map.get('shiba-wallet.spending-policies.v1')).entries[`${SEPOLIA}|${OWNER.toLowerCase()}`].length === 1 &&
+      JSON.stringify(JSON.parse(s.map.get('shiba-wallet.spending-policies.v1')).entries[`${SEPOLIA}|${OWNER.toLowerCase()}`]) === JSON.stringify(JSON.parse(evmBlob).entries[`${SEPOLIA}|${OWNER.toLowerCase()}`]));
+  check('…and listSpendingScopes lists both scopes, the Solana owner exact',
+    !scopes.damaged && scopes.scopes.length === 2 && scopes.scopes.some((x) => x.scope.chain === DEVNET && x.scope.owner === SOL_OWNER && x.count === 1));
+
+  // The app rules of a Solana scope.
+  await rejects('a Solana scope refuses a limit on the network coin (no Solana token mint)', () => saveSpendingPolicy(SOL_SCOPE, { ...usdcLimit, token: NATIVE_TOKEN }, [...SOL_KNOWN, NATIVE_TOKEN], { store: memoryStore(), now: NOW }), /^Choose a Solana token tracked on this network: a Solana token limit names the token’s mint\.$/);
+  await rejects('…refuses "Send anyway"', () => saveSpendingPolicy(SOL_SCOPE, { ...usdcLimit, allowOverride: true }, SOL_KNOWN, { store: memoryStore(), now: NOW }), /^“Send anyway” is not offered for a Solana token limit: a Solana token send over a limit is refused\.$/);
+  await rejects('…refuses counting network fees (they are SOL, not the token)', () => saveSpendingPolicy(SOL_SCOPE, { ...usdcLimit, countFees: true }, SOL_KNOWN, { store: memoryStore(), now: NOW }), /^Network fees cannot be counted in a Solana token limit: they are paid in SOL, not in the token\.$/);
+  await rejects('…refuses a mint that is not a tracked token of the network', () => saveSpendingPolicy(SOL_SCOPE, usdcLimit, [EURC_MINT], { store: memoryStore(), now: NOW }), /^Choose a Solana token tracked on this network/);
+  await rejects('…refuses the account itself as a token', () => saveSpendingPolicy(SOL_SCOPE, { ...usdcLimit, token: SOL_OWNER }, [SOL_OWNER], { store: memoryStore(), now: NOW }), /^Choose a Solana token tracked on this network/);
+  await rejects('…keeps the engine\'s rules on the stand-ins (one rule per token and window)', async () => {
+    const d = memoryStore();
+    await saveSpendingPolicy(SOL_SCOPE, usdcLimit, SOL_KNOWN, { store: d, now: NOW });
+    await saveSpendingPolicy(SOL_SCOPE, { ...usdcLimit, cap: 5n }, SOL_KNOWN, { store: d, now: NOW });
+  }, /duplicates an earlier \(token, window\) rule/);
+  const restored = memoryStore();
+  await saveSpendingPolicy(SOL_SCOPE, usdcLimit, [USDC_MINT], { store: restored, now: NOW });
+  check('a records-backup restore (records-backup.ts passes [policy.token] as the known tokens) saves a Solana limit', (await listSpendingPolicies(SOL_SCOPE, restored)).policies.length === 1);
+
+  // Stored data the Solana rules cannot have fails closed.
+  const tampered = (mutate) => {
+    const t = memoryStore();
+    const doc = JSON.parse(s.map.get('shiba-wallet.spending-policies.v1'));
+    mutate(doc);
+    t.map.set('shiba-wallet.spending-policies.v1', JSON.stringify(doc));
+    return t;
+  };
+  check('a stored Solana limit with "Send anyway" on, or with fees counted, or a hex token, marks the store damaged (fail closed)',
+    (await listSpendingPolicies(SOL_SCOPE, tampered((d) => (d.entries[`${DEVNET}|${SOL_OWNER}`][0].allowOverride = true)))).damaged &&
+      (await listSpendingPolicies(SOL_SCOPE, tampered((d) => (d.entries[`${DEVNET}|${SOL_OWNER}`][0].countFees = true)))).damaged &&
+      (await listSpendingPolicies(SOL_SCOPE, tampered((d) => (d.entries[`${DEVNET}|${SOL_OWNER}`][0].token = SEP_USDC)))).damaged &&
+      (await listSpendingPolicies(SCOPE, tampered((d) => (d.entries[`${DEVNET}|${SOL_OWNER.toLowerCase()}`] = d.entries[`${DEVNET}|${SOL_OWNER}`])))).damaged);
+  const feeHistory = memoryStore();
+  feeHistory.map.set('shiba-wallet.spending-history.v1', JSON.stringify({ version: 1, entries: { [`${DEVNET}|${SOL_OWNER}`]: [{ token: USDC_MINT, amount: '1', at: NOW, kind: 'fee', ref: sig(1) }] } }));
+  check('…and a stored Solana FEE record marks the history damaged (a Solana scope never counts a fee)', (await listSpendRecords(SOL_SCOPE, feeHistory)).damaged);
+
+  // The decision.
+  const blocked = await SP.evaluateSolanaTokenSend(input(2_000_000n), { store: s, now: NOW });
+  check('2 USDC under a 1 USDC per hour limit: blocked, no "Send anyway", the entry named by the mint (the stand-in mapped back), basis quote',
+    blocked.status === 'blocked' && blocked.overrideAllowed === false && blocked.basis === 'quote' && blocked.decision.enforcement === 'client-side' &&
+      blocked.results.length === 1 && blocked.results[0].entry.token === USDC_MINT && blocked.results[0].entry.proposed === 2_000_000n && blocked.results[0].entry.exceeds &&
+      blocked.outflows.length === 1 && blocked.outflows[0].token === USDC_MINT);
+  check('…its message: the over-limit sentence, the honesty sentence, the no-"Send anyway" sentence (exact)',
+    blocked.title === SPENDING_BLOCK_TITLE &&
+      blocked.message === ['This send would go over your spending limit for USDC: 1 USDC per 1 hour. Already spent in this window: 0 USDC; this send: 2 USDC.', SPENDING_HONESTY_SENTENCE, SPENDING_OVERRIDE_OFF_SENTENCE].join('\n\n'));
+  check('1 USDC exactly (the cap): allowed; 0.5 USDC: allowed', (await SP.evaluateSolanaTokenSend(input(1_000_000n), { store: s, now: NOW })).status === 'allowed' && (await SP.evaluateSolanaTokenSend(input(500_000n), { store: s, now: NOW })).status === 'allowed');
+  check('a mint with no limit (EURC), and an account with no Solana limit at all: no-policy',
+    (await SP.evaluateSolanaTokenSend(input(9_000_000n, EURC_MINT), { store: s, now: NOW })).status === 'no-policy' &&
+      (await SP.evaluateSolanaTokenSend({ ...input(9_000_000n), owner: solanaKeyProvider.deriveAccount(seed, 1, 0).address }, { store: s, now: NOW })).status === 'no-policy');
+  const unreadable = memoryStore();
+  unreadable.map.set('shiba-wallet.spending-policies.v1', '{nope');
+  check('unreadable stored limits: "unreadable" with the app\'s sentence (fail closed)',
+    (await SP.evaluateSolanaTokenSend(input(1n), { store: unreadable, now: NOW })).message === SPENDING_UNREADABLE_MESSAGE);
+
+  // The count: before the broadcast, under the signature, exactly.
+  const gate = SP.solanaSpendingGate({ store: s });
+  check('record 0.5 USDC under a signature: created; again: existed (counted once)',
+    (await gate.record(input(500_000n), sig(1), NOW - 3599)) === 'created' && (await gate.record(input(500_000n), sig(1), NOW)) === 'existed');
+  const recs = (await listSpendRecords(SOL_SCOPE, s)).records;
+  check('…the record: kind transfer, the mint, 500000, the signature as written', recs.length === 1 && recs[0].kind === 'transfer' && recs[0].token === USDC_MINT && recs[0].amount === 500_000n && recs[0].ref === sig(1) && recs[0].at === NOW - 3599);
+  const after = await SP.evaluateSolanaTokenSend(input(600_000n), { store: s, now: NOW });
+  check('…then 0.6 USDC in the same hour: blocked, "already spent" 0.5 USDC', after.status === 'blocked' && after.results[0].entry.spentInWindow === 500_000n);
+  check('…and an hour after the first (at > now − window is the engine\'s rule): allowed again', (await SP.evaluateSolanaTokenSend(input(600_000n), { store: s, now: NOW + 1 })).status === 'allowed');
+  check('readouts: "Spent in the current window: 0.5 of 1 USDC" for the Solana limit (the engine on the stand-in)',
+    (await spendingReadouts(SOL_SCOPE, { store: s, now: NOW })).readouts.map((r) => spentReadoutText(r, false)).join('|') === 'Spent in the current window: 0.5 of 1 USDC');
+  check('a record of a mint with no limit is not written ("none")', (await gate.record(input(5n, EURC_MINT), sig(2), NOW)) === 'none' && (await listSpendRecords(SOL_SCOPE, s)).records.length === 1);
+  // Two limits on two mints: each counts only its own mint.
+  await saveSpendingPolicy(SOL_SCOPE, { token: EURC_MINT, symbol: 'EURC', decimals: 6, cap: 100n, windowSeconds: 3600 }, SOL_KNOWN, { store: s, now: NOW });
+  check('two limits (USDC, EURC): EURC is not charged with the 0.5 USDC already spent, and USDC still is',
+    (await SP.evaluateSolanaTokenSend(input(100n, EURC_MINT), { store: s, now: NOW })).status === 'allowed' &&
+      (await SP.evaluateSolanaTokenSend(input(600_000n), { store: s, now: NOW })).status === 'blocked');
+  // Release is exact: a base58 signature differing only in letter case is another signature.
+  const upper = sig(1).toUpperCase() === sig(1) ? sig(1).toLowerCase() : sig(1).toUpperCase();
+  await gate.release(input(500_000n), upper);
+  check('release by a signature that differs only in letter case removes nothing (base58 is case-sensitive)', (await listSpendRecords(SOL_SCOPE, s)).records.length === 1);
+  await gate.accepted(input(500_000n), sig(1), sig(3));
+  check('accepted under another signature: the record moves to it', (await listSpendRecords(SOL_SCOPE, s)).records[0].ref === sig(3));
+  await gate.release(input(500_000n), sig(3));
+  check('release by the exact signature removes it', (await listSpendRecords(SOL_SCOPE, s)).records.length === 0);
+  check('the gate\'s check never throws: a bad owner reads as "unreadable" (fail closed)', (await gate.check({ ...input(1n), owner: 'not-base58!' })).status === 'unreadable');
+  await rejects('evaluateBeforeSigning (the EVM check) refuses a Solana scope instead of reading it as EVM calls', () => evaluateBeforeSigning({ scope: SOL_SCOPE, spender: SOL_OWNER, calls: [], fee: 0n, url: null, store: s, now: NOW }), /^Not an EVM chain id: solana:/);
+  check('solanaSpendingTokenOptions: the network\'s tracked Solana tokens by mint, never the coin, no duplicates, other chains dropped',
+    JSON.stringify(SP.solanaSpendingTokenOptions(DEVNET, [
+      { kind: 'fungible', assetId: { chainId: DEVNET, namespace: 'token', reference: USDC_MINT }, symbol: 'USDC', decimals: 6 },
+      { kind: 'fungible', assetId: { chainId: DEVNET, namespace: 'token', reference: USDC_MINT }, symbol: 'USDC', decimals: 6 },
+      { kind: 'fungible', assetId: { chainId: MAINNET_SOL, namespace: 'token', reference: EURC_MINT }, symbol: 'EURC', decimals: 6 },
+    ])) === JSON.stringify([{ token: USDC_MINT, symbol: 'USDC', decimals: 6, label: 'USDC · 4zMM…ncDU' }]));
+  check('the screen explainer no longer says Solana is not covered', SP.SPENDING_SCREEN_EXPLAINER.endsWith('Bitcoin and Dogecoin are not covered; Solana tokens have their own section below.'));
+
+  // In-suite mutants: a copy of wallet/spending-policy.ts with one change, its relative imports pinned.
+  const HERE = dirname(fileURLToPath(import.meta.url));
+  const PATH = resolve(HERE, '../src/wallet/spending-policy.ts');
+  const SRC = readFileSync(PATH, 'utf8');
+  const DIR = join(HERE, `.mutants-spending-policy-${process.pid}`);
+  process.on('exit', () => rmSync(DIR, { recursive: true, force: true }));
+  let made = 0;
+  let caught = 0;
+  const mutant = async (from, to) => {
+    if (!SRC.includes(from)) throw new Error(`mutation anchor not found: ${from}`);
+    mkdirSync(DIR, { recursive: true });
+    made += 1;
+    const file = join(DIR, `m${made}-spending-policy.ts`);
+    writeFileSync(file, SRC.replace(from, to).replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolve(dirname(PATH), spec)).href}'`));
+    return import(pathToFileURL(file).href);
+  };
+  const verdict = (name, ok) => {
+    caught += ok ? 1 : 0;
+    check(`mutant caught (3b): ${name}`, ok);
+  };
+  {
+    const M = await mutant('    return `${scope.chain}|${scope.owner}`;', '    return `${scope.chain}|${scope.owner.toLowerCase()}`;');
+    const t = memoryStore();
+    await M.saveSpendingPolicy(SOL_SCOPE, usdcLimit, SOL_KNOWN, { store: t, now: NOW });
+    verdict('the Solana owner lower-cased in the scope key (the store no longer reads back)', (await M.listSpendingPolicies(SOL_SCOPE, t)).damaged);
+  }
+  {
+    const M = await mutant("    .filter((r) => r.kind === 'transfer' && toEngine.has(r.token))", '    .filter(() => false)');
+    const t = memoryStore();
+    await M.saveSpendingPolicy(SOL_SCOPE, usdcLimit, SOL_KNOWN, { store: t, now: NOW });
+    await M.solanaSpendingGate({ store: t }).record(input(500_000n), sig(1), NOW);
+    verdict('the recorded sends left out of the decision (0.6 after 0.5 is allowed)', (await M.evaluateSolanaTokenSend(input(600_000n), { store: t, now: NOW })).status === 'allowed');
+  }
+  {
+    const M = await mutant("      if (before.some((r) => r.ref === input.ref)) return 'existed';\n", '');
+    const t = memoryStore();
+    await M.saveSpendingPolicy(SOL_SCOPE, usdcLimit, SOL_KNOWN, { store: t, now: NOW });
+    const g = M.solanaSpendingGate({ store: t });
+    await g.record(input(500_000n), sig(1), NOW);
+    await g.record(input(500_000n), sig(1), NOW);
+    verdict('the same signature counted twice', (await M.listSpendRecords(SOL_SCOPE, t)).records.length === 2);
+  }
+  {
+    const M = await mutant('  return isSolanaScopeChain(scope.chain) ? a === b : a.toLowerCase() === b.toLowerCase();', '  return a.toLowerCase() === b.toLowerCase();');
+    const t = memoryStore();
+    await M.saveSpendingPolicy(SOL_SCOPE, usdcLimit, SOL_KNOWN, { store: t, now: NOW });
+    const g = M.solanaSpendingGate({ store: t });
+    await g.record(input(500_000n), sig(1), NOW);
+    await g.release(input(500_000n), upper);
+    verdict('signatures compared without letter case (another signature releases this one)', (await M.listSpendRecords(SOL_SCOPE, t)).records.length === 0);
+  }
+  {
+    const M = await mutant("      if (input.countFees) throw new Error(t('spendingSol.err.fees'));\n", '');
+    let message = '';
+    try {
+      await M.saveSpendingPolicy(SOL_SCOPE, { ...usdcLimit, countFees: true }, SOL_KNOWN, { store: memoryStore(), now: NOW });
+    } catch (e) {
+      message = e.message;
+    }
+    verdict('the Solana fee refusal removed (a fee setting no longer refused with the SOL sentence)', !/they are paid in SOL/.test(message));
+  }
+  {
+    const M = await mutant("  if (isSolanaScopeChain(scope.chain) && r.kind !== 'transfer') return false;\n", '');
+    verdict('a stored Solana fee record accepted', !(await M.listSpendRecords(SOL_SCOPE, feeHistory)).damaged);
+  }
+  {
+    const M = await mutant('    if (solana) {', '    if (false) {');
+    let threw = false;
+    try {
+      await M.spendingReadouts(SOL_SCOPE, { store: s, now: NOW });
+    } catch {
+      threw = true;
+    }
+    verdict('the readouts of a Solana scope sent to the engine with the mint itself (the engine refuses a non-hex token)', threw);
+  }
+  check(`phase 26 item 3b: every spending-policy.ts mutant caught (${caught} of ${made})`, made >= 7 && caught === made);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
