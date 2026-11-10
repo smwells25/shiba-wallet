@@ -118,6 +118,8 @@ const EXPECTED_IDS = [
   'wallet-handle',
   // Phase 24 item 1: Solana token sends on Solana devnet (gate in wallet/spl-tokens.ts).
   'spl-tokens',
+  // Phase 26 item 2: lending (Aave v3 supply and withdraw) on Arbitrum Sepolia (gate in wallet/lending.ts).
+  'lending',
 ];
 const ids = FEATURE_READINESS.map((f) => f.id);
 check('every expected feature id is present exactly once', EXPECTED_IDS.every((id) => ids.filter((x) => x === id).length === 1) && ids.length === EXPECTED_IDS.length, ids.join());
@@ -248,6 +250,24 @@ for (const id of ['eoa-send', 'tokens', 'nft', 'swap', 'walletconnect', 'dogecoi
   check('wallet-handle is refused on mainnet and allowed by readiness on every built-in test network (the screen allows only Sepolia)',
     !isFeatureAllowed('wallet-handle', MAINNET) && TEST_NETWORK_CHAINS.every((c) => isFeatureAllowed('wallet-handle', c)));
 }
+// Phase 26 item 2 (feature 61): lending (supply and withdraw USDC on Aave
+// v3's Arbitrum Sepolia test market) is testnet-only and enforced; its
+// reason names the one key that administers the test market, the audit
+// coverage not established, supply and withdrawal only to the sending
+// account, and Arbitrum Sepolia only; its evidence names the threat-model
+// row T-96.
+{
+  const f = featureReadiness('lending');
+  check('lending is testnet-only, enforced, evidence W1 W2 W9 W13 T-96',
+    f.status === 'testnet-only' && f.enforced === true && f.evidence.join() === 'W1,W2,W9,W13,T-96', JSON.stringify(f));
+  check('lending: the reviewer line names the lending threat-model row T-96', readinessEvidenceLine(f) === 'Checklist and findings: W1, W2, W9, W13, T-96.');
+  check('lending reason: one key administers the test market, audits not established, supply and withdrawal only to the sending account, Arbitrum Sepolia only',
+    /Aave v3’s Arbitrum Sepolia test market, which one key administers and can pause, change or replace/.test(f.reason) &&
+      /audits cover the code deployed there has not been established/.test(f.reason) && /no borrowing/.test(f.reason) &&
+      /credited to and paid back to the sending account itself/.test(f.reason) && /only on Arbitrum Sepolia, where the USDC has no value\.$/.test(f.reason), f.reason);
+  check('lending is refused on mainnet and allowed by readiness on every built-in test network (the screen allows only Arbitrum Sepolia)',
+    !isFeatureAllowed('lending', MAINNET) && TEST_NETWORK_CHAINS.every((c) => isFeatureAllowed('lending', c)));
+}
 // Phase 24 item 1 (feature 43): Solana token sends are testnet-only and
 // enforced, allowed on Solana devnet only (SOLANA_TEST_NETWORK_CHAINS) and on
 // no Solana main network; the reason says no transfer has been sent through
@@ -287,7 +307,7 @@ check('walletconnect names W11 and W12 (permit decoding, dApp identity)', ['W11'
       /tested offline/.test(wc) && /live app over the WalletConnect relay/.test(wc) && /not yet cleared for real funds/.test(wc), wc);
 }
 // Every enforced feature has a gate in the app modules (static check).
-const gateSources = ['aa.ts', 'delegation.ts', 'sessions.ts', 'passkeys.ts', 'recovery.ts', 'token-gas.ts', 'inheritance.ts', 'browser-bridge.ts', 'multisig.ts', 'staking.ts', 'bridge.ts', 'handle.ts', 'spl-tokens.ts']
+const gateSources = ['aa.ts', 'delegation.ts', 'sessions.ts', 'passkeys.ts', 'recovery.ts', 'token-gas.ts', 'inheritance.ts', 'browser-bridge.ts', 'multisig.ts', 'staking.ts', 'bridge.ts', 'handle.ts', 'spl-tokens.ts', 'lending.ts']
   .map((f) => readFileSync(join(HERE, '..', 'src', 'wallet', f), 'utf8'))
   .join('\n');
 for (const f of FEATURE_READINESS.filter((x) => x.enforced)) {

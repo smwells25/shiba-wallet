@@ -1484,7 +1484,7 @@ console.log('check-pending: every smart-account path is recorded (phase 20 item 
     const r = parseRegistry(JSON.stringify({ version: 1, records: [{ ...legacy, origin }] }));
     if (r.readOnly || r.records.length !== 1) check(`origin ${origin} parses`, false);
   }
-  check('every known origin parses (14, incl. phase 21\'s bridge, phase 23\'s cold-aa and the handle screen\'s handle)', USEROP_ORIGINS.length === 14 && USEROP_ORIGINS.includes('bridge') && USEROP_ORIGINS.includes('cold-aa') && USEROP_ORIGINS.includes('handle'));
+  check('every known origin parses (15, incl. phase 21\'s bridge, phase 23\'s cold-aa, the handle screen\'s handle and phase 26\'s lending)', USEROP_ORIGINS.length === 15 && USEROP_ORIGINS.includes('bridge') && USEROP_ORIGINS.includes('cold-aa') && USEROP_ORIGINS.includes('handle') && USEROP_ORIGINS.includes('lending'));
   check('an unknown origin makes the registry read-only', parseRegistry(JSON.stringify({ version: 1, records: [{ ...legacy, origin: 'teleport' }] })).readOnly);
   check('a non-string origin makes the registry read-only', parseRegistry(JSON.stringify({ version: 1, records: [{ ...legacy, origin: 7 }] })).readOnly);
   check('an extra unknown key still makes it read-only', parseRegistry(JSON.stringify({ version: 1, records: [{ ...legacy, origin: 'swap', bundlerUrl: 'https://x' }] })).readOnly);
@@ -1492,7 +1492,7 @@ console.log('check-pending: every smart-account path is recorded (phase 20 item 
   // The recorder WalletContext registers.
   const store = memoryStore();
   const recorder = pendingUserOpRecorder(store);
-  const kinds = ['swap', 'staking', 'session-setup', 'recurring-payment', 'dca-swap', 'session-op', 'walletconnect', 'browser', 'multisig', 'bridge', 'handle', 'other'];
+  const kinds = ['swap', 'staking', 'session-setup', 'recurring-payment', 'dca-swap', 'session-op', 'walletconnect', 'browser', 'multisig', 'bridge', 'handle', 'lending', 'other'];
   for (const [i, kind] of kinds.entries()) await recorder(event(200 + i, kind, { resend: native }));
   let ops = userOpsFor((await loadPendingRegistry(store)).records, CHAIN, FROM);
   check('the recorder stores one record per path, each with its origin', ops.length === kinds.length && kinds.every((k) => ops.some((o) => o.origin === k)), ops.map((o) => o.origin).join());
@@ -1549,6 +1549,10 @@ console.log('check-pending: every smart-account path is recorded (phase 20 item 
     userOpCardTitle({ userOpHash: H(205), origin: 'handle', resend: null }) === `Smart-account operation ${shortHashOf(H(205))} from Wallet handle (ENS).` &&
       USEROP_RETRY_SENTENCES.handle === 'To try again, open Wallet handle (ENS): it reads from the chain which step of the registration is done and offers the next one. Nothing is resent from here.' &&
       userOpStatusSentence(dropped, { origin: 'handle', resend: null }) === `${USEROP_DROPPED_SENTENCE} ${USEROP_RETRY_SENTENCES.handle}`);
+  check('a lending operation (Lend screen, phase 26 item 2): its title and its retry sentence (exact)',
+    userOpCardTitle({ userOpHash: H(206), origin: 'lending', resend: null }) === `Smart-account operation ${shortHashOf(H(206))} from Lend.` &&
+      USEROP_RETRY_SENTENCES.lending === 'To try again, open Lend: it reads your position and the reserve again before a new quote; nothing is resent from here.' &&
+      userOpStatusSentence(dropped, { origin: 'lending', resend: null }) === `${USEROP_DROPPED_SENTENCE} ${USEROP_RETRY_SENTENCES.lending}`);
   check('card title keeps the Send wording with a pre-fill', userOpCardTitle({ userOpHash: H(203), origin: 'send', resend: native }) === `Smart-account operation ${shortHashOf(H(203))}: 0.000000000000000005 test ETH to ${TO}.`);
   check('every path has a phrase entry and a retry sentence', USEROP_ORIGINS.every((k) => typeof USEROP_ORIGIN_PHRASES[k] === 'string' && USEROP_RETRY_SENTENCES[k].length > 20));
 }

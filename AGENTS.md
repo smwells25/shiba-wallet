@@ -20359,3 +20359,98 @@ driver at a time, item 1's first; 6 last. Subagents on Opus.
       a 1 USDC per hour limit on devnet USDC, a 2 USDC send refused before
       any prompt, 0.5 USDC allowed and the readouts, 0.6 refused, the
       no-limit sentence on SFEE, the Settings section, TalkBack.
+- [x] Item 2, app half — THE LEND SCREEN (commit below; 22 files, +2,584 /
+      −22 — new app/src/wallet/lending.ts, screens/LendScreen.tsx and
+      LendViews.tsx, app/scripts/check-lending.mjs (101 checks, 13 in-suite
+      mutants) registered in suites.mjs after check-staking; risk.ts (Aave
+      v3's Pool a pinned contract and a pinned spender for the lending
+      asset), aa.ts ('lending' in AaOperationKind), pending-transactions.ts
+      ('lending' in USEROP_ORIGINS, placed after 'bridge' and before 'cold-aa'
+      because check-cold-aa's M9 anchor needs that order; the card "from
+      Lend"), readiness.ts (the row), navigation.ts / App.tsx (route Lend,
+      title "Lend (test networks)"), HomeScreen ("Lend (Aave)" after Staking
+      where the offer allows), watch-only.ts (ROUTE_FEATURES Lend), 86
+      lend.* ids in one block (Spanish drafts) with a lendNew rule in
+      check-i18n, THREAT_MODEL T-96, DEMO step 56 and a warning-2 sentence;
+      check-approvals 325 (was 307), check-readiness 238 (230),
+      check-pending 391 (390); the agent's patch was cut against 549cf24
+      and REBASED onto 850f3f4 by the CTO with a three-way apply — the
+      conflicts: the two string tables' and the fixture's appended tails
+      (both blocks kept), check-i18n's new-entries rule (both the
+      spendingSol and the lend clauses kept, the description string's join
+      repaired by hand), and DEMO.md, where BOTH app slices had written a
+      "Step 55" (the Lend step renumbered 56 with its warning-2 reference);
+      the rebased patch id bb69a00c…ab32 equals what was committed; the
+      offline runner ALL GREEN on the resolved tree: engine 1,415, app
+      11,961 across 68 suites (= the 3b tree's 11,833 plus this slice's
+      128), lint 0/0, tsc clean; the pre-commit scan at the commit; 13
+      in-suite, 2 check-approvals and 7 hand mutants caught; the CTO read
+      the threat-model row, the readiness reason, the risk lines and the
+      honesty strings; NOT seen on a device, nothing live; the agent was
+      cut by the Opus session limit and resumed from its worktree under
+      this session's scratchpad). DESIGN (modelled on Staking):
+      lendingOfferFor keyed on readiness AND the network (Arbitrum Sepolia
+      only today); owners — the regular account, or a kernel-v3.3 smart
+      account; watch-only, multisig, kernel-7702, simple and kernel-multisig
+      refused with plain sentences (DEVIATION NOTED: Lend refuses an
+      EIP-7702-upgraded owner where Staking accepts one — the brief's owner
+      list; left as built, a decision for the CTO at the refresh);
+      readLendingView checks the chain id, reads the reserve through the
+      engine's readReserveState and the position at the same block;
+      planLending calls the engine's quotes and checkLendingCalls BEFORE any
+      plan exists; the regular account sends the exact approve first and
+      the supply once the allowance is seen (each call re-checked), the
+      smart account one batch through prepareAaCalls; "Withdraw all" uses
+      AAVE_WITHDRAW_ALL; describeAaveError then describeSendError;
+      lendingOutcomeLines from decodeLendingReceipt filtered to the holder.
+      SCREEN: the readiness card where refused; the intro ("Lend supplies
+      Circle's test USDC to Aave v3, a lending protocol: the USDC goes into
+      Aave's pool, where others can borrow it and pay interest, and this
+      account receives aArbSepUSDC, a token whose balance is the USDC
+      supplied plus the interest earned…") and seven honesty lines (the one
+      administering key that can pause, freeze, recap or replace the
+      market; a frozen reserve still allows withdrawals; withdrawable at
+      once is bounded by the pool's liquidity; interest accrues to the
+      aToken balance itself; no borrowing, nothing to liquidate; supplied
+      on behalf of and withdrawn to the sending account only; "Whether
+      Aave's audited code matches what is deployed on this test network has
+      not been established."); the reserve card ("Read just now, at block
+      N, with every pinned contract checked first.", open / frozen / paused
+      / inactive, the cap and the room left, the liquidity, the variable
+      rate, "Aave's Pool (pinned)"); the position card masked by Hide
+      amounts; the smart-account switch, Max and "Withdraw all"; the
+      approve and confirm views with the calls in words, the fees, the
+      preview and the risk card — "This transaction goes to Aave v3's Pool
+      on Arbitrum Sepolia (0x…), pinned by this wallet from Aave's published
+      address book." and the approval form, a look-alike keeping the
+      generic lines; the success view with the receipt line ("Supplied 0.1
+      USDC; your position is now …"), the explorer button gated on
+      explorerTxBase and TransactionNoteField; the device prompts stay
+      English ("Approve exactly 0.1 USDC for Aave's Pool", "Supply 0.1 USDC
+      to Aave", "Withdraw all your USDC from Aave"). READINESS row lending
+      ("Lending (Aave v3 supply and withdraw)", testnet-only, enforced,
+      evidence W1 W2 W9 W13 T-96): "Lending supplies your USDC to Aave v3's
+      Arbitrum Sepolia test market, which one key administers and can
+      pause, change or replace, and whether Aave's audits cover the code
+      deployed there has not been established. This wallet offers supply
+      and withdrawal only, with no borrowing, always credited to and paid
+      back to the sending account itself. It offers lending only on
+      Arbitrum Sepolia, where the USDC has no value." T-96 RATED Low /
+      Medium (test networks only) — the agent's proposal, ACCEPTED BY THE
+      CTO (the impact is supplied test USDC a paused or frozen reserve or
+      drained liquidity can hold back but not take; the beneficiary and
+      recipient are fixed by the engine and re-checked before every quote).
+      FOLLOW-UPS: the aToken aArbSepUSDC is not on Home's token list
+      (LENDING_VAULTS 7.1 suggests it with a rebasing flag) — its balance
+      shows on the Lend screen only; a supply's USDC goes through the
+      existing spending gate, a withdrawal moves nothing out. EMULATOR
+      CHECKLIST (Arbitrum Sepolia; Account 1 about 0.000195 ETH and 1 USDC
+      — thin, about 8 runs at today's price, a 0.001 ETH top-up from the
+      dev EOA by fund.mjs if Review refuses for funds; the Kernel 0.745441
+      USDC and about 0.0018 ETH): the link on Arbitrum Sepolia only; the
+      intro and reserve card; supply 0.1 as two steps and two prompts with
+      the pinned lines; the Supply event, USDC −100,000, aToken +100,000,
+      allowance 0; Withdraw all; the smart account's one prompt and the
+      pending card "from Lend"; the refusals; mainnet's readiness row;
+      TalkBack, dark mode, Spanish. UNVERIFIED: the first lending batch
+      through a bundler; everything on a device.

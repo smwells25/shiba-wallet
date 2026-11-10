@@ -103,7 +103,9 @@ export type FeatureId =
   // Phase 23 item 6: a wallet handle (an ENS name) registered on Ethereum Sepolia.
   | 'wallet-handle'
   // Phase 24 item 1: Solana token sends (SPL Token and Token-2022) on Solana devnet.
-  | 'spl-tokens';
+  | 'spl-tokens'
+  // Phase 26 item 2: supply and withdraw USDC on Aave v3's Arbitrum Sepolia test market (feature 61).
+  | 'lending';
 
 export interface FeatureReadiness {
   id: FeatureId;
@@ -583,6 +585,28 @@ export const FEATURE_READINESS: readonly FeatureReadiness[] = [
       'class, and a token with a transfer-fee setting is sent only with the fee shown before you approve. This wallet ' +
       'offers Solana token sends only on Solana devnet.',
     evidence: ['W1', 'W2', 'W9', 'W13', 'T-93'],
+    enforced: true,
+  },
+  // Phase 26 item 2 (feature 61, docs/LENDING_VAULTS.md sections 7 and 10):
+  // supplying Circle's test USDC to Aave v3's Arbitrum Sepolia test market
+  // and withdrawing it, through the engine's packages/chains-evm/src/
+  // lending.ts (app glue wallet/lending.ts, which holds the gate). Appended
+  // at the end of the table. Evidence: W1 / W2 (the device conditions every
+  // send shares: the supply and the withdrawal go through the regular send
+  // and smart-account paths), W9 (the switchboard that enforces this row),
+  // W13 (the reserve's state and the preview come from one RPC provider) and
+  // T-96 (the threat-model row for lending: the single key that administers
+  // the test market, what the wallet verifies, its residuals).
+  {
+    id: 'lending',
+    title: 'Lending (Aave v3 supply and withdraw)',
+    status: 'testnet-only',
+    reason:
+      'Lending supplies your USDC to Aave v3’s Arbitrum Sepolia test market, which one key administers and can pause, ' +
+      'change or replace, and whether Aave’s audits cover the code deployed there has not been established. This ' +
+      'wallet offers supply and withdrawal only, with no borrowing, always credited to and paid back to the sending ' +
+      'account itself. It offers lending only on Arbitrum Sepolia, where the USDC has no value.',
+    evidence: ['W1', 'W2', 'W9', 'W13', 'T-96'],
     enforced: true,
   },
 ];

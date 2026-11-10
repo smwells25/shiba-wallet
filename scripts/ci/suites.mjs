@@ -120,6 +120,7 @@ export const APP_SCRIPTS = {
   'check-subscriptions.mjs': { kind: 'offline', summary: 'counts' },
   // Phase 18 item 2: staking on test networks (Lido, Rocket Pool; fakes only).
   'check-staking.mjs': { kind: 'offline', summary: 'counts' },
+  'check-lending.mjs': { kind: 'offline', summary: 'counts' }, // Phase 26 item 2: the Lend screen (Aave v3 on Arbitrum Sepolia; the engine's recorded reads replayed, fake Kernel node and bundler).
   'check-swap.mjs': { kind: 'offline', summary: 'counts' },
   'check-token-send.mjs': { kind: 'offline', summary: 'counts' },
   // Phase 13 item 2: paying the network fee in USDC through Circle's paymaster (fakes only).

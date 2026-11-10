@@ -58,6 +58,7 @@ import { InsightsScreen } from './src/screens/InsightsScreen';
 import { PriceAlertsScreen } from './src/screens/PriceAlertsScreen';
 import { ColdSignScreen } from './src/screens/ColdSignScreen';
 import { HandleScreen } from './src/screens/HandleScreen';
+import { LendScreen } from './src/screens/LendScreen';
 import { SolanaTokensScreen } from './src/screens/SolanaTokensScreen';
 import { SolanaTokenSendScreen } from './src/screens/SolanaTokenSendScreen';
 import { appScreenProtection } from './src/wallet/screen-protection';
@@ -405,6 +406,7 @@ function Root() {
             <Stack.Screen name="PriceAlerts" component={PriceAlertsScreen} options={{ title: 'Price alerts' }} />
             <Stack.Screen name="ColdSign" component={ColdSignScreen} options={{ title: 'Send with an off-line signer' }} />
             <Stack.Screen name="Handle" component={HandleScreen} options={{ title: 'Wallet handle (ENS)' }} />
+            <Stack.Screen name="Lend" component={LendScreen} options={{ title: 'Lend (test networks)' }} />
             <Stack.Screen name="SolanaTokens" component={SolanaTokensScreen} options={{ title: 'Solana tokens' }} />
             <Stack.Screen name="SolanaTokenSend" component={SolanaTokenSendScreen} options={{ title: 'Send token' }} />
             <Stack.Screen name="Inbox" component={InboxScreen} options={{ title: 'Inbox' }} />

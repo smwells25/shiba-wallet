@@ -197,6 +197,9 @@ export const USEROP_ORIGINS: readonly AaOperationKind[] = [
   'browser',
   'multisig',
   'bridge',
+  // Phase 26 item 2 (the Lend screen). Listed before 'cold-aa' so the lines
+  // check-cold-aa's mutant reads ('cold-aa', 'handle', 'other') stay together.
+  'lending',
   'cold-aa',
   'handle',
   'other',
@@ -2007,6 +2010,7 @@ export const USEROP_RETRY_SENTENCES: Readonly<Record<AaOperationKind, string>> =
     'To try again, open Send with an off-line signer, review the send again and have the new request signed; nothing is resent from here.',
   handle:
     'To try again, open Wallet handle (ENS): it reads from the chain which step of the registration is done and offers the next one. Nothing is resent from here.',
+  lending: 'To try again, open Lend: it reads your position and the reserve again before a new quote; nothing is resent from here.',
   other: 'To try again, go back to the screen you sent it from and review it again; nothing is resent from here.',
 };
 
@@ -2025,6 +2029,7 @@ export const USEROP_ORIGIN_PHRASES: Readonly<Record<AaOperationKind, string>> = 
   bridge: 'from Bridge',
   'cold-aa': 'from an off-line signer',
   handle: 'from Wallet handle (ENS)',
+  lending: 'from Lend',
   other: '',
 };
 

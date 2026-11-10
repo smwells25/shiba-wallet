@@ -218,6 +218,9 @@ const ROUTE_FEATURES: Record<string, string> = {
   // Wallet handles (phase 23 item 6): registering an ENS name signs from
   // the account, so the route stays OFF both allow lists.
   Handle: 'Wallet handles (ENS names)',
+  // Lending (phase 26 item 2): supplying and withdrawing sign from the
+  // account, so the route stays OFF both allow lists.
+  Lend: 'Lending (Aave)',
   // Solana tokens (phase 24 item 1): a watch-only or multi-signature account
   // has no Solana key in this wallet, so both routes stay OFF both allow
   // lists.

@@ -63,6 +63,8 @@ export type RootStackParamList = {
   Bridge: undefined;
   /** A wallet handle: an ENS .eth name registered on Ethereum Sepolia's ENSv2 contracts (phase 23 item 6, feature 75). */
   Handle: undefined;
+  /** Lend: supply and withdraw test USDC on Aave v3's Arbitrum Sepolia test market (phase 26 item 2, feature 61). */
+  Lend: undefined;
   /** Net worth across the wallet's accounts and networks, with profit and loss (phase 20 item 1, features 96 and 97). */
   Portfolio: undefined;
   /** Portfolio insights and risk overview (phase 25 item 2, feature 99): read only, no network request of its own. */

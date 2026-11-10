@@ -65,6 +65,7 @@ import { shortAccountAddress } from '../wallet/accounts';
 import { delegationLabelSuffix, FOREIGN_DELEGATE_WARNING, upgradeLinkShown, walletDelegateDeployed } from '../wallet/delegation';
 import { isFeatureAllowed } from '../config/readiness';
 import { stakingOfferFor } from '../wallet/staking';
+import { lendingLinkShown } from '../wallet/lending';
 import { bridgeLinkShown } from '../wallet/bridge';
 import { evmProfileByCaip2, multisigNetworkVerified } from '../config/evm-chain';
 import { usePrices } from '../wallet/usePrices';
@@ -702,6 +703,13 @@ export function HomeScreen({ navigation }: Props) {
           // Ethereum Sepolia and Hoodi; Rocket Pool on Hoodi).
           isFeatureAllowed('staking', evmChain.caip2) && stakingOfferFor(evmChain.caip2).unavailable === null
             ? cardLink('staking', 'Staking', () => navigation.navigate('Staking'))
+            : null,
+          // Lending (phase 26 item 2, feature 61): test networks only
+          // (readiness row 'lending', enforced), only where the engine pins
+          // an Aave market (Arbitrum Sepolia), never for a watch-only or
+          // multi-signature account (wallet/lending.ts lendingLinkShown).
+          lendingLinkShown(evmChain.caip2, activeAccount ?? null)
+            ? cardLink('lend', 'Lend (Aave)', () => navigation.navigate('Lend'), 'Supplies test USDC to Aave on Arbitrum Sepolia, and withdraws it')
             : null,
           // Bridging (feature 35): test networks only (readiness row
           // 'bridge', enforced), and only where a provider lists a route

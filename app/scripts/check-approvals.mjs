@@ -34,7 +34,7 @@ import { dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Interface, Transaction, id as ethersId, zeroPadValue, getAddress } from 'ethers';
 import { evmKeyProvider, mnemonicToSeed } from '@shiba-wallet/core';
-import { CCTP_DEPOSIT_FOR_BURN_SELECTOR, CCTP_RECEIVE_MESSAGE_SELECTOR, CCTP_V2_TESTNET, CCTP_V2_TESTNET_USDC, ENS_V2_SEPOLIA, ENS_V2_SEPOLIA_USDC, LIDO_DEPLOYMENTS, MAX_UINT256, ROCKET_POOL_DEPLOYMENTS, STAKING_SELECTORS, ensOwnedResolverSalt, predictVerifiableProxyAddress, rocketContractAddressKey, toHex } from '@shiba-wallet/chains-evm';
+import { CCTP_DEPOSIT_FOR_BURN_SELECTOR, CCTP_RECEIVE_MESSAGE_SELECTOR, CCTP_V2_TESTNET, CCTP_V2_TESTNET_USDC, ENS_V2_SEPOLIA, ENS_V2_SEPOLIA_USDC, LENDING_DEPLOYMENTS, LIDO_DEPLOYMENTS, MAX_UINT256, ROCKET_POOL_DEPLOYMENTS, STAKING_SELECTORS, ensOwnedResolverSalt, predictVerifiableProxyAddress, rocketContractAddressKey, toHex } from '@shiba-wallet/chains-evm';
 import {
   APPROVAL_WINDOW_BLOCKS,
   USDT_MAINNET,
@@ -93,6 +93,9 @@ import {
   bridgeApprovalText,
   pinnedSpenderApprovalTarget,
   pinnedEnsContracts,
+  pinnedLendingContracts,
+  lendingContractAt,
+  lendingContractText,
   ensContractAt,
   ensContractText,
   resolvedRocketDepositPoolAt,
@@ -1676,6 +1679,93 @@ console.log('pinned ENS contracts on the risk card (pass p23-handle finding 5):'
   calls = [];
   const mZeroLines = mZero.computeRiskLines(await mZero.gatherRiskFacts({ transport, url: RPC, wallet: OWNER, to: SEP_USDC, data: approveTo(REG, 0n), chainCaip2: SEPOLIA, trackedTokens: sepKnown, loadOwnMultisigs: null }));
   check('MUTANT (a zero approval described as taking USDC) is caught', mZeroLines.some((l) => l.text === EXACT_LINE) && !mZeroLines.some((l) => l.text === ZERO_LINE));
+}
+
+console.log('pinned lending contract on the risk card (phase 26 item 2: Aave v3’s Pool on Arbitrum Sepolia):');
+{
+  const ARB = 'eip155:421614';
+  const D = LENDING_DEPLOYMENTS[ARB];
+  // The addresses as bgd-labs/aave-address-book d4c2848e src/AaveV3ArbitrumSepolia.sol lines 12 and 79 list them, pinned here independently.
+  const POOL = '0xBfC91D59fdAA134A4ED45f7B584cAf96D7792Eff';
+  const ARB_USDC = '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d';
+  check('the engine table holds Aave’s documented Arbitrum Sepolia Pool and Circle’s USDC as the reserve', D.pool === POOL && D.asset.address === ARB_USDC);
+  const all = pinnedLendingContracts();
+  check('one pinned lending contract: Aave v3’s Pool on Arbitrum Sepolia, none on mainnet or another network',
+    all.length === 1 && all[0].chain === ARB && all[0].address === POOL && all[0].operator === 'Aave v3' && all[0].name === 'Pool');
+  const poolLookAlike = (POOL.slice(0, -1) + (POOL.slice(-1).toLowerCase() === 'f' ? 'e' : 'f')).toLowerCase();
+  check('lendingContractAt: exact pair only (lower case matches; a look-alike, mainnet, Sepolia and a malformed address do not)',
+    lendingContractAt(ARB, POOL)?.name === 'Pool' && lendingContractAt(ARB, POOL.toLowerCase()) !== null && lendingContractAt(ARB, poolLookAlike) === null &&
+      lendingContractAt(MAINNET, POOL) === null && lendingContractAt('eip155:11155111', POOL) === null && lendingContractAt(ARB, POOL + '00') === null);
+  const POOL_LINE = `This transaction goes to Aave v3’s Pool on Arbitrum Sepolia (${POOL}), pinned by this wallet from Aave’s published address book.`;
+  check('the supply / withdraw line (exact)', lendingContractText(lendingContractAt(ARB, POOL)) === POOL_LINE);
+  const APPROVE_LINE = `This approves Aave v3’s Pool on Arbitrum Sepolia (${POOL}), pinned by this wallet from Aave’s published address book, to take USDC from this account through its token contract ${ARB_USDC}.`;
+  check('the approval line (exact)', bridgeApprovalText({ contract: ARB_USDC, symbol: 'USDC', spender: lendingContractAt(ARB, POOL) }) === APPROVE_LINE);
+
+  node = defaultNode();
+  node.chainId = '0x66eee';
+  for (const a of [POOL, poolLookAlike, ARB_USDC]) {
+    node.codes[a.toLowerCase()] = '0x6080604052';
+    node.deployedAt[a.toLowerCase()] = HEAD - 150n;
+  }
+  const arbKnown = approvalTokensForChain([], ARB).map((t) => ({ address: t.address, symbol: t.symbol }));
+  const poolIface = new Interface(['function supply(address,uint256,address,uint16)', 'function withdraw(address,uint256,address)']);
+  const supplyData = poolIface.encodeFunctionData('supply', [ARB_USDC, 100_000n, ME, 0]);
+  const withdrawData = poolIface.encodeFunctionData('withdraw', [ARB_USDC, MAX_UINT256, ME]);
+  const approveTo = (spender, amount = 100_000n) => erc20Iface.encodeFunctionData('approve', [spender, amount]);
+  const generic = (lines, address) => lines.some((l) => l.text === `This transaction goes to a contract (${address}).`) || lines.some((l) => l.type === 'new-contract' || l.type === 'contract-age-unknown' || /^first-interaction/.test(l.type));
+  for (const [what, data] of [['the supply', supplyData], ['the withdrawal', withdrawData]]) {
+    calls = [];
+    const lines = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: POOL, data, chainCaip2: ARB, trackedTokens: arbKnown, loadOwnMultisigs: null }));
+    check(`${what}: exactly one line naming Aave v3’s pinned Pool`, lines.length === 1 && lines[0].text === POOL_LINE && lines[0].tone === 'notice', lines.map((l) => l.text).join(' | '));
+    check(`…${what}: no "goes to a contract", no age line, no first-interaction search`, !generic(lines, POOL) && !calls.some((c) => c.method === 'eth_getLogs'));
+  }
+  const lookAlike = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: poolLookAlike, data: supplyData, chainCaip2: ARB, trackedTokens: arbKnown, loadOwnMultisigs: null }));
+  check('control: a supply to a Pool LOOK-ALIKE (one digit off) keeps the generic lines and no pinned line',
+    generic(lookAlike, poolLookAlike) && !lookAlike.some((l) => /pinned by this wallet/.test(l.text)), lookAlike.map((l) => l.text).join(' | '));
+  node.codes[POOL.toLowerCase()] = '0x';
+  const noCode = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: POOL, data: supplyData, chainCaip2: ARB, trackedTokens: arbKnown, loadOwnMultisigs: null }));
+  check('control: the pinned Pool address WITHOUT code is not named (code at the target is required)', !noCode.some((l) => l.text === POOL_LINE), noCode.map((l) => l.text).join(' | '));
+  node.codes[POOL.toLowerCase()] = '0x6080604052';
+  calls = [];
+  const approve = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: ARB_USDC, data: approveTo(POOL), chainCaip2: ARB, trackedTokens: arbKnown, loadOwnMultisigs: null }));
+  check('the exact approval: the card describes the SPENDER (Aave’s Pool, one line), never the USDC contract', approve.length === 1 && approve[0].text === APPROVE_LINE, approve.map((l) => l.text).join(' | '));
+  check('…no first-transfer search about the token contract', !generic(approve, ARB_USDC) && !calls.some((c) => c.method === 'eth_getLogs'));
+  const approveLookAlike = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: ARB_USDC, data: approveTo(poolLookAlike), chainCaip2: ARB, trackedTokens: arbKnown, loadOwnMultisigs: null }));
+  check('control: an approval naming a Pool LOOK-ALIKE as spender is not described by the spender', !approveLookAlike.some((l) => /pinned by this wallet/.test(l.text)) &&
+    pinnedSpenderApprovalTarget(ARB_USDC, approveTo(poolLookAlike), ARB, []) === null);
+  check('pinnedSpenderApprovalTarget: Aave’s Pool is a spender on Arbitrum Sepolia only, with the amount read from the calldata',
+    pinnedSpenderApprovalTarget(ARB_USDC, approveTo(POOL, 7n), ARB, [])?.amount === 7n && pinnedSpenderApprovalTarget(ARB_USDC, approveTo(POOL), MAINNET, []) === null &&
+      pinnedSpenderApprovalTarget(ARB_USDC, approveTo(POOL), 'eip155:11155111', []) === null);
+  const unlimited = computeRiskLines(await gatherRiskFacts({ transport, url: RPC, wallet: ME, to: ARB_USDC, data: approveTo(POOL, MAX_UINT256), chainCaip2: ARB, trackedTokens: arbKnown, loadOwnMultisigs: null }));
+  check('an UNLIMITED approval to Aave’s Pool keeps its warning beside the spender line',
+    unlimited.some((l) => l.type === 'unlimited-approval' && l.tone === 'warning') && unlimited.some((l) => l.text === APPROVE_LINE));
+  node.chainId = '0xaa36a7';
+
+  const HERE = dirname(fileURLToPath(import.meta.url));
+  const MUTANT_DIR = join(HERE, `.mutants-approvals-lending-${process.pid}`);
+  process.on('exit', () => rmSync(MUTANT_DIR, { recursive: true, force: true }));
+  let lm = 0;
+  const importRiskMutant = async (from, to) => {
+    const relPath = 'src/wallet/risk.ts';
+    const original = readFileSync(join(HERE, '..', relPath), 'utf8');
+    if (!original.includes(from)) throw new Error(`mutation anchor not found: ${from}`);
+    const originalDir = dirname(join(HERE, '..', relPath));
+    const rewritten = original
+      .replace(from, to)
+      .replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolvePath(originalDir, spec)).href}'`);
+    mkdirSync(MUTANT_DIR, { recursive: true });
+    lm += 1;
+    const file = join(MUTANT_DIR, `ml${lm}-risk.ts`);
+    writeFileSync(file, rewritten);
+    return import(pathToFileURL(file).href);
+  };
+  const mChain = await importRiskMutant(
+    'return pinnedLendingContracts().find((c) => c.chain === chainCaip2 && c.address.toLowerCase() === lower) ?? null;',
+    'return pinnedLendingContracts().find((c) => c.address.toLowerCase() === lower) ?? null;',
+  );
+  check('MUTANT (chain not compared for Aave’s Pool) is caught', mChain.lendingContractAt('eip155:11155111', POOL) !== null && lendingContractAt('eip155:11155111', POOL) === null);
+  const mSpender = await importRiskMutant('  const named: PinnedSpender | null = spender ?? lending;', '  const named: PinnedSpender | null = spender;');
+  check('MUTANT (Aave’s Pool not accepted as a spender) is caught', mSpender.pinnedSpenderApprovalTarget(ARB_USDC, approveTo(POOL), ARB, []) === null);
 }
 
 check('approximate durations', approxDuration(9000n) === 'about 30 hours' && approxDuration(72000n) === 'about 10 days' && approxDuration(1n) === 'about 1 minute' && approxDuration(64n) === 'about 13 minutes' && approxDuration(300n) === 'about 1 hour');

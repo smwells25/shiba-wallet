@@ -4180,6 +4180,8 @@ function notifyAaSent(event: AaSentEvent): void {
  *  - 'handle': a step of a wallet handle (an ENS name) sent from the
  *    Wallet handle (ENS) screen by a smart account (phase 23 item 6,
  *    wallet/handle.ts; the kind added after pass p23-handle);
+ *  - 'lending': a supply or withdrawal sent from the Lend screen by a smart
+ *    account (phase 26 item 2, wallet/lending.ts);
  *  - 'other': every other sendAa caller (guardians, passkeys, owner change,
  *    inheritance), which passes no kind.
  */
@@ -4197,6 +4199,7 @@ export type AaOperationKind =
   | 'bridge'
   | 'cold-aa'
   | 'handle'
+  | 'lending'
   | 'other';
 
 /** What the Send screen's "Send again" can pre-fill (public data only; see pending-transactions.ts). */

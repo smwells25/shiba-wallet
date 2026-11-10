@@ -4,6 +4,7 @@ import {
   CCTP_V2_TESTNET_DOMAINS,
   CCTP_V2_TESTNET_USDC,
   ENS_V2_SEPOLIA,
+  LENDING_DEPLOYMENTS,
   LIDO_DEPLOYMENTS,
   MAX_UINT256,
   ROCKET_POOL_DEPLOYMENTS,
@@ -740,8 +741,51 @@ export function ensContractText(contract: PinnedEnsContract): string {
   );
 }
 
-/** A spender the card can name: a pinned bridge contract, or ENS's pinned ETHRegistrar (it takes the registration fee). */
-export type PinnedSpender = PinnedBridgeContract | PinnedEnsContract;
+/**
+ * A lending contract the wallet pins for one chain (phase 26 item 2): Aave
+ * v3's Pool from the engine's LENDING_DEPLOYMENTS table (packages/chains-evm/
+ * src/lending.ts, pinned from bgd-labs/aave-address-book d4c2848e and
+ * re-read on-chain before every quote). The Pool is both the target of the
+ * supply and the withdrawal and the spender of the exact USDC approval.
+ */
+export interface PinnedLendingContract {
+  /** CAIP-2 id of the chain the address is pinned for. */
+  chain: string;
+  /** The address as the engine's table lists it (EIP-55). */
+  address: string;
+  /** Who runs it, for the card ("Aave v3"). */
+  operator: 'Aave v3';
+  /** What the contract is ("Pool"). */
+  name: 'Pool';
+}
+
+/** Every lending contract the card names, from the engine's pinned table (one Pool per deployment). */
+export function pinnedLendingContracts(): PinnedLendingContract[] {
+  return Object.values(LENDING_DEPLOYMENTS).map((d) => ({ chain: d.chain, address: d.pool, operator: 'Aave v3' as const, name: 'Pool' as const }));
+}
+
+/** The pinned lending contract at exactly `address` on `chainCaip2`, or null (all 40 hex digits, that chain only). */
+export function lendingContractAt(chainCaip2: string, address: string): PinnedLendingContract | null {
+  if (!ADDRESS.test(address)) return null;
+  const lower = address.toLowerCase();
+  return pinnedLendingContracts().find((c) => c.chain === chainCaip2 && c.address.toLowerCase() === lower) ?? null;
+}
+
+/** The card's one line for a pinned lending contract (RiskFacts.lendingContract). */
+export function lendingContractText(contract: PinnedLendingContract): string {
+  const network = evmProfileByCaip2(contract.chain)?.label ?? contract.chain;
+  return (
+    `This transaction goes to ${contract.operator}’s ${contract.name} on ${network} (${contract.address}), ` +
+    'pinned by this wallet from Aave’s published address book.'
+  );
+}
+
+/**
+ * A spender the card can name: a pinned bridge contract, ENS's pinned
+ * ETHRegistrar (it takes the registration fee), or Aave v3's pinned Pool (it
+ * takes the supplied USDC).
+ */
+export type PinnedSpender = PinnedBridgeContract | PinnedEnsContract | PinnedLendingContract;
 
 /** The token whose approval names a pinned spender (RiskFacts.bridgeApproval). */
 export interface PinnedSpenderApproval {
@@ -757,9 +801,11 @@ export interface PinnedSpenderApproval {
  *  - the calldata is exactly approve(spender, amount) (selector plus two
  *    words, a clean address word);
  *  - the spender is Circle's TokenMessengerV2 as the wallet pins it on THIS
- *    chain (bridgeContractAt), or ENS's pinned ETHRegistrar;
- *  - `to` is one of `tokens` (tracked plus known on the active chain), or
- *    Circle's USDC that the CCTP table pins on this chain.
+ *    chain (bridgeContractAt), ENS's pinned ETHRegistrar, or Aave v3's Pool
+ *    as the wallet pins it on THIS chain (lendingContractAt, phase 26);
+ *  - `to` is one of `tokens` (tracked plus known on the active chain),
+ *    Circle's USDC that the CCTP table pins on this chain, or (for Aave's
+ *    Pool) the reserve's asset as the lending table pins it.
  * Whether `to` holds code is checked separately (gatherRiskFacts).
  */
 export function pinnedSpenderApprovalTarget(
@@ -781,14 +827,21 @@ export function pinnedSpenderApprovalTarget(
   // MessageTransmitterV2 only receives the mint call (pass p23-mint).
   const bridge = bridgeContractAt(chainCaip2, spenderAddress);
   const spender: PinnedSpender | null = (bridge?.name === 'TokenMessengerV2' ? bridge : null) ?? (ens?.name === 'ETHRegistrar' ? ens : null);
-  if (!spender) return null;
+  // Aave v3's pinned Pool on THIS chain (phase 26 item 2): the spender of
+  // the Lend screen's exact USDC approval.
+  const lending = lendingContractAt(chainCaip2, spenderAddress);
+  const named: PinnedSpender | null = spender ?? lending;
+  if (!named) return null;
   const amount = BigInt('0x' + hex.slice(74));
   const lower = to.toLowerCase();
   const listed = tokens.find((t) => ADDRESS.test(t.address) && t.address.toLowerCase() === lower);
-  if (listed) return { token: listed, spender, amount };
+  if (listed) return { token: listed, spender: named, amount };
   const chainId = /^eip155:(\d+)$/.exec(chainCaip2)?.[1];
   const usdc = chainId !== undefined ? CCTP_V2_TESTNET_USDC[Number(chainId)] : undefined;
-  if (usdc && usdc.toLowerCase() === lower) return { token: { address: usdc, symbol: 'USDC' }, spender, amount };
+  if (usdc && usdc.toLowerCase() === lower) return { token: { address: usdc, symbol: 'USDC' }, spender: named, amount };
+  // The reserve's own asset as the lending table pins it (Circle's USDC on Arbitrum Sepolia).
+  const asset = lending ? LENDING_DEPLOYMENTS[chainCaip2]?.asset : undefined;
+  if (asset && asset.address.toLowerCase() === lower) return { token: { address: asset.address, symbol: asset.symbol }, spender: named, amount };
   return null;
 }
 
@@ -803,6 +856,7 @@ export function bridgeContractText(contract: PinnedBridgeContract): string {
 
 /** Where the wallet took a pinned spender's address from, for the card. */
 function pinnedSource(s: PinnedSpender): string {
+  if (s.operator === 'Aave v3') return 'Aave’s published address book';
   return s.operator === 'ENS' ? 'ENS’s published Sepolia deployments' : `${s.operator}’s published test-network addresses`;
 }
 
@@ -881,6 +935,12 @@ export interface RiskFacts {
    * the card names it, with no contract-age or first-interaction check.
    */
   ensContract?: PinnedEnsContract;
+  /**
+   * Set when `to` is a lending contract the wallet pins for this chain
+   * (lendingContractAt: Aave v3's Pool) and was seen to hold code: the card
+   * names it, with no contract-age or first-interaction check.
+   */
+  lendingContract?: PinnedLendingContract;
   /** Set when `to` is one of the wallet's own addresses (no age or first-interaction checks then). */
   ownRecipient?: OwnAddress;
   /** Set when the paid party differs from `to` and is one of the wallet's own addresses. */
@@ -1159,6 +1219,14 @@ export function computeRiskLines(facts: RiskFacts): RiskLine[] {
       type: 'recipient-class',
       tone: 'notice',
       text: bridgeContractText(facts.bridgeContract),
+      subject: facts.to,
+    });
+  } else if (facts.lendingContract) {
+    // Aave v3's pinned Pool (phase 26 item 2): the supply's and the withdrawal's target.
+    lines.push({
+      type: 'recipient-class',
+      tone: 'notice',
+      text: lendingContractText(facts.lendingContract),
       subject: facts.to,
     });
   } else if (facts.ensContract) {
@@ -1482,12 +1550,14 @@ export async function gatherRiskFacts(options: GatherRiskOptions): Promise<RiskF
   // spender is one (the step before the burn); each confirmed below only if
   // `to` holds code.
   const bridgeRef = facts.ownRecipient || tokenRef || stakingRef ? null : bridgeContractAt(options.chainCaip2, options.to);
+  // Aave v3's pinned Pool (phase 26 item 2); confirmed below only if `to` holds code.
+  const lendingRef = facts.ownRecipient || tokenRef || stakingRef || bridgeRef ? null : lendingContractAt(options.chainCaip2, options.to);
   // A pinned ENS contract or the name owner's own resolver (pass p23-handle
   // finding 5); confirmed below only if `to` holds code.
   const ensRef =
-    facts.ownRecipient || tokenRef || stakingRef || bridgeRef ? null : ensContractAt(options.chainCaip2, options.to, options.ensResolverOwner ?? null);
+    facts.ownRecipient || tokenRef || stakingRef || bridgeRef || lendingRef ? null : ensContractAt(options.chainCaip2, options.to, options.ensResolverOwner ?? null);
   const bridgeApprovalRef =
-    facts.ownRecipient || tokenRef || stakingRef || bridgeRef || ensRef ? null : pinnedSpenderApprovalTarget(options.to, options.data, options.chainCaip2, tokens);
+    facts.ownRecipient || tokenRef || stakingRef || bridgeRef || lendingRef || ensRef ? null : pinnedSpenderApprovalTarget(options.to, options.data, options.chainCaip2, tokens);
 
   // Class, delegation and age of `address`, recorded as the card's subject.
   const describeSubject = async (address: string, known?: RecipientClass) => {
@@ -1527,6 +1597,11 @@ export async function gatherRiskFacts(options: GatherRiskOptions): Promise<RiskF
     if (bridgeRef && toClass.kind === 'contract') {
       facts.recipientClass = toClass;
       facts.bridgeContract = bridgeRef;
+      return;
+    }
+    if (lendingRef && toClass.kind === 'contract') {
+      facts.recipientClass = toClass;
+      facts.lendingContract = lendingRef;
       return;
     }
     if (ensRef && toClass.kind === 'contract') {
@@ -1592,13 +1667,13 @@ export async function gatherRiskFacts(options: GatherRiskOptions): Promise<RiskF
   // a first interaction worth a warning (finding 13), so no search runs.
   const selfSend = ownParty !== null;
   facts.firstInteractionApplicable = !selfSend;
-  if ((stakingRef || bridgeRef || ensRef || bridgeApprovalRef) && !selfSend && counterparty.toLowerCase() === options.to.toLowerCase()) {
+  if ((stakingRef || bridgeRef || lendingRef || ensRef || bridgeApprovalRef) && !selfSend && counterparty.toLowerCase() === options.to.toLowerCase()) {
     // The paid party is the pinned staking or bridge contract itself (or the
     // token whose approval names a pinned bridge spender): when its code is
     // confirmed, "have you sent here before" adds nothing, so no search
     // runs; otherwise the searches run as for any other address.
     await classifyTask();
-    if (facts.stakingContract || facts.bridgeContract || facts.ensContract || facts.bridgeApproval) {
+    if (facts.stakingContract || facts.bridgeContract || facts.lendingContract || facts.ensContract || facts.bridgeApproval) {
       facts.firstInteractionApplicable = false;
       return facts;
     }
