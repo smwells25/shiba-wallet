@@ -20454,3 +20454,119 @@ driver at a time, item 1's first; 6 last. Subagents on Opus.
       pending card "from Lend"; the refusals; mainnet's readiness row;
       TalkBack, dark mode, Spanish. UNVERIFIED: the first lending batch
       through a bundler; everything on a device.
+- [x] EMULATOR PASS p26-emu1 — THE FEE MINT SENT IN-APP, THE PENDING CARD'S
+      WAITING AND DROPPED STATES AND THE DUPLICATE REFUSAL SEEN LIVE, THE
+      ITEM-4 FIXES (2026-11-10 02:06–03:08 UTC; Expo Go on emulator 37.1.11
+      under -gpu swangle, Metro moved to wt-app at 549cf24 with the engine
+      rebuilt inside it (node 2556 on 8081, 1,952 modules); the REAL wallet;
+      3 prompts — "Unlock Shiba Wallet", "Approve sending 1 SFEE", "Approve
+      sending 0.1 SFEE" — each read from the BiometricPrompt window;
+      isKeyguardShowing read false before any input; no repository file
+      touched; .dev-wallet never read (the driver's helper is the p22b set
+      with the .dev-wallet readers removed); nothing from the dev EOA, no EVM
+      transaction; the report step by step in the session scratchpad
+      p26-emu1/REPORT.md with redacted dumps and screenshots; the driver was
+      cut by the Opus session limit before starting and resumed; THE CTO
+      RE-READ the in-app send, the dropped signature and Account 2's token
+      account on api.devnet.solana.com — all equal to the report). PART 1 —
+      ITEM 3a IN-APP, ALL PASS: the mint 7iJCvReXQqTqj7grTPzo3ggibPrSp5jcfghnmADjnoEn
+      read back as "SFEE — Shiba Fee Test", "Token-2022 (Token Extensions) ·
+      6 decimals (from the mint)", "Name and symbol: from the mint's on-chain
+      metadata.", "Transfer fee: 100 basis points (1 SFEE max) — shown again
+      on every send.", no freeze-authority line; the Track prompt exact;
+      Home "SFEE, Shiba Fee Test · Solana devnet token. Balance 10 SFEE" with
+      "Send SFEE on Solana devnet ↗"; Max "10" before and "9" after; the
+      Review of 1 SFEE to Account 2 — "Issuer's transfer fee (withheld from
+      the amount) 0.01 SFEE", "Recipient receives 0.99 SFEE", "Network fee
+      (paid in test SOL) 5000 lamports (0.000005 test SOL)", "Total test SOL
+      leaving your account 5000 lamports …", the sender's account
+      8jZRyqhxw1SHKZWazXgvp8ydSaDN6cEPKv4nmpfSfkwL, the recipient's AWFg…yYKJ
+      not marked created, NO rent row; ONE prompt; "Sent ✓" / "The sending
+      endpoint reports the transaction confirmed." / "Read again on
+      solana-devnet.api.onfinality.io: the transaction is there (finalized).";
+      the pending card "Solana token send 4jLp…AXDF: 1 SFEE to 9WMg…471n…"
+      then "Included: the network endpoint reports it finalized (slot
+      520591451)." about 25 s after the prompt; SIGNATURE
+      4jLphZNL5PG2bdxAAUv77v9sTzX1LfunU1HG6vJgC4AGZHBDTAeJLFw9VSuj5QymFBphfvBqcShqywY4TPUdAXDF,
+      slot 520591451 (02:23:51 UTC), err null, fee 5,000, one
+      transferCheckedWithFee of 1,000,000 with feeAmount 10,000, identical on
+      both RPCs; Activity — Account 1 "Sent 1 SFEE to 9WMg…471n" / −1 SFEE /
+      "fee 0.000005 test SOL" (the mint of 10 SFEE reads "Received 10 SFEE;
+      the transaction does not name one sender"), Account 2 "Received 0.99
+      SFEE from EK5j…rYPv". THE FIRST Token-2022 TRANSFER WITH A FEE THROUGH
+      THE APP. PART 2 — ITEM 3c, ALL PASS (the method: a root watcher in the
+      guest polled the app's AsyncStorage for a "kind":"solana" record —
+      written just before sendTransaction — and then ran `svc wifi disable;
+      svc data disable` (both interfaces are validated networks) with a 6 s
+      netem delay on both so the broadcast sat in the queue): the 0.1 SFEE
+      send's screen read "No usable answer came back from the network
+      endpoint, so this wallet does not know whether the transaction was
+      sent. It is listed under Pending on this phone, which checks it every
+      15 seconds; do not send it again until that list says what happened."
+      with the technical line "fetch failed: java.net.UnknownHostException:
+      Unable to resolve host "api.devnet.solana.com"…" (the request never
+      left the device), the card with the no-replacement sentence and
+      "Checking with the network endpoint…"; the network back → "The
+      network endpoint does not list this transaction yet. This list checks
+      again every 15 seconds." (THE WAITING STATE); the same send reviewed
+      again → NO prompt and exactly "A send of the same amount of SFEE to the
+      same recipient from this account is still listed under Pending on this
+      phone. A Solana transaction signed again is a new transaction, so both
+      could be included. Wait until that list says what happened before
+      sending it again. Nothing was signed." (THE DUPLICATE REFUSAL); at 17
+      minutes "The network endpoint has had no record of this transaction
+      for more than 10 minutes, so it was most likely dropped: its recent
+      blockhash has expired, so it can no longer be included. Nothing is
+      resent from here. To try again, open the token's Send screen from
+      Home and review the send again." with "Remove from this list" (THE
+      DROPPED STATE); signature 43rB…XNkS null on both RPCs — the transaction
+      never existed and cost nothing; Remove cleared it (no confirmation
+      dialog). PART 3 — ITEM 4: (a) PASS — Account 2's Dogecoin card
+      "Balance unavailable: no endpoint is configured for this chain" with
+      only Activity and the line "Sending DOGE needs a Dogecoin Blockbook
+      endpoint: add one under Settings → Network endpoints.", TalkBack
+      reading the card, the line and the unchanged Bitcoin card in order;
+      (b) the risk overview's waiting section as Account 2: "Pending on this
+      phone, every account and network: waiting (sent less than 10 minutes
+      ago): 1; sent more than 10 minutes ago and not seen included since:
+      14." then "Arbitrum Sepolia, Account 1: regular-account transactions
+      sent more than 10 minutes ago: 3." / "Hoodi, Account 1: … 1." / "Base
+      Sepolia, Account 1: smart-account operations … 10." / "Solana devnet,
+      EK5j…rYPv (not an account in this wallet now): Solana token sends
+      waiting: 1." — the p25-emu2 "4 + 10" entries are Account 1's on other
+      networks; WATCHING 0x8E1d…0cDF again ("Cold 8", 0 prompts) attached no
+      entry; the Stop-watching dialog ends with the exact new sentence; after
+      it the marker records fell 8 → 5, every remaining record Account 1's
+      (the three gone most likely Cold 8's p22b replacement markers — an
+      inference); (c) DEMO step 52 followed literally — PASS, incl. the
+      share sheet's shiba-gains_eip155-1_ETH_2026-11-10.csv (cancelled), and
+      Home's "Risk overview" link (3da568a) seen live for the first time.
+      FUNDS (finalized, both RPCs): Account 1 46,998,120 → 46,993,120 lamports,
+      SFEE 10,000,000 → 9,000,000, USDC and EURC unchanged; Account 2's SFEE
+      account 990,000 → 1,980,000 with withheld 10,000 → 20,000. FINDINGS
+      (fix slice dispatched for 1–4): (1) with Account 2 active the risk
+      overview labels Account 1's own Solana send "(not an account in this
+      wallet now)" — the 448fc2c follow-up (only the active account's Solana
+      address is labelled), now visibly misleading, and its note then says
+      such entries stay, which is false here; (2) THE P&L OFFER IGNORES THE
+      DEVNET SWITCH — with Ethereum on mainnet and Solana devnet on, the "SOL
+      on Solana" chip loaded the DEVNET history (12 entries, 8 token
+      transfers) and would have valued test SOL at CoinGecko's mainnet price;
+      only its gap sentences stopped a figure; (3) the withheld fee is
+      invisible to the recipient — Account 2's row "Received 0.99 SFEE" and
+      Home's "Balance 1.98 SFEE" say nothing of the 1 SFEE sent or the 0.02
+      SFEE withheld in its own account; (4) the Review's fee note says "(at
+      most 1000000 base units per transfer)" where the read-back says "(1
+      SFEE max)"; (5) a DNS failure before any connection is reported as an
+      open outcome (conservative and correct for the card; the wallet could
+      say nothing left the device — a design note); (6) "Remove from this
+      list" on a dropped Solana send acts at once with no confirmation
+      (noted). NOT VERIFIED: the waiting state on a send that reached a
+      node; the Spanish lengths; removing an imported key or Multisig 3;
+      real touch and audio; iOS. END STATE: Home, Ethereum Sepolia, Account
+      1 (0.011746 test ETH, ENS name qzv7hk2wmt.eth), devnet OFF (SFEE kept
+      on the devnet list), no watched address, light mode, protection OFF,
+      TalkBack OFF (level 6), IME ADBKeyboard, the network restored with no
+      netem left, the guest helpers removed; Metro node 2556 on 8081 from
+      wt-app at 549cf24 with only that reverse; qemu 86708 (PRI 55) with
+      caffeinate 86986, the window in front.
