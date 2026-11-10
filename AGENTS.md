@@ -20222,3 +20222,64 @@ driver at a time, item 1's first; 6 last. Subagents on Opus.
       keeps its Sepolia entries; Account 2's Dogecoin card with no Send and
       the new line, spoken by TalkBack; DEMO steps 51 and 52 followed
       literally; the Spanish lengths.
+- [x] Item 1, app half — THE HANDLE SCREEN'S RENEW FLOW (commit below; 8
+      files, +1,057 / −20, no new file, no new dependency — handle.ts (a
+      "Renewal" section from line 1065: readOwnedHandle, handleExpiryLine,
+      quoteHandleRenewal, planHandleRenewal, preflightRenewal, gateRenewal,
+      readHandleRenewalResult, describeRenewalError; the engine's functions
+      called, nothing re-implemented), HandleScreen.tsx (+326),
+      HandleViews.tsx, check-handle 194 (was 153; in-suite mutants 17 → 26),
+      44 handle.renew.* ids in one delimited block in en.ts / es.ts (Spanish
+      drafts) and the fixture's "new" list, docs/DEMO.md step 55 and
+      warning 7; offline runner ALL GREEN in the CTO's isolated worktree on
+      HEAD 549cf24: checkout 0 / apply 0 / 8 files, the staged patch id
+      790421c5…2848 equal to the file's and the agent's, engine 1,415, app
+      11,767 across 67 suites, lint 0/0, tsc clean; six hand mutants on the
+      real files caught; the pre-commit scan at the commit; the CTO read the
+      DEMO hunk and every English string; NOT seen on a device, nothing
+      sent; the agent was cut by the Opus session limit and resumed from
+      its worktree, which it had created under THIS session's scratchpad
+      through SHIBA_SCRATCHPAD). DESIGN: "Your names" lists the names the
+      regular and the Kernel smart account hold (their primary names, plus
+      a name checked in the form that turns out to be theirs — the wallet
+      keeps no list of owned names, so a name in its grace period whose
+      primary name no longer resolves appears only after it is checked),
+      each with its owner, the expiry line from the registry ("Expires on
+      2026-11-24 03:49:00 UTC." / "Expired on …; it can still be renewed
+      until …") and "Renew for 28 days"; the review shows "Renewal:
+      0.613701 USDC for 28 days (the registrar's figure, read just now; the
+      wallet computed the same).", the current and new expiry (the note:
+      the registrar extends from the CURRENT expiry, not from today), the
+      grace end when in grace, the payer, the pinned registrar and USDC
+      contracts, the two call lines, the pre-flight, the balance-change
+      preview of both calls and the risk card aimed at the pinned registrar;
+      a regular account always sends the exact approval first (transaction
+      1 of 2) and, once it is included, re-runs the eth_call pre-flight and
+      opens renew (2 of 2); the smart account sends one batch [approve,
+      renew] with one prompt — DEVIATION, CTO accepted: its pre-flight is an
+      eth_simulateV1 of both calls together (renew alone reverts until the
+      approval exists), at review and again before the prompt; gateRenewal
+      = pre-flight → the spending check (0.613701 USDC counted) → the device
+      prompt; the success view reads the new expiry back from the registry
+      and decodes the NameRenewed log; a renewal stores nothing in
+      shiba-wallet.handle-pending.v1 (no secret, no wait — said in a
+      comment and on screen); only the holder's own names are offered;
+      the readiness row wallet-handle covers it (no new row). PROMPTS:
+      "Approve the USDC for renewing qzv7hk2wmt.eth (transaction 1 of 2)",
+      "Approve renewing qzv7hk2wmt.eth (transaction 2 of 2)", "Approve
+      renewing xk9fdq4rvz.eth from your smart account"; SUCCESS: "Renewed
+      ✓" / "{name} now expires on {to}, read back from the .eth registry
+      (before this renewal: {from})."; the seven engine reasons each a full
+      sentence ending "Nothing was sent.". EMULATOR PASS QUEUED (before
+      2026-11-24, after pass p26-emu1 releases the driver): renew
+      qzv7hk2wmt.eth from Account 1 (two prompts; expect the new expiry
+      1797911340 = 2026-12-22 03:49:00 UTC, exactly 613,701 USDC base units
+      to the beneficiary 0x84D3…39D3, allowance 0 after) and xk9fdq4rvz.eth
+      from the Kernel (one prompt; expect 1797912444 and the pending card
+      "from Wallet handle (ENS)" settling); the primary names and
+      smart.qzv7hk2wmt.eth unchanged; Back leaves nothing sent; stopping
+      after the approval shows "Remove the USDC approval". UNVERIFIED: any
+      view, TalkBack, the Spanish lengths, whether ZeroDev accepts the
+      renewal batch from the Kernel. Docs left for the refresh:
+      FEATURE_UNIVERSE row 75, THREAT_MODEL T-91 / T-94, WALLET_HANDLES
+      section 14.

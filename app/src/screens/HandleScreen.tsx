@@ -55,26 +55,38 @@ import {
   checkHandleLabel,
   checkHandleSubLabel,
   describeHandleError,
+  describeRenewalError,
   forgetPendingHandle,
+  formatBlockTime,
   formatUsdc,
   gateRegister,
+  gateRenewal,
   handleAccountRefusal,
   handleCallLines,
   handleCardLiveText,
+  handleExpiryLine,
   handleOfferFor,
   handlePromptTitle,
   loadPendingHandles,
   newHandlePlan,
+  ownedLabelOfName,
   pendingFor,
   planFromPending,
+  planHandleRenewal,
   planHandleSubname,
   preflightRegister,
+  preflightRenewal,
   quoteHandle,
+  quoteHandleRenewal,
   readHandleProgress,
+  readHandleRenewalResult,
+  readOwnedHandle,
   readProgressUntil,
   readRegistrarAllowance,
   readSubnameState,
   refreshPrimaryNameUntil,
+  renewPreflightSentence,
+  renewalDoneSentence,
   resetPendingHandles,
   revokeRegistrarApprovalCall,
   savePendingHandle,
@@ -86,6 +98,10 @@ import {
   type HandleOwnerKind,
   type HandleProgress,
   type HandleQuote,
+  type HandleRenewalPlan,
+  type HandleRenewalQuote,
+  type OwnedHandle,
+  type RenewPreflight,
   type PendingHandle,
   type PendingHandles,
   type SubnameState,
@@ -95,11 +111,11 @@ import { NetworkBadge, Row, exact18, stakingStyles as styles } from './StakingVi
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Handle'>;
 
-type Phase = 'main' | 'checking' | 'review' | 'quoting' | 'tx-confirm' | 'tx-sending' | 'aa-confirm' | 'aa-sending' | 'success';
+type Phase = 'main' | 'checking' | 'review' | 'renew-review' | 'quoting' | 'tx-confirm' | 'tx-sending' | 'aa-confirm' | 'aa-sending' | 'success';
 
 /** One thing to send: a single transaction (regular account) or one operation (smart account). */
 interface Job {
-  kind: 'prepare' | 'register' | 'reverse' | 'subname' | 'targetReverse' | 'revoke';
+  kind: 'prepare' | 'register' | 'reverse' | 'subname' | 'targetReverse' | 'revoke' | 'renewApprove' | 'renew';
   path: 'eoa' | 'aa';
   calls: Call[];
   /** The confirm screen's lines for these calls. */
@@ -123,10 +139,27 @@ interface Job {
    * finding 7: the smart-account review now says so too).
    */
   preflightOk?: boolean;
+  /**
+   * For 'renewApprove' / 'renew' (phase 26 item 1): the renewal these calls
+   * belong to (wallet/handle.ts planHandleRenewal), and how the renewal's
+   * pre-flight passed just before this job was opened.
+   */
+  renewal?: HandleRenewalPlan;
+  preflightVia?: 'eth_call' | 'eth_simulateV1';
 }
 
+/** The USDC a job takes from the payer (register and renew), counted by the spending check and its notice. */
+function jobUsdcOutflow(j: Job): bigint | null {
+  if (j.kind === 'register' && j.record) return BigInt(j.record.total);
+  if (j.kind === 'renew' && j.renewal) return j.renewal.plan.total;
+  return null;
+}
+
+/** A name in "Your names": still being read, read (null when this wallet's accounts do not hold it), or a read that failed. */
+type OwnedRow = { label: string; value: OwnedHandle | null; error: string | null };
+
 /** Where the main view scrolls to when it is next laid out (pass p23-handle finding 2). */
-type ScrollAnchor = 'notice' | 'card' | 'answer' | 'sub';
+type ScrollAnchor = 'notice' | 'card' | 'answer' | 'sub' | 'names';
 
 /** How long after its first scroll an anchor keeps following layout changes (a judgement). */
 const ANCHOR_SETTLE_MS = 3_000;
@@ -212,6 +245,10 @@ export function HandleScreen({ navigation }: Props) {
   const [result, setResult] = useState<{ txid: string; explorerUrl: string | null; title: string; body: string; anchor?: ScrollAnchor } | null>(null);
   const [subLabel, setSubLabel] = useState(HANDLE_SUB_LABEL_DEFAULT);
   const [subError, setSubError] = useState<string | null>(null);
+  // Phase 26 item 1: the renewal being reviewed, and the names checked in
+  // the form that turned out to be held by this wallet (this session only).
+  const [renewal, setRenewal] = useState<{ owned: OwnedHandle; quoted: HandleRenewalQuote; plan: HandleRenewalPlan; preflight: RenewPreflight; url: string } | null>(null);
+  const [knownLabels, setKnownLabels] = useState<string[]>([]);
 
   // Pass p23-handle finding 2: every other phase replaces the main view, so
   // coming back to it (after Check, a confirm screen or an included step)
@@ -372,6 +409,40 @@ export function HandleScreen({ navigation }: Props) {
   }, [subName, shownSmartAddress, url, subKey]);
   const subPoints = subState && subState.key === subKey ? subState.value : null;
 
+  // "Your names" (phase 26 item 1): the .eth names this wallet knows its
+  // accounts hold — the regular account's and the smart account's primary
+  // names, and any name checked in the form that turned out to be theirs —
+  // each read from the .eth registry (wallet/handle.ts readOwnedHandle: held
+  // by one of the two accounts, and registered or inside its grace period).
+  // A primary name may stop resolving once the name has expired, so a name
+  // in its grace period may be found only by checking it in the form.
+  const smartPrimaryName = smartPrimary?.status === 'ok' ? smartPrimary.name : null;
+  const ownedLabelsKey = [...new Set([ownedLabelOfName(parentName), ownedLabelOfName(smartPrimaryName), ...knownLabels].filter((l): l is string => l !== null))].join(',');
+  const ownedKey = `${ownedLabelsKey}|${address ?? ''}|${shownSmartAddress ?? ''}|${url ?? ''}|${reloadTick}`;
+  const [owned, setOwned] = useState<{ key: string; rows: OwnedRow[] } | null>(null);
+  useEffect(() => {
+    if (!url || !address || !offer.ok || ownedLabelsKey === '') return undefined;
+    let cancelled = false;
+    void (async () => {
+      const node = simulationTransport(url);
+      const owners: { address: string; kind: HandleOwnerKind }[] = [{ address, kind: 'regular' }];
+      if (shownSmartAddress) owners.push({ address: shownSmartAddress, kind: 'smart' });
+      const rows: OwnedRow[] = [];
+      for (const label of ownedLabelsKey.split(',')) {
+        try {
+          rows.push({ label, value: await readOwnedHandle(node, label, owners), error: null });
+        } catch (e) {
+          rows.push({ label, value: null, error: sanitizeEndpointMessage(errorText(e)) || errorText(e) });
+        }
+      }
+      if (!cancelled) setOwned({ key: ownedKey, rows });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [url, address, shownSmartAddress, offer.ok, ownedLabelsKey, ownedKey]);
+  const ownedRows = owned && owned.key === ownedKey ? owned.rows.filter((r) => r.value !== null || r.error !== null) : null;
+
   // ------------------------------------------------------------- guards
   if (gate) {
     return (
@@ -432,12 +503,13 @@ export function HandleScreen({ navigation }: Props) {
     try {
       if (next.path === 'aa') {
         if (!bundle) throw new Error(t('handle.owner.smartUnavailable'));
+        const outflow = jobUsdcOutflow(next);
         const q = await prepareAaCalls(bundle, address, next.calls, {
           displayTo: next.calls[0]!.to,
-          ...(next.kind === 'register' && next.record
-            ? { tokenSpend: { contract: HANDLE_USDC.address, amount: BigInt(next.record.total), symbol: HANDLE_USDC.symbol } }
-            : {}),
+          ...(outflow !== null ? { tokenSpend: { contract: HANDLE_USDC.address, amount: outflow, symbol: HANDLE_USDC.symbol } } : {}),
         });
+        // A renewal is paid by the account that holds the name: the batch must come from it.
+        if (next.renewal && q.sender.toLowerCase() !== next.renewal.plan.payer.toLowerCase()) throw new Error(t('handle.renew.smartUnavailable', { name: next.name }));
         setAaQuote(q);
         setJob(next);
         setPhase('aa-confirm');
@@ -498,8 +570,113 @@ export function HandleScreen({ navigation }: Props) {
     return null;
   };
 
+  // ------------------------------------------------------------ renewal
+  // Phase 26 item 1: renewing a name this wallet holds, for 28 days, paid by
+  // the account that holds it (wallet/handle.ts quoteHandleRenewal,
+  // planHandleRenewal). A renewal needs no commit secret and no wait, so no
+  // record is written to shiba-wallet.handle-pending.v1 for it.
+
+  /** Quotes the renewal of `o` and opens its review (with the pre-flight read just now). */
+  const onRenewReview = async (o: OwnedHandle) => {
+    setNotice(null);
+    if (o.ownerKind === 'smart' && !bundle) {
+      backToMain(t('handle.renew.smartUnavailable', { name: o.name }), 'names');
+      return;
+    }
+    setPhase('checking');
+    try {
+      const start = await currentEndpoint();
+      const node = simulationTransport(start.url);
+      const quoted = await quoteHandleRenewal(node, { label: o.label, payer: o.owner, payerLabel: ownerLabelOf(o.owner, o.ownerKind) });
+      const plan = planHandleRenewal(quoted, o.owner, o.ownerKind);
+      // Before the first transaction renew alone would revert without the
+      // approval, unless the registrar may already take the price: then an
+      // eth_call of renew; else the approval and renew simulated together.
+      const remaining = quoted.allowance >= quoted.quote.total ? [plan.plan.renew.calls[1]!] : plan.plan.renew.calls;
+      const preflight = await preflightRenewal(node, o.owner, remaining);
+      setRenewal({ owned: o, quoted, plan, preflight, url: start.url });
+      setPhase('renew-review');
+    } catch (e) {
+      backToMain(describeRenewalError(e, o.name), 'names');
+    }
+  };
+
+  /** From the review: the smart account's one batch, or the regular account's first transaction (the exact approval). */
+  const onRenewContinue = async () => {
+    if (!renewal) return;
+    const { plan, owned: o, preflight } = renewal;
+    setRenewal(null);
+    if (plan.payerKind === 'smart') {
+      await openJob({
+        kind: 'renew', path: 'aa', calls: plan.sends[0]!, lines: plan.lines, position: null,
+        title: handlePromptTitle('renew', { name: o.name, smart: true }), record: null, prepareIndex: null, name: o.name,
+        renewal: plan, ...(preflight.kind === 'ok' ? { preflightVia: preflight.via } : {}),
+      });
+      return;
+    }
+    if (plan.plan.payer.toLowerCase() !== address.toLowerCase()) {
+      backToMain(t('handle.renew.refusal.other', { name: o.name, detail: 'the payer is not the active account' }), 'names');
+      return;
+    }
+    await openJob({
+      kind: 'renewApprove', path: 'eoa', calls: plan.sends[0]!, lines: [plan.lines[0]!], position: { index: 1, count: 2 },
+      title: handlePromptTitle('renewApprove', { name: o.name }), record: null, prepareIndex: null, name: o.name, renewal: plan,
+    });
+  };
+
+  /**
+   * After a renewal's transaction was included: after the approval, the
+   * renew transaction (once its eth_call pre-flight passes — read again
+   * while a load-balanced endpoint has not caught up with the approval);
+   * after renew, the new expiry read back from the registry with the
+   * receipt's NameRenewed log.
+   */
+  const afterRenewalStep = async (done: Job, plan: HandleRenewalPlan, sent: { txid: string; explorerUrl: string | null }) => {
+    if (!url) {
+      backToMain(null, 'names');
+      return;
+    }
+    const node = simulationTransport(url);
+    if (done.kind === 'renewApprove') {
+      const renewCalls = plan.sends[1]!;
+      let read: { progress: RenewPreflight; stale: boolean };
+      try {
+        read = await readProgressUntil(() => preflightRenewal(node, plan.plan.payer, renewCalls), (pre) => pre.kind !== 'ok');
+      } catch (e) {
+        backToMain(describeRenewalError(e, done.name), 'names');
+        return;
+      }
+      if (read.progress.kind !== 'ok') {
+        backToMain(renewPreflightSentence(read.progress, done.name), 'names');
+        return;
+      }
+      await openJob({
+        kind: 'renew', path: 'eoa', calls: renewCalls, lines: [plan.lines[1]!], position: { index: 2, count: 2 },
+        title: handlePromptTitle('renew', { name: done.name }), record: null, prepareIndex: null, name: done.name,
+        renewal: plan, preflightVia: read.progress.via,
+      });
+      return;
+    }
+    try {
+      const read = await readProgressUntil(() => readHandleRenewalResult(node, plan.plan, sent.txid), (o) => !o.result.extended);
+      if (read.stale) {
+        backToMain(t('handle.renew.notSeen', { hash: sent.txid, name: done.name }), 'names');
+        return;
+      }
+      setResult({ ...sent, title: t('handle.renew.success.title'), body: renewalDoneSentence(done.name, plan.plan, read.progress), anchor: 'names' });
+      setPhase('success');
+      reload();
+    } catch (e) {
+      backToMain(describeRenewalError(e, done.name), 'names');
+    }
+  };
+
   /** After an included step: read the chain again and open what comes next. */
   const afterStep = async (done: Job, sent: { txid: string; explorerUrl: string | null }) => {
+    if ((done.kind === 'renewApprove' || done.kind === 'renew') && done.renewal) {
+      await afterRenewalStep(done, done.renewal, sent);
+      return;
+    }
     if (done.kind === 'subname' || done.kind === 'targetReverse' || done.kind === 'revoke') {
       // The smart account's own name was just set: read it again now (finding 1).
       if (done.kind === 'targetReverse' && shownSmartAddress) void refreshPrimaryNameUntil(primaryNames, caip2, shownSmartAddress, done.name);
@@ -573,13 +750,24 @@ export function HandleScreen({ navigation }: Props) {
         from: address,
         quote,
         url: sendUrl,
-        ...(j.kind === 'register' && j.record ? { quoteOutflows: [{ token: HANDLE_USDC.address, amount: BigInt(j.record.total) }] } : {}),
+        ...(jobUsdcOutflow(j) !== null ? { quoteOutflows: [{ token: HANDLE_USDC.address, amount: jobUsdcOutflow(j)! }] } : {}),
       });
       if (!withinLimits) return false;
       const auth = await requireLocalAuth(j.title);
       if (!auth.ok) Alert.alert(t('send.back'), auth.message);
       return auth.ok;
     };
+    if (j.kind === 'renew' && j.renewal) {
+      // The renewal's pre-flight (an eth_call of renew from the payer, or the
+      // smart account's batch simulated in one block) runs again against the
+      // latest block BEFORE the spending check and the device prompt.
+      const payer = j.renewal.plan.payer;
+      const node = simulationTransport(sendUrl);
+      const gated = await gateRenewal({ name: j.name, preflight: () => preflightRenewal(node, payer, j.calls), authorize: spendingAndPrompt });
+      if (gated.kind === 'authorized') return true;
+      if (gated.kind === 'stopped') backToMain(gated.text, 'names');
+      return false;
+    }
     if (j.kind !== 'register' || !j.record) return spendingAndPrompt();
     const rec = j.record;
     const node = simulationTransport(sendUrl);
@@ -675,12 +863,33 @@ export function HandleScreen({ navigation }: Props) {
     // view back scrolled to the answer (finding 2), and the review opens as
     // its own screen at its top.
     setPhase('checking');
+    let checkUrl: string | null = null;
     try {
       const start = await currentEndpoint();
+      checkUrl = start.url;
       const q = await quoteHandle(simulationTransport(start.url), { label: check.label, owner, ownerLabel: ownerLabelOf(owner, ownerKind) });
       setQuoted(q);
       setPhase('review');
     } catch (e) {
+      // Phase 26 item 1: a name that is not available may be one this
+      // wallet already holds (a primary name can stop resolving once it has
+      // expired); then it joins "Your names", where it can be renewed.
+      if ((e as { reason?: unknown } | null)?.reason === 'unavailable' && checkUrl) {
+        try {
+          const owners: { address: string; kind: HandleOwnerKind }[] = [{ address, kind: 'regular' }];
+          if (shownSmartAddress) owners.push({ address: shownSmartAddress, kind: 'smart' });
+          const mine = await readOwnedHandle(simulationTransport(checkUrl), check.label, owners);
+          if (mine) {
+            setKnownLabels((l) => (l.includes(mine.label) ? l : [...l, mine.label]));
+            pendingAnchor.current = { anchor: 'answer', until: null };
+            setFormError(t('handle.renew.typedOwned', { name: mine.name }));
+            setPhase('main');
+            return;
+          }
+        } catch {
+          // The taken sentence below stands.
+        }
+      }
       pendingAnchor.current = { anchor: 'answer', until: null };
       setFormError(describeHandleError(e, check.name));
       setPhase('main');
@@ -817,7 +1026,11 @@ export function HandleScreen({ navigation }: Props) {
   const jobResolver = (j: Job): string | null => (j.kind === 'subname' ? j.calls[0]!.to : (j.record?.resolver ?? null));
   /** The owner of the name a job is for, so the risk card can name that owner's resolver (finding 5). */
   const jobNameOwner = (j: Job): string | null => (j.record ? j.record.owner : j.kind === 'subname' ? address : null);
-  const stepTitle = (j: Job) => (j.kind === 'prepare' ? t('handle.prepare.title') : j.kind === 'register' || j.kind === 'reverse' ? t('handle.register.title') : t('handle.title'));
+  const stepTitle = (j: Job) =>
+    j.kind === 'prepare' ? t('handle.prepare.title')
+    : j.kind === 'register' || j.kind === 'reverse' ? t('handle.register.title')
+    : j.kind === 'renewApprove' || j.kind === 'renew' ? t('handle.renew.stepTitle')
+    : t('handle.title');
 
   // ------------------------------------------------------------- success
   if (phase === 'success' && result) {
@@ -874,11 +1087,11 @@ export function HandleScreen({ navigation }: Props) {
           owner={address}
           quote={eoaQuote}
           from={address}
-          {...(job.kind === 'register' && job.record ? { quoteOutflows: [{ token: HANDLE_USDC.address, amount: BigInt(job.record.total) }] } : {})}
+          {...(jobUsdcOutflow(job) !== null ? { quoteOutflows: [{ token: HANDLE_USDC.address, amount: jobUsdcOutflow(job)! }] } : {})}
         />
         {eoaQuote.simulation.ok ? (
           <Text style={[styles.simulationOk, { color: theme.success }]}>
-            {job.kind === 'register' ? t('handle.preflight.ok') : t('send.simulation.passed')}
+            {job.kind === 'register' ? t('handle.preflight.ok') : job.kind === 'renew' && job.preflightVia === 'eth_call' ? t('handle.renew.preflight.okCall') : t('send.simulation.passed')}
           </Text>
         ) : (
           <WarningBox>{t('send.simulation.failed', { reason: eoaQuote.simulation.reason })}</WarningBox>
@@ -918,11 +1131,17 @@ export function HandleScreen({ navigation }: Props) {
           owner={address}
           quote={aaQuote}
           from={address}
-          {...(job.kind === 'register' && job.record ? { quoteOutflows: [{ token: HANDLE_USDC.address, amount: BigInt(job.record.total) }] } : {})}
+          {...(jobUsdcOutflow(job) !== null ? { quoteOutflows: [{ token: HANDLE_USDC.address, amount: jobUsdcOutflow(job)! }] } : {})}
         />
         {/* The register pre-flight ran from the smart account's address before this review opened (finding 7). */}
         {job.kind === 'register' && job.preflightOk ? (
           <Text style={[styles.simulationOk, { color: theme.success }]}>{t('handle.preflight.ok')}</Text>
+        ) : null}
+        {/* The renewal's batch was pre-flighted from the smart account before this review opened, and is again before the prompt (phase 26 item 1). */}
+        {job.kind === 'renew' && job.preflightVia ? (
+          <Text style={[styles.simulationOk, { color: theme.success }]}>
+            {job.preflightVia === 'eth_call' ? t('handle.renew.preflight.okCall') : t('handle.renew.preflight.okSim')}
+          </Text>
         ) : null}
         {phase === 'aa-sending' ? (
           busy(t('handle.tx.waiting'))
@@ -938,6 +1157,57 @@ export function HandleScreen({ navigation }: Props) {
 
   if (phase === 'quoting' || phase === 'checking') {
     return <View style={[screenStyle(theme), styles.center]}>{busy(t('handle.checking'))}</View>;
+  }
+
+  // ------------------------------------------------------ renewal review
+  if (phase === 'renew-review' && renewal) {
+    const { quoted: rq, plan: rp, preflight } = renewal;
+    const q = rq.quote;
+    const payerText = ownerLabelOf(rp.plan.payer, rp.payerKind);
+    return (
+      <ScrollView key="handle-renew-review" style={screenStyle(theme)} contentContainerStyle={styles.content}>
+        <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
+        <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>{t('handle.renew.title', { name: q.name })}</Text>
+        <Text style={[styles.hint, { color: theme.text }]}>{t('handle.renew.price', { amount: formatUsdc(q.total), days: HANDLE_DURATION_DAYS })}</Text>
+        <Row label={q.inGrace ? t('handle.renew.row.currentGrace') : t('handle.renew.row.current')} value={formatBlockTime(q.currentExpiry)} theme={theme} />
+        {q.inGrace ? <Row label={t('handle.renew.row.graceEnds')} value={formatBlockTime(q.graceEndsAt)} theme={theme} /> : null}
+        <Row label={t('handle.renew.row.new')} value={formatBlockTime(q.newExpiry)} theme={theme} />
+        <Note text={t('handle.renew.fromNote', { days: HANDLE_DURATION_DAYS })} theme={theme} />
+        <Row label={t('handle.renew.row.payer')} value={rp.plan.payer} mono spoken={`${t('handle.renew.row.payer')}: ${spokenShortAddress(rp.plan.payer)}`} theme={theme} />
+        <Note
+          text={t('handle.quote.balance', { who: payerText, amount: formatUsdc(rq.usdcBalance) })}
+          spoken={spokenWithShortAddresses(t('handle.quote.balance', { who: payerText, amount: formatUsdc(rq.usdcBalance) }))}
+          theme={theme}
+        />
+        <Row label={t('handle.row.registrar')} value={ENS_V2_SEPOLIA.ethRegistrar} mono theme={theme} />
+        <Row label={t('handle.row.usdc')} value={HANDLE_USDC.address} mono theme={theme} />
+        <CallLines lines={rp.lines} theme={theme} />
+        <Note text={rp.payerKind === 'smart' ? t('handle.renew.smartNote') : t('handle.renew.regularNote')} theme={theme} />
+        <Note text={t('handle.renew.noRecord')} theme={theme} />
+        {preflight.kind === 'ok' ? (
+          <Text style={[styles.simulationOk, { color: theme.success }]}>
+            {preflight.via === 'eth_call' ? t('handle.renew.preflight.okCall') : t('handle.renew.preflight.okSim')}
+          </Text>
+        ) : (
+          <WarningBox announce>{renewPreflightSentence(preflight, q.name)}</WarningBox>
+        )}
+        <BalanceChangePreview
+          url={renewal.url}
+          request={{ from: rp.plan.payer, to: rp.plan.renew.calls[0]!.to, value: 0n, data: rp.plan.renew.calls[0]!.data }}
+          batch={rp.plan.renew.calls.map((c) => ({ from: rp.plan.payer, to: c.to, value: c.value, data: c.data }))}
+        />
+        <RiskWarnings url={renewal.url} wallet={rp.plan.payer} to={rp.plan.renew.calls[1]!.to} data={rp.plan.renew.calls[1]!.data} />
+        <Button title={t('handle.renew.continue')} onPress={() => void onRenewContinue()} disabled={preflight.kind !== 'ok'} />
+        <Button
+          title={t('send.back')}
+          variant="secondary"
+          onPress={() => {
+            setRenewal(null);
+            backToMain(null, 'names');
+          }}
+        />
+      </ScrollView>
+    );
   }
 
   // -------------------------------------------------------------- review
@@ -1092,6 +1362,40 @@ export function HandleScreen({ navigation }: Props) {
       ) : null}
 
       {!record || p?.kind === 'expired' || p?.kind === 'taken' ? allowanceRows : null}
+
+      {/* "Your names" (phase 26 item 1): when each name this wallet holds expires, and a 28-day renewal. */}
+      {ownedRows && ownedRows.length > 0 ? (
+        <View onLayout={(e) => onAnchorLayout('names', e.nativeEvent.layout.y)} style={[handleStyles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+          <Text accessibilityRole="header" style={[handleStyles.cardTitle, { color: theme.text }]}>{t('handle.renew.heading')}</Text>
+          <Note text={t('handle.renew.intro', { days: HANDLE_DURATION_DAYS })} theme={theme} />
+          {ownedRows.map((row) => (
+            <View key={row.label} style={handleStyles.nameBlock}>
+              <Text accessibilityRole="header" style={[styles.label, { color: theme.text }]}>{row.value?.name ?? `${row.label}.eth`}</Text>
+              {row.value ? (
+                <>
+                  <Row
+                    label={t('handle.row.owner')}
+                    value={row.value.owner}
+                    mono
+                    spoken={`${t('handle.row.owner')}: ${spokenShortAddress(row.value.owner)}`}
+                    theme={theme}
+                  />
+                  <Text style={[styles.hint, { color: row.value.state === 'grace' ? theme.warningText : theme.text }]}>{handleExpiryLine(row.value)}</Text>
+                  {row.value.ownerKind === 'smart' && !bundle ? (
+                    <Note text={t('handle.renew.smartUnavailable', { name: row.value.name })} theme={theme} />
+                  ) : (
+                    <Button title={t('handle.renew.button', { days: HANDLE_DURATION_DAYS })} onPress={() => void onRenewReview(row.value!)} disabled={!url} />
+                  )}
+                </>
+              ) : (
+                <WarningBox>{t('handle.renew.unread', { name: `${row.label}.eth`, detail: row.error ?? '' })}</WarningBox>
+              )}
+            </View>
+          ))}
+        </View>
+      ) : ownedLabelsKey !== '' && url && !ownedRows ? (
+        <Note text={t('handle.renew.reading', { name: ownedLabelsKey.split(',').map((l) => `${l}.eth`).join(', ') })} theme={theme} />
+      ) : null}
 
       {showForm ? (
         <>

@@ -2,6 +2,7 @@
 // scripts/check-handle.mjs under Node's type stripping (the staking.ts /
 // bridge.ts precedent).
 import {
+  ENS_REGISTER_ERROR_SELECTORS,
   ENS_V2_MIN_LABEL_LENGTH,
   ENS_V2_SEPOLIA,
   ENS_V2_SEPOLIA_REGISTRAR_LIMITS,
@@ -10,31 +11,41 @@ import {
   checkEnsHandleLabel,
   checkEnsSubLabel,
   classifyEnsRegisterRevert,
+  decodeEnsNameRenewedLogs,
   encodeErc20Approve,
   encodeErc20BalanceOf,
   encodeFunctionCall,
+  ensIsRenewableState,
   ensOwnedResolverSalt,
   ensRegisterWindow,
   namehash,
   newEnsCommitSecret,
   planEnsRegistration,
+  planEnsRenewal,
   planEnsSubname,
   quoteEnsRegistration,
+  quoteEnsRenewal,
   readEnsCommitmentAt,
   readEnsNameState,
   readEnsOwnedResolver,
   readEnsPrimaryName,
+  readEnsRenewalResult,
   resolveEnsAddress,
   revertDataOf,
+  simulateAssetChanges,
   toBytes,
   toHex,
   type Call,
   type EnsHandleLabelCheck,
+  type EnsNameRenewedLog,
   type EnsOwnedResolverState,
   type EnsPrimaryName,
   type EnsRegisterWindow,
   type EnsRegistrationPlan,
   type EnsRegistrationQuote,
+  type EnsRenewalPlan,
+  type EnsRenewalQuote,
+  type EnsRenewalResult,
   type EnsSubnamePlan,
   type JsonRpcTransport,
 } from '@shiba-wallet/chains-evm';
@@ -683,15 +694,15 @@ export const HANDLE_STEP_POLL_MAX_MS = 120_000;
  * the last error is thrown. Returns the last progress read and whether it
  * is still stale, with the number of reads (for the checks).
  */
-export async function readProgressUntil(
-  read: () => Promise<HandleProgress>,
-  stale: (p: HandleProgress) => boolean,
+export async function readProgressUntil<T = HandleProgress>(
+  read: () => Promise<T>,
+  stale: (p: T) => boolean,
   options: { intervalMs?: number; maxMs?: number; sleep?: (ms: number) => Promise<void> } = {},
-): Promise<{ progress: HandleProgress; stale: boolean; reads: number }> {
+): Promise<{ progress: T; stale: boolean; reads: number }> {
   const intervalMs = options.intervalMs ?? HANDLE_STEP_POLL_MS;
   const maxMs = options.maxMs ?? HANDLE_STEP_POLL_MAX_MS;
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  let last: HandleProgress | null = null;
+  let last: T | null = null;
   let lastError: unknown = null;
   let reads = 0;
   for (let waited = 0; ; waited += intervalMs) {
@@ -876,7 +887,7 @@ export function handleCardLiveText(progress: HandleProgress | null, name: string
 
 /** The device-prompt titles. */
 export function handlePromptTitle(
-  kind: 'prepare' | 'register' | 'reverse' | 'subname' | 'targetReverse' | 'revoke',
+  kind: 'prepare' | 'register' | 'reverse' | 'subname' | 'targetReverse' | 'revoke' | 'renewApprove' | 'renew',
   args: { name: string; smart?: boolean; index?: number; count?: number },
 ): string {
   switch (kind) {
@@ -894,6 +905,10 @@ export function handlePromptTitle(
       return t('handle.prompt.targetReverse', { name: args.name });
     case 'revoke':
       return t('handle.prompt.revoke');
+    case 'renewApprove':
+      return t('handle.renew.prompt.approve', { name: args.name });
+    case 'renew':
+      return args.smart ? t('handle.renew.prompt.smart', { name: args.name }) : t('handle.renew.prompt.renew', { name: args.name });
   }
 }
 
@@ -1044,4 +1059,309 @@ export async function refreshPrimaryNameUntil(
     if (answer?.status === 'ok' && answer.name === name) return answer;
   }
   return answer;
+}
+
+// ---------------------------------------------------------------------------
+// Renewal (phase 26 item 1, the app half)
+// ---------------------------------------------------------------------------
+//
+// The engine half (packages/chains-evm/src/ens-register.ts, "Renewal (phase
+// 26 item 1)", commit 3900077) read the deployed registrar from source
+// (ensdomains/contracts-v2 at 07e55a05): renew((label, duration, referrer),
+// token) has NO caller check and pulls the price from msg.sender
+// (AbstractETHRegistrar.sol 93–95); the expiry is extended from the CURRENT
+// expiry, not from now (_renew, 128–143); a renewal costs exactly the base
+// price, with no premium (StandardRentPriceOracle.getRenewPrice 319–330); a
+// name inside its grace period is still renewable (ETHRegistrar._isRenewable
+// 265–292). This app half only wires those functions into the Handle
+// screen:
+//
+//  - WHO PAYS: the account that holds the name (the payer = the owner
+//    account, the brief's rule): a regular account sends the exact approve
+//    and then renew as two transactions, each quoted only after the previous
+//    one is included (as the registration's steps are); its Kernel v3.3 smart
+//    account sends both calls as ONE batch (one operation, all or nothing).
+//  - THE TERM: 28 days, fixed as the registration's is (HANDLE_DURATION_SECONDS).
+//  - NO STORED RECORD: a renewal needs no commit secret and no wait (the
+//    registrar's renew is not commit-reveal), so nothing is written to
+//    shiba-wallet.handle-pending.v1 (STORE_KEYS.handlePending): if the app
+//    stops between the two transactions, the exact approval is the only
+//    trace, and the screen's existing "The ENS registrar may still take …"
+//    row offers to set it back to 0.
+//  - THE PRE-FLIGHT before every device prompt: an eth_call of renew from
+//    the payer against the latest block when renew is the only call left
+//    (the regular account's second transaction, or an allowance that already
+//    covers the price); when the approve still has to run first (the smart
+//    account's batch, or the review before the first transaction), the
+//    calls are simulated together in one block with eth_simulateV1 (the
+//    engine's simulateAssetChanges), because renew alone would revert
+//    without the approval.
+
+/** Where a name this wallet holds stands: registered, or expired and inside its grace period. */
+export interface OwnedHandle {
+  label: string;
+  name: string;
+  /** The account that holds it (the registry's latestOwner): the regular account or its smart account. */
+  owner: string;
+  ownerKind: HandleOwnerKind;
+  state: 'registered' | 'grace';
+  expiry: bigint;
+  /** expiry + GRACE_PERIOD: after this nobody can renew it. */
+  graceEndsAt: bigint;
+}
+
+/**
+ * Reads `label` in the .eth registry (getState at the latest block, the
+ * engine's readEnsNameState) and returns it when one of `owners` holds it
+ * and it is renewable: REGISTERED, or AVAILABLE with that owner as the
+ * latest owner and less than the grace period past its expiry (the engine's
+ * ensIsRenewableState, the registrar's own rule). Null otherwise.
+ */
+export async function readOwnedHandle(
+  node: JsonRpcTransport,
+  label: string,
+  owners: readonly { address: string; kind: HandleOwnerKind }[],
+): Promise<OwnedHandle | null> {
+  const state = await readEnsNameState(node, label);
+  const holder = owners.find((o) => sameAddress(o.address, state.latestOwner));
+  if (!holder) return null;
+  const grace = ENS_V2_SEPOLIA_REGISTRAR_LIMITS.gracePeriod;
+  let kind: OwnedHandle['state'];
+  if (state.status === 2) kind = 'registered';
+  else if (ensIsRenewableState(state, state.blockTimestamp, grace)) kind = 'grace';
+  else return null;
+  return {
+    label,
+    name: `${label}.eth`,
+    owner: holder.address,
+    ownerKind: holder.kind,
+    state: kind,
+    expiry: state.expiry,
+    graceEndsAt: state.expiry + grace,
+  };
+}
+
+/** "Expires on <date> UTC." or, inside the grace period, "Expired on <date> UTC; it can still be renewed until <date> UTC." */
+export function handleExpiryLine(owned: Pick<OwnedHandle, 'state' | 'expiry' | 'graceEndsAt'>): string {
+  return owned.state === 'grace'
+    ? t('handle.renew.expired', { date: formatBlockTime(owned.expiry), until: formatBlockTime(owned.graceEndsAt) })
+    : t('handle.renew.expires', { date: formatBlockTime(owned.expiry) });
+}
+
+/** The second-level .eth label of a primary name ("alice.eth" → "alice"), or null for any other name. */
+export function ownedLabelOfName(name: string | null | undefined): string | null {
+  if (!name) return null;
+  const m = /^([a-z0-9-]+)\.eth$/.exec(name);
+  return m ? m[1]! : null;
+}
+
+/** Everything the renewal review shows, read at one time. */
+export interface HandleRenewalQuote {
+  quote: EnsRenewalQuote;
+  usdcBalance: bigint;
+  /** What the registrar may already take from the payer (decides how the pre-flight runs). */
+  allowance: bigint;
+}
+
+/**
+ * Quotes a 28-day renewal paid by `payer`: the engine's quoteEnsRenewal
+ * (chain and deployment, renewable by the registrar's own answer and the
+ * wallet's rule, the registrar's price equal to the wallet's mirror, a
+ * renewal that would leave the name expired refused), then the payer's
+ * USDC, which must cover the price (the registrar pulls it from the payer).
+ */
+export async function quoteHandleRenewal(
+  node: JsonRpcTransport,
+  input: { label: string; payer: string; payerLabel: string },
+): Promise<HandleRenewalQuote> {
+  assertHandleOffered(HANDLE_CHAIN);
+  const quote = await quoteEnsRenewal(node, { label: input.label, duration: HANDLE_DURATION_SECONDS });
+  const usdcBalance = await readUsdcBalance(node, input.payer);
+  if (usdcBalance < quote.total) {
+    throw new HandleRefusal(
+      t('handle.renew.usdc', {
+        fee: formatUsdc(quote.total),
+        who: input.payerLabel,
+        have: formatUsdc(usdcBalance),
+        short: formatUsdc(quote.total - usdcBalance),
+      }),
+    );
+  }
+  const allowance = await readRegistrarAllowance(node, input.payer);
+  return { quote, usdcBalance, allowance };
+}
+
+/** The renewal plan and how it is sent: two transactions (regular account) or one batch (smart account). */
+export interface HandleRenewalPlan {
+  plan: EnsRenewalPlan;
+  payerKind: HandleOwnerKind;
+  /** The calls of each thing sent, in order: [[approve], [renew]] or [[approve, renew]]. */
+  sends: Call[][];
+  /** One line per call (approve, renew), for the review and the confirm screens. */
+  lines: string[];
+}
+
+/**
+ * The engine's planEnsRenewal with the payer = the account that holds the
+ * name, split the way it is sent: a regular account's approve and renew as
+ * two transactions, a smart account's as one batch.
+ */
+export function planHandleRenewal(quoted: Pick<HandleRenewalQuote, 'quote'>, payer: string, payerKind: HandleOwnerKind): HandleRenewalPlan {
+  const plan = planEnsRenewal({ quote: quoted.quote, payer });
+  const [approve, renew] = plan.renew.calls;
+  if (!approve || !renew || plan.renew.calls.length !== 2) throw new HandleRefusal(t('handle.refusal.other', { detail: 'unexpected renewal plan' }));
+  return {
+    plan,
+    payerKind,
+    sends: payerKind === 'smart' ? [[approve, renew]] : [[approve], [renew]],
+    lines: renewalCallLines(plan),
+  };
+}
+
+/** The two call lines of a renewal (full contract addresses, as every confirm screen). */
+export function renewalCallLines(plan: Pick<EnsRenewalPlan, 'name' | 'total' | 'currentExpiry' | 'newExpiry' | 'payer'>): string[] {
+  const amount = formatUsdc(plan.total);
+  return [
+    t('handle.renew.call.approve', { amount, base: plan.total.toString(), registrar: ENS_V2_SEPOLIA.ethRegistrar }),
+    t('handle.renew.call.renew', {
+      name: plan.name,
+      days: HANDLE_DURATION_DAYS,
+      registrar: ENS_V2_SEPOLIA.ethRegistrar,
+      amount,
+      from: formatBlockTime(plan.currentExpiry),
+      to: formatBlockTime(plan.newExpiry),
+    }),
+  ];
+}
+
+export type RenewPreflight =
+  | { kind: 'ok'; via: 'eth_call' | 'eth_simulateV1' }
+  | { kind: 'not-renewable' }
+  | { kind: 'failed'; reason: string };
+
+/**
+ * The renewal pre-flight from `payer` against the latest block. `calls`
+ * are the calls still to run, ending with renew: one call (renew alone) is
+ * an eth_call, as the register pre-flight is; several (approve then renew)
+ * are simulated in one block with eth_simulateV1, since renew alone would
+ * revert without the approval. `node` should keep the JSON-RPC error data
+ * (simulationTransport) so a NameNotRenewable revert is told apart.
+ */
+export async function preflightRenewal(node: JsonRpcTransport, payer: string, calls: readonly Call[]): Promise<RenewPreflight> {
+  const last = calls[calls.length - 1];
+  if (!last || !sameAddress(last.to, ENS_V2_SEPOLIA.ethRegistrar)) return { kind: 'failed', reason: 'the last call is not renew at the ENS registrar' };
+  if (calls.length === 1) {
+    try {
+      await node('eth_call', [{ from: payer, to: last.to, value: '0x0', data: toHex(last.data) }, 'latest']);
+      return { kind: 'ok', via: 'eth_call' };
+    } catch (e) {
+      const revert = revertDataOf(e);
+      if (revert === undefined) {
+        const text = e instanceof Error ? e.message : String(e);
+        if (/NameNotRenewable/.test(text)) return { kind: 'not-renewable' };
+        return { kind: 'failed', reason: text };
+      }
+      const kind = classifyEnsRegisterRevert(revert);
+      if (kind === 'nameNotRenewable') return { kind: 'not-renewable' };
+      return { kind: 'failed', reason: `${kind} (${revert.slice(0, 10)})` };
+    }
+  }
+  try {
+    const sim = await simulateAssetChanges(node, calls.map((c) => ({ from: payer, to: c.to, value: c.value, data: c.data })), payer);
+    if (sim.ok) return { kind: 'ok', via: 'eth_simulateV1' };
+    const index = sim.calls.findIndex((c) => !c.ok);
+    const reason = sim.calls[index]?.revertReason ?? 'reverted';
+    // A custom error comes back as "reverted with custom error data 0x1caefaa0…"
+    // (the engine's decodeRevertReason, packages/chains-evm/src/simulate.ts 61).
+    if (/NameNotRenewable/.test(reason) || reason.toLowerCase().includes(ENS_REGISTER_ERROR_SELECTORS.nameNotRenewable)) return { kind: 'not-renewable' };
+    return { kind: 'failed', reason: `call ${index + 1} of ${calls.length}: ${reason}` };
+  } catch (e) {
+    return { kind: 'failed', reason: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** The sentence for a pre-flight that did not pass (no prompt is shown). */
+export function renewPreflightSentence(pre: Exclude<RenewPreflight, { kind: 'ok' }>, name: string): string {
+  return pre.kind === 'not-renewable' ? t('handle.renew.refusal.notRenewable', { name }) : t('handle.renew.preflight.failed', { name, reason: pre.reason });
+}
+
+export type RenewGateOutcome = { kind: 'authorized' } | { kind: 'stopped'; text: string } | { kind: 'not-authorized' };
+
+/**
+ * The order every renewal call that pays goes through (the regular
+ * account's renew transaction, the smart account's batch): the pre-flight,
+ * THEN the spending check and the device prompt. The prompt is never shown
+ * when the pre-flight did not pass.
+ */
+export async function gateRenewal(deps: {
+  preflight: () => Promise<RenewPreflight>;
+  authorize: () => Promise<boolean>;
+  name: string;
+}): Promise<RenewGateOutcome> {
+  const pre = await deps.preflight();
+  if (pre.kind !== 'ok') return { kind: 'stopped', text: renewPreflightSentence(pre, deps.name) };
+  return (await deps.authorize()) ? { kind: 'authorized' } : { kind: 'not-authorized' };
+}
+
+/** What the chain says after a renewal was included. */
+export interface HandleRenewalOutcome {
+  /** The registry read again (the engine's readEnsRenewalResult). */
+  result: EnsRenewalResult;
+  /** The registrar's NameRenewed log for this label in the receipt, or null when the receipt carries none. */
+  logged: EnsNameRenewedLog | null;
+}
+
+/**
+ * Reads a renewal's outcome: the receipt's NameRenewed log for the label
+ * (the engine's decodeEnsNameRenewedLogs, the pinned registrar only) and
+ * the registry's state again (readEnsRenewalResult: the new expiry, and
+ * whether it is at least, and exactly, the planned one).
+ */
+export async function readHandleRenewalResult(node: JsonRpcTransport, plan: Pick<EnsRenewalPlan, 'label' | 'newExpiry'>, txHash: string): Promise<HandleRenewalOutcome> {
+  const receipt = (await node('eth_getTransactionReceipt', [txHash])) as { logs?: unknown } | null;
+  const logs = receipt && Array.isArray(receipt.logs) ? (receipt.logs as { address: string; topics: string[]; data: string }[]) : [];
+  const logged = decodeEnsNameRenewedLogs(logs).find((l) => l.label === plan.label) ?? null;
+  const result = await readEnsRenewalResult(node, plan);
+  return { result, logged };
+}
+
+/** The success view's body after a renewal: the new expiry read back from the registry, and the log. */
+export function renewalDoneSentence(name: string, plan: Pick<EnsRenewalPlan, 'currentExpiry'>, outcome: HandleRenewalOutcome): string {
+  const base = t('handle.renew.done', { name, to: formatBlockTime(outcome.result.expiry), from: formatBlockTime(plan.currentExpiry) });
+  const log = outcome.logged
+    ? t('handle.renew.doneLog', {
+        days: (outcome.logged.duration / 86_400n).toString(),
+        amount: formatUsdc(outcome.logged.amount),
+        expiry: formatBlockTime(outcome.logged.newExpiry),
+      })
+    : t('handle.renew.doneNoLog');
+  return `${base} ${log}`;
+}
+
+/** Any error from the renewal quote, plan or pre-flight, as the screen shows it. */
+export function describeRenewalError(e: unknown, name: string): string {
+  if (e instanceof HandleRefusal) return e.message;
+  if ((e as { name?: unknown } | null)?.name === 'FeatureNotAllowedError') return (e as Error).message;
+  const detail = e instanceof Error ? e.message : String(e);
+  if (e instanceof EnsRegisterError || (e as { name?: unknown } | null)?.name === 'EnsRegisterError') {
+    switch ((e as EnsRegisterError).reason) {
+      case 'not-renewable':
+        return t('handle.renew.refusal.notRenewable', { name });
+      case 'duration':
+        return t('handle.renew.refusal.duration', { name, days: HANDLE_DURATION_DAYS, detail });
+      case 'price-mismatch':
+        return t('handle.renew.refusal.price', { name, detail });
+      case 'payment-token':
+        return t('handle.renew.refusal.paymentToken', { detail });
+      case 'wrong-chain':
+        return t('handle.renew.refusal.wrongChain', { detail });
+      case 'deployment-mismatch':
+        return t('handle.renew.refusal.deployment', { detail });
+      case 'invalid-label':
+        return t('handle.renew.refusal.invalidLabel', { name });
+      default:
+        return t('handle.renew.refusal.other', { name, detail });
+    }
+  }
+  return t('handle.renew.refusal.other', { name, detail });
 }

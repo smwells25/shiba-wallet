@@ -89,6 +89,8 @@ export function Note({ text, theme, style, spoken }: { text: string; theme: Them
 export const handleStyles = StyleSheet.create({
   card: { borderRadius: 12, borderWidth: 1, padding: 14, gap: 10 },
   cardTitle: { fontSize: 15, fontWeight: '700' },
+  /** One name in "Your names" (phase 26 item 1): its title, owner, expiry line and Renew button. */
+  nameBlock: { gap: 8 },
 });
 
 const styles = StyleSheet.create({

@@ -34,8 +34,10 @@ import {
   ensOwnedResolverSalt,
   ensRegisterWindow,
   planEnsRegistration,
+  planEnsRenewal,
   planEnsSubname,
   predictVerifiableProxyAddress,
+  quoteEnsRenewal,
   toHex,
 } from '@shiba-wallet/chains-evm';
 import * as H from '../src/wallet/handle.ts';
@@ -872,6 +874,268 @@ console.log('check-handle: the fourteen findings of emulator pass p23-handle');
   const wallet = source('src/wallet/WalletContext.tsx');
   check('follow-up: both wipe paths delete the prepared registrations',
     (wallet.match(/await resetPendingHandles\((store|AsyncStorage)\)\.catch\(\(\) => undefined\);/g) ?? []).length === 2 && wallet.includes("import { resetPendingHandles } from './handle';"));
+}
+
+// ---------------------------------------------------------------------------
+console.log('check-handle: renewing a name (phase 26 item 1, the app half)');
+// ---------------------------------------------------------------------------
+{
+  // The engine's recorded renewal session (Sepolia, block 12100610 = 0xb8a402,
+  // 2026-11-09; packages/chains-evm/test/fixtures/ens-renew-sepolia-2026-11-09.json),
+  // read from there, with the payer's USDC balance and allowance and every
+  // later answer from the fake state below.
+  const RENEW_FIXTURE = JSON.parse(readFileSync(join(APP_ROOT, '../packages/chains-evm/test/fixtures/ens-renew-sepolia-2026-11-09.json'), 'utf8'));
+  const ACCOUNT_1 = '0x772eAA1d3BEf14C0BD5cee980b90dB3FC680F44F';
+  const KERNEL = '0xD31c2C54F21684eE2026a6C41e391130BdEeD8FA';
+  const GRACE = 2_419_200n;
+  const DAYS28 = 2_419_200n;
+  const SIM = 'eth_simulateV1';
+  const renewer = new ethers.Interface([
+    'function renew((string label, uint64 duration, bytes32 referrer) rd, address paymentToken)',
+    'event NameRenewed(uint256 indexed tokenId, string label, uint64 duration, uint64 newExpiry, address paymentToken, bytes32 indexed referrer, uint256 amount)',
+  ]);
+  const erc20 = new ethers.Interface(['function approve(address spender, uint256 amount)']);
+  const nameNotRenewable = ENS_REGISTER_ERROR_SELECTORS.nameNotRenewable + coder.encode(['string'], ['x']).slice(2);
+  function renewNode(over = {}) {
+    const st = { usdc: 59_465_902n, allowance: 0n, renewRevert: null, simulate: null, receipts: {}, stateAfter: null, ...over };
+    const calls = [];
+    const transport = async (method, params) => {
+      calls.push(method === 'eth_call' ? `eth_call ${params[0].data.slice(0, 10)} ${params[1]}` : method);
+      if (method === 'eth_getTransactionReceipt') return st.receipts[params[0]] ?? null;
+      if (method === SIM) {
+        if (!st.simulate) throw new Error('fake node: no simulation set');
+        return st.simulate(params);
+      }
+      if (method === 'eth_call' && params[1] === 'latest') {
+        const { to, data } = params[0];
+        const s = data.slice(0, 10);
+        if (s === SEL.balanceOf && same(to, ENS_V2_SEPOLIA_USDC.address)) return word(st.usdc);
+        if (s === SEL.allowance && same(to, ENS_V2_SEPOLIA_USDC.address)) return word(st.allowance);
+        if (s === sel('renew((string,uint64,bytes32),address)')) {
+          if (st.renewRevert) {
+            const err = new Error('RPC error 3: execution reverted (eth_call)');
+            err.data = st.renewRevert;
+            throw err;
+          }
+          return '0x';
+        }
+        if (s === SEL.getState && st.stateAfter) {
+          const a = st.stateAfter;
+          return coder.encode(['uint256', 'uint256', 'address', 'uint256', 'uint256'], [a.status, a.expiry, a.owner, 1n, 1n]);
+        }
+      }
+      // getState read by readOwnedHandle / readEnsRenewalResult goes through sepoliaBlock: answer from the recording at its block.
+      const key = `${method} ${JSON.stringify(params)}`;
+      if (method === 'eth_call' && params[0].data.slice(0, 10) === SEL.getState && st.stateAfter) {
+        const a = st.stateAfter;
+        return coder.encode(['uint256', 'uint256', 'address', 'uint256', 'uint256'], [a.status, a.expiry, a.owner, 1n, 1n]);
+      }
+      const hit = RENEW_FIXTURE.recording[key];
+      if (!hit) throw new Error(`fake node: no answer for ${key.slice(0, 160)}`);
+      if (hit.error) throw Object.assign(new Error(hit.error.message), hit.error);
+      return hit.result;
+    };
+    transport.calls = calls;
+    transport.state = st;
+    return transport;
+  }
+
+  // The quote, through the engine's own quoteEnsRenewal on the recording.
+  const QZ = 'qzv7hk2wmt';
+  const XK = 'xk9fdq4rvz';
+  const qz = await H.quoteHandleRenewal(renewNode(), { label: QZ, payer: ACCOUNT_1, payerLabel: `Account 1 ${ACCOUNT_1}` });
+  const engineQz = await quoteEnsRenewal(renewNode(), { label: QZ, duration: H.HANDLE_DURATION_SECONDS });
+  check('renewal quote for qzv7hk2wmt.eth: the engine’s quote unchanged (price 613,701, expiry 1795492140 → 1797911340, holder Account 1), 28 days',
+    H.HANDLE_DURATION_SECONDS === DAYS28 && qz.quote.total === FEE && qz.quote.currentExpiry === 1_795_492_140n && qz.quote.newExpiry === 1_797_911_340n &&
+      same(qz.quote.holder, ACCOUNT_1) && qz.quote.duration === DAYS28 && JSON.stringify(qz.quote, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)) ===
+      JSON.stringify(engineQz, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)) && qz.usdcBalance === 59_465_902n && qz.allowance === 0n);
+  const xk = await H.quoteHandleRenewal(renewNode({ usdc: 24_298_753n }), { label: XK, payer: KERNEL, payerLabel: `Smart account ${KERNEL}` });
+  check('renewal quote for xk9fdq4rvz.eth: held by the Kernel, 613,701, expiry 1795493244 → 1797912444',
+    same(xk.quote.holder, KERNEL) && xk.quote.total === FEE && xk.quote.currentExpiry === 1_795_493_244n && xk.quote.newExpiry === 1_797_912_444n);
+  check('a balance of exactly the price is enough', (await H.quoteHandleRenewal(renewNode({ usdc: FEE }), { label: QZ, payer: ACCOUNT_1, payerLabel: 'A' })).quote.total === FEE);
+  const short = await rejection(() => H.quoteHandleRenewal(renewNode({ usdc: 500_000n }), { label: QZ, payer: ACCOUNT_1, payerLabel: `Account 1 ${ACCOUNT_1}` }));
+  check('the USDC shortfall is refused with its exact sentence (ending "Nothing was sent.")',
+    short instanceof H.HandleRefusal && short.message === `Not enough USDC: the renewal costs 0.613701 USDC and Account 1 ${ACCOUNT_1} holds 0.5 USDC (0.113701 USDC short). Nothing was sent.`,
+    short?.message);
+  const notRenewable = await rejection(() => H.quoteHandleRenewal(renewNode(), { label: 'shibawallet-fixture', payer: ACCOUNT_1, payerLabel: 'A' }));
+  check('a never-registered name: the engine refuses (not-renewable) and the screen’s sentence says so',
+    notRenewable?.reason === 'not-renewable' && H.describeRenewalError(notRenewable, 'shibawallet-fixture.eth') === 'shibawallet-fixture.eth cannot be renewed: the registry says it is not registered, or its grace period has ended. Nothing was sent.');
+
+  // The plan, for both owner kinds, equal to the engine's planEnsRenewal.
+  const regular = H.planHandleRenewal(qz, ACCOUNT_1, 'regular');
+  const engineRegular = planEnsRenewal({ quote: qz.quote, payer: ACCOUNT_1 });
+  const approveData = erc20.encodeFunctionData('approve', [ENS_V2_SEPOLIA.ethRegistrar, FEE]);
+  const renewData = renewer.encodeFunctionData('renew', [[QZ, DAYS28, ethers.ZeroHash], ENS_V2_SEPOLIA_USDC.address]);
+  const hexOf = (call) => (call ? toHex(call.data) : 'missing');
+  check('regular account: the engine’s plan (payer = the account), sent as two transactions [[approve], [renew]]',
+    JSON.stringify(regular.plan, (_k, v) => (typeof v === 'bigint' ? v.toString() : v instanceof Uint8Array ? toHex(v) : v)) ===
+      JSON.stringify(engineRegular, (_k, v) => (typeof v === 'bigint' ? v.toString() : v instanceof Uint8Array ? toHex(v) : v)) &&
+      regular.sends.length === 2 && regular.sends[0].length === 1 && regular.sends[1].length === 1 &&
+      same(regular.sends[0][0].to, ENS_V2_SEPOLIA_USDC.address) && hexOf(regular.sends[0][0]) === approveData &&
+      same(regular.sends[1][0].to, ENS_V2_SEPOLIA.ethRegistrar) && hexOf(regular.sends[1][0]) === renewData && regular.plan.payerIsHolder);
+  const smart = H.planHandleRenewal(xk, KERNEL, 'smart');
+  const engineSmart = planEnsRenewal({ quote: xk.quote, payer: KERNEL });
+  check('smart account: the engine’s plan (payer = the Kernel), sent as ONE batch [[approve, renew]] in that order',
+    smart.sends.length === 1 && smart.sends[0].length === 2 && hexOf(smart.sends[0][0]) === hexOf(engineSmart.renew.calls[0]) &&
+      hexOf(smart.sends[0][1]) === hexOf(engineSmart.renew.calls[1]) && hexOf(smart.sends[0][1]) === renewer.encodeFunctionData('renew', [[XK, DAYS28, ethers.ZeroHash], ENS_V2_SEPOLIA_USDC.address]) &&
+      same(smart.plan.payer, KERNEL) && smart.plan.payerIsHolder);
+  check('the two call lines (exact approval; renew with the expiry moving)',
+    regular.lines.length === 2 &&
+      regular.lines[0] === `Approve exactly 0.613701 USDC (613701 base units) for the ENS registrar ${ENS_V2_SEPOLIA.ethRegistrar}, never more; Renew uses all of it` &&
+      regular.lines[1] === `Renew ${QZ}.eth for 28 days at the ENS registrar ${ENS_V2_SEPOLIA.ethRegistrar}, which takes exactly 0.613701 USDC; its expiry moves from 2026-11-24 03:49:00 UTC to 2026-12-22 03:49:00 UTC`,
+    JSON.stringify(regular.lines));
+  check('the prompt titles', H.handlePromptTitle('renewApprove', { name: 'qzv7hk2wmt.eth' }) === 'Approve the USDC for renewing qzv7hk2wmt.eth (transaction 1 of 2)' &&
+    H.handlePromptTitle('renew', { name: 'qzv7hk2wmt.eth' }) === 'Approve renewing qzv7hk2wmt.eth (transaction 2 of 2)' &&
+    H.handlePromptTitle('renew', { name: 'xk9fdq4rvz.eth', smart: true }) === 'Approve renewing xk9fdq4rvz.eth from your smart account');
+
+  // Every engine reason as a sentence.
+  const want = {
+    'not-renewable': 'a.eth cannot be renewed: the registry says it is not registered, or its grace period has ended. Nothing was sent.',
+    duration: 'a.eth cannot be renewed for 28 days: the new expiry would not be valid (D). Nothing was sent.',
+    'price-mismatch': 'The registrar’s renewal price for a.eth did not match the wallet’s own calculation (D), so the renewal was not offered. Nothing was sent.',
+    'payment-token': 'The ENS registrar does not accept Circle’s Sepolia USDC for this renewal (D). Nothing was sent.',
+    'wrong-chain': 'The network endpoint does not serve Ethereum Sepolia (D), so nothing was read further. Nothing was sent.',
+    'deployment-mismatch': 'The ENS contracts on Sepolia no longer match what this wallet was written against (D). Nothing was sent.',
+    'invalid-label': 'a.eth is not a name this wallet can renew: the registrar does not price it. Nothing was sent.',
+  };
+  const { EnsRegisterError } = await import('@shiba-wallet/chains-evm');
+  const badReasons = Object.entries(want).filter(([reason, text]) => H.describeRenewalError(new EnsRegisterError(reason, 'D'), 'a.eth') !== text);
+  check('the seven engine reasons, each a full sentence ending "Nothing was sent."', badReasons.length === 0 && Object.values(want).every((s) => s.endsWith('Nothing was sent.')), JSON.stringify(badReasons));
+  check('…and their Spanish drafts exist with the same placeholders',
+    Object.keys(en).filter((k) => k.startsWith('handle.renew.')).every((k) => typeof es[k] === 'string' && es[k] !== k &&
+      JSON.stringify([...en[k].matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort()) === JSON.stringify([...es[k].matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort())));
+
+  // The expiry line, registered and in grace.
+  check('the expiry line of a registered name', H.handleExpiryLine({ state: 'registered', expiry: 1_795_492_140n, graceEndsAt: 1_795_492_140n + GRACE }) === 'Expires on 2026-11-24 03:49:00 UTC.');
+  check('the expiry line inside the grace period', H.handleExpiryLine({ state: 'grace', expiry: 1_795_492_140n, graceEndsAt: 1_795_492_140n + GRACE }) === 'Expired on 2026-11-24 03:49:00 UTC; it can still be renewed until 2026-12-22 03:49:00 UTC.');
+  const owners = [{ address: ACCOUNT_1, kind: 'regular' }, { address: KERNEL, kind: 'smart' }];
+  const now = BigInt(RENEW_FIXTURE.block.timestamp);
+  const ownedAs = async (stateAfter) => H.readOwnedHandle(renewNode({ stateAfter }), QZ, owners);
+  const reg = await ownedAs({ status: 2, expiry: 1_795_492_140n, owner: ACCOUNT_1 });
+  const grace = await ownedAs({ status: 0, expiry: now - 86_400n, owner: KERNEL });
+  check('readOwnedHandle: registered to Account 1 → its expiry and grace end; in grace held by the Kernel → the grace line, owner kind smart',
+    reg?.state === 'registered' && reg.ownerKind === 'regular' && reg.expiry === 1_795_492_140n && reg.graceEndsAt === 1_795_492_140n + GRACE &&
+      grace?.state === 'grace' && grace.ownerKind === 'smart' && same(grace.owner, KERNEL));
+  check('readOwnedHandle: past the grace period, or held by someone else → not listed',
+    (await ownedAs({ status: 0, expiry: now - GRACE - 1n, owner: ACCOUNT_1 })) === null && (await ownedAs({ status: 2, expiry: now + 10n, owner: DEV })) === null);
+  check('the label of a primary name: second-level .eth only', H.ownedLabelOfName('qzv7hk2wmt.eth') === QZ && H.ownedLabelOfName('smart.qzv7hk2wmt.eth') === null && H.ownedLabelOfName(null) === null);
+
+  // The pre-flight: one call → eth_call; approve + renew → eth_simulateV1.
+  const okSim = (params) => [{ calls: params[0].blockStateCalls[0].calls.map(() => ({ status: '0x1', returnData: '0x', gasUsed: '0x1', logs: [] })) }];
+  const node1 = renewNode();
+  const p1 = await H.preflightRenewal(node1, ACCOUNT_1, regular.sends[1]);
+  check('pre-flight of renew alone: an eth_call of renew from the payer against the latest block', p1.kind === 'ok' && p1.via === 'eth_call' &&
+    node1.calls.includes(`eth_call ${renewData.slice(0, 10)} latest`) && !node1.calls.includes(SIM));
+  const p2 = await H.preflightRenewal(renewNode({ renewRevert: nameNotRenewable }), ACCOUNT_1, regular.sends[1]);
+  check('…a NameNotRenewable revert is told apart', p2.kind === 'not-renewable' && H.renewPreflightSentence(p2, 'a.eth') === want['not-renewable']);
+  let simParams = null;
+  const node3 = renewNode({ simulate: (params) => { simParams = params; return okSim(params); } });
+  const p3 = await H.preflightRenewal(node3, KERNEL, smart.sends[0]);
+  check('pre-flight of the batch: approve then renew simulated together from the payer (eth_simulateV1, one block)', p3.kind === 'ok' && p3.via === 'eth_simulateV1' &&
+    simParams[0].blockStateCalls[0].calls.length === 2 && simParams[0].blockStateCalls[0].calls.every((c) => same(c.from, KERNEL)) &&
+    simParams[0].blockStateCalls[0].calls[1].input === toHex(smart.sends[0][1].data));
+  const p4 = await H.preflightRenewal(renewNode({ simulate: (params) => [{ calls: [{ status: '0x1', returnData: '0x', gasUsed: '0x1', logs: [] }, { status: '0x0', returnData: nameNotRenewable, gasUsed: '0x1' }] }] }), KERNEL, smart.sends[0]);
+  check('…a reverting renew in the batch is not-renewable (custom error data)', p4.kind === 'not-renewable', JSON.stringify(p4));
+  const p5 = await H.preflightRenewal(renewNode(), ACCOUNT_1, [regular.sends[0][0]]);
+  check('…a call list that does not end in renew is refused', p5.kind === 'failed');
+
+  // The gate: no prompt when the pre-flight fails.
+  let prompted = 0;
+  const g1 = await H.gateRenewal({ name: 'a.eth', preflight: async () => ({ kind: 'failed', reason: 'R' }), authorize: async () => { prompted += 1; return true; } });
+  const g2 = await H.gateRenewal({ name: 'a.eth', preflight: async () => ({ kind: 'ok', via: 'eth_call' }), authorize: async () => { prompted += 1; return true; } });
+  check('the gate: a failed pre-flight stops before the prompt with its sentence; a passing one prompts once',
+    g1.kind === 'stopped' && g1.text === 'The renewal of a.eth did not pass its pre-flight in the latest block, so no device check was shown. Nothing was sent. Technical detail: R' && g2.kind === 'authorized' && prompted === 1);
+
+  // The read-back: the receipt's NameRenewed log and the registry's new expiry.
+  const TX = '0x' + 'ab'.repeat(32);
+  const tokenId = BigInt(ethers.id(QZ));
+  const mkLog = (label, newExpiry) => {
+    const enc = renewer.encodeEventLog('NameRenewed', [tokenId, label, DAYS28, newExpiry, ENS_V2_SEPOLIA_USDC.address, ethers.ZeroHash, FEE]);
+    return { address: ENS_V2_SEPOLIA.ethRegistrar, topics: enc.topics, data: enc.data };
+  };
+  const readNode = renewNode({ receipts: { [TX]: { status: '0x1', logs: [mkLog('other-name', 1n), mkLog(QZ, 1_797_911_340n)] } }, stateAfter: { status: 2, expiry: 1_797_911_340n, owner: ACCOUNT_1 } });
+  const out = await H.readHandleRenewalResult(readNode, regular.plan, TX);
+  check('read-back: the NameRenewed log for this label (another label’s skipped) and the expiry read again, exact',
+    out.logged?.label === QZ && out.logged.newExpiry === 1_797_911_340n && out.logged.amount === FEE && out.result.extended && out.result.exact && out.result.expiry === 1_797_911_340n);
+  check('the success sentence', H.renewalDoneSentence('qzv7hk2wmt.eth', regular.plan, out) ===
+    'qzv7hk2wmt.eth now expires on 2026-12-22 03:49:00 UTC, read back from the .eth registry (before this renewal: 2026-11-24 03:49:00 UTC). The registrar’s NameRenewed log in the transaction: 28 days for 0.613701 USDC, new expiry 2026-12-22 03:49:00 UTC.');
+  const stale = await H.readHandleRenewalResult(renewNode({ receipts: { [TX]: { status: '0x1', logs: [] } }, stateAfter: { status: 2, expiry: 1_795_492_140n, owner: ACCOUNT_1 } }), regular.plan, TX);
+  check('…a registry that does not show the new expiry yet is "not extended" (the screen reads again, then says so)', !stale.result.extended && stale.logged === null);
+
+  // Source pins: the screen.
+  const screen = source('src/screens/HandleScreen.tsx');
+  const fn = (name) => {
+    const i = screen.indexOf(`const ${name} = async`);
+    const j = screen.indexOf('\n  };\n', i);
+    return i < 0 || j < 0 ? '' : screen.slice(i, j);
+  };
+  const authorize = fn('authorizeJob');
+  check('screen: a renew job runs the renewal gate (pre-flight, then the spending check and prompt) before anything else',
+    /if \(j\.kind === 'renew' && j\.renewal\) \{[\s\S]*?gateRenewal\(\{ name: j\.name, preflight: \(\) => preflightRenewal\(node, payer, j\.calls\), authorize: spendingAndPrompt \}\)/.test(authorize) &&
+      authorize.indexOf("j.kind === 'renew'") < authorize.indexOf("if (j.kind !== 'register' || !j.record) return spendingAndPrompt();"));
+  check('screen: the smart account renews in ONE batch, the regular account approves first (transaction 1 of 2)',
+    /kind: 'renew', path: 'aa', calls: plan\.sends\[0\]!, lines: plan\.lines/.test(fn('onRenewContinue')) &&
+      /kind: 'renewApprove', path: 'eoa', calls: plan\.sends\[0\]!, lines: \[plan\.lines\[0\]!\], position: \{ index: 1, count: 2 \}/.test(fn('onRenewContinue')) &&
+      /kind: 'renew', path: 'eoa', calls: renewCalls, lines: \[plan\.lines\[1\]!\], position: \{ index: 2, count: 2 \}/.test(fn('afterRenewalStep')));
+  check('screen: the renewal stores nothing (no pending record, no secure store, no vault) and reads no key outside the prompt',
+    !/savePendingHandle|forgetPendingHandle|writeStoreItem|readSecureItem|createKeyVault|signWith/.test(fn('onRenewReview') + fn('onRenewContinue') + fn('afterRenewalStep')) &&
+      !/readSecureItem|createKeyVault|SecureStore/.test(screen));
+  check('screen: the renewal review shows the price, both expiries, the payer, the calls, the pre-flight, the preview and the risk card, and Continue only after the pre-flight passed',
+    /phase === 'renew-review' && renewal/.test(screen) && screen.includes("t('handle.renew.price'") && screen.includes("t('handle.renew.row.new')") &&
+      screen.includes("t('handle.renew.row.payer')") && screen.includes('<CallLines lines={rp.lines}') && screen.includes('renewPreflightSentence(preflight, q.name)') &&
+      /<RiskWarnings url=\{renewal\.url\} wallet=\{rp\.plan\.payer\} to=\{rp\.plan\.renew\.calls\[1\]!\.to\}/.test(screen) && screen.includes('batch={rp.plan.renew.calls.map(') &&
+      screen.includes("disabled={preflight.kind !== 'ok'}"));
+  check('screen: "Your names" shows the expiry line and "Renew for 28 days"; the review is quoted from the engine and pre-flighted before it opens',
+    screen.includes('{handleExpiryLine(row.value)}') && screen.includes("t('handle.renew.button', { days: HANDLE_DURATION_DAYS })") &&
+      /quoteHandleRenewal\([\s\S]*?planHandleRenewal\([\s\S]*?preflightRenewal\(node, o\.owner, remaining\)/.test(fn('onRenewReview')));
+  check('screen: the renewal counts its USDC against the spending check (register and renew) and its smart batch is checked against the payer',
+    screen.includes("if (j.kind === 'renew' && j.renewal) return j.renewal.plan.total;") && screen.includes('next.renewal && q.sender.toLowerCase() !== next.renewal.plan.payer.toLowerCase()'));
+  const handleSrc = source('src/wallet/handle.ts');
+  const renewalSrc = handleSrc.slice(handleSrc.indexOf('// Renewal (phase 26 item 1, the app half)'));
+  check('handle.ts: the renewal section calls the engine (quoteEnsRenewal, planEnsRenewal, readEnsRenewalResult, decodeEnsNameRenewedLogs) and writes nothing to storage',
+    ['quoteEnsRenewal(', 'planEnsRenewal(', 'readEnsRenewalResult(', 'decodeEnsNameRenewedLogs(', 'ensIsRenewableState(', 'simulateAssetChanges('].every((f) => renewalSrc.includes(f)) &&
+      !/writeStoreItem|removeStoreItem|STORE_KEYS|savePendingHandle/.test(renewalSrc.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')));
+
+  // In-suite mutants (each must be caught).
+  {
+    const m = await handleMutant('  if (usdcBalance < quote.total) {\n    throw new HandleRefusal(\n      t(\'handle.renew.usdc\'', '  if (false) {\n    throw new HandleRefusal(\n      t(\'handle.renew.usdc\'');
+    caught('renewal: the USDC shortfall check removed', (await rejection(() => m.quoteHandleRenewal(renewNode({ usdc: 1n }), { label: QZ, payer: ACCOUNT_1, payerLabel: 'A' }))) === null);
+  }
+  {
+    const m = await handleMutant("    sends: payerKind === 'smart' ? [[approve, renew]] : [[approve], [renew]],", '    sends: [[approve], [renew]],');
+    caught('renewal: the smart account sends two operations instead of one batch', m.planHandleRenewal(xk, KERNEL, 'smart').sends.length !== 1);
+  }
+  {
+    const m = await handleMutant("      return { kind: 'ok', via: 'eth_call' };\n    } catch (e) {", "      return { kind: 'ok', via: 'eth_call' };\n    } catch (e) {\n      return { kind: 'ok', via: 'eth_call' };");
+    caught('renewal: a reverting eth_call pre-flight treated as passed', (await m.preflightRenewal(renewNode({ renewRevert: nameNotRenewable }), ACCOUNT_1, regular.sends[1])).kind === 'ok');
+  }
+  {
+    const m = await handleMutant("  const pre = await deps.preflight();\n  if (pre.kind !== 'ok') return { kind: 'stopped', text: renewPreflightSentence(pre, deps.name) };",
+      "  await deps.authorize();\n  const pre = await deps.preflight();\n  if (pre.kind !== 'ok') return { kind: 'stopped', text: renewPreflightSentence(pre, deps.name) };");
+    let n = 0;
+    await m.gateRenewal({ name: 'a', preflight: async () => ({ kind: 'failed', reason: 'R' }), authorize: async () => { n += 1; return true; } });
+    caught('renewal: the device prompt shown before the pre-flight', n > 0);
+  }
+  {
+    const m = await handleMutant("    ? t('handle.renew.expired', { date: formatBlockTime(owned.expiry), until: formatBlockTime(owned.graceEndsAt) })", "    ? t('handle.renew.expired', { date: formatBlockTime(owned.expiry), until: formatBlockTime(owned.expiry) })");
+    caught('renewal: the grace line names the expiry as the last renewal time', m.handleExpiryLine({ state: 'grace', expiry: 1_795_492_140n, graceEndsAt: 1_795_492_140n + GRACE }) !== H.handleExpiryLine({ state: 'grace', expiry: 1_795_492_140n, graceEndsAt: 1_795_492_140n + GRACE }));
+  }
+  {
+    const m = await handleMutant('  const holder = owners.find((o) => sameAddress(o.address, state.latestOwner));', '  const holder = owners[0];');
+    caught('renewal: a name held by someone else listed as this wallet’s', (await m.readOwnedHandle(renewNode({ stateAfter: { status: 2, expiry: now + 10n, owner: DEV } }), QZ, owners)) !== null);
+  }
+  {
+    const m = await handleMutant('  const logged = decodeEnsNameRenewedLogs(logs).find((l) => l.label === plan.label) ?? null;', '  const logged = decodeEnsNameRenewedLogs(logs)[0] ?? null;');
+    caught('renewal: another label’s NameRenewed log read as this one', (await m.readHandleRenewalResult(readNode, regular.plan, TX)).logged?.label !== QZ);
+  }
+  {
+    const m = await handleMutant("      case 'not-renewable':\n        return t('handle.renew.refusal.notRenewable', { name });", "      case 'not-renewable':\n        return t('handle.renew.refusal.other', { name, detail: '' });");
+    caught('renewal: the not-renewable reason shown as a generic failure', m.describeRenewalError(new EnsRegisterError('not-renewable', 'D'), 'a.eth') !== want['not-renewable']);
+  }
+  {
+    const m = await handleMutant("  if (calls.length === 1) {\n    try {\n      await node('eth_call'", "  if (calls.length === 0) {\n    try {\n      await node('eth_call'");
+    caught('renewal: the batch pre-flight used for renew alone (no eth_call)', (await m.preflightRenewal(renewNode({ simulate: okSim }), ACCOUNT_1, regular.sends[1])).via !== 'eth_call');
+  }
 }
 
 console.log(`\ncheck-handle: ${passed} passed, ${failed} failed (${mutantsCaught} mutants)`);
