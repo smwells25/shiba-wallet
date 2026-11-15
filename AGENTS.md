@@ -20631,3 +20631,178 @@ driver at a time, item 1's first; 6 last. Subagents on Opus.
       the SFEE withheld line, masked and spoken under Hide amounts; a fresh
       SFEE Review saying "(at most 1 SFEE per transfer)"; Spanish and
       TalkBack on the new lines.
+- [x] EMULATOR PASS p26-emu2 — BOTH ENS NAMES RENEWED THROUGH THE APP, THE
+      LEND SCREEN PROVEN LIVE INCLUDING THE FIRST LENDING BATCH THROUGH A
+      BUNDLER, THE SOLANA SPENDING LIMIT SEEN LIVE (2026-11-10 03:15–04:55
+      UTC; Expo Go on emulator 37.1.11 under -gpu swangle, Metro moved to
+      wt-app at 8ed971d (code 3edab3c) with the engine rebuilt inside it
+      (node 51729 on 8081, 1,953 modules); the REAL wallet; 17 prompts, each
+      title read from the BiometricPrompt window (the thirteen listed below
+      plus four Unlock prompts); isKeyguardShowing read false before every
+      input; no repository file touched; .dev-wallet never read; nothing from
+      the dev EOA; THE CTO RE-READ every receipt below on two RPCs per
+      network and the devnet signature on the public RPC — all equal to the
+      report; the driver's step-by-step report folder was later emptied by
+      the macOS temp cleaner during five idle days, so the driver's final
+      hand-back message is the surviving record). (1) THE RENEWALS — ALL
+      PASS; BOTH NAMES NOW EXPIRE ON 2026-12-22. "Your names" listed both
+      with owner and "Expires on 2026-11-24 03:49:00 UTC." / "…04:07:24
+      UTC."; the review word for word as 33cb7d7 designed it ("Renewal:
+      0.613701 USDC for 28 days (the registrar's figure, read just now; the
+      wallet computed the same).", the current and new expiry with the
+      from-the-current-expiry note, "Paid by 0x772e…F44F", "Account 1
+      0x772e…F44F holds 59.465902 USDC.", the pinned registrar
+      0xf633e7FC17e2bbE0D0965D18ec1821dcB754a3d3 and USDC contract, the two
+      numbered call lines, "Pre-flight passed: the approval and the renewal,
+      simulated together from the paying account, succeed in the latest
+      block.", the preview "You send 0.613701 USDC" + the approval line, the
+      risk line "This transaction goes to ENS's ETHRegistrar on Ethereum
+      Sepolia (0xf633…a3d3), pinned by this wallet from ENS's published
+      Sepolia deployments."); Back from the review → nothing sent;
+      qzv7hk2wmt.eth FROM ACCOUNT 1: "Approve the USDC for renewing
+      qzv7hk2wmt.eth (transaction 1 of 2)" (03:22:20) → approve
+      0x88c69aeb28c82f3501c855dcbce6c3d6b6cf5b73764dd2df2294f187dd8ecf93
+      block 12101949, 137,757 gas at 78 wei, Approval 613,701 → "Transaction
+      2 of 2" with "Pre-flight passed: an eth_call of the renewal from the
+      paying account succeeds in the latest block." → "Approve renewing
+      qzv7hk2wmt.eth (transaction 2 of 2)" (03:23:22) → renew
+      0x8e2f1d37a04a6b3e9ed331a4974f7f3153a22700dbe536770d25a54bcd1dfc56
+      block 12101954, 124,447 gas, NameRenewed duration 2,419,200 newExpiry
+      1797911340 amount 613,701, the USDC to the beneficiary 0x84D3…39D3;
+      "Renewed ✓ / qzv7hk2wmt.eth now expires on 2026-12-22 03:49:00 UTC,
+      read back from the .eth registry (before this renewal: 2026-11-24
+      03:49:00 UTC). The registrar's NameRenewed log in the transaction: 28
+      days for 0.613701 USDC, new expiry 2026-12-22 03:49:00 UTC."; the list
+      then "Expires on 2026-12-22 03:49:00 UTC."; xk9fdq4rvz.eth FROM THE
+      KERNEL: the review ("Smart account 0xD31c…D8FA holds 24.298753 USDC.",
+      the one-operation note, the simulated pre-flight), the confirm ("Max
+      network fee (bundler estimate) 0.001429859973713922 test ETH", the
+      deposit row with its top-up), ONE prompt "Approve renewing
+      xk9fdq4rvz.eth from your smart account" (03:26:14) → bundle
+      0x874eceae202af606a93419c075efc10412fe7be6148b35c8262c4dc4d20651af
+      block 12101968, 348,621 gas, userOpHash 0xdd2f7217…c0c1 nonce 41
+      success actualGasCost 959,255,210,864,236, the Approval, NameRenewed
+      newExpiry 1797912444 amount 613,701, Deposited = the displayed max fee;
+      "Renewed ✓ … 2026-12-22 04:07:24 UTC"; the pending card "Smart-account
+      operation 0xdd2f…c0c1 from Wallet handle (ENS)." settled within about
+      20 s; Home and Receive still "ENS name: qzv7hk2wmt.eth",
+      smart.qzv7hk2wmt.eth → the Kernel on both RPCs; RECONCILED: Account 1
+      ETH −20,451,912 wei (the two fees), USDC 59,465,902 → 58,852,201, nonce
+      54 → 56; the Kernel ETH −941,683,017,346,821 (= the top-up), deposit →
+      470,604,762,849,686 exact, USDC 24,298,753 → 23,685,052; the beneficiary
+      +1,227,402; both names status REGISTERED with the new expiries. (2) THE
+      LEND SCREEN — PASS: "Lend (Aave)" on Arbitrum Sepolia's Home only
+      (Apps, Multisig, Lend (Aave), Bridge); the intro, the seven honesty
+      lines and the reserve card verbatim ("Read just now, at block
+      327752587, with every pinned contract checked first.", "Supply cap
+      10500000 USDC; about 5577041.643864 USDC is supplied, so about
+      4922958.356136 USDC more can be supplied (an estimate at this block).",
+      "Withdrawable at once: 855825.783201 USDC (the rest is lent out).",
+      "Supply rate when read: about 4.29% a year, variable.", "Aave's Pool
+      (pinned) 0xBfC91D59fdAA134A4ED45f7B584cAf96D7792Eff"); the refusals
+      with no prompt ("This account has no USDC supplied to Aave on Arbitrum
+      Sepolia, so there is nothing to withdraw.", "This account holds 1 USDC,
+      less than the 2 USDC to supply. Nothing was signed."); THE REGULAR LEG
+      (Account 1's 0.000194 ETH sufficed): "Approve exactly 0.1 USDC for
+      Aave's Pool" (03:41:28) → approve
+      0xd434c2560d41767ada09604b4c5787c10513eb6e0fa6aa59c807567dc6eb949a
+      block 327753357, 55,437 gas; "Supply 0.1 USDC to Aave" (03:42:16) →
+      supply 0xfa8e912f39a1631d22c58c107d028d62bfdd6b1fefbdbbbfb6f40d8ffcf5a043
+      block 327753539, 217,287 gas, Supply(onBehalfOf Account 1, referral 0,
+      100,000), "Supplied 0.1 USDC; your position is now 0.1 USDC (the
+      aArbSepUSDC balance, read after the transaction)."; "Withdraw all your
+      USDC from Aave" (03:44:35) → withdraw
+      0x35bdd9216d93f113219dcf4951a10e5b4be085299acce0a941d3de93d899fd3d
+      block 327754065, 186,993 gas, "Withdrawn 0.1 USDC to this account; your
+      position is now 0 USDC (…)."; exactly 0.1 back, no interest dust;
+      Account 1 ETH −9,263,751,306,000 = the three fees, USDC 1,000,000 →
+      900,000 → 1,000,000, aToken 0 → 100,000 → 0, nonce 5 → 8; THE SMART LEG
+      — THE FIRST LENDING BATCH THROUGH ZERODEV: the confirm "One operation,
+      all-or-nothing: (1) approve exactly 0.1 USDC for Aave's Pool, (2) the
+      supply. If the supply would fail, the approval is undone with it.", ONE
+      prompt "Supply 0.1 USDC to Aave from your smart account" (the third
+      attempt — see finding 1) → bundle
+      0x72995930e54d42fedab357183936e2ab31daad0bff29080a1e6ae5dd1a5a4997
+      block 327757582, 324,411 gas, userOpHash 0xea54768b…5de7 nonce 2
+      success actualGasCost 7,148,792,942,000, the pending card "… from
+      Lend." settled within about 20 s; "Withdraw all your USDC from Aave
+      from your smart account" (04:08:10) → bundle
+      0x9a2a5adfc406b12fcf99b474edbae02b82c152147d84514e9b4d3a008b86ae28
+      block 327759499, 284,157 gas, userOpHash 0xa4d27a9b…a1c8 nonce 3
+      success; the Kernel ETH unchanged, USDC 745,441 → 645,441 → 745,441,
+      aToken 0 → 100,000 → 0, deposit 51,161,114,856,028 → 38,033,301,478,028
+      (= minus the two actualGasCosts, exact); Arbitrum fees in total
+      0.0000223916 ETH; mainnet shows the readiness row "Lending (Aave v3
+      supply and withdraw) — Test networks only" with its reason and no Home
+      link. (3) THE SOLANA SPENDING LIMIT — ALL PASS: the Settings section
+      for the active account on Solana devnet (chips USDC / EURC / SFEE,
+      "Limit (USDC)", the four windows, "The window rolls: a send counts for
+      1 hour after it was sent."), "1 USDC per 1 hour" saved with no prompt,
+      the card "Spent in the current window: 0 of 1 USDC" / the mint; a 2
+      USDC send to Account 2: the confirm's look-ahead warning and the fee
+      note, then Send REFUSED with 0 prompts — "Over your spending limit /
+      This send would go over your spending limit for USDC: 1 USDC per 1
+      hour. Already spent in this window: 0 USDC; this send: 2 USDC. /
+      Enforced by this app only. Anyone with your recovery phrase, and keys
+      used outside this app, are not limited. / To send it, raise or remove
+      the limit in Settings → Spending limits (this app only). / Nothing was
+      signed."; 0.5 USDC → ONE prompt "Approve sending 0.5 USDC" (04:29:09) →
+      signature 2RkDZykcxxCrzv7XdQUfj3YumkV7BYfJwQ1Xmn4mAhbxxduy9PuGLAbJurweerkxGrD6a2YuEtcVt5nbYDJvFTMw,
+      slot 520622913, err null, fee 5,000, one transferChecked of 500,000
+      (the CTO re-read it), the card "Included: … finalized (slot
+      520622913)."; 0.6 USDC → "Spent in the current window: 0.5 of 1 USDC."
+      and refused with 0 prompts ("Already spent in this window: 0.5 USDC;
+      this send: 0.6 USDC."); an SFEE confirm "No spending limit (Settings →
+      Spending limits) is set for SFEE on Solana devnet for this account, so
+      this send is not counted against any limit." (Back); Remove → "Remove
+      the USDC limit?" / "1 USDC per 1 hour. Solana token sends of USDC from
+      this account on Solana devnet will no longer be checked against it,
+      and its spending record is deleted." → prompt "Remove your spending
+      limit" (04:39:01) → "No Solana token limits…"; devnet Account 1
+      46,993,120 → 46,988,120 lamports, USDC 17,500,000 → 17,000,000; Account
+      2 USDC 2,500,000 → 3,000,000. (4) TALKBACK (level 6 → 2 → 6 in place,
+      context kept) — PASS with the notes in findings 9–10; short addresses
+      where designed, the pinned contracts and the mint spoken in full.
+      FEATURE 75 (the handle) and FEATURE 61 (lending) are proven live
+      through the app; feature 19's Solana scope seen live. FINDINGS (fix
+      slice dispatched for 1–10; 11 is the p26-emu1 finding 4, FIXED in
+      9d0bb65, which this pass's Metro at 8ed971d predates): (1) ZERODEV'S
+      IMPOSSIBLE (ZERO) GAS ESTIMATES ON ARBITRUM SEPOLIA ARE STILL HAPPENING
+      — the guard worked every time and nothing was signed or sent, but 4
+      Review refusals and 2 send-time refusals that came AFTER the device
+      prompt (03:49:32, 03:55:58, each about 2.5 min) cost two wasted prompts;
+      the third attempt took about 3.75 min; (2) the Kernel renewal's success
+      view shows only the bundle hash and no UserOperation hash (Lend's
+      smart-account view shows both); (3) the Kernel renewal confirm's risk
+      card describes only the batch's first call (the approve) and has no
+      one-operation heading; (4) Activity names neither ENS's registrar nor
+      "renewed" ("Smart-account operation: approved USDC for 0xf633…a3d3 (up
+      to 0.613701 USDC), called 0xf633…a3d3: sent 0.613701 USDC" / "Called
+      0xf633…a3d3: sent 0.613701 USDC"); (5) "Your names" owner rows show the
+      full 42-character address, not the account label; (6) the Lend
+      previews call the pinned aToken "untracked token 0x460b…1216"; (7) the
+      Lend approve step has no balance-change preview (the renewal's has
+      one); (8) the renewal's approval transaction hash is never shown on
+      screen (Lend shows "Approval transaction: …"); (9) TalkBack: the Solana
+      limit's "Remove. Button" does not name the limit, and the 44-character
+      mint is spoken in full; (10) TalkBack: the renewal review's label and
+      value are separate stops; (12) Arbitrum Activity has no indexer, so
+      the Lend rows are not listed (said on screen); (13) a driving slip — a
+      helper's BACK from Home left Expo Go for the launcher, returned
+      through Recents, nothing else touched. NOT DONE: Back on transaction 2
+      of a renewal (a re-renewal would cost an approval outside the caps);
+      the Lend form and confirm under TalkBack; Hide-amounts speech on the
+      limit cards; dark mode; Spanish. END STATE (2026-11-10 04:55 UTC): Home,
+      Ethereum Sepolia, Account 1 ("ENS name: qzv7hk2wmt.eth"), devnet OFF,
+      light mode, protection OFF, TalkBack OFF (level 6), IME ADBKeyboard,
+      Metro node 51729 on 8081 from wt-app at 8ed971d, qemu 86708 with
+      caffeinate 86986, the window in front. HOUSEKEEPING (2026-11-15, the
+      CTO): after five idle days the macOS temp cleaner had emptied the three
+      kept worktrees (wt-app, wt-verify, wt-ios2 — their .git links and
+      tracked files gone; the iOS prebuild of 2.5 GB lost with wt-ios2) and
+      the pass folders' files; the orphaned Metro was stopped, the worktrees
+      pruned, wt-verify and wt-app recreated at HEAD with mkwt.sh (wt-ios2
+      is recreated when an iOS pass needs it; a Simulator rebuild takes
+      about 17 minutes plus pod install), and both scratchpads touched —
+      THE RULE STANDS: touch the scratchpad at the START of every day's
+      work, and an idle gap of three days loses everything under /private/tmp.
