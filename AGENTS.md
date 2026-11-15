@@ -20806,3 +20806,96 @@ driver at a time, item 1's first; 6 last. Subagents on Opus.
       about 17 minutes plus pod install), and both scratchpads touched —
       THE RULE STANDS: touch the scratchpad at the START of every day's
       work, and an idle gap of three days loses everything under /private/tmp.
+- [x] Item 6 — LEADERSHIP REFRESH (docs commit a11cc77; six documents, +171 /
+      −62 — FEATURE_UNIVERSE.md, THREAT_MODEL.md, DEMO.md, MAINNET_READINESS.md,
+      WALLET_HANDLES.md, LENDING_VAULTS.md; verified in the CTO's rebuilt
+      isolated worktree on HEAD f77a226 (the patch's base; the code HEAD 9d0bb65
+      touches none of these files): apply 0 / 6 files, the staged patch id
+      696e658f…8256 equal to the agent's, check-screen-protection 87,
+      check-devmode 476, check-readiness 238, check-insights 142, check-pnl 206,
+      check-handle 194 and check-multisig 443 green on the patched tree; the
+      pre-commit secret scan clean; CI green; the full runner not run for a
+      docs-only change). FEATURE_UNIVERSE section 15 (header dated 2026-11-15;
+      the record runs to pass p26-emu2 and 9d0bb65): row 61 (lending and
+      borrowing) Designed → Proven live, partial — Aave v3 on Arbitrum Sepolia
+      from the Lend screen in pass p26-emu2 (the supply with its exact
+      approval and the withdrawal to the account itself, each one prompt;
+      supply and withdraw only, no borrowing, test networks only behind the
+      enforced readiness row lending; an EIP-7702-upgraded owner refused);
+      row 42 (Ordinals and Runes) Not started → Designed (docs/BITCOIN_ASSETS.md,
+      4bef635); row 75 extended with the script renewal of
+      shibawalletdemo.eth (3900077) and both in-app renewals of pass p26-emu2
+      (33cb7d7; qzv7hk2wmt.eth and xk9fdq4rvz.eth now expire 2026-12-22 03:49:00
+      and 04:07:24 UTC), the phase 25 "no renew flow" sentence put in the past
+      tense; row 43 extended with the Token-2022 fee mint (e1e81fb) sent
+      in-app in pass p26-emu1, the Solana pending card's waiting, dropped and
+      duplicate states seen live, and the Solana spending-limit scope
+      (850f3f4) seen in pass p26-emu2, with the 9d0bb65 fixes marked offline;
+      rows 10, 19, 32, 40, 45, 92, 95, 96, 97 and 99 extended one or two
+      sentences each from the record; the summary paragraph gains a phase 26
+      sentence. TALLY, recounted by the agent's script (which first reproduced
+      HEAD's 62 / 18 / 6 / 13) and by the page builder: PROVEN LIVE 63 (T1 29,
+      T2 32, T3 2), BUILT 18 (9 / 8 / 1), DESIGNED 6 (1 / 1 / 4), NOT STARTED
+      12 (1 / 3 / 8); the summary table and the count sentence agree.
+      THREAT_MODEL: a header line dated 2026-11-15 recording the CTO's
+      acceptance of T-96 Low / Medium (test networks only); the 1.1 Solana row
+      and T-91, T-93, T-94, T-96 and T-79 updated from the two passes and the
+      fixes; NEW ROWS, their ratings proposed by the agent on the file's own
+      scale and ACCEPTED BY THE CTO: F-93 (the risk overview's "not an account"
+      labels for other accounts' Solana sends) Low, fixed 9d0bb65, offline;
+      F-94 (profit and loss offered over Solana devnet with a mainnet price)
+      MEDIUM — it broke the portfolio layer's rule that test assets are never
+      valued (T-79), and a valued test asset can make a worthless holding look
+      real, so it is more than a display defect although no figure was ever
+      shown live; fixed 9d0bb65, offline; F-95 (the withheld transfer fee
+      invisible to the recipient) Low, fixed in part (Home, 9d0bb65) with the
+      Activity half open; F-96 (the fee cap shown in base units) Low, fixed
+      9d0bb65, offline; F-97 (ZeroDev's zero gas estimates on Arbitrum refused
+      AFTER the device prompt) Low as F-61, Open — the fix slice in progress;
+      section 7.4 at 9d0bb65 — engine 1,415 (core 162, chains-evm 943,
+      chains-utxo 70, chains-solana 111, prices 129), 68 suites / 12,010
+      checks. DEMO: warning 2's rehearsal status for steps 55 and 56 (both
+      rehearsed 2026-11-10 in pass p26-emu2; 9d0bb65 not seen); WARNING 7
+      REWRITTEN — the names now expire 2026-12-22, the Renew flow exists and
+      its cost is stated, check the expiry before a demo; step 49 extended
+      with two optional bullets (the SFEE fee token; the Solana spending
+      limit); step 53's obsolete "set for Ethereum networks only" sentence
+      replaced by the no-limit sentence of 850f3f4 and the waiting, dropped
+      and duplicate states added with the caveat that they needed the network
+      cut by a root script; steps 51, 54, 55 and 56 updated to what was seen,
+      step 56 correcting the approve step's preview claim and carrying the
+      F-97 warning; "What this demo cannot show" extended. MAINNET_READINESS:
+      the status line dated 2026-11-15; the ENS bullet with the renewals and
+      what a mainnet renewal would need; the Solana bullet (the fee transfer
+      done with a lab token; the limit scope on devnet); a new Aave bullet
+      (test-network-only pins from aave-address-book d4c2848e, NOT yet in
+      scripts/audit/verify-pins.mjs — a follow-up); lending on the enforced
+      list; a phase 26 paragraph in section 4, a lending limitation in
+      section 7, staged-path bullets for lending and renewals marked as this
+      refresh's proposals, section 9's lending decision rewritten.
+      WALLET_HANDLES §14.5 (both in-app renewals with hashes, blocks, gas,
+      prompts, the new expiries and the reconciliation) and LENDING_VAULTS §11
+      (the Lend screen, its live run as a five-row table, its findings, what
+      is not verified). THE SHAREABLE PAGE rebuilt with .local/fu/build-fu.py
+      from the version-28 base (kept as .local/fu/feature-universe.v28.html;
+      63 / 18 / 6 / 12 asserted in the tiles, the table and the header, dated
+      15 November 2026; a phase 26 sentence added after the phase 25 one in
+      the static summary paragraph; the scan: no 64-hex run, one 40-hex run —
+      the phase 15 multisig address already in version 28 — no uuid, one
+      inline script, one Google-Fonts stylesheet) and PUBLISHED by the CTO as
+      VERSION 29 of https://claude.ai/artifact/JEfyMuPcMJ8YW5x3ZKitsw (version
+      id 1794783184-7675), after reading every line of the live version's saved
+      source (1,193 lines, byte-identical to the version-28 base bar the
+      host's wrapper line). CTO ANSWERS to the agent's five open questions:
+      (1) row 19 (spending limits) STAYS BUILT — pass p26-emu2's live Solana
+      limit is one scope on one devnet, and the row's own description
+      (on-chain policy fences) is still unmet; flipping it would have made
+      the tally 64 / 17 / 6 / 12; (2) F-94 Medium as proposed; (3) Lend KEEPS
+      REFUSING an EIP-7702-upgraded owner — Staking's acceptance predates the
+      zero-estimate and fee-floor findings, and a lending position is harder
+      to unwind than a stake, so the stricter rule stands until a 7702 owner
+      has run a supply live; (4) no F rows for pass p26-emu2's display
+      findings 2–10 — they are in the running fix slice and get their rows
+      only if any survives it; (5) the header line's placement after the
+      earlier phase 26 line is accepted (the "Row updates" lines are not in
+      date order — a housekeeping follow-up, not changed here).
