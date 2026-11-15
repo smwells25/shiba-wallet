@@ -1,6 +1,6 @@
 # Lending and yield vaults on the test networks (features 61 and 62)
 
-**Status:** Research only, written 2026-11-08 against repository HEAD `215f3e0` for phase 25 item 4 (`AGENTS.md`, "Phase 25 plan"). Nothing here is built, and no transaction was sent: every on-chain figure is a read-only `eth_call`, `eth_getCode`, `eth_getStorageAt` or `eth_simulateV1` made on 2026-11-08 through two keyless public endpoints per network — Ethereum Sepolia `ethereum-sepolia-rpc.publicnode.com` and `0xrpc.io/sep` (blocks 12,094,979 to 12,095,009), Base Sepolia `base-sepolia-rpc.publicnode.com` and `sepolia.base.org` (blocks 56,373,639 to 56,375,108), Arbitrum Sepolia `arbitrum-sepolia-rpc.publicnode.com` and `sepolia-rollup.arbitrum.io/rpc` (blocks 327,442,980 to 327,444,007), OP Sepolia `optimism-sepolia-rpc.publicnode.com` and `sepolia.optimism.io` (blocks 51,197,044 to 51,197,046), Hoodi `ethereum-hoodi-rpc.publicnode.com` and `rpc.hoodi.ethpandaops.io`. Unless a row says otherwise, the two endpoints of a network gave the same answer. Every document was fetched the same day from the source named beside each claim. Section 9 lists what could not be verified. **Update 2026-11-09:** the engine and script half of the recommended slice (section 7.1) is now built, and a supply and withdrawal of 0.1 USDC was sent live on Arbitrum Sepolia by script; section 10 records what was built and the live run. Sections 1 to 9 are left as written on 2026-11-08.
+**Status:** Research only, written 2026-11-08 against repository HEAD `215f3e0` for phase 25 item 4 (`AGENTS.md`, "Phase 25 plan"). Nothing here is built, and no transaction was sent: every on-chain figure is a read-only `eth_call`, `eth_getCode`, `eth_getStorageAt` or `eth_simulateV1` made on 2026-11-08 through two keyless public endpoints per network — Ethereum Sepolia `ethereum-sepolia-rpc.publicnode.com` and `0xrpc.io/sep` (blocks 12,094,979 to 12,095,009), Base Sepolia `base-sepolia-rpc.publicnode.com` and `sepolia.base.org` (blocks 56,373,639 to 56,375,108), Arbitrum Sepolia `arbitrum-sepolia-rpc.publicnode.com` and `sepolia-rollup.arbitrum.io/rpc` (blocks 327,442,980 to 327,444,007), OP Sepolia `optimism-sepolia-rpc.publicnode.com` and `sepolia.optimism.io` (blocks 51,197,044 to 51,197,046), Hoodi `ethereum-hoodi-rpc.publicnode.com` and `rpc.hoodi.ethpandaops.io`. Unless a row says otherwise, the two endpoints of a network gave the same answer. Every document was fetched the same day from the source named beside each claim. Section 9 lists what could not be verified. **Update 2026-11-09:** the engine and script half of the recommended slice (section 7.1) is now built, and a supply and withdrawal of 0.1 USDC was sent live on Arbitrum Sepolia by script; section 10 records what was built and the live run. **Update 2026-11-15:** the app half, the Lend screen, is built and a supply and withdrawal went through the app on Arbitrum Sepolia on 2026-11-10 UTC from the regular account and from the smart account; section 11 records that run. Sections 1 to 9 are left as written on 2026-11-08.
 
 This file is plain technical prose for leadership and for the engineers who would build a slice; it follows the model of `docs/STAKING.md`. The persona and compression rules do not apply to it.
 
@@ -235,7 +235,7 @@ The ERC-4626 surface is attractive because one interface covers many vaults, but
 
 ## 10. What was built, and the live run (2026-11-09, phase 26 item 2)
 
-This section records the engine and script half of the slice recommended in section 7.1: supplying Circle's USDC to Aave v3's Arbitrum Sepolia market and withdrawing it, with no borrowing. The app half (a Lend screen) is not built yet.
+This section records the engine and script half of the slice recommended in section 7.1: supplying Circle's USDC to Aave v3's Arbitrum Sepolia market and withdrawing it, with no borrowing. The app half (the Lend screen) was built afterwards; section 11 records its run through the app.
 
 ### 10.1 Sources
 
@@ -281,7 +281,42 @@ The layer-1 part of the gas (`gasUsedForL1`) was 0 in all three receipts. After 
 
 ### 10.6 Still not verified
 
-- A supply or withdrawal from the smart account (one batch through a bundler), and anything in the app: the confirm screen, the preview, the risk card and the readiness row are the app half.
+- A supply or withdrawal from the smart account (one batch through a bundler), and anything in the app: the confirm screen, the preview, the risk card and the readiness row are the app half. All of these were later seen through the app (section 11).
 - The interest accrual itself, and any aToken rounding at other amounts: the live position stayed at exactly 100,000 for the 19 seconds it was held.
 - What the test market's administrators do later. The engine refuses outright when a pinned fact changes (a replaced Pool implementation, another revision, another aToken); a configuration change such as a lower cap, a freeze or a pause is not an inconsistency and shows up instead as the matching refusal of the quote.
 - OP Sepolia, which needs its own table entry and checks.
+
+## 11. The Lend screen, and the run through the app (2026-11-10, phase 26 item 2)
+
+The app half (commit `3edab3c`) is the "Lend (Aave)" screen, linked from Home on Arbitrum Sepolia only and behind the readiness row `lending` (test networks only, enforced). It is modelled on the Staking screen: it reads the reserve and the position through the engine of section 10.3 at one block, plans a supply or a withdrawal through the engine's quotes and `checkLendingCalls` before any plan exists, and sends through the wallet's existing send paths — an exact approval and then the supply from the regular account (two device prompts), or one all-or-nothing operation of both calls from a Kernel smart account (one prompt); a withdrawal is one call. The confirm names Aave v3's pinned Pool on the risk card, and the screen states the residuals of section 7.4. Watch-only and multi-signature accounts, EIP-7702-upgraded owners and SimpleAccount owners are refused with plain sentences. `app/scripts/check-lending.mjs` (101 checks, 13 in-suite mutants) covers it; the threat-model row is T-96 in `docs/THREAT_MODEL.md` (rated Low / Medium on test networks).
+
+### 11.1 What the emulator showed
+
+On 2026-11-10 UTC, on the Android emulator in Expo Go, with the emulator wallet's Account 1 and its Kernel smart account (`AGENTS.md` phase 26, "EMULATOR PASS p26-emu2" check 2; every receipt re-read by the CTO on two endpoints):
+
+- The link "Lend (Aave)" on Arbitrum Sepolia's Home only; on mainnet only the readiness row "Lending (Aave v3 supply and withdraw) — Test networks only", with its reason, and no link.
+- The intro, the honesty lines and the reserve card as built: "Read just now, at block 327752587, with every pinned contract checked first.", "Supply cap 10500000 USDC; about 5577041.643864 USDC is supplied, so about 4922958.356136 USDC more can be supplied (an estimate at this block).", "Withdrawable at once: 855825.783201 USDC (the rest is lent out).", "Supply rate when read: about 4.29% a year, variable." and "Aave's Pool (pinned) 0xBfC91D59fdAA134A4ED45f7B584cAf96D7792Eff".
+- Two refusals with no device prompt: "This account has no USDC supplied to Aave on Arbitrum Sepolia, so there is nothing to withdraw." and "This account holds 1 USDC, less than the 2 USDC to supply. Nothing was signed."
+
+| Step | Account | Transaction | Block | Gas used | Prompt |
+|---|---|---|---|---|---|
+| approve exactly 0.1 USDC to the Pool | Account 1 | `0xd434c2560d41767ada09604b4c5787c10513eb6e0fa6aa59c807567dc6eb949a` | 327,753,357 | 55,437 | "Approve exactly 0.1 USDC for Aave's Pool" |
+| supply 0.1 USDC | Account 1 | `0xfa8e912f39a1631d22c58c107d028d62bfdd6b1fefbdbbbfb6f40d8ffcf5a043` | 327,753,539 | 217,287 | "Supply 0.1 USDC to Aave" |
+| withdraw everything | Account 1 | `0x35bdd9216d93f113219dcf4951a10e5b4be085299acce0a941d3de93d899fd3d` | 327,754,065 | 186,993 | "Withdraw all your USDC from Aave" |
+| approve and supply 0.1 USDC, one operation (bundle transaction) | Kernel smart account | `0x72995930e54d42fedab357183936e2ab31daad0bff29080a1e6ae5dd1a5a4997` | 327,757,582 | 324,411 | "Supply 0.1 USDC to Aave from your smart account" |
+| withdraw everything, one operation (bundle transaction) | Kernel smart account | `0x9a2a5adfc406b12fcf99b474edbae02b82c152147d84514e9b4d3a008b86ae28` | 327,759,499 | 284,157 | "Withdraw all your USDC from Aave from your smart account" |
+
+The supply's `Supply` event named Account 1 as the beneficiary with referral 0 and 100,000 base units, and the success view read "Supplied 0.1 USDC; your position is now 0.1 USDC (the aArbSepUSDC balance, read after the transaction)."; the withdrawal read "Withdrawn 0.1 USDC to this account; your position is now 0 USDC (…).". Exactly 0.1 USDC came back each time, with no interest dust. Account 1's ETH fell by the three fees exactly (9,263,751,306,000 wei), its USDC went 1,000,000 → 900,000 → 1,000,000 and its aToken 0 → 100,000 → 0. The smart account's confirm read "One operation, all-or-nothing: (1) approve exactly 0.1 USDC for Aave's Pool, (2) the supply. If the supply would fail, the approval is undone with it."; its two UserOperations (nonces 2 and 3) succeeded, its pending card "… from Lend." settled within about 20 seconds, its USDC went 745,441 → 645,441 → 745,441 and its aToken 0 → 100,000 → 0, and its ETH balance was unchanged while its EntryPoint deposit fell by exactly the two operations' gas costs. This was the first lending batch through a bundler. The run's Arbitrum Sepolia fees came to 0.0000223916 ETH in total.
+
+### 11.2 Findings of the run
+
+- ZeroDev's bundler on Arbitrum Sepolia again answered impossible (zero) gas estimates (`docs/THREAT_MODEL.md` F-61). The wallet's guard refused every one and nothing was signed or sent, but four refusals came at Review and two at send time after the device prompt, so two prompts were wasted; the smart-account supply succeeded at the third attempt, about 3.75 minutes in (`docs/THREAT_MODEL.md` F-97, a fix in progress).
+- The previews call the pinned aToken "untracked token 0x460b…1216", and the approve step shows no balance-change preview; both are in a fix slice.
+- Arbitrum Sepolia has no history indexer configured on the emulator, so Activity does not list the lending transactions (the screen says so).
+
+### 11.3 Still not verified
+
+- Interest worth anything: each position was held for minutes, at about 4.3 per cent a year.
+- Borrowing, sponsored supply, a supply-and-withdraw-only session key and a health-factor reminder (section 6): design only.
+- OP Sepolia (no table entry yet), dark mode, Spanish and the Lend form and confirm under TalkBack.
+- Whether Aave's audited commits match the bytecode deployed on the test network, and who holds the administering key.

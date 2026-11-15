@@ -64,7 +64,9 @@ registrar adds the chosen duration to the name's current expiry and takes
 the same USDC price a registration of that length would cost, with no
 premium. The engine quotes and plans a renewal, and the CTO's dev-wallet
 name `shibawalletdemo.eth` was renewed live for 28 days on 2026-11-09
-(section 14).
+(section 14). The wallet's own two names were then renewed through the
+app's Renew flow on 2026-11-10 and now expire on 2026-12-22
+(section 14.5).
 
 ## 2. What a wallet handle can honestly be
 
@@ -561,11 +563,13 @@ and from which attesters.
 
 ## 14. Renewal (phase 26 item 1)
 
-The two names the wallet registered in phase 23 expire on 2026-11-24 and the
-dev wallet's `shibawalletdemo.eth` on 2026-11-22 (its expiry 1795359696 is
+The two names the wallet registered in phase 23 were due to expire on
+2026-11-24 (they have since been renewed, section 14.5) and the dev wallet's `shibawalletdemo.eth` on 2026-11-22 (its expiry 1795359696 is
 2026-11-22 15:01:36 UTC). This section records how the ENSv2 Sepolia
 registrar renews a name, what the engine now builds, and the live renewal
-that proved the engine's calls before the app's renew screen is built.
+that proved the engine's calls before the app's renew screen was built,
+and (section 14.5) the renewal of the wallet's own two names through that
+screen.
 
 ### 14.1 What the contracts do
 
@@ -665,7 +669,63 @@ days to renew; the two transactions cost about 264,000 gas together.
 - A renewal inside the grace period, and a renewal paid by someone other
   than the holder, were covered in tests with altered answers only, not on
   the chain.
-- A renewal from a smart account (one batch through a bundler) was not run;
-  it is the app half's first live step.
+- A renewal from a smart account (one batch through a bundler) was not run
+  by the script; it was run through the app on 2026-11-10 (section 14.5).
 - Whether ENS will keep the Sepolia ENSv2 deployment, its prices or its
   payment tokens unchanged is not something the wallet controls.
+
+### 14.5 The renewals through the app (2026-11-10)
+
+The app half (commit `33cb7d7`) lists, under "Your names" on the Wallet
+handle screen, the names the regular account and its Kernel smart account
+hold, each with its owner and its expiry read from the .eth registry, and
+offers "Renew for 28 days". The review shows the registrar's price and the
+wallet's own computation of it, the current and the new expiry (28 days
+after the current expiry), who pays, the pinned registrar and USDC
+contracts, the two calls, a pre-flight against the latest block, the
+balance-change preview and the risk card. A regular account sends the
+exact approval and then `renew` as two transactions, one prompt each; a
+smart account sends both calls as one operation with one prompt. The new
+expiry is read back from the registry and the `NameRenewed` log decoded.
+Nothing is stored on the phone for a renewal.
+
+On 2026-11-10 UTC, on the Android emulator in Expo Go, both of the wallet's
+names were renewed through that screen (`AGENTS.md` phase 26, "EMULATOR
+PASS p26-emu2" check 1; every receipt re-read by the CTO on two endpoints):
+
+- `qzv7hk2wmt.eth`, held and paid for by Account 1
+  (`0x772e…F44F`), in two transactions:
+  - the approval of exactly 613,701 USDC base units for the registrar:
+    `0x88c69aeb28c82f3501c855dcbce6c3d6b6cf5b73764dd2df2294f187dd8ecf93`,
+    block 12,101,949, 137,757 gas;
+  - `renew`: `0x8e2f1d37a04a6b3e9ed331a4974f7f3153a22700dbe536770d25a54bcd1dfc56`,
+    block 12,101,954, 124,447 gas; `NameRenewed` with duration 2,419,200,
+    new expiry 1797911340 (2026-12-22 03:49:00 UTC) and amount 613,701, the
+    USDC to the beneficiary `0x84D3…39D3`.
+- `xk9fdq4rvz.eth`, held and paid for by the Kernel smart account
+  (`0xD31c…D8FA`), as one operation through ZeroDev's bundler: bundle
+  transaction
+  `0x874eceae202af606a93419c075efc10412fe7be6148b35c8262c4dc4d20651af`,
+  block 12,101,968, 348,621 gas, UserOperation nonce 41, success; the
+  approval and `NameRenewed` with new expiry 1797912444 (2026-12-22
+  04:07:24 UTC) and amount 613,701. The pending card "Smart-account
+  operation … from Wallet handle (ENS)." settled within about 20 seconds.
+
+The done view read, for the first name, "qzv7hk2wmt.eth now expires on
+2026-12-22 03:49:00 UTC, read back from the .eth registry (before this
+renewal: 2026-11-24 03:49:00 UTC)." Afterwards both names were REGISTERED
+with the new expiries, no allowance was left, the beneficiary had received
+1,227,402 base units (twice 613,701), Account 1 had spent exactly the two
+gas fees and 0.613701 USDC, and the Kernel's balance, EntryPoint deposit
+and USDC reconciled to the base unit. The primary name `qzv7hk2wmt.eth` on
+Home and Receive and the sub-name `smart.qzv7hk2wmt.eth` were unchanged.
+Going Back from the review sent nothing.
+
+Not seen in that pass: a renewal inside the grace period, a name found by
+checking it in the form, and going Back on a renewal's second transaction.
+Its display findings (the smart account's success view shows the bundle
+transaction but not the UserOperation hash; its risk card describes only
+the batch's first call; Activity names neither ENS's registrar nor a
+renewal; the owner rows show the full address; the approval's transaction
+hash is not shown) are in a fix slice. The next renewal of both names is
+due before 2026-12-22, or within the 28-day grace period after it.
