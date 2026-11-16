@@ -72,6 +72,18 @@ export interface HistoryEntry {
    * match.
    */
   contract?: string;
+  /**
+   * For an incoming token entry only: the token's issuer's transfer fee that
+   * the same transaction WITHHELD in the receiving token account, in the
+   * token's base units (assetDecimals), in addition to assetAmount (which is
+   * what the account's spendable balance rose by). Solana Token-2022 only:
+   * set by the Solana history provider from the transaction's one top-level
+   * TransferCheckedWithFee instruction when it can be attributed to this
+   * entry with certainty; absent otherwise (no fee, a fee it cannot
+   * attribute, any other chain, entries built before the field existed).
+   * Absent never means "no fee was withheld", only "not known".
+   */
+  withheldFee?: bigint;
 }
 
 export interface HistoryPage {

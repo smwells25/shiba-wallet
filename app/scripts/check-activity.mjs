@@ -2234,8 +2234,10 @@ installFakeNode();
       bridgeSendPhrase(facts, { to: POOL, selector: OFT_SEND_SELECTOR, value: VALUE + 1n }, fmt) === null &&
       bridgeSendPhrase(facts, { to: ACCOUNT_2, selector: OFT_SEND_SELECTOR, value: VALUE }, fmt) === null &&
       bridgeSendPhrase(null, { to: POOL, selector: OFT_SEND_SELECTOR, value: VALUE }, fmt) === null);
-  check('control: the transaction read once more only for a bridge send (one extra eth_getTransactionByHash per bridge row)',
-    count('eth_getTransactionByHash') === 4, count('eth_getTransactionByHash'));
+  // Phase 27 item 1: the bridge facts are read from the transaction the decode already fetched (rememberingTransport),
+  // no longer from a second eth_getTransactionByHash (2 rows, 2 reads; it was 4 before).
+  check('control: the transaction read exactly once per row, the bridge facts included (no second eth_getTransactionByHash)',
+    count('eth_getTransactionByHash') === 2, count('eth_getTransactionByHash'));
   // Mutant: the pool check dropped — any contract with the OFT selector would be named as Stargate's pool.
   const srcPath = join(here, '..', 'src', 'wallet', 'activity-sentences.ts');
   const original = readFileSync(srcPath, 'utf8');
@@ -2332,22 +2334,24 @@ installFakeNode();
   check('the decode records the direct renewal from its own calldata: qzv7hk2wmt, 28 days, the pinned registrar',
     out.get(RENEW_TX)?.ensRenewal?.label === 'qzv7hk2wmt' && out.get(RENEW_TX).ensRenewal.duration === DAYS28 && out.get(RENEW_TX).ensRenewal.source === 'calldata' &&
       out.get(RENEW_TX).ensRenewal.registrar === REGISTRAR, out.get(RENEW_TX)?.ensRenewal);
-  check('LIVE SHAPE (Account 1) — "Called ENS’s registrar 0xf633…a3d3 to renew qzv7hk2wmt.eth for 28 days: sent 0.613701 USDC"',
-    r(RENEW_TX) === 'Called ENS’s registrar 0xf633…a3d3 to renew qzv7hk2wmt.eth for 28 days: sent 0.613701 USDC', r(RENEW_TX));
-  check('…a reverted renewal reads "Failed: tried to call ENS’s registrar 0xf633…a3d3 to renew qzv7hk2wmt.eth for 28 days; only the network fee was paid"',
-    r(RENEW_FAILED) === 'Failed: tried to call ENS’s registrar 0xf633…a3d3 to renew qzv7hk2wmt.eth for 28 days; only the network fee was paid', r(RENEW_FAILED));
+  check('LIVE SHAPE (Account 1) — "Renewed qzv7hk2wmt.eth for 28 days with ENS’s registrar 0xf633…a3d3: sent 0.613701 USDC"',
+    r(RENEW_TX) === 'Renewed qzv7hk2wmt.eth for 28 days with ENS’s registrar 0xf633…a3d3: sent 0.613701 USDC', r(RENEW_TX));
+  check('…a reverted renewal reads "Failed: tried to renew qzv7hk2wmt.eth for 28 days with ENS’s registrar 0xf633…a3d3; only the network fee was paid"',
+    r(RENEW_FAILED) === 'Failed: tried to renew qzv7hk2wmt.eth for 28 days with ENS’s registrar 0xf633…a3d3; only the network fee was paid', r(RENEW_FAILED));
   check('LIVE SHAPE (step 1) — the approval names the registrar: "Approved USDC for ENS’s registrar 0xf633…a3d3 (up to 0.613701 USDC)"',
     r(APPROVE_TX) === 'Approved USDC for ENS’s registrar 0xf633…a3d3 (up to 0.613701 USDC)', r(APPROVE_TX));
   check('the Kernel batch: the renewal read from the registrar’s NameRenewed log (xk9fdq4rvz, 28 days)',
     out.get(BATCH_TX)?.ensRenewal?.label === 'xk9fdq4rvz' && out.get(BATCH_TX).ensRenewal.source === 'log', out.get(BATCH_TX)?.ensRenewal);
-  check('LIVE SHAPE (the Kernel) — "Smart-account operation: approved USDC for ENS’s registrar 0xf633…a3d3 (up to 0.613701 USDC), called ENS’s registrar 0xf633…a3d3 to renew xk9fdq4rvz.eth for 28 days: sent 0.613701 USDC"',
-    r(BATCH_TX) === 'Smart-account operation: approved USDC for ENS’s registrar 0xf633…a3d3 (up to 0.613701 USDC), called ENS’s registrar 0xf633…a3d3 to renew xk9fdq4rvz.eth for 28 days: sent 0.613701 USDC', r(BATCH_TX));
+  check('SYNTHETIC SHAPE (the Kernel) — "Smart-account operation: approved USDC for ENS’s registrar 0xf633…a3d3 (up to 0.613701 USDC), renewed xk9fdq4rvz.eth for 28 days with ENS’s registrar 0xf633…a3d3: sent 0.613701 USDC"',
+    r(BATCH_TX) === 'Smart-account operation: approved USDC for ENS’s registrar 0xf633…a3d3 (up to 0.613701 USDC), renewed xk9fdq4rvz.eth for 28 days with ENS’s registrar 0xf633…a3d3: sent 0.613701 USDC', r(BATCH_TX));
   check('a look-alike contract with the same calldata is neither named nor described (the pinned address only)',
     out.get(LOOKALIKE_TX)?.ensRenewal === undefined && !/ENS|renew/.test(r(LOOKALIKE_TX)), r(LOOKALIKE_TX));
   check('Hide amounts masks the amounts, not the name or the duration', !/0\.613701/.test(r(RENEW_TX, { hidden: true })) && /qzv7hk2wmt\.eth for 28 days/.test(r(RENEW_TX, { hidden: true })), r(RENEW_TX, { hidden: true }));
   check('on another network the registrar address is not named (Ethereum Sepolia only)', !/ENS/.test(render(out.get(APPROVE_TX), { contacts: [], networkId: 'eip155:1' })));
-  check('requests: one more eth_getTransactionByHash for each DIRECT renew row (2), one more receipt for the batch, nothing for the approval or the look-alike',
-    count('eth_getTransactionByHash') - before.tx === 5 + 2 && count('eth_getTransactionReceipt') - before.rc === 5 + 1,
+  // Phase 27 item 1: the renewal facts are read from the transaction and receipt the decode already fetched
+  // (rememberingTransport) — no second read, which on a load-balanced endpoint could reach a backend answering null.
+  check('requests: exactly one eth_getTransactionByHash and one eth_getTransactionReceipt per row (5 rows), the renewal facts included',
+    count('eth_getTransactionByHash') - before.tx === 5 && count('eth_getTransactionReceipt') - before.rc === 5,
     { tx: count('eth_getTransactionByHash') - before.tx, rc: count('eth_getTransactionReceipt') - before.rc });
   // The calldata decoder: exact, refuses anything the engine would not encode the same way.
   const decoded = decodeEnsRenewCalldata(renewInput);
@@ -2369,8 +2373,8 @@ installFakeNode();
   const silent = { called: 0 };
   check('ensRenewalForDescription: off Ethereum Sepolia, no request and no facts',
     (await ensRenewalForDescription(async () => { silent.called += 1; return null; }, 'eip155:1', out.get(RENEW_TX).description)) === null && silent.called === 0);
-  check('the engine’s verbs: "called" is listed, "renewed" is not — so the phrase says "called … to renew" (an engine change would allow "Renewed …")',
-    ACTIVITY_CALL_VERBS.includes('called') && !ACTIVITY_CALL_VERBS.includes('renewed'));
+  check('the engine’s verbs: "renewed" is listed (phase 27 item 1), so the phrase says "renewed … with ENS’s registrar …"',
+    ACTIVITY_CALL_VERBS.includes('renewed') && ACTIVITY_CALL_VERBS.includes('called'));
   const screen = readFileSync(join(here, '..', 'src', 'screens', 'ActivityScreen.tsx'), 'utf8');
   check('the screen renders through renderActivitySentence (the renewal facts ride on the decode)', /renderActivitySentence\(decoded, sentenceOptions\)/.test(screen));
   // Mutants on activity-sentences.ts.
@@ -2401,6 +2405,140 @@ installFakeNode();
   } finally {
     rmSync(mutantDir, { recursive: true, force: true });
   }
+}
+
+// Phase 27 item 1: the Kernel's renewal of xk9fdq4rvz.eth (bundle 0x874eceae…51af, block 12101968) read
+// "Smart-account operation: approved USDC for ENS’s registrar … , called ENS’s registrar 0xf633…a3d3: sent
+// 0.613701 USDC" on the emulator (pass p27-emu1 finding 1). Cause, established read-only on 2026-11-16:
+// publicnode's Sepolia endpoint load-balances a geth and a reth backend, and reth answered null for this
+// receipt in 6 of 8 batched reads while geth served it. The decode got its receipt (from geth); the renewal
+// facts then asked for the receipt a SECOND time, that read reached reth, the facts came back null and the
+// row was cached without them. Now the follow-up readers reuse the decode's own answers (rememberingTransport).
+// The live transaction and receipt are pinned verbatim in fixtures/sepolia-kernel-renewal-2026-11-16.json.
+console.log('The Kernel renewal row, live (phase 27 item 1):');
+reset();
+installFakeNode();
+{
+  const LIVE = JSON.parse(readFileSync(join(here, 'fixtures', 'sepolia-kernel-renewal-2026-11-16.json'), 'utf8'));
+  const HASH = LIVE.transaction.hash.toLowerCase();
+  const { ENS_V2_SEPOLIA_USDC } = await import('@shiba-wallet/chains-evm');
+  const USDC_ENS = getAddress(ENS_V2_SEPOLIA_USDC.address);
+  const trackedUsdc = [{ assetId: { chainId: SEPOLIA, namespace: 'erc20', reference: USDC_ENS }, symbol: 'USDC', name: 'USDC', decimals: 6 }];
+  check('the fixture is the live bundle: block 12101968, status 0x1, sender the Kernel 0xD31c…D8FA in the UserOperationEvent',
+    HASH === '0x874eceae202af606a93419c075efc10412fe7be6148b35c8262c4dc4d20651af' && LIVE.receipt.blockNumber === '0xb8a950' && LIVE.receipt.status === '0x1' &&
+      LIVE.receipt.logs.some((l) => l.topics[0] === USER_OPERATION_EVENT_TOPIC && l.topics[2].toLowerCase().endsWith(KERNEL_OF_ACCOUNT_1.slice(2).toLowerCase())));
+  // A load-balanced endpoint: the transaction always, the receipt only on the FIRST read (geth), null afterwards (reth).
+  const serveLikePublicnode = () => {
+    let receiptReads = 0;
+    mode.rpc = (method, params) => {
+      if (String(params?.[0]).toLowerCase() !== HASH) return undefined;
+      if (method === 'eth_getTransactionByHash') return LIVE.transaction;
+      if (method === 'eth_getTransactionReceipt') return (receiptReads += 1) === 1 ? LIVE.receipt : null;
+      return undefined;
+    };
+  };
+  const decodeLive = async (module = sentencesModule) => {
+    module.clearActivityCache();
+    const decoder = module.createActivityDecoder({ chainCaip2: SEPOLIA, evmChainId: SEPOLIA_ID, wallet: [ACCOUNT_1, KERNEL_OF_ACCOUNT_1], trackedTokens: trackedUsdc, run: fixedRun, maxPerCall: 8 });
+    return (await decoder.decodeEntries([HASH])).get(HASH);
+  };
+  const WANT = 'Smart-account operation: approved USDC for ENS’s registrar 0xf633…a3d3 (up to 0.613701 USDC), renewed xk9fdq4rvz.eth for 28 days with ENS’s registrar 0xf633…a3d3: sent 0.613701 USDC';
+  try {
+    serveLikePublicnode();
+    const before = { tx: count('eth_getTransactionByHash'), rc: count('eth_getTransactionReceipt') };
+    const live = await decodeLive();
+    check('LIVE (the Kernel, a receipt served once then null) — the renewal facts are read from the decode’s own receipt: xk9fdq4rvz, 28 days, from the NameRenewed log',
+      live?.ensRenewal?.label === 'xk9fdq4rvz' && live.ensRenewal.duration === 2_419_200n && live.ensRenewal.source === 'log', live?.ensRenewal);
+    check(`LIVE (the Kernel) — "${WANT}"`, render(live, { contacts: [] }) === WANT, render(live, { contacts: [] }));
+    check('…one eth_getTransactionByHash and one eth_getTransactionReceipt for the whole row (no second read to reach a null backend)',
+      count('eth_getTransactionByHash') - before.tx === 1 && count('eth_getTransactionReceipt') - before.rc === 1,
+      { tx: count('eth_getTransactionByHash') - before.tx, rc: count('eth_getTransactionReceipt') - before.rc });
+    check('…Hide amounts masks the amounts, not the name or the duration',
+      !/0\.613701/.test(render(live, { contacts: [], hidden: true })) && /renewed xk9fdq4rvz\.eth for 28 days/.test(render(live, { contacts: [], hidden: true })));
+    // rememberingTransport itself: only the two reads of exactly this hash are kept, and only non-null answers.
+    const { rememberingTransport } = sentencesModule;
+    const asked = [];
+    let answer = null;
+    const t = rememberingTransport(async (method, params) => { asked.push(method); return method === 'eth_chainId' ? '0xaa36a7' : answer; }, HASH.toUpperCase().replace('0X', '0x'));
+    await t('eth_getTransactionReceipt', [HASH]);
+    answer = { status: '0x1' };
+    const first = await t('eth_getTransactionReceipt', [HASH]);
+    answer = null;
+    const again = await t('eth_getTransactionReceipt', [HASH]);
+    const other = await t('eth_getTransactionReceipt', ['0x' + '00'.repeat(32)]);
+    await t('eth_chainId', []);
+    await t('eth_chainId', []);
+    check('rememberingTransport: a null answer is not kept (asked again), the first non-null one is (case ignored), another hash and other methods always go through',
+      first?.status === '0x1' && again === first && other === null &&
+        JSON.stringify(asked) === JSON.stringify(['eth_getTransactionReceipt', 'eth_getTransactionReceipt', 'eth_getTransactionReceipt', 'eth_chainId', 'eth_chainId']), asked);
+    // The finding reproduced: without the remembering transport the second receipt read reaches the null backend.
+    const srcPath = join(here, '..', 'src', 'wallet', 'activity-sentences.ts');
+    const original = readFileSync(srcPath, 'utf8');
+    const anchor = '    const transport = rememberingTransport(httpTransport(url), hash);\n';
+    const mutantDir = join(here, `.mutants-activity-p27-${process.pid}`);
+    mkdirSync(mutantDir, { recursive: true });
+    try {
+      if (!original.includes(anchor)) throw new Error('mutation anchor not found');
+      const file = join(mutantDir, 'm1-activity-sentences.ts');
+      writeFileSync(file, original.replace(anchor, '    const transport = httpTransport(url);\n').replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolvePath(dirname(srcPath), spec)).href}'`));
+      const m1 = await import(pathToFileURL(file).href);
+      serveLikePublicnode();
+      const broken = await decodeLive(m1);
+      const brokenText = m1.renderActivitySentence(broken, { nativeSymbol: 'test ETH', hidden: false, contacts: [], networkId: SEPOLIA });
+      check('M-p27-1 caught: a fresh transport for the follow-up readers reproduces the live row (no renewal named: "called ENS’s registrar 0xf633…a3d3: sent 0.613701 USDC")',
+        broken?.ensRenewal === undefined && brokenText === 'Smart-account operation: approved USDC for ENS’s registrar 0xf633…a3d3 (up to 0.613701 USDC), called ENS’s registrar 0xf633…a3d3: sent 0.613701 USDC', brokenText);
+    } finally {
+      rmSync(mutantDir, { recursive: true, force: true });
+    }
+  } finally {
+    mode.rpc = null;
+  }
+}
+
+// Phase 27 item 1: the pinned lending token named in Activity as the Lend preview names it ("aArbSepUSDC (pinned
+// lending token)", simulation.ts resolveTokenMeta → the engine's ActivityTokenMeta.pinnedLending), on Arbitrum Sepolia.
+console.log('The pinned lending token in Activity (phase 27 item 1):');
+reset({ chainId: '0x66eee' });
+installFakeNode();
+{
+  const { lendingDeploymentFor } = await import('@shiba-wallet/chains-evm');
+  const ARB = 'eip155:421614';
+  const dep = lendingDeploymentFor(ARB);
+  const A_TOKEN = getAddress(dep.aToken.address);
+  const LOOK = getAddress('0x460b97bd498e1157530aeb3086301d5225b91217');
+  const TRANSFER = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+  const pad = (a) => '0x' + '0'.repeat(24) + a.slice(2).toLowerCase();
+  const erc20 = new Interface(['function transfer(address,uint256)']);
+  const sendOf = (hash, token, chainHex = '0x66eee') => ({
+    transaction: { hash, from: ACCOUNT_1.toLowerCase(), to: token.toLowerCase(), input: erc20.encodeFunctionData('transfer', [BURN, 100_000n]), value: '0x0', nonce: '0x8', type: '0x2', chainId: chainHex, blockNumber: '0x1388', blockHash: '0x' + 'ab'.repeat(32) },
+    receipt: { transactionHash: hash, blockNumber: '0x1388', blockHash: '0x' + 'ab'.repeat(32), status: '0x1', logs: [{ address: token, topics: [TRANSFER, pad(ACCOUNT_1), pad(BURN)], data: '0x' + (100_000n).toString(16).padStart(64, '0') }] },
+  });
+  const PINNED_TX = '0x' + 'a7'.repeat(32);
+  const LOOK_TX = '0x' + 'a8'.repeat(32);
+  mode.extraTx = (h) => (h === PINNED_TX ? sendOf(PINNED_TX, A_TOKEN) : h === LOOK_TX ? sendOf(LOOK_TX, LOOK) : null);
+  const fetchMetadata = async () => ({ decimals: 6, symbol: 'aArbSepUSDC', name: 'Aave Arbitrum Sepolia USDC' });
+  const decodeOn = async (chainCaip2, evmChainId, tracked = []) => {
+    clearActivityCache();
+    const decoder = createActivityDecoder({ chainCaip2, evmChainId, wallet: [ACCOUNT_1], trackedTokens: tracked, run: fixedRun, maxPerCall: 8, fetchMetadata });
+    return decoder.decodeEntries([PINNED_TX, LOOK_TX]);
+  };
+  const arb = await decodeOn(ARB, 421_614n);
+  const r = (d, networkId = ARB) => render(d, { contacts: [], networkId });
+  check('the decoder marks the aToken pinnedLending on Arbitrum Sepolia (resolveTokenMeta, exact address), not tracked, not a staking token',
+    arb.get(PINNED_TX)?.tokens[A_TOKEN.toLowerCase()]?.pinnedLending === true && arb.get(PINNED_TX).tokens[A_TOKEN.toLowerCase()].pinned !== true,
+    arb.get(PINNED_TX)?.tokens);
+  check('PINNED, UNTRACKED: "Sent 0.1 aArbSepUSDC (pinned lending token) to 0x0000…dEaD", as the Lend preview names it',
+    r(arb.get(PINNED_TX)) === 'Sent 0.1 aArbSepUSDC (pinned lending token) to 0x0000…dEaD', r(arb.get(PINNED_TX)));
+  check('…a look-alike one digit off answering the same symbol keeps "(untracked token 0x…)"',
+    r(arb.get(LOOK_TX)) === 'Sent 0.1 aArbSepUSDC (untracked token 0x460b…1217) to 0x0000…dEaD', r(arb.get(LOOK_TX)));
+  const tracked = await decodeOn(ARB, 421_614n, [{ assetId: { chainId: ARB, namespace: 'erc20', reference: A_TOKEN }, symbol: 'aArbSepUSDC', name: 'aArbSepUSDC', decimals: 6 }]);
+  check('PINNED, TRACKED: the plain symbol (tracking wins over the pinned tag)', r(tracked.get(PINNED_TX)) === 'Sent 0.1 aArbSepUSDC to 0x0000…dEaD', r(tracked.get(PINNED_TX)));
+  reset({ chainId: '0xaa36a7' });
+  installFakeNode();
+  mode.extraTx = (h) => (h === PINNED_TX ? sendOf(PINNED_TX, A_TOKEN, '0xaa36a7') : null);
+  const sepolia = await decodeOn(SEPOLIA, SEPOLIA_ID);
+  check('…the same address is not pinned on another network (Sepolia): "(untracked token 0x…)"',
+    r(sepolia.get(PINNED_TX), SEPOLIA) === 'Sent 0.1 aArbSepUSDC (untracked token 0x460b…1216) to 0x0000…dEaD', r(sepolia.get(PINNED_TX), SEPOLIA));
 }
 
 console.log('HistoryEntry.contract through the merged four-stream feed (phase 23 item 8):');

@@ -351,6 +351,25 @@ describe('synthetic paths', () => {
     ).toBe('Sent 0.001 token 0x3e3F…40Af to Burn');
   });
 
+  it('a caller-pinned lending token: "(pinned lending token)" when untracked, plain when tracked, never called a staking token', () => {
+    // Aave v3's aArbSepUSDC on Arbitrum Sepolia (the engine's LENDING_DEPLOYMENTS), pinned by the app.
+    const aToken = '0x460b97bd498e1157530aeb3086301d5225b91216';
+    const tx = syntheticTx({ to: aToken, input: erc20.encodeFunctionData('transfer', [BURN, 100_000n]) });
+    const d = describe1(tx, syntheticReceipt([transferLog(aToken, ACCOUNT_1, BURN, 100_000n)]));
+    expect(
+      activitySentence(d, ctx({ tokens: { [aToken]: { symbol: 'aArbSepUSDC', decimals: 6, tracked: false, pinnedLending: true } } })),
+    ).toBe('Sent 0.1 aArbSepUSDC (pinned lending token) to Burn');
+    expect(
+      activitySentence(d, ctx({ tokens: { [aToken]: { symbol: 'aArbSepUSDC', decimals: 6, tracked: true, pinnedLending: true } } })),
+    ).toBe('Sent 0.1 aArbSepUSDC to Burn');
+    expect(
+      activitySentence(d, ctx({ tokens: { [aToken]: { symbol: 'aArbSepUSDC', decimals: 6, tracked: false, pinnedLending: false } } })),
+    ).toBe('Sent 0.1 aArbSepUSDC (untracked token 0x460b…1216) to Burn');
+    expect(
+      activitySentence(d, ctx({ tokens: { [aToken]: { symbol: null, decimals: 6, tracked: false, pinnedLending: true } } })),
+    ).toBe('Sent 0.1 token 0x460b…1216 to Burn');
+  });
+
   it('incoming token transfer from someone else names the sender', () => {
     const d = describe1(
       syntheticTx({ from: STRANGER, to: USDC, input: erc20.encodeFunctionData('transfer', [ACCOUNT_1, 2_500_000n]) }),
@@ -615,7 +634,7 @@ describe('describeCall (wording supplied by the caller)', () => {
     expect(activitySentence(d, ctx({ describeCall: staking }))).toBe(
       'Failed: tried to stake 0.0002 ETH with Lido (stETH contract 0x1111…1111); only the network fee was paid',
     );
-    const present = { staked: 'stake', wrapped: 'wrap', unwrapped: 'unwrap', requested: 'request', claimed: 'claim', burned: 'burn', bridged: 'bridge' };
+    const present = { staked: 'stake', wrapped: 'wrap', unwrapped: 'unwrap', requested: 'request', claimed: 'claim', burned: 'burn', bridged: 'bridge', renewed: 'renew' };
     for (const [past, base] of Object.entries(present)) {
       expect(activitySentence(d, ctx({ describeCall: () => `${past} something` }))).toBe(
         `Failed: tried to ${base} something; only the network fee was paid`,
@@ -659,7 +678,7 @@ describe('describeCall (wording supplied by the caller)', () => {
 
   it('lists its verbs', async () => {
     const { ACTIVITY_CALL_VERBS } = await import('../src/activity-decode.js');
-    expect(ACTIVITY_CALL_VERBS).toEqual(expect.arrayContaining(['staked', 'wrapped', 'unwrapped', 'requested', 'claimed', 'burned', 'bridged', 'sent', 'called']));
+    expect(ACTIVITY_CALL_VERBS).toEqual(expect.arrayContaining(['staked', 'wrapped', 'unwrapped', 'requested', 'claimed', 'burned', 'bridged', 'renewed', 'sent', 'called']));
   });
 });
 

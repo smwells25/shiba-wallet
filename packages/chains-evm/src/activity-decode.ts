@@ -1319,6 +1319,16 @@ export interface ActivityTokenMeta {
    * not tracked. Absent means the token is not pinned.
    */
   pinned?: boolean;
+  /**
+   * Set by the caller for the aToken of a lending reserve it pins from a
+   * published deployment list (the app's resolveTokenMeta from
+   * LENDING_DEPLOYMENTS, e.g. Aave v3's aArbSepUSDC on Arbitrum Sepolia);
+   * labelled "SYM (pinned lending token)" when not tracked, as the app's
+   * preview names it. Kept apart from `pinned` so a lending token is never
+   * called a staking token. Absent means the token is not a pinned lending
+   * token.
+   */
+  pinnedLending?: boolean;
 }
 
 export interface ActivitySentenceContext {
@@ -1489,14 +1499,15 @@ class SentenceWriter {
   }
 
   /**
-   * Token label: tracked symbol, else "SYM (pinned staking token)" for a
-   * token the caller pins, else a known contract's symbol, else
-   * "SYM (untracked token 0x…)".
+   * Token label: tracked symbol, else "SYM (pinned staking token)" or
+   * "SYM (pinned lending token)" for a token the caller pins, else a known
+   * contract's symbol, else "SYM (untracked token 0x…)".
    */
   token(address: string): string {
     const meta = this.ctx.tokens[address.toLowerCase()];
     if (meta?.tracked && meta.symbol) return meta.symbol;
     if (meta?.pinned && meta.symbol) return `${meta.symbol} (pinned staking token)`;
+    if (meta?.pinnedLending && meta.symbol) return `${meta.symbol} (pinned lending token)`;
     const known = knownContract(this.desc.chainId, address);
     if (known?.kind === 'token' && known.symbol) return known.symbol;
     const short = shortActivityAddress(address);
@@ -1838,6 +1849,8 @@ const PAST_TO_PRESENT: Record<string, string> = {
   burned: 'burn',
   // A bridge send (the app's Stargate pool phrase): "Failed: tried to bridge …".
   bridged: 'bridge',
+  // A renewal of a name (the app's ENS registrar phrase): "Failed: tried to renew …".
+  renewed: 'renew',
 };
 
 /**

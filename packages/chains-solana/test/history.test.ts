@@ -7,8 +7,11 @@ import {
   solanaFollowedTokenAccounts,
   solanaHistoryProvider,
   solanaTokenMoves,
+  solanaWithheldTransferFee,
 } from '../src/history.js';
 import type { JsonRpcTransport } from '../src/rpc.js';
+import { base58 } from '@scure/base';
+import { transferCheckedWithFee } from '../src/tokenTransfer.js';
 
 const ME = '6TgSKzjg3SQSeqrDR95D7RNncYh63FPzRcDWX6T4455t';
 const OTHER = '11111111111111111111111111111111';
@@ -529,4 +532,114 @@ describe('followed token accounts (pass p24-solfix2)', () => {
       expect(perPage.every((n) => n <= SOLANA_HISTORY_MAX_SIGNATURE_REQUESTS)).toBe(true);
     }
   }, 20_000); // 30 rounds: 4.3 s with a host load average of 76 (verify run, 2026-11-08); the 5 s default timed out once under three concurrent runners
+});
+
+describe('the withheld Token-2022 transfer fee on the recipient\'s entry (phase 27 item 1, the Activity half of F-95)', () => {
+  // The in-app send of 1 SFEE of emulator pass p26-emu1, read verbatim on 2026-11-16 (see the fixture's "about").
+  const live = JSON.parse(readFileSync(new URL('./fixtures/devnet-fee-transfer-2026-11-16.json', import.meta.url), 'utf8')) as {
+    transactions: Record<string, Record<string, unknown>>;
+  };
+  const SIG = '4jLphZNL5PG2bdxAAUv77v9sTzX1LfunU1HG6vJgC4AGZHBDTAeJLFw9VSuj5QymFBphfvBqcShqywY4TPUdAXDF';
+  const SENDER = 'EK5jKrBRwvQXXsSERGN6jEoYaofE2PNiZWQoaCLtrYPv';
+  const RECIPIENT = '9WMgKdmRJBZy8WQ6Q9T6VjJN4wyT9jQenDvfvLFe471n';
+  const SFEE = '7iJCvReXQqTqj7grTPzo3ggibPrSp5jcfghnmADjnoEn';
+  const clone = () => JSON.parse(JSON.stringify(live.transactions[SIG])) as {
+    meta: Record<string, unknown> & { innerInstructions: unknown; postTokenBalances: { uiTokenAmount: { amount: string } }[] };
+    transaction: { message: { accountKeys: string[]; instructions: { programIdIndex: number; accounts: number[]; data: string }[] } };
+  };
+  const history = async (detail: unknown, address: string) =>
+    (await solanaHistoryProvider(async (method) =>
+      method === 'getSignaturesForAddress'
+        ? [sig(SIG, { slot: 520591451, blockTime: 1794277431 })]
+        : detail,
+    ).getHistory(address)).entries;
+  const move = { mint: SFEE, change: 990_000n, decimals: 6 };
+
+  it('the instruction in the live transaction is the engine\'s own TransferCheckedWithFee layout: amount 1000000, decimals 6, fee 10000', () => {
+    const ix = clone().transaction.message.instructions[0]!;
+    const rebuilt = transferCheckedWithFee({
+      source: base58.decode('8jZRyqhxw1SHKZWazXgvp8ydSaDN6cEPKv4nmpfSfkwL'),
+      mint: base58.decode(SFEE),
+      destination: base58.decode('AWFgCuNfEZ9Mc7CMxdWuEynabh8Mx6jHs7MFo3hmyYKJ'),
+      owner: base58.decode(SENDER),
+      amount: 1_000_000n,
+      decimals: 6,
+      fee: 10_000n,
+    });
+    expect(ix.data).toBe(base58.encode(rebuilt.data));
+    expect(ix.accounts).toStrictEqual([1, 3, 2, 0]);
+  });
+
+  it('LIVE: the recipient\'s entry carries withheldFee 10000 beside the 990000 it received; the sender\'s entry is unchanged (no withheldFee)', async () => {
+    expect(await history(clone(), RECIPIENT)).toStrictEqual([
+      {
+        id: SIG,
+        timestamp: 1794277431,
+        confirmed: true,
+        direction: 'in',
+        uid: `${SIG}:token:${SFEE}`,
+        assetAmount: 990_000n,
+        assetDecimals: 6,
+        contract: SFEE,
+        counterparty: SENDER,
+        withheldFee: 10_000n,
+      },
+    ]);
+    expect(await history(clone(), SENDER)).toStrictEqual([
+      {
+        id: SIG,
+        timestamp: 1794277431,
+        confirmed: true,
+        direction: 'out',
+        uid: `${SIG}:token:${SFEE}`,
+        assetAmount: 1_000_000n,
+        assetDecimals: 6,
+        contract: SFEE,
+        counterparty: RECIPIENT,
+        fee: 5000n,
+      },
+    ]);
+  });
+
+  it('says nothing when the fee cannot be attributed with certainty', () => {
+    const fee = (mutate: (d: ReturnType<typeof clone>) => void, m = move) => {
+      const d = clone();
+      mutate(d);
+      return solanaWithheldTransferFee(d as never, RECIPIENT, m);
+    };
+    expect(fee(() => {})).toBe(10_000n);
+    // No innerInstructions array (an older node, or a field left out): unknown.
+    expect(fee((d) => { delete d.meta.innerInstructions; })).toBeNull();
+    // A cross-program call that runs Token-2022 could move the same tokens.
+    expect(fee((d) => { d.meta.innerInstructions = [{ index: 0, instructions: [{ programIdIndex: 4, accounts: [1, 3, 2, 0], data: '1' }] }]; })).toBeNull();
+    // An inner instruction whose program is not a static key (a lookup table): unknown.
+    expect(fee((d) => { d.meta.innerInstructions = [{ index: 0, instructions: [{ programIdIndex: 9, accounts: [], data: '1' }] }]; })).toBeNull();
+    // Two fee-extension instructions: which fee went where is not known.
+    expect(fee((d) => { d.transaction.message.instructions.push({ ...d.transaction.message.instructions[0]! }); })).toBeNull();
+    // An account index outside the static keys.
+    expect(fee((d) => { d.transaction.message.instructions[0]!.accounts = [1, 3, 7, 0]; })).toBeNull();
+    // The destination's balance did not rise by exactly amount − fee, although the address's whole change in the mint
+    // still is (another account of the address made up the difference): not attributable.
+    expect(fee((d) => {
+      d.meta.postTokenBalances[1]!.uiTokenAmount.amount = '1979999';
+      (d.meta.preTokenBalances as unknown[]).push({ accountIndex: 4, mint: SFEE, owner: RECIPIENT, uiTokenAmount: { amount: '0', decimals: 6 } });
+      (d.meta.postTokenBalances as unknown[]).push({ accountIndex: 4, mint: SFEE, owner: RECIPIENT, uiTokenAmount: { amount: '1', decimals: 6 } });
+    })).toBeNull();
+    // The address's whole change in the mint is not amount − fee (another transfer touched its accounts).
+    expect(fee(() => {}, { ...move, change: 990_001n })).toBeNull();
+    // Another mint, other decimals, or someone else's account.
+    expect(fee(() => {}, { ...move, mint: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU' })).toBeNull();
+    expect(fee(() => {}, { ...move, decimals: 9 })).toBeNull();
+    expect(solanaWithheldTransferFee(clone() as never, SENDER, move)).toBeNull();
+    // A plain TransferChecked (tag 12) carries no fee field: nothing is said.
+    expect(fee((d) => { d.transaction.message.instructions[0]!.data = base58.encode(Uint8Array.of(12, 64, 66, 15, 0, 0, 0, 0, 0, 6)); })).toBeNull();
+  });
+
+  it('an entry built with no fee instruction is unchanged key for key (no withheldFee key at all)', async () => {
+    const d = clone();
+    d.transaction.message.instructions = [];
+    const [entry] = await history(d, RECIPIENT);
+    expect(entry).toBeDefined();
+    expect(Object.prototype.hasOwnProperty.call(entry, 'withheldFee')).toBe(false);
+  });
 });

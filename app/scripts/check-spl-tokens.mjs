@@ -1599,6 +1599,52 @@ console.log('check-spl-tokens: Activity notes and the CSV keyed by the active So
 }
 
 // ---------------------------------------------------------------------------
+console.log('check-spl-tokens: phase 27 item 1 — the withheld Token-2022 transfer fee on the recipient\'s Activity row (F-95)');
+// ---------------------------------------------------------------------------
+{
+  // The in-app send of 1 SFEE of pass p26-emu1 (100 basis points, capped at 1 SFEE), read verbatim from devnet on
+  // 2026-11-16 (packages/chains-solana/test/fixtures/devnet-fee-transfer-2026-11-16.json). Account 2 received 0.99 SFEE
+  // and 0.01 SFEE was withheld in its token account; its row read only "Received 0.99 SFEE from EK5j…rYPv".
+  const FEE_FIXTURE = JSON.parse(readFileSync(resolve(HERE, '../../packages/chains-solana/test/fixtures/devnet-fee-transfer-2026-11-16.json'), 'utf8'));
+  const SIG = '4jLphZNL5PG2bdxAAUv77v9sTzX1LfunU1HG6vJgC4AGZHBDTAeJLFw9VSuj5QymFBphfvBqcShqywY4TPUdAXDF';
+  const SFEE = '7iJCvReXQqTqj7grTPzo3ggibPrSp5jcfghnmADjnoEn';
+  const SENDER = 'EK5jKrBRwvQXXsSERGN6jEoYaofE2PNiZWQoaCLtrYPv';
+  const RECIPIENT = '9WMgKdmRJBZy8WQ6Q9T6VjJN4wyT9jQenDvfvLFe471n';
+  const rowOf = async (address) => (await solanaHistoryProvider(async (method) =>
+    method === 'getSignaturesForAddress'
+      ? [{ signature: SIG, slot: 520591451, err: null, blockTime: 1794277431, confirmationStatus: 'finalized' }]
+      : FEE_FIXTURE.transactions[SIG],
+  ).getHistory(address)).entries[0];
+  const sfee = [{ assetId: { chainId: DEVNET, namespace: 'token', reference: SFEE }, symbol: 'SFEE', name: 'Shiba Fee Test', decimals: 6 }];
+  const symbols = SOLACT.solanaTokenSymbols(DEVNET, sfee);
+  const recipientRow = SOLACT.labelSolanaEntry(await rowOf(RECIPIENT), symbols);
+  const senderRow = SOLACT.labelSolanaEntry(await rowOf(SENDER), symbols);
+  const say = (M, entry, hidden = false) => M.solanaActivitySentence(entry, { hidden, ...DEVNET_NATIVE, companion: false });
+  check('LIVE: the engine\'s recipient entry carries withheldFee 10000 beside assetAmount 990000 (no extra request: one getTransaction for the row)',
+    recipientRow.withheldFee === 10_000n && recipientRow.assetAmount === 990_000n && senderRow.withheldFee === undefined, recipientRow);
+  check('LIVE (Account 2) — "Received 0.99 SFEE from EK5j…rYPv; 0.01 SFEE more was withheld in this account’s token account as the issuer’s transfer fee"',
+    say(SOLACT, recipientRow) === 'Received 0.99 SFEE from EK5j…rYPv; 0.01 SFEE more was withheld in this account’s token account as the issuer’s transfer fee', say(SOLACT, recipientRow));
+  check('…the sender\'s row is unchanged: "Sent 1 SFEE to 9WMg…471n"', say(SOLACT, senderRow) === 'Sent 1 SFEE to 9WMg…471n', say(SOLACT, senderRow));
+  check('…Hide amounts masks both figures: "Received •••• SFEE from EK5j…rYPv; •••• SFEE more was withheld …"',
+    say(SOLACT, recipientRow, true) === 'Received •••• SFEE from EK5j…rYPv; •••• SFEE more was withheld in this account’s token account as the issuer’s transfer fee', say(SOLACT, recipientRow, true));
+  const { counterparty: _c, ...unnamed } = recipientRow;
+  check('…with no single sender named: "Received 0.99 SFEE; 0.01 SFEE more was withheld …; the transaction does not name one sender"',
+    say(SOLACT, unnamed) === 'Received 0.99 SFEE; 0.01 SFEE more was withheld in this account’s token account as the issuer’s transfer fee; the transaction does not name one sender', say(SOLACT, unnamed));
+  const { withheldFee: _w, ...plain } = recipientRow;
+  check('…an entry without withheldFee (any other transfer, or one the engine could not attribute) reads exactly as before',
+    say(SOLACT, plain) === 'Received 0.99 SFEE from EK5j…rYPv' && say(SOLACT, { ...recipientRow, withheldFee: 0n }) === 'Received 0.99 SFEE from EK5j…rYPv');
+  const W1 = await solactMutant('    if (entry.withheldFee !== undefined && entry.withheldFee > 0n) {', '    if (false) {');
+  const okW1 = say(W1, recipientRow) === 'Received 0.99 SFEE from EK5j…rYPv';
+  solactCaught += okW1 ? 1 : 0;
+  check('mutant caught: the withheld fee left unsaid (the row as it read on the emulator)', okW1);
+  const W2 = await solactMutant('    const fee = maskAmount(formatUnits(entry.withheldFee, entry.assetDecimals, entry.assetDecimals), options.hidden);', '    const fee = formatUnits(entry.withheldFee, entry.assetDecimals, entry.assetDecimals);');
+  const okW2 = say(W2, recipientRow, true).includes('0.01 SFEE');
+  solactCaught += okW2 ? 1 : 0;
+  check('mutant caught: the withheld fee not masked by Hide amounts', okW2);
+  check(`phase 27 item 1 mutants all caught (${solactCaught} of ${solactMutants} solana-activity and source mutants in total)`, solactCaught === solactMutants);
+}
+
+// ---------------------------------------------------------------------------
 console.log('check-spl-tokens: phase 26 item 3b — a Solana token send checked and counted against a spending limit');
 // ---------------------------------------------------------------------------
 {

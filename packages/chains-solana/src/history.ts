@@ -2,7 +2,7 @@ import { base58 } from '@scure/base';
 import type { HistoryEntry, HistoryPage, HistoryProvider } from '@shiba-wallet/core';
 import type { JsonRpcTransport } from './rpc.js';
 import { findAssociatedTokenAddress } from './splToken.js';
-import { tokenProgramId } from './tokenExtensions.js';
+import { TOKEN_2022_PROGRAM_ID, tokenProgramId } from './tokenExtensions.js';
 
 /**
  * Transaction history via the standard RPC methods, verified against
@@ -146,22 +146,32 @@ interface SignatureInfo {
   confirmationStatus: string | null;
 }
 
-interface TokenBalanceDetail {
+/** The getTransaction (encoding json) fields this module reads. */
+export interface TokenBalanceDetail {
   accountIndex?: unknown;
   mint?: unknown;
   owner?: unknown;
   uiTokenAmount?: { amount?: unknown; decimals?: unknown } | null;
 }
 
-interface TransactionDetail {
+/** The getTransaction (encoding json) fields this module reads. */
+export interface CompiledInstructionDetail {
+  programIdIndex?: unknown;
+  accounts?: unknown;
+  data?: unknown;
+}
+
+/** The getTransaction (encoding json) fields this module reads. */
+export interface TransactionDetail {
   meta: {
     fee: number;
     preBalances: number[];
     postBalances: number[];
     preTokenBalances?: TokenBalanceDetail[] | null;
     postTokenBalances?: TokenBalanceDetail[] | null;
+    innerInstructions?: { instructions?: unknown }[] | null;
   } | null;
-  transaction: { message: { accountKeys: string[] } };
+  transaction: { message: { accountKeys: string[]; instructions?: CompiledInstructionDetail[] } };
 }
 
 export interface SolanaHistoryOptions {
@@ -398,7 +408,7 @@ async function enrich(
       // one of its token accounts, found through that account's
       // signatures): its token movements, if any, without a fee it did not
       // pay; otherwise the bare entry, as before.
-      return moves.length === 0 ? [entry] : tokenEntries(entry, moves);
+      return moves.length === 0 ? [entry] : tokenEntries(entry, moves, detail, address);
     }
 
     const pre = BigInt(detail.meta.preBalances[index] ?? 0);
@@ -424,7 +434,7 @@ async function enrich(
       return [counterparty === null ? native : { ...native, counterparty }];
     }
 
-    const tokens = tokenEntries(entry, moves);
+    const tokens = tokenEntries(entry, moves, detail, address);
     if (net === 0n) {
       // No lamports moved besides the fee: the fee rides on the first token
       // entry, and no native entry of 0 is listed.
@@ -439,17 +449,130 @@ async function enrich(
   }
 }
 
-/** One token entry per moved mint (see the module comment). */
-function tokenEntries(entry: HistoryEntry, moves: readonly SolanaTokenMove[]): HistoryEntry[] {
-  return moves.map((move) => ({
-    ...entry,
-    direction: move.change > 0n ? 'in' : 'out',
-    uid: `${entry.id}:token:${move.mint}`,
-    assetAmount: move.change < 0n ? -move.change : move.change,
-    assetDecimals: move.decimals,
-    contract: move.mint,
-    ...(move.counterparty !== null ? { counterparty: move.counterparty } : {}),
-  }));
+/** One token entry per moved mint (see the module comment), an incoming one with its withheld fee when attributable. */
+function tokenEntries(entry: HistoryEntry, moves: readonly SolanaTokenMove[], detail: TransactionDetail, address: string): HistoryEntry[] {
+  return moves.map((move) => {
+    const withheld = move.change > 0n ? solanaWithheldTransferFee(detail, address, move) : null;
+    return {
+      ...entry,
+      direction: move.change > 0n ? 'in' : 'out',
+      uid: `${entry.id}:token:${move.mint}`,
+      assetAmount: move.change < 0n ? -move.change : move.change,
+      assetDecimals: move.decimals,
+      contract: move.mint,
+      ...(move.counterparty !== null ? { counterparty: move.counterparty } : {}),
+      ...(withheld !== null ? { withheldFee: withheld } : {}),
+    };
+  });
+}
+
+const TOKEN_2022_PROGRAM_TEXT = base58.encode(TOKEN_2022_PROGRAM_ID);
+
+/** A compiled instruction's static account indices, or null when any is not a static key (or malformed). */
+function staticIndices(value: unknown, keyCount: number): number[] | null {
+  if (!Array.isArray(value)) return null;
+  for (const i of value) if (typeof i !== 'number' || !Number.isInteger(i) || i < 0 || i >= keyCount) return null;
+  return value as number[];
+}
+
+/** The little-endian u64 at `offset` of `bytes`. */
+function u64Le(bytes: Uint8Array, offset: number): bigint {
+  let value = 0n;
+  for (let i = 7; i >= 0; i--) value = (value << 8n) | BigInt(bytes[offset + i]!);
+  return value;
+}
+
+/**
+ * The transfer fee the issuer of a Token-2022 mint WITHHELD in `address`'s
+ * receiving token account in this transaction, in base units, or null when
+ * it cannot be attributed with certainty (phase 27 item 1, the Activity half
+ * of F-95). Read from the transaction already fetched — no request.
+ *
+ * The instruction: Token-2022's TransferFeeExtension (instruction 26)
+ * sub-instruction TransferCheckedWithFee (1), data = [26, 1, amount u64 LE,
+ * decimals u8, fee u64 LE] (19 bytes) and accounts [source, mint,
+ * destination, authority, …] (token-2022 at 5170695d,
+ * interface/src/extension/transfer_fee/instruction.rs 24–37 and 206–245;
+ * the engine's own encoder, tokenTransfer.ts transferCheckedWithFee, writes
+ * exactly this layout). The processor moves `amount` out of the source and
+ * credits `amount − fee` to the destination's balance, the fee being held
+ * in the destination's TransferFeeAmount extension (processor.rs 570–592):
+ * so the receiving account's spendable balance rises by amount − fee.
+ *
+ * Every condition must hold, else null (never a guess):
+ *  - meta.innerInstructions is an array and no inner instruction runs
+ *    Token-2022 or a program that is not a static account key (a
+ *    cross-program call could move the same tokens);
+ *  - every top-level instruction's program is a static key, and exactly one
+ *    top-level Token-2022 instruction has the tag 26, and it is
+ *    TransferCheckedWithFee with exactly 19 bytes of data;
+ *  - its accounts are static keys; its mint account is the move's mint;
+ *  - its destination is a token account reported on both sides of the
+ *    token balances, of that mint, owned by `address`, with the
+ *    instruction's decimals, whose balance rose by exactly amount − fee;
+ *  - `address`'s whole change in that mint equals amount − fee (so no other
+ *    transfer of the mint touched its accounts), and 0 < fee ≤ amount.
+ */
+export function solanaWithheldTransferFee(
+  detail: TransactionDetail,
+  address: string,
+  move: Pick<SolanaTokenMove, 'mint' | 'change' | 'decimals'>,
+): bigint | null {
+  const meta = detail.meta;
+  const message = detail.transaction?.message;
+  if (!meta || !message || !Array.isArray(message.accountKeys) || !Array.isArray(message.instructions)) return null;
+  const keys = message.accountKeys;
+  const keyCount = keys.length;
+  const programOf = (ix: CompiledInstructionDetail): string | null => {
+    const index = ix?.programIdIndex;
+    if (typeof index !== 'number' || !Number.isInteger(index) || index < 0 || index >= keyCount) return null;
+    const key = keys[index];
+    return typeof key === 'string' ? key : null;
+  };
+  if (!Array.isArray(meta.innerInstructions)) return null;
+  for (const group of meta.innerInstructions) {
+    if (!group || !Array.isArray(group.instructions)) return null;
+    for (const ix of group.instructions as CompiledInstructionDetail[]) {
+      const program = programOf(ix);
+      if (program === null || program === TOKEN_2022_PROGRAM_TEXT) return null;
+    }
+  }
+  let found: { data: Uint8Array; accounts: number[] } | null = null;
+  for (const ix of message.instructions) {
+    const program = programOf(ix);
+    if (program === null) return null;
+    if (program !== TOKEN_2022_PROGRAM_TEXT) continue;
+    if (typeof ix.data !== 'string') return null;
+    let data: Uint8Array;
+    try {
+      data = base58.decode(ix.data);
+    } catch {
+      return null;
+    }
+    if (data[0] !== 26) continue;
+    if (found !== null) return null; // two fee-extension instructions: not attributable
+    const accounts = staticIndices(ix.accounts, keyCount);
+    if (accounts === null || data.length !== 19 || data[1] !== 1 || accounts.length < 4) return null;
+    found = { data, accounts };
+  }
+  if (found === null) return null;
+  const amount = u64Le(found.data, 2);
+  const decimals = found.data[10]!;
+  const fee = u64Le(found.data, 11);
+  if (fee <= 0n || fee > amount) return null;
+  const received = amount - fee;
+  if (keys[found.accounts[1]!] !== move.mint || decimals !== move.decimals || move.change !== received) return null;
+  const destination = found.accounts[2]!;
+  const pre = parseTokenBalances(meta.preTokenBalances);
+  const post = parseTokenBalances(meta.postTokenBalances);
+  if (pre === null || post === null) return null;
+  const before = pre.filter((b) => b.accountIndex === destination);
+  const after = post.filter((b) => b.accountIndex === destination);
+  if (before.length !== 1 || after.length !== 1) return null;
+  for (const b of [before[0]!, after[0]!]) {
+    if (b.mint !== move.mint || b.owner !== address || b.decimals !== decimals) return null;
+  }
+  return after[0]!.amount - before[0]!.amount === received ? fee : null;
 }
 
 /**

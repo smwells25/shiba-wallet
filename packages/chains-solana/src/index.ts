@@ -49,8 +49,9 @@ export {
   solanaFollowedTokenAccounts,
   solanaHistoryProvider,
   solanaTokenMoves,
+  solanaWithheldTransferFee,
 } from './history.js';
-export type { SolanaHistoryOptions, SolanaTokenMove } from './history.js';
+export type { SolanaHistoryOptions, SolanaTokenMove, TransactionDetail as SolanaTransactionDetail } from './history.js';
 export {
   EXT,
   MAX_FEE_BASIS_POINTS,

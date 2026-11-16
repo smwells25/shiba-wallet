@@ -92,6 +92,16 @@ export function solanaActivitySentence(
         ? t('activity.solana.sent', { amount, asset, to: party })
         : t('activity.solana.sentUnnamed', { amount, asset });
     }
+    // The issuer's transfer fee withheld in this account's token account by
+    // the same transfer (the engine's HistoryEntry.withheldFee, set only
+    // when it attributed the fee with certainty; phase 27 item 1, the
+    // Activity half of F-95). Nothing is said when it is absent.
+    if (entry.withheldFee !== undefined && entry.withheldFee > 0n) {
+      const fee = maskAmount(formatUnits(entry.withheldFee, entry.assetDecimals, entry.assetDecimals), options.hidden);
+      return party !== null
+        ? t('activity.solana.receivedWithheld', { amount, asset, from: party, fee })
+        : t('activity.solana.receivedUnnamedWithheld', { amount, asset, fee });
+    }
     return party !== null
       ? t('activity.solana.received', { amount, asset, from: party })
       : t('activity.solana.receivedUnnamed', { amount, asset });

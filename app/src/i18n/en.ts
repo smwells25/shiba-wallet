@@ -2333,4 +2333,9 @@ export const en = {
   'handle.renew.buttonLabel': 'Renew {name} for {days} days',
   'send.btc.assetsWarning': 'This wallet does not track Ordinals inscriptions or Runes. An ordinary Bitcoin send, and Max in particular, can spend outputs that hold them, which can give them away to the recipient or to the miner. If this address has ever received an inscription or Runes, do not send from it with this wallet.',
   // ---- END phase 27 items 2 and 3 ----
+  // ---- BEGIN phase 27 item 1 (Activity): the recipient's row of a Solana Token-2022 transfer that withheld the issuer's
+  // transfer fee in its token account (wallet/solana-activity.ts solanaActivitySentence; the engine's HistoryEntry.withheldFee).
+  'activity.solana.receivedWithheld': 'Received {amount} {asset} from {from}; {fee} {asset} more was withheld in this account’s token account as the issuer’s transfer fee',
+  'activity.solana.receivedUnnamedWithheld': 'Received {amount} {asset}; {fee} {asset} more was withheld in this account’s token account as the issuer’s transfer fee; the transaction does not name one sender',
+  // ---- END phase 27 item 1 (Activity) ----
 } as const;

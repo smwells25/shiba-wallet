@@ -1,0 +1,131 @@
+{
+  "about": "Raw answer (the result field, verbatim) of getTransaction(4jLphZNL\u2026AXDF, {encoding: 'json', maxSupportedTransactionVersion: 0, commitment: 'confirmed'}) from https://api.devnet.solana.com, read-only and keyless, on 2026-11-16. The in-app send of 1 SFEE (Token-2022, a 100-basis-point transfer fee capped at 1 SFEE) from Account 1 EK5jKr\u2026rYPv to Account 2 9WMgKd\u2026471n of emulator pass p26-emu1 (slot 520591451): one top-level TransferCheckedWithFee (amount 1000000, decimals 6, fee 10000); the recipient's token account AWFgCu\u2026yYKJ rose by 990000 and 10000 was withheld in it. solana-devnet.api.onfinality.io/public answered a null result for the same request on 2026-11-16, so it is read on one RPC only.",
+  "transactions": {
+    "4jLphZNL5PG2bdxAAUv77v9sTzX1LfunU1HG6vJgC4AGZHBDTAeJLFw9VSuj5QymFBphfvBqcShqywY4TPUdAXDF": {
+      "blockTime": 1794277431,
+      "meta": {
+        "computeUnitsConsumed": 4004,
+        "costUnits": 5804,
+        "err": null,
+        "fee": 5000,
+        "innerInstructions": [],
+        "loadedAddresses": {
+          "readonly": [],
+          "writable": []
+        },
+        "logMessages": [
+          "Program TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb invoke [1]",
+          "Program log: TransferFeeInstruction: TransferCheckedWithFee",
+          "Program TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb consumed 4004 of 200000 compute units",
+          "Program TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb success"
+        ],
+        "postBalances": [
+          46993120,
+          1574800,
+          1574800,
+          2926080,
+          1159846
+        ],
+        "postTokenBalances": [
+          {
+            "accountIndex": 1,
+            "mint": "7iJCvReXQqTqj7grTPzo3ggibPrSp5jcfghnmADjnoEn",
+            "owner": "EK5jKrBRwvQXXsSERGN6jEoYaofE2PNiZWQoaCLtrYPv",
+            "programId": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+            "uiTokenAmount": {
+              "amount": "9000000",
+              "decimals": 6,
+              "uiAmount": 9.0,
+              "uiAmountString": "9"
+            }
+          },
+          {
+            "accountIndex": 2,
+            "mint": "7iJCvReXQqTqj7grTPzo3ggibPrSp5jcfghnmADjnoEn",
+            "owner": "9WMgKdmRJBZy8WQ6Q9T6VjJN4wyT9jQenDvfvLFe471n",
+            "programId": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+            "uiTokenAmount": {
+              "amount": "1980000",
+              "decimals": 6,
+              "uiAmount": 1.98,
+              "uiAmountString": "1.98"
+            }
+          }
+        ],
+        "preBalances": [
+          46998120,
+          1574800,
+          1574800,
+          2926080,
+          1159846
+        ],
+        "preTokenBalances": [
+          {
+            "accountIndex": 1,
+            "mint": "7iJCvReXQqTqj7grTPzo3ggibPrSp5jcfghnmADjnoEn",
+            "owner": "EK5jKrBRwvQXXsSERGN6jEoYaofE2PNiZWQoaCLtrYPv",
+            "programId": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+            "uiTokenAmount": {
+              "amount": "10000000",
+              "decimals": 6,
+              "uiAmount": 10.0,
+              "uiAmountString": "10"
+            }
+          },
+          {
+            "accountIndex": 2,
+            "mint": "7iJCvReXQqTqj7grTPzo3ggibPrSp5jcfghnmADjnoEn",
+            "owner": "9WMgKdmRJBZy8WQ6Q9T6VjJN4wyT9jQenDvfvLFe471n",
+            "programId": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+            "uiTokenAmount": {
+              "amount": "990000",
+              "decimals": 6,
+              "uiAmount": 0.99,
+              "uiAmountString": "0.99"
+            }
+          }
+        ],
+        "rewards": [],
+        "status": {
+          "Ok": null
+        }
+      },
+      "slot": 520591451,
+      "transaction": {
+        "message": {
+          "accountKeys": [
+            "EK5jKrBRwvQXXsSERGN6jEoYaofE2PNiZWQoaCLtrYPv",
+            "8jZRyqhxw1SHKZWazXgvp8ydSaDN6cEPKv4nmpfSfkwL",
+            "AWFgCuNfEZ9Mc7CMxdWuEynabh8Mx6jHs7MFo3hmyYKJ",
+            "7iJCvReXQqTqj7grTPzo3ggibPrSp5jcfghnmADjnoEn",
+            "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+          ],
+          "header": {
+            "numReadonlySignedAccounts": 0,
+            "numReadonlyUnsignedAccounts": 2,
+            "numRequiredSignatures": 1
+          },
+          "instructions": [
+            {
+              "accounts": [
+                1,
+                3,
+                2,
+                0
+              ],
+              "data": "5m88b4kMKooQinML9Sp5DGDEdu",
+              "programIdIndex": 4,
+              "stackHeight": 1
+            }
+          ],
+          "recentBlockhash": "GxqcC3e3GFiSVX6YLqTupB4kkzHFuhSFjbpzkWwUft4m"
+        },
+        "signatures": [
+          "4jLphZNL5PG2bdxAAUv77v9sTzX1LfunU1HG6vJgC4AGZHBDTAeJLFw9VSuj5QymFBphfvBqcShqywY4TPUdAXDF"
+        ]
+      },
+      "transactionIndex": 3,
+      "version": "legacy"
+    }
+  }
+}

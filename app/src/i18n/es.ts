@@ -2330,4 +2330,8 @@ export const es: Readonly<Partial<Record<StringId, string>>> = {
   'handle.renew.buttonLabel': 'Renovar {name} por {days} días',
   'send.btc.assetsWarning': 'Esta billetera no sigue las inscripciones de Ordinals ni las Runes. Un envío normal de Bitcoin, y Máx. en particular, puede gastar salidas que las contengan, lo que puede entregarlas al destinatario o al minero. Si esta dirección ha recibido alguna vez una inscripción o Runes, no envíes desde ella con esta billetera.',
   // ---- END phase 27 items 2 and 3 ----
+  // ---- BEGIN phase 27 item 1 (Activity). Spanish drafts, pending a native reviewer.
+  'activity.solana.receivedWithheld': 'Recibiste {amount} {asset} de {from}; además, {fee} {asset} quedaron retenidos en la cuenta de token de esta cuenta como comisión de transferencia del emisor',
+  'activity.solana.receivedUnnamedWithheld': 'Recibiste {amount} {asset}; además, {fee} {asset} quedaron retenidos en la cuenta de token de esta cuenta como comisión de transferencia del emisor; la transacción no indica un único remitente',
+  // ---- END phase 27 item 1 (Activity) ----
 };

@@ -164,7 +164,9 @@ export interface TokenMeta {
    * decimals come from that table, never from the contract, and the preview
    * names it "aArbSepUSDC (pinned lending token)" (pass p26-emu2 finding 6:
    * the Lend previews read "untracked token 0x460b…1216"). Kept apart from
-   * `pinned`, which the engine's Activity labels read as a staking token.
+   * `pinned`, which the engine's Activity labels read as a staking token;
+   * the engine's ActivityTokenMeta.pinnedLending reads this flag, so Activity
+   * names the token the same way (phase 27 item 1).
    */
   pinnedLending?: boolean;
 }

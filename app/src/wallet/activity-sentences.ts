@@ -329,6 +329,33 @@ export interface ActivityDecoder {
   mayDecode(id: string): boolean;
 }
 
+/**
+ * A transport for one decode of `hash` that keeps the first non-null answer
+ * to eth_getTransactionByHash and eth_getTransactionReceipt for exactly that
+ * hash (case ignored) and answers a repeat of either from it; every other
+ * call, and a null answer, goes to `inner` as before. The follow-up readers
+ * (bridgeSendForDescription, ensRenewalForDescription) thus read the very
+ * transaction and receipt the description was built from, with no second
+ * request: on a load-balanced endpoint a second read can reach a backend
+ * that answers null (pass p27-emu1 finding 1). Pure apart from `inner`.
+ */
+export function rememberingTransport(inner: JsonRpcTransport, hash: string): JsonRpcTransport {
+  const kept = new Map<string, unknown>();
+  const wanted = hash.toLowerCase();
+  return async (method, params) => {
+    const remembered =
+      (method === 'eth_getTransactionByHash' || method === 'eth_getTransactionReceipt') &&
+      Array.isArray(params) &&
+      params.length === 1 &&
+      typeof params[0] === 'string' &&
+      params[0].toLowerCase() === wanted;
+    if (remembered && kept.has(method)) return kept.get(method);
+    const answer = await inner(method, params);
+    if (remembered && answer !== null && answer !== undefined) kept.set(method, answer);
+    return answer;
+  };
+}
+
 export function createActivityDecoder(options: ActivityDecoderOptions): ActivityDecoder {
   const walletKey = options.wallet.map((a) => a.toLowerCase()).sort().join(',');
   const keyFor = (hash: string) => `${options.chainCaip2}|${walletKey}|${hash.toLowerCase()}`;
@@ -374,8 +401,8 @@ export function createActivityDecoder(options: ActivityDecoderOptions): Activity
     return out;
   };
 
-  /** Token metadata for a description, read through `url`. */
-  async function withTokens(url: string, description: ActivityDescription): Promise<DecodedActivity> {
+  /** Token metadata for a description, read through `url` (the follow-up readers through `transport`, see attempt()). */
+  async function withTokens(url: string, transport: JsonRpcTransport, description: ActivityDescription): Promise<DecodedActivity> {
     // The preview's resolver takes balance changes; present each contract
     // the sentence may name as a zero-amount change so the same tracked-
     // list matching, eth_call reads, cap and sanitizing apply.
@@ -397,9 +424,9 @@ export function createActivityDecoder(options: ActivityDecoderOptions): Activity
           ...(options.fetchMetadata ? { fetchMetadata: options.fetchMetadata } : {}),
         })
       : {};
-    const rocketDepositPool = await rocketDepositPoolForDescription(httpTransport(url), options.chainCaip2, description);
-    const bridgeSend = await bridgeSendForDescription(httpTransport(url), options.chainCaip2, description);
-    const ensRenewal = await ensRenewalForDescription(httpTransport(url), options.chainCaip2, description);
+    const rocketDepositPool = await rocketDepositPoolForDescription(transport, options.chainCaip2, description);
+    const bridgeSend = await bridgeSendForDescription(transport, options.chainCaip2, description);
+    const ensRenewal = await ensRenewalForDescription(transport, options.chainCaip2, description);
     return {
       description,
       tokens,
@@ -413,11 +440,21 @@ export function createActivityDecoder(options: ActivityDecoderOptions): Activity
 
   /** One decode through `url`: a description, a missing answer (null transaction or receipt), or another outcome. */
   async function attempt(url: string, hash: string): Promise<Attempt> {
-    const outcome = await decodeActivity(httpTransport(url), hash, {
+    // One transport for the whole decode: the transaction and receipt the
+    // engine read are kept and handed to the follow-up readers (the bridge
+    // and renewal facts), which otherwise asked the endpoint again. Pass
+    // p27-emu1 finding 1: publicnode's Sepolia endpoint is load-balanced,
+    // and its reth backend answers null for the receipt of the Kernel's
+    // renewal bundle 0x874eceae… (6 of 8 batched reads on 2026-11-16) while
+    // its geth backend serves it; the decode got its receipt from geth,
+    // the second read hit reth, the renewal facts came back null and the
+    // row was cached without them.
+    const transport = rememberingTransport(httpTransport(url), hash);
+    const outcome = await decodeActivity(transport, hash, {
       wallet: options.wallet,
       chainId: options.evmChainId,
     });
-    if (outcome.status === 'ok') return { kind: 'ok', value: await withTokens(url, outcome.description) };
+    if (outcome.status === 'ok') return { kind: 'ok', value: await withTokens(url, transport, outcome.description) };
     // 'not-found' and 'receipt-unavailable' are answers that leave out a
     // transaction known to exist (when the history listed it); 'pending'
     // is not retried elsewhere.
@@ -1122,14 +1159,13 @@ export async function ensRenewalForDescription(
 }
 
 /**
- * "called ENS’s registrar 0xf633…a3d3 to renew qzv7hk2wmt.eth for 28 days"
- * for exactly the renew() the facts were read for, else null. "called" is
- * one of the engine's ACTIVITY_CALL_VERBS (activity-decode.ts 1826–1847);
- * "renewed" is not, and a phrase starting with an unlisted verb is ignored
- * by the engine (customPhrase, 1618–1624), so the wording says what was
- * called and what for; what the logs show (the USDC paid) follows after a
- * colon (added by the engine), and a reverted renewal reads "tried to call
- * … to renew …".
+ * "renewed qzv7hk2wmt.eth for 28 days with ENS’s registrar 0xf633…a3d3"
+ * for exactly the renew() the facts were read for, else null. "renewed" is
+ * one of the engine's ACTIVITY_CALL_VERBS (activity-decode.ts PAST_TO_PRESENT,
+ * added in phase 27 item 1; a phrase starting with an unlisted verb is
+ * ignored by the engine's customPhrase); what the logs show (the USDC paid)
+ * follows after a colon (added by the engine), and a reverted renewal reads
+ * "tried to renew … with ENS’s registrar …".
  */
 export function ensRenewPhrase(
   facts: EnsRenewalFacts | null | undefined,
@@ -1137,7 +1173,7 @@ export function ensRenewPhrase(
 ): string | null {
   if (!facts || call.to.toLowerCase() !== facts.registrar.toLowerCase() || call.value !== 0n) return null;
   if (call.selector === null || call.selector.toLowerCase() !== ENS_RENEW_SELECTOR) return null;
-  return `called ${ensRegistrarActivityLabel(facts.registrar)} to renew ${facts.label}.eth for ${renewDurationPhrase(facts.duration)}`;
+  return `renewed ${facts.label}.eth for ${renewDurationPhrase(facts.duration)} with ${ensRegistrarActivityLabel(facts.registrar)}`;
 }
 
 /** "Lido wstETH contract 0xB823…067b": how a sentence names a pinned staking contract. */

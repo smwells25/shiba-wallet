@@ -13241,7 +13241,9 @@
   "aa.prePrompt.bundler",
   "aa.prePrompt.final",
   "handle.renew.buttonLabel",
-  "send.btc.assetsWarning"
+  "send.btc.assetsWarning",
+  "activity.solana.receivedWithheld",
+  "activity.solana.receivedUnnamedWithheld"
  ],
  "changed": {
   "activity.note.privacy": {
