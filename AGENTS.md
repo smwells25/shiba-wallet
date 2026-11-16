@@ -21404,3 +21404,81 @@ tails); 2 — the emulator pass; 5 last. Subagents on Opus.
       WalletConnect sheet, the Multisig confirm staying up while the prompt
       opens, TalkBack on each screen, whether "bundler" ever flashes before
       "final" where the stage is set synchronously.
+- [x] EMULATOR PASS p27-emu2 — THE PHASE 27 SLICES SEEN LIVE: THE BUSY STATE,
+      THE KERNEL RENEWAL NAMED IN ACTIVITY ON FIVE OF FIVE LOADS, THE WITHHELD
+      FEE ROW, THE BITCOIN WARNING; ONE REFUSAL STILL CAME AFTER THE DEVICE
+      PROMPT (2026-11-16 09:11–~11:00 UTC; Expo Go on emulator 37.1.11 under
+      -gpu swangle, Metro moved to wt-app at 0ea0e27 with the engine rebuilt
+      inside it (node 60303 on 8081, 1,958 modules); the REAL wallet; 13
+      prompts, each title read from the prompt window, 7 of them cancelled on
+      purpose; no repository file touched; .dev-wallet never read; nothing
+      from the dev EOA; NO ENS renewal approved; THE CTO RE-READ both Arbitrum
+      Sepolia bundle receipts on publicnode and sepolia-rollup (identical
+      status, block, gas, log count and block hash) and the Kernel's USDC and
+      aToken balances there; the report with screencaps and redacted dumps in
+      the session scratchpad p27-emu2/REPORT.md; CI green on 922a2c9). (A)
+      THE BUSY STATE — the line "Checking the bundler's gas estimate before
+      asking you to approve. This can take up to about half a minute; nothing
+      has been signed." under a disabled Approve with a spinner on the
+      smart-account Send, the Lido stake, the Multisig confirm (which stays on
+      screen while the check runs), the Kernel renewal and Lend; each
+      cancelled prompt re-enabled both buttons; a second tap during the check
+      did nothing and exactly one prompt followed; LEND ON ARBITRUM SEPOLIA
+      from the Kernel: 5 of 7 Reviews refused at Review after about 27 s
+      ("…on all 8 attempts"), no prompt; the supply of 0.1 USDC — bundle
+      0x71aaa9e890ec1c8777dff4c4d984b61d2035c243269af4e1b406fb6055f274d0,
+      block 329747252, status 0x1, 307,323 gas, userOp 0xeafd6dad…a8b0 nonce
+      6, actualGasCost 6,752,340,832,000; THE WITHDRAWAL'S FIRST ATTEMPT
+      PASSED THE PRE-PROMPT CHECK, RAISED ITS ONE PROMPT, AND WAS THEN REFUSED
+      at the send-time estimate ("The bundler's gas estimate was
+      impossible…", "The operation was not signed or submitted.") — nothing
+      sent, one prompt wasted (finding 1: what is left of F-97); the second
+      attempt, after four more Review refusals, went through — bundle
+      0x74dd29b4d5dcfa40776b005d4b4421943b95b4d711605ef78b4639d8f2f1f264,
+      block 329749875, status 0x1, 284,157 gas, userOp 0x5be1efcb…a02f nonce
+      7, actualGasCost 5,974,898,598,000, Withdraw of 100,001; the Kernel's
+      ETH unchanged, USDC 745,441 → 645,441 → 745,442 (one base unit of Aave
+      rounding or interest; the supply of exactly 100,000 read 100,001 as the
+      aToken balance at once), aToken 0, the EntryPoint deposit
+      25,232,737,980,028 → 12,505,498,550,028 (minus the two costs, exact).
+      (B) WALLET HANDLE: TalkBack "Renew qzv7hk2wmt.eth for 28 days. Button" /
+      "Renew xk9fdq4rvz.eth for 28 days. Button"; "Paid by: Account 1's smart
+      account, 0xD31c…D8FA" and "Owner of the name: …" each one stop; both
+      names still expire 2026-12-22. (C) ACTIVITY: the Kernel row "Smart-account
+      operation: approved USDC for ENS's registrar 0xf633…a3d3 (up to
+      0.613701 USDC), renewed xk9fdq4rvz.eth for 28 days with ENS's registrar
+      0xf633…a3d3: sent 0.613701 USDC" on 5 of 5 loads (first open, a pull to
+      refresh, three reopens, a cold relaunch) — the f7a9b18 fix holds; the
+      regular account's "Renewed qzv7hk2wmt.eth for 28 days with ENS's
+      registrar …"; on Solana devnet Account 2's row "Received 0.99 SFEE from
+      EK5j…rYPv; 0.01 SFEE more was withheld in this account's token account
+      as the issuer's transfer fee", spoken "(amount hidden)" under Hide
+      amounts; the 2026-11-09 script transfer that also CREATED the
+      recipient's token account reads only "Received 0.99 SFEE from
+      6TgS…455t" — by design (an inner Token-2022 instruction makes the rule
+      refuse; finding 4). (D) the EVM limit card's Remove spoken "Remove the
+      test ETH limit on Ethereum Sepolia. Button"; a 0.001 test ETH limit
+      added and removed behind one prompt. (E) THE BITCOIN WARNING on Account
+      1's Bitcoin Send form once, read once by TalkBack; no box on the
+      Ethereum or Solana forms; the Bitcoin confirm not reached (0 BTC). (F)
+      ESPAÑOL: the busy line, the Bitcoin warning and the withheld row are
+      Spanish; still English — the cancel alert, the confirm's preview and
+      risk sections, the "BTC address" placeholder, Home's Solana devnet card
+      lines. FINDINGS (fix slice dispatched for 1, 2 and 5): (1) the
+      send-time estimate after the prompt can still answer zero although the
+      pre-prompt estimate passed seconds earlier; (2) TalkBack announces the
+      busy line twice per check; (3) the "Running the last checks…" stage
+      never seen; (4) above; (5) the wallet handle's cancel alert is titled
+      "Back" where the other screens say "Not sent"; (6) the Spanish gaps;
+      (7) after a cancel or refusal Multisig returns to the collecting view
+      and Lend to its form; (9) the Ethereum Sepolia testnet banner shows on
+      the Bitcoin mainnet Send form (pre-existing); (10) a linear TalkBack
+      walk skipped the last rows of Account 2's Activity. NOT VERIFIED: a zero
+      refusal DURING the pre-prompt check with the buttons re-enabling in
+      place; the Dogecoin form; a second Solana RPC (OnFinality answered
+      -32029); iOS. END STATE: Home, Ethereum Sepolia, Account 1, devnet OFF,
+      Hide amounts OFF, language System, light mode, protection OFF, TalkBack
+      OFF (level 6), IME ADBKeyboard, no spending limit, no Aave position;
+      Metro node 60303 on 8081 from wt-app at 0ea0e27; qemu 86708 with
+      caffeinate 86986, the window in front. Ethereum Sepolia and Solana
+      devnet balances unchanged.
