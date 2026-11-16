@@ -21060,3 +21060,113 @@ flagged spam NFT and an ERC-1155 name-token send, never seen or sent; the
 gains report with real figures; THREAT_MODEL's "Row updates" lines put in
 date order; both wallet names expire again on 2026-12-22 and cost 0.613701
 test USDC each to renew.
+
+## After phase 26 (2026-11-16): follow-up passes before a phase 27 plan
+
+Phase 27 has no approved plan yet; the Chairperson's "pick up where we
+left off" of 2026-11-16 is acted on by taking the first no-input follow-up
+of the phase 26 status.
+
+- [x] EMULATOR PASS p27-emu1 — THE TWO OFFLINE-ONLY FIX SLICES 9d0bb65 AND
+      e728e4e SEEN LIVE; F-97'S FIX HOLDS (2026-11-16 03:58–~05:45 UTC; Expo
+      Go on emulator 37.1.11 under -gpu swangle, Metro moved to wt-app at
+      fd5c590 with the engine rebuilt inside it (node 83265 on 8081, 1,963
+      modules); the REAL wallet; 8 prompts, each title read from the
+      BiometricPrompt window — "Unlock Shiba Wallet", "Supply 0.1 USDC to
+      Aave from your smart account", "Withdraw all your USDC from Aave from
+      your smart account", "Approve exactly 0.1 USDC for Aave's Pool",
+      "Supply 0.1 USDC to Aave", "Withdraw all your USDC from Aave", and
+      "Remove your spending limit" twice; no repository file touched;
+      .dev-wallet never read; nothing from the dev EOA; no renewal sent; THE
+      CTO RE-READ the five Arbitrum Sepolia receipts on publicnode and
+      sepolia-rollup (identical status, block, gas and log count) and both
+      accounts' final balances there; the report with dumps and one
+      screenshot in the session scratchpad p27-emu1/REPORT.md). (E1, F-97)
+      THE KERNEL'S SUPPLY of 0.1 USDC on Arbitrum Sepolia: the confirm's
+      heading, the preview ("You receive 0.1 aArbSepUSDC (pinned lending
+      token)", "Approval: 0xBfC9…2Eff may spend up to 0.1 USDC") and the
+      pinned Pool risk line; the prompt 19 s after the button; userOp
+      0xda37f9b4…b608, bundle tx
+      0x971e28cf3f633ba18af6ae7df43db4d8678a79a78c5b89dda0ac59a8c2761fcb,
+      block 329668812, status 0x1, 307,323 gas, nonce 4, actualGasCost
+      6,810,355,216,000; THE WITHDRAWAL'S FIRST ATTEMPT WAS REFUSED 26 s
+      AFTER THE BUTTON WITH NO DEVICE PROMPT — "The bundler's gas estimate
+      was impossible." with the technical line "…on all 8 attempts
+      (verificationGasLimit is 0, …)" — the second attempt was refused at
+      Review, the third went through (prompt 2 s after the button; userOp
+      0xcfee6052…c061, bundle tx
+      0x86540247ee2959f57417b31572f50ac64f9c63adedd403d12a2314974538598f,
+      block 329670637, status 0x1, 284,133 gas, nonce 5, actualGasCost
+      5,990,208,282,000); no refusal came after any prompt; the Kernel's ETH
+      unchanged, USDC 745,441 back exactly, the EntryPoint deposit
+      38,033,301,478,028 → 25,232,737,980,028 (minus the two costs, exact).
+      (E2) THE REGULAR ACCOUNT: the approve step now has its preview
+      ("Approval: 0xBfC9…2Eff may spend up to 0.1 USDC") and the pinned
+      spender line; approve
+      0x01025d79e112e56ec2d8bbeb971d02e98166c45bb430b20283ec905df417db1d
+      block 329671293, 55,437 gas; supply
+      0xeba7bc86104422fb07f0b1fe60f3ddcfa44a76dff57c71bd5311fc2a0383f96e
+      block 329671606, 200,187 gas, the preview naming the pinned lending
+      token, the success view showing "Approval transaction: 0x…"; withdraw
+      0x1a21fe5dc7fb94f3977eacf93e8e6c456ad5eab04fc800755958b77286c7b15d
+      block 329672122, 186,993 gas; Account 1 185,299,333,600,000 →
+      176,438,222,278,000 wei (the three fees, exact), nonce 8 → 11, USDC
+      1,000,000, aToken 0. (E3) WALLET HANDLE on Ethereum Sepolia: "Your
+      names" owner rows "Account 1" / "Account 1's smart account" with the
+      short address below and the 2026-12-22 expiries; the Kernel renewal's
+      confirm heading "One operation, all-or-nothing: (1) approve exactly
+      0.613701 USDC for ENS's registrar, (2) the renewal of xk9fdq4rvz.eth
+      for 28 days. If the renewal would fail, the approval is undone with
+      it." and the risk card aimed at the pinned ETHRegistrar; backed out,
+      nothing sent (the UserOperation hash on the success view and the
+      regular account's "Approval transaction" line on a renewal therefore
+      NOT seen). (E4) TalkBack: each renewal-review row and each owner row
+      one stop. (E5) ACTIVITY, PARTIAL: the regular account's rows read
+      "Called ENS's registrar 0xf633…a3d3 to renew qzv7hk2wmt.eth for 28
+      days: sent 0.613701 USDC" and "Approved USDC for ENS's registrar
+      0xf633…a3d3 (up to 0.613701 USDC)"; THE KERNEL'S ROW names the
+      registrar but NOT the renewal ("Smart-account operation: approved
+      USDC for ENS's registrar … , called ENS's registrar 0xf633…a3d3: sent
+      0.613701 USDC") — the NameRenewed-log path of e728e4e did not show
+      (finding 1). (E6) the Solana limit card on devnet: saved with no
+      prompt, TalkBack "Mint 4zMMC9…ncDU" and "Remove the USDC limit on
+      Solana devnet. Button", removed behind one prompt. (N1) Account 2 on
+      devnet: "0.02 SFEE is withheld in this token account as the issuer's
+      transfer fee; it is not yours to send.", masked under Hide amounts
+      and spoken "(amount hidden) SFEE is withheld…"; the Dogecoin card's
+      no-endpoint line. (N2) NOT REACHABLE: the risk overview holds no
+      Solana pending entry, so the 9d0bb65 Solana label was not seen; its
+      section listed 17 old entries, every one labelled Account 1 (Arbitrum
+      Sepolia 3 + 3, Hoodi 1, Base Sepolia 10). (N3) the SFEE Review's note
+      "(at most 1 SFEE per transfer)", nothing sent. (N4, F-94) Ethereum
+      mainnet with devnet on: Portfolio "test SOL on Solana devnet … test
+      asset, no value", "Profit and loss for SOL is not offered while Solana
+      devnet is on: devnet SOL has no price.", no SOL button; devnet off →
+      "SOL on Solana" back. (E7) ESPAÑOL, PARTIAL: the owner rows, the
+      expiry lines, the Kernel confirm heading and the limit's spoken Remove
+      label are Spanish; still English: the withheld line, the SFEE Review,
+      the renewal's risk line, the devnet switch and its note, the EVM half
+      of Spending limits, the Solana limit card lines and window chips, and
+      one mixed sentence ("…un envío cuenta durante 1 hour después de
+      enviarse."). Solana devnet balances unchanged (one RPC only —
+      OnFinality rate-limited every read); Ethereum Sepolia unchanged.
+      FINDINGS: (1) the Kernel renewal's Activity row above; (2) after the
+      pre-prompt refusal OK returns to the Lend form, not the confirm (safe);
+      (3) the pre-prompt check took 19–26 s and whether the button shows a
+      busy state was not established (the e728e4e follow-up); (4) the
+      renewal confirm's owner row and the reviews' "Paid by" row show an
+      address with no account label; (5) the two "Renew for 28 days" buttons
+      sound identical under TalkBack; (6) the Spanish gaps; (7) today's
+      Arbitrum operations count as "sent more than 10 minutes ago" in the
+      risk overview until Activity is opened there; (8) Account 2 with 0
+      test SOL still gets three Solana token Send links (finding F,
+      unchanged); (9) Expo Go's Tools bubble overlaps the devnet switch at
+      one scroll position. Driving slips: one Settings scroll stopped with
+      the Danger zone on screen (nothing tapped), one tap hit Max before any
+      Review (retyped), one opened the dev menu, one opened the Inbox.
+      THREAT_MODEL F-94, F-95 (the Home half), F-96 and F-97 now say they
+      were seen in this pass; F-93 stays verified offline only. END STATE:
+      Home, Ethereum Sepolia, Account 1, devnet OFF, Hide amounts OFF,
+      language System, light mode, protection OFF, TalkBack OFF (level 6),
+      IME ADBKeyboard, no Solana limit, Metro node 83265 on 8081 from wt-app
+      at fd5c590, qemu 86708 with caffeinate 86986, the window in front.
