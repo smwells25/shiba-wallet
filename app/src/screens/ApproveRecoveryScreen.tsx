@@ -247,11 +247,12 @@ export function ApproveRecoveryScreen({ navigation, route }: Props) {
   /**
    * The guardian's recovery submission, under the pre-prompt guard (phase
    * 27 item 2): from the tap until the handler returns the confirm's
-   * buttons are disabled and a second tap starts nothing. This submission
-   * is not made by prepareAaCalls, so checkAaQuoteBeforeApproval reads only
-   * the bundler's fee floor and runs no gas estimate
-   * (aaQuoteHasPrePromptEstimate): the line then says only that the last
-   * checks run ('final'), never that a gas estimate is being checked.
+   * buttons are disabled and a second tap starts nothing. Since phase 28
+   * prepareGuardianSubmission registers a bundler estimate of the
+   * submission (recovery.ts), so checkAaQuoteBeforeApproval runs one before
+   * the device prompt and the line names it ('bundler'); a quote without a
+   * registered estimate would get only the last checks ('final'), never a
+   * claim that a gas estimate is being checked.
    */
   const onSubmitTap = () => void prePrompt.guard.run((step) => onSubmit(step));
   const onSubmit = async (step: PrePromptStep) => {

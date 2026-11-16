@@ -62,6 +62,8 @@ import {
   aaSelfPaidFeeSentence,
   aaQuoteHasPrePromptEstimate,
   aaPreCheckedEstimateFor,
+  carryPrePromptEstimate,
+  registerPrePromptEstimate,
   checkAaQuoteBeforeApproval,
   AA_FEE_FLOOR_HEADROOM_PERCENT,
   AA_QUOTE_ALREADY_USED,
@@ -2861,7 +2863,8 @@ await (async () => {
   }
   {
     // M-P1: the pre-prompt estimate not run.
-    const m = await mutant('  const estimate = prePromptEstimates.get(quote);\n  if (estimate) await estimate();\n', '');
+    // Phase 28 item 1: the check now keeps or drops the passing estimate itself (the anchor changed in place; the mutant still removes the run).
+    const m = await mutant('  const estimate = prePromptEstimates.get(quote);\n  if (estimate) {\n', '  const estimate = undefined;\n  if (estimate) {\n');
     const b = scripted([REAL], { estimateRetries: NO_WAIT }, m);
     const q = await m.prepareAaSend(b.bundle, owner.address, RECIPIENT, AMOUNT);
     b.answer([ZERO]);
@@ -3005,15 +3008,20 @@ await (async () => {
     b.answer([REAL]);
     await checkAaQuoteBeforeApproval(b.bundle.bundler, q);
     const kinds = [];
-    for (const [key, value] of [['sponsored', true], ['tokenGas', { source: 'circle' }], ['passkey', true]]) {
+    for (const [key, value] of [['sponsored', true], ['tokenGas', { source: 'circle' }]]) {
       const before = q[key];
       q[key] = value;
       kinds.push(aaPreCheckedEstimateFor(q) === undefined);
       if (before === undefined) delete q[key];
       else q[key] = before;
     }
-    check('pass p27-emu2: never for a sponsored, USDC-fee or passkey quote (a paymaster changes the operation the bundler estimates)',
+    check('pass p27-emu2: never for a sponsored or USDC-fee quote (a paymaster changes the operation the bundler estimates)',
       kinds.every(Boolean) && aaPreCheckedEstimateFor(q) !== undefined);
+    // Phase 28 item 1: a passkey quote may have one now (its pre-prompt estimate is of the passkey spec's own stub operation,
+    // with no paymaster; sendPasskeyCalls passes it). The flag alone no longer withholds it.
+    q.passkey = true;
+    check('phase 28 item 1: a passkey quote whose pre-prompt check passed keeps its estimate (no paymaster takes part)', aaPreCheckedEstimateFor(q) !== undefined);
+    delete q.passkey;
   }
   {
     // Without the pre-prompt check sendAa passes nothing: the behaviour before this fix (pinned above at "zero at send time on every attempt").
@@ -3049,12 +3057,91 @@ await (async () => {
   }
   {
     // M-P7: a sponsored quote gets one.
-    const m = await mutant('  if (quote.sponsored || quote.tokenGas || quote.passkey) return undefined;\n', '  if (quote.tokenGas || quote.passkey) return undefined;\n');
+    // Phase 28 item 1: the passkey exclusion was removed (the anchor changed in place; the mutant still drops "sponsored").
+    const m = await mutant('  if (quote.sponsored || quote.tokenGas) return undefined;\n', '  if (quote.tokenGas) return undefined;\n');
     const b = scripted([REAL], { estimateRetries: NO_WAIT }, m);
     const q = await m.prepareAaSend(b.bundle, owner.address, RECIPIENT, AMOUNT);
     await m.checkAaQuoteBeforeApproval(b.bundle.bundler, q);
     q.sponsored = true;
     check('M-P7 caught: a sponsored quote would get a pre-checked estimate (the check above would fail)', m.aaPreCheckedEstimateFor(q) !== undefined);
+  }
+
+  // ---------------------------------------------------------------------
+  // Phase 28 item 1: the pre-prompt estimate for quotes the other wrappers
+  // make. registerPrePromptEstimate (the ERC-7677 USDC-fee quote, the guardian
+  // recovery submission) and carryPrePromptEstimate (the passkey quote, a
+  // copy of a prepareAaCalls quote) give checkAaQuoteBeforeApproval the same
+  // run-after-the-floor estimate, keep what the check returns (null: nothing)
+  // and say so through aaQuoteHasPrePromptEstimate.
+  console.log('\ncheck-aa: the pre-prompt estimate for the other quote wrappers (phase 28 item 1)');
+  {
+    const b = scripted([REAL], { estimateRetries: NO_WAIT });
+    const q = await prepareAaSend(b.bundle, owner.address, RECIPIENT, AMOUNT);
+    const copy = { ...q, passkey: true };
+    check('phase 28 item 1: a copy has no pre-prompt estimate until carryPrePromptEstimate gives it the original\'s',
+      aaQuoteHasPrePromptEstimate(copy) === false && (carryPrePromptEstimate(q, copy), aaQuoteHasPrePromptEstimate(copy) === true));
+    const at = b.state.estimates;
+    await checkAaQuoteBeforeApproval(b.bundle.bundler, copy);
+    const kept = aaPreCheckedEstimateFor(copy);
+    check('phase 28 item 1: the carried check asks the bundler once and keeps its estimate for the COPY (the stand-in sendPasskeyCalls passes)',
+      b.state.estimates === at + 1 && kept !== undefined && kept.op.nonce === 7n && aaPreCheckedEstimateFor(q) === undefined);
+    b.answer([ZERO]);
+    const e = await checkAaQuoteBeforeApproval(b.bundle.bundler, copy).then(() => null, (x) => x);
+    check('phase 28 item 1: …and a zero burst at the carried check throws the engine\'s ImpossibleGasEstimateError before any prompt, leaving no estimate behind',
+      isImpossibleGasEstimateError(e) && aaPreCheckedEstimateFor(copy) === undefined && b.state.sends === 0, e?.message);
+    const nothing = {};
+    carryPrePromptEstimate({}, nothing);
+    check('phase 28 item 1: carrying from an object without an estimate gives nothing', aaQuoteHasPrePromptEstimate(nothing) === false);
+  }
+  {
+    // registerPrePromptEstimate: run after the floor check, the null result keeps nothing, a throw passes on.
+    const b = scripted([REAL], { estimateRetries: NO_WAIT });
+    const q = await prepareAaSend(b.bundle, owner.address, RECIPIENT, AMOUNT);
+    const wrapper = { maxFeePerGas: q.maxFeePerGas, maxPriorityFeePerGas: q.maxPriorityFeePerGas };
+    let runs = 0;
+    registerPrePromptEstimate(wrapper, async () => {
+      runs += 1;
+      return null;
+    });
+    check('phase 28 item 1: a registered wrapper says it has a pre-prompt estimate', aaQuoteHasPrePromptEstimate(wrapper) === true);
+    await checkAaQuoteBeforeApproval(b.bundle.bundler, wrapper);
+    check('phase 28 item 1: the registered check runs once at checkAaQuoteBeforeApproval and its null result keeps nothing', runs === 1 && aaPreCheckedEstimateFor(wrapper) === undefined);
+    b.state.floor = { maxFeePerGas: '0x' + (q.maxFeePerGas * 10n).toString(16), maxPriorityFeePerGas: '0x' + (q.maxPriorityFeePerGas * 10n).toString(16) };
+    const floorError = await checkAaQuoteBeforeApproval(b.bundle.bundler, wrapper).then(() => null, (x) => x);
+    check('phase 28 item 1: the fee-floor check still runs first for a registered wrapper (no estimate asked when the floor refuses)',
+      floorError instanceof AaFeeRoseError && floorError.reason === 'floor' && runs === 1);
+    b.state.floor = null;
+    const plain = { maxFeePerGas: q.maxFeePerGas, maxPriorityFeePerGas: q.maxPriorityFeePerGas };
+    const zeroError = new Error('stub');
+    registerPrePromptEstimate(plain, async () => {
+      throw zeroError;
+    });
+    const thrown = await checkAaQuoteBeforeApproval(b.bundle.bundler, plain).then(() => null, (x) => x);
+    check('phase 28 item 1: what a registered check throws is thrown by checkAaQuoteBeforeApproval (the screens refuse before the prompt)', thrown === zeroError);
+    const keep = { maxFeePerGas: q.maxFeePerGas, maxPriorityFeePerGas: q.maxPriorityFeePerGas };
+    const fake = { op: { nonce: 1n }, estimate: {}, checkedAtMs: 1, chainId: 1n, entryPoint: ENTRYPOINT_V07 };
+    registerPrePromptEstimate(keep, async () => fake);
+    await checkAaQuoteBeforeApproval(b.bundle.bundler, keep);
+    check('phase 28 item 1: a registered check that returns an estimate has it kept for the send (aaPreCheckedEstimateFor)', aaPreCheckedEstimateFor(keep) === fake);
+  }
+  {
+    // M-P8: carryPrePromptEstimate gives nothing (the code before this slice: the passkey quote had no estimate).
+    const m = await mutant('  if (check) prePromptEstimates.set(to, check);\n', '');
+    const b = scripted([REAL], { estimateRetries: NO_WAIT }, m);
+    const q = await m.prepareAaSend(b.bundle, owner.address, RECIPIENT, AMOUNT);
+    const copy = { ...q, passkey: true };
+    m.carryPrePromptEstimate(q, copy);
+    b.answer([ZERO]);
+    const e = await m.checkAaQuoteBeforeApproval(b.bundle.bundler, copy).then(() => null, (x) => x);
+    check('M-P8 caught: without the carry a passkey quote reaches the prompt through a zero burst (the check above would fail)', e === null);
+  }
+  {
+    // M-P9: the kept estimate dropped (the check's result ignored).
+    const m = await mutant('    if (passed) prePromptPassed.set(quote, passed);\n', '');
+    const b = scripted([REAL], { estimateRetries: NO_WAIT }, m);
+    const q = await m.prepareAaSend(b.bundle, owner.address, RECIPIENT, AMOUNT);
+    await m.checkAaQuoteBeforeApproval(b.bundle.bundler, q);
+    check('M-P9 caught: without keeping the passing estimate there is no stand-in for sendAa (the p27-emu2 checks above would fail)', m.aaPreCheckedEstimateFor(q) === undefined);
   }
 })();
 

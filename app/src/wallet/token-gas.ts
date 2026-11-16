@@ -53,6 +53,8 @@ import {
   quoteFeesOverFloor,
   TOKEN_GAS_PADDING_PCT,
   getAaConfig,
+  erc7677TokenGasClient,
+  registerPrePromptEstimate,
   isImpossibleGasEstimateError,
   isPrefundError,
   type AaChainConfig,
@@ -127,6 +129,18 @@ import { t } from '../i18n/index.ts';
  * charge can never exceed what the user saw. The real operation's limits are
  * far smaller than the ceiling, so the final prefund (and the permit) is
  * normally well below it, and postOp refunds the unused part.
+ * For the same reason a Circle quote has NO pre-prompt estimate either
+ * (phase 28 item 1, aa.ts checkAaQuoteBeforeApproval): the operation the
+ * bundler would estimate carries that signed permit in its paymaster stub
+ * (packages/chains-evm/src/token-paymaster.ts createCirclePaymasterTransport,
+ * whose stub branch calls signPermit), and the owner key may be read only
+ * after the device prompt. A placeholder permit with no valid signature
+ * would not be the operation that is signed, and it grants no allowance, so
+ * unless the account had already approved the paymaster the simulation
+ * would fail as the phase 13 negatives did (AA33 "exceeds allowance", in
+ * AGENTS.md). So the check before the prompt reads only the bundler's
+ * fee floor, and the busy line says so ('final'). The ERC-7677 source below
+ * has one (registerErc7677PrePromptEstimate).
  *
  * SPENDING LIMITS. The USDC fee does NOT count toward any app spending
  * limit. Spending limits count network fees only under countFees, and
@@ -1298,6 +1312,31 @@ function erc7677Calls(tokenGas: AaTokenGas, userCalls: Call[]): Call[] {
   return [erc7677TokenApproveCall(tokenGas.token, tokenGas.paymaster, tokenGas.maxTokenCharge), ...userCalls];
 }
 
+/**
+ * Phase 28 item 1: the ERC-7677 USDC-fee quote's pre-prompt estimate, run by
+ * aa.ts checkAaQuoteBeforeApproval just before the device prompt. Unlike
+ * Circle's path, this source can be estimated before the prompt (its stub
+ * needs no signature from the account, see Erc7677Facts), and it is asked
+ * through the very client sendAa will use (aa.ts erc7677TokenGasClient: the
+ * quote's calls — the exact approval first —, its fees, the paymaster's
+ * stub data and the bundle's retry policy) with the owner as an address
+ * only (SmartAccountClient.estimateBeforeSigning: nothing is signed), so an
+ * impossible (zero) answer, or a paymaster or bundler refusal, is shown
+ * before the prompt instead of after it. Nothing is kept for the send-time
+ * stand-in: a paymaster takes part, which the engine refuses
+ * (preCheckedEstimateMismatch), so the check resolves null.
+ */
+function registerErc7677PrePromptEstimate(bundle: AaClientBundle, ownerAddress: string, quote: AaSendQuote): AaSendQuote {
+  registerPrePromptEstimate(quote, async () => {
+    await erc7677TokenGasClient(bundle, quote.sender, quote).estimateBeforeSigning(addressOnlyOwner(ownerAddress), quote.calls, {
+      maxFeePerGas: quote.maxFeePerGas,
+      maxPriorityFeePerGas: quote.maxPriorityFeePerGas,
+    });
+    return null;
+  });
+  return quote;
+}
+
 function erc7677FundingError(facts: Erc7677Facts, tokenGas: AaTokenGas | null, amount: bigint): AaFundingError {
   const s = TOKEN_GAS_SYMBOL;
   const d = facts.decimals;
@@ -1342,12 +1381,16 @@ async function prepareErc7677NativeSend(
   const userCalls: Call[] = [{ to, value, data: new Uint8Array(0) }];
   const { tokenGas, gas } = await erc7677Price(bundle, ownerAddress, facts, userCalls);
   if (facts.feeTokenBalance < tokenGas.maxTokenCharge) throw erc7677FundingError(facts, tokenGas, 0n);
-  return assembleQuote(
+  return registerErc7677PrePromptEstimate(
     bundle,
-    { ...facts, tokenGas },
-    erc7677Calls(tokenGas, userCalls),
-    { to, ...(value !== amount ? { maxAdjustment: { requested: amount } } : {}) },
-    gas,
+    ownerAddress,
+    assembleQuote(
+      bundle,
+      { ...facts, tokenGas },
+      erc7677Calls(tokenGas, userCalls),
+      { to, ...(value !== amount ? { maxAdjustment: { requested: amount } } : {}) },
+      gas,
+    ),
   );
 }
 
@@ -1393,7 +1436,7 @@ async function prepareErc7677Erc20Send(
     throw erc7677FundingError(facts, priced.tokenGas, 0n);
   }
   const userCalls = aaErc20TransferCalls(token.contract, token.recipient, amount);
-  return assembleQuote(
+  return registerErc7677PrePromptEstimate(bundle, ownerAddress, assembleQuote(
     bundle,
     { ...facts, tokenGas: priced.tokenGas },
     erc7677Calls(priced.tokenGas, userCalls),
@@ -1409,7 +1452,7 @@ async function prepareErc7677Erc20Send(
       ...(amount !== token.amount ? { maxAdjustment: { requested: token.amount } } : {}),
     },
     priced.gas,
-  );
+  ));
 }
 
 /** True when the ERC-7677 source applies to this bundle's chain (and the caller accepts it). */

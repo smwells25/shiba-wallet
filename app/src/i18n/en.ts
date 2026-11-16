@@ -2338,4 +2338,10 @@ export const en = {
   'activity.solana.receivedWithheld': 'Received {amount} {asset} from {from}; {fee} {asset} more was withheld in this account’s token account as the issuer’s transfer fee',
   'activity.solana.receivedUnnamedWithheld': 'Received {amount} {asset}; {fee} {asset} more was withheld in this account’s token account as the issuer’s transfer fee; the transaction does not name one sender',
   // ---- END phase 27 item 1 (Activity) ----
+  // ---- BEGIN phase 28 item 1: the busy line of the off-line signing screen for a smart account, at Show and at Submit
+  // (wallet/pre-prompt-guard.ts coldSignCheckText; components/PrePromptCheckNote.tsx ColdSignCheckNote). No device prompt
+  // follows there, so the confirm's "before asking you to approve" line would be untrue.
+  'coldSign.prePrompt.show': 'Checking the spending limits, the bundler’s minimum fee and its gas estimate before the request for the off-line signer is shown. This can take up to about a minute; nothing has been signed or sent.',
+  'coldSign.prePrompt.submit': 'Checking the signature, the account’s nonce and deployment and the bundler’s minimum fee, then handing the signed operation to the bundler. This phone signs nothing here.',
+  // ---- END phase 28 item 1 ----
 } as const;

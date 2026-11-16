@@ -1582,8 +1582,10 @@ export function SendScreen({ route, navigation }: Props) {
       const preBundle = aaBundle.current;
       // The busy line names the bundler's gas estimate only when
       // checkAaQuoteBeforeApproval really runs one: a quote prepareAaCalls
-      // made. The passkey and USDC-fee quotes are built by their own
-      // wrappers, whose check reads only the fee floor ('final').
+      // made, a passkey quote (which carries that estimate) and a USDC-fee
+      // quote through ERC-7677 (phase 28). A Circle USDC-fee quote runs
+      // none, because its paymaster stub needs an owner-signed permit, so
+      // its check reads only the fee floor ('final').
       step(preBundle && aaQuoteHasPrePromptEstimate(quote) ? 'bundler' : 'final');
       if (preBundle) {
         try {

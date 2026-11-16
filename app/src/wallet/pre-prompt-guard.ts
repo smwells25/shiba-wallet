@@ -106,6 +106,33 @@ export function prePromptStageText(stage: PrePromptStage): string | null {
 }
 
 /**
+ * The busy line of the off-line signing screen for a smart account (phase
+ * 28 item 1), for the two places that run under its pre-prompt guard
+ * (screens/ColdSignScreen.tsx). No device prompt follows on that screen, so
+ * the confirm's line ("…before asking you to approve…") would be untrue
+ * there; each of these says what the code there does instead:
+ * - 'show' (onAaShow): the spending limits, then wallet/cold-aa.ts
+ *   prepareColdAaRequest — checkAaQuoteBeforeApproval (the bundler's fee
+ *   floor and its gas estimate) and the engine's
+ *   prepareUserOperationForExternalSigner (the operation built and
+ *   estimated again, no signature) — before the request is shown; the phone
+ *   signs nothing and sends nothing there.
+ * - 'submit' (onAaSubmit): wallet/cold-aa.ts submitColdAa — the signature
+ *   checked against the stored request, the account's nonce and deployment
+ *   read (the engine's submitPreparedUserOperation), the bundler's fee floor
+ *   (beforeSign), then eth_sendUserOperation; the phone signs nothing there
+ *   (the signature came from the off-line signer). The line stays while the
+ *   operation is handed over, so it never says "nothing has been sent".
+ * Null while idle. The two estimates of 'show' each follow the retry policy
+ * (up to 8 asks 3 s apart on Arbitrum Sepolia, aa.ts aaEstimateRetriesFor),
+ * hence "about a minute" rather than the confirm's half minute.
+ */
+export function coldSignCheckText(stage: PrePromptStage, kind: 'show' | 'submit'): string | null {
+  if (stage === 'idle') return null;
+  return kind === 'show' ? t('coldSign.prePrompt.show') : t('coldSign.prePrompt.submit');
+}
+
+/**
  * The one spoken path for the busy line (pass p27-emu2 finding 2: TalkBack
  * announced the "Checking the bundler's gas estimate…" line twice per
  * check). Returns a function the note calls with the line it currently

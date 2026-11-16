@@ -2334,4 +2334,8 @@ export const es: Readonly<Partial<Record<StringId, string>>> = {
   'activity.solana.receivedWithheld': 'Recibiste {amount} {asset} de {from}; además, {fee} {asset} quedaron retenidos en la cuenta de token de esta cuenta como comisión de transferencia del emisor',
   'activity.solana.receivedUnnamedWithheld': 'Recibiste {amount} {asset}; además, {fee} {asset} quedaron retenidos en la cuenta de token de esta cuenta como comisión de transferencia del emisor; la transacción no indica un único remitente',
   // ---- END phase 27 item 1 (Activity) ----
+  // ---- BEGIN phase 28 item 1. Spanish drafts, pending a native reviewer.
+  'coldSign.prePrompt.show': 'Comprobando los límites de gasto, la comisión mínima del bundler y su estimación de gas antes de mostrar la solicitud para el firmante sin conexión. Puede tardar hasta un minuto; no se ha firmado ni enviado nada.',
+  'coldSign.prePrompt.submit': 'Comprobando la firma, el nonce y el despliegue de la cuenta y la comisión mínima del bundler, y después entregando la operación firmada al bundler. Este teléfono no firma nada aquí.',
+  // ---- END phase 28 item 1 ----
 };

@@ -15,7 +15,7 @@ import { SpendingPolicyNotice, confirmSpendingCheck, spendingGateForQuote } from
 import { PendingTransactionsSection } from '../components/PendingTransactions';
 import { PaymentRequestNotice } from '../components/PaymentRequestViews';
 import { NOTE_VIEW_SCROLL_PROPS, TransactionNoteField, dismissKeyboardThenClose } from '../components/TransactionNoteField';
-import { usePrePromptGuard } from '../components/PrePromptCheckNote';
+import { ColdSignCheckNote, usePrePromptGuard } from '../components/PrePromptCheckNote';
 import { getEndpoint, withEndpoint } from '../config/networks';
 import { useTheme, type Theme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
@@ -228,10 +228,11 @@ export function ColdSignScreen({ route, navigation }: Props) {
   const [phase, setPhase] = useState<Phase>(replace ? 'quoting' : 'form');
   // Phase 27 item 2: the smart-account Show and Submit taps run under the
   // pre-prompt guard, so a second tap starts nothing and both buttons stay
-  // disabled until the handler returns. No busy line here: no device prompt
-  // follows these checks (Show builds the request for the off-line signer;
-  // Submit hands a signed operation to the bundler), so the shared line's
-  // "before asking you to approve" would be untrue.
+  // disabled until the handler returns. Not the shared busy line: no device
+  // prompt follows these checks (Show builds the request for the off-line
+  // signer; Submit hands a signed operation to the bundler), so its "before
+  // asking you to approve" would be untrue. Since phase 28 item 1 each place
+  // shows its own true line instead (ColdSignCheckNote, coldSignCheckText).
   const prePrompt = usePrePromptGuard();
   const [tokens, setTokens] = useState<FungibleAsset[]>([]);
   const [tokenId, setTokenId] = useState<string | null>(route.params?.tokenId ?? null);
@@ -1012,6 +1013,8 @@ export function ColdSignScreen({ route, navigation }: Props) {
             <Button title="Back" variant="secondary" onPress={aaBackToForm} disabled={prePrompt.stage !== 'idle'} />
           </>
         )}
+        {/* Phase 28 item 1: what runs while Submit holds the guard (no device prompt follows on this screen). */}
+        <ColdSignCheckNote stage={prePrompt.stage} kind="submit" />
         <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(COLD_AA_REVIEW_AGAIN_NOTE)}</Text>
       </ScrollView>
     );
@@ -1044,6 +1047,8 @@ export function ColdSignScreen({ route, navigation }: Props) {
             <Button title="Back" variant="secondary" onPress={aaBackToForm} disabled={prePrompt.stage !== 'idle'} />
           </>
         )}
+        {/* Phase 28 item 1: what runs while Show holds the guard (no device prompt follows on this screen). */}
+        <ColdSignCheckNote stage={prePrompt.stage} kind="show" />
       </ScrollView>
     );
   }

@@ -13,6 +13,7 @@ import { requireLocalAuth } from '../wallet/biometric';
 import { formatUnits } from '../wallet/balances';
 import { EVM_CHAIN_ID, describeSendError } from '../wallet/send';
 import {
+  aaQuoteHasPrePromptEstimate,
   checkAaQuoteBeforeApproval,
   createAaClientFromConfig,
   describeAaError,
@@ -322,9 +323,32 @@ export function PasskeyScreen({ navigation }: Props) {
     }
   };
 
-  const onTest = async () => {
+  /**
+   * The passkey test, under the pre-prompt guard (phase 28 item 1, as on the
+   * Lend screen): from the tap until the handler returns the confirm's
+   * buttons are disabled and a second tap starts nothing. Before the
+   * platform passkey prompt, checkAaQuoteBeforeApproval reads the bundler's
+   * fee floor and runs the bundler estimate the passkey quote carries
+   * (passkeys.ts preparePasskeyCalls → aa.ts carryPrePromptEstimate), so an
+   * impossible (zero) estimate is refused here with nothing signed, not
+   * after the person answered the passkey prompt.
+   */
+  const onTestTap = () => void prePrompt.guard.run((step) => onTest(step));
+  const onTest = async (step: PrePromptStep) => {
     const t = pendingTest;
     if (!t) return;
+    // The busy line names the bundler's gas estimate only when the check
+    // really runs one (a passkey quote carries it since phase 28 item 1).
+    step(aaQuoteHasPrePromptEstimate(t.quote) ? 'bundler' : 'final');
+    try {
+      await checkAaQuoteBeforeApproval(t.pbundle.bundler, t.quote);
+    } catch (checkError) {
+      Alert.alert('Passkey test not sent', describe(checkError));
+      setPendingTest(null);
+      setPhase('main');
+      return;
+    }
+    step('final');
     // No app-level biometric gate here: the platform passkey prompt that
     // follows IS the user-verification step, and the validator rejects any
     // assertion without the UV flag on-chain.
@@ -620,10 +644,12 @@ export function PasskeyScreen({ navigation }: Props) {
           busy
         ) : (
           <>
-            <Button title="Sign with passkey and send" onPress={() => void onTest()} />
+            <Button title="Sign with passkey and send" onPress={onTestTap} disabled={prePrompt.stage !== 'idle'} />
+            <PrePromptCheckNote stage={prePrompt.stage} />
             <Button
               title="Back"
               variant="secondary"
+              disabled={prePrompt.stage !== 'idle'}
               onPress={() => {
                 setPendingTest(null);
                 setPhase('main');

@@ -80,6 +80,10 @@ import {
   sendAa,
   AA_QUOTE_ALREADY_USED,
   addAaOperationSentListener,
+  aaPreCheckedEstimateFor,
+  aaQuoteHasPrePromptEstimate,
+  checkAaQuoteBeforeApproval,
+  isImpossibleGasEstimateError,
   setAccountEip7702,
   setRecoveredAccount,
 } from '../src/wallet/aa.ts';
@@ -863,6 +867,71 @@ console.log('check-recovery: recovery on a new wallet (no delay)');
   offOpEvents();
   offRecorder();
 
+  // Phase 28 item 1: the guardian submission's pre-prompt estimate. prepareGuardianSubmission registers it
+  // (aa.ts registerPrePromptEstimate), asked through the very client submitGuardianRecovery builds
+  // (guardianSubmitClient) with the submitting guardian as an address only; checkAaQuoteBeforeApproval runs it before
+  // the device prompt; the passing estimate stands in for an impossible send-time answer.
+  {
+    const ZERO_EST = { callGasLimit: '0xcb36', verificationGasLimit: '0x0', preVerificationGas: '0x333' };
+    const zeroable = (inner) => {
+      const t = async (method, params) => {
+        if (method === 'eth_estimateUserOperationGas') {
+          t.estimates += 1;
+          if (t.zero) {
+            await inner(method, params);
+            return ZERO_EST;
+          }
+        }
+        return inner(method, params);
+      };
+      t.estimates = 0;
+      t.zero = false;
+      t.inner = inner;
+      return t;
+    };
+    const zb = zeroable(fakeBundler());
+    const approvalsB = reviewB.approvals.map((a) => a.signature);
+    const pq = await prepareGuardianSubmission({ node, bundler: zb, chainId: CHAIN_ID, request: progress.request, approvals: approvalsB, submitter: gB.address });
+    check('phase 28 item 1: the guardian submission carries a pre-prompt estimate (the Approve a recovery busy line names it)', aaQuoteHasPrePromptEstimate(pq) === true);
+    const at = zb.estimates;
+    await checkAaQuoteBeforeApproval(zb, pq);
+    const kept = aaPreCheckedEstimateFor(pq);
+    check('phase 28 item 1: the check asks the bundler once for the recovery operation (the account as sender, the approved guardian-lane nonce, doRecovery, the guardian stub) and keeps it; nothing sent',
+      zb.estimates === at + 1 && kept !== undefined && same(kept.op.sender, ACCOUNT) && kept.op.nonce === nonce &&
+        toHex(kept.op.callData) === progress.request.callData.toLowerCase() && !kept.op.factory && zb.inner.calls.every((c) => c.method !== 'eth_sendUserOperation'));
+    zb.zero = true;
+    const sentP = await submitGuardianRecovery({ quote: pq, node, bundler: zb, chainId: CHAIN_ID, signer: gB }).then((x) => x, (e) => e);
+    zb.zero = false;
+    const sop = zb.inner.lastOp;
+    check('phase 28 item 1: zeros at send time after a passing check → submitted once with the quote\'s limits, never above its fee (the stand-in)',
+      typeof sentP?.userOpHash === 'string' && sop && BigInt(sop.verificationGasLimit) === pq.verificationGasLimit &&
+        (BigInt(sop.callGasLimit) + BigInt(sop.verificationGasLimit) + BigInt(sop.preVerificationGas)) * BigInt(sop.maxFeePerGas) <= pq.fee,
+      sentP?.message);
+    // A zero burst AT the check: refused there (the chain's retry policy runs: 4 asks 2 s apart on Sepolia).
+    const zb2 = zeroable(fakeBundler());
+    const pq2 = await prepareGuardianSubmission({ node, bundler: zb2, chainId: CHAIN_ID, request: progress.request, approvals: approvalsB, submitter: gB.address });
+    zb2.zero = true;
+    const refusedAt = await caught(() => checkAaQuoteBeforeApproval(zb2, pq2));
+    check('phase 28 item 1: a zero burst at the guardian check → the engine\'s ImpossibleGasEstimateError before the device prompt, nothing signed or sent, no estimate kept',
+      isImpossibleGasEstimateError(refusedAt) && zb2.inner.calls.every((c) => c.method !== 'eth_sendUserOperation') && aaPreCheckedEstimateFor(pq2) === undefined, refusedAt?.message);
+    // MUTANT on recovery.ts: the registration removed (a submission had no pre-prompt estimate before this slice).
+    const recSource = readFileSync(new URL('../src/wallet/recovery.ts', import.meta.url), 'utf8');
+    const regAnchor = '  registerPrePromptEstimate(quote, () =>\n';
+    if (!recSource.includes(regAnchor)) throw new Error('mutation anchor not found (the guardian pre-prompt registration)');
+    const recDir = new URL('../src/wallet/', import.meta.url);
+    const mutantDir = new URL(`./.mutants-recovery-${process.pid}/`, import.meta.url);
+    process.on('exit', () => rmSync(mutantDir, { recursive: true, force: true }));
+    const { mkdirSync: mk } = await import('node:fs');
+    mk(mutantDir, { recursive: true });
+    const mFile = new URL('m1-recovery.ts', mutantDir);
+    writeFileSync(mFile, recSource
+      .replace(regAnchor, '  void ((_q, _f) => null)(quote, () =>\n')
+      .replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${new URL(spec, recDir).href}'`));
+    const mRec = await import(mFile.href);
+    const mq = await mRec.prepareGuardianSubmission({ node, bundler: fakeBundler(), chainId: CHAIN_ID, request: progress.request, approvals: approvalsB, submitter: gB.address });
+    check('MUTANT (the guardian registration removed) is caught: the submission has no pre-prompt estimate (the checks above would fail)', aaQuoteHasPrePromptEstimate(mq) === false);
+  }
+
   // After inclusion: attach only after the on-chain owner check.
   const aaStore = memoryStore();
   await aaStore.setItem('shiba-wallet.aa-config.v1', JSON.stringify({ [M]: { bundlerUrl: 'https://bundler.example', bundlerVerifiedAt: 'x', accountType: 'kernel-v3.3', factory: KERNEL_V3_3.factory, kernelValidator: VALIDATOR, factoryImplementation: KERNEL_V3_3.implementation } }));
@@ -1579,7 +1648,12 @@ console.log('check-recovery: mainnet readiness gate (phase 9 item 6)');
   check("phase 27 item 2: Approve a recovery (guardian submit) \u2014 onSubmit runs under the guard: the bundler check, then \"final\", then the device prompt",
     guardScreen1.includes('const prePrompt = usePrePromptGuard();') && guardScreen1.includes("const onSubmitTap = () => void prePrompt.guard.run((step) => onSubmit(step));") &&
       guardOrder(guardScreen1, "const onSubmit = async (step: PrePromptStep) => {", "await checkAaQuoteBeforeApproval(await bundlerFor(), submission);", "requireLocalAuth('Approve submitting this recovery"));
-  check("phase 27 item 2: Approve a recovery (guardian submit) \u2014 the line never claims a gas estimate for a submission whose check reads only the fee floor", guardScreen1.includes("step(aaQuoteHasPrePromptEstimate(submission) ? 'bundler' : 'final');\n"));
+  check("phase 27 item 2: Approve a recovery (guardian submit) \u2014 the line names the gas estimate only when one is registered for the submission (phase 28: it is)", guardScreen1.includes("step(aaQuoteHasPrePromptEstimate(submission) ? 'bundler' : 'final');\n"));
+  const recSrc = readGuardSrc(new URL('../src/wallet/recovery.ts', import.meta.url), 'utf8');
+  check('phase 28 item 1: submitGuardianRecovery and its pre-prompt estimate use ONE client builder (guardianSubmitClient), and the send hands the kept estimate to the engine',
+    (recSrc.match(/guardianSubmitClient\(/g) ?? []).length === 3 &&
+      recSrc.includes('...(aaPreCheckedEstimateFor(args.quote) ? { preCheckedEstimate: aaPreCheckedEstimateFor(args.quote) } : {}),') &&
+      recSrc.includes('const client = guardianSubmitClient(args);'));
   check("phase 27 item 2: Approve a recovery (guardian submit) \u2014 Submit recovery and Back disabled while the guard runs, the busy line between them", guardScreen1.includes("<Button title=\"Submit recovery\" variant=\"destructive\" onPress={onSubmitTap} disabled={prePrompt.stage !== 'idle'} />\n            <PrePromptCheckNote stage={prePrompt.stage} />\n            <Button title=\"Back\" variant=\"secondary\" onPress={() => setPhase('review')} disabled={prePrompt.stage !== 'idle'} />"));
   check("phase 27 item 2: Approve a recovery (guardian submit) \u2014 no confirm button still calls the handler outside the guard",
     ["onPress={() => void onSubmit()}"].every((old) => !guardScreen1.includes(old)));

@@ -299,6 +299,14 @@ export interface PreCheckedGasEstimate {
 export const PRE_CHECKED_ESTIMATE_MAX_AGE_MS = 90_000;
 
 /**
+ * Refusal of SmartAccountClient.estimateBeforeSigning for an EIP-7702 spec
+ * (phase 28 item 1): building that spec's stub signs an authorization, and
+ * the method exists to run before anything is signed.
+ */
+export const ESTIMATE_BEFORE_SIGNING_7702_REFUSAL =
+  'An estimate before signing is not offered for an EIP-7702 account: building its operation signs an authorization. Nothing was signed.';
+
+/**
  * Why `pre` cannot stand in for the estimate of `op` (the stub operation
  * sendCalls built, before the estimate), or null when it can. Pure; exported
  * for the app's checks.
@@ -458,20 +466,17 @@ export class SmartAccountClient {
   }
 
   /**
-   * Everything sendCalls does before the owner signs, in the same order
-   * and with the same requests (moved here unchanged in phase 23 so the
-   * external-signer path below runs exactly the same pipeline): sender and
-   * deployment, nonce, the paymaster stub, the checked bundler estimate
-   * and padding, the deposit top-up headroom, the final paymaster data,
-   * the final impossible-limit check and `beforeSign`. Returns the
-   * operation with the estimation stub still in its signature field.
+   * The stub-signed operation sendCalls hands to eth_estimateUserOperationGas
+   * (moved here unchanged in phase 28 item 1, so buildUnsignedOperation and
+   * estimateBeforeSigning build it with the same requests in the same order):
+   * the EIP-7702 authorization if the spec has one, the deployment state and
+   * factory arguments, the sender, the nonce, the zero gas fields, the fees,
+   * the spec's stub signature and, with a paymaster, its stub data.
    */
-  private async buildUnsignedOperation(
+  private async estimationStub(
     owner: DerivedAccount,
     calls: Call[],
     fees: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
-    beforeSign: ((op: UserOperation) => void | Promise<void>) | undefined,
-    preChecked?: { estimate: PreCheckedGasEstimate; nowMs: () => number },
   ): Promise<UserOperation> {
     const spec = this.config.spec;
     // EIP-7702 senders are EOAs: no factory ever; the delegation (if not yet
@@ -508,6 +513,67 @@ export class SmartAccountClient {
       );
       op = { ...op, ...paymasterFields(stub) };
     }
+    return op;
+  }
+
+  /**
+   * Phase 28 item 1: the checked bundler estimate sendCalls would ask for,
+   * WITHOUT signing anything — for the checks a screen runs before the
+   * device prompt. The stub operation is built by the same code and with the
+   * same requests as sendCalls' (estimationStub), then asked of the bundler
+   * once under the client's retry policy (estimateUserOperationGasChecked
+   * with config.estimateRetries, or DEFAULT_ESTIMATE_RETRIES), so an
+   * impossible (zero) answer that stays impossible throws the engine's
+   * ImpossibleGasEstimateError here, before any prompt. Returns the
+   * estimate in the shape sendCalls' `preCheckedEstimate` takes (the engine
+   * still decides with preCheckedEstimateMismatch whether it may stand in;
+   * it never does when a paymaster takes part).
+   *
+   * `owner` may be an address-only stand-in (addressOnlyOwner): no spec hook
+   * on this path signs, EXCEPT a paymaster transport's stub request, which
+   * this method cannot see into — Circle's permit-mode transport signs a
+   * permit for its stub, so a caller must not pass a client built with it
+   * before the owner is allowed to sign. Refused before any request for an
+   * EIP-7702 spec (its authorization is signed while the stub is built).
+   */
+  async estimateBeforeSigning(
+    owner: DerivedAccount,
+    calls: Call[],
+    fees: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
+    options: { nowMs?: () => number } = {},
+  ): Promise<PreCheckedGasEstimate> {
+    if (this.config.spec.getEip7702Authorization) throw new Error(ESTIMATE_BEFORE_SIGNING_7702_REFUSAL);
+    const op = await this.estimationStub(owner, calls, fees);
+    const estimate = await this.bundlerClient.estimateUserOperationGasChecked(
+      op,
+      this.config.estimateRetries ?? DEFAULT_ESTIMATE_RETRIES,
+    );
+    return {
+      op,
+      estimate,
+      checkedAtMs: (options.nowMs ?? Date.now)(),
+      chainId: this.config.chainId,
+      entryPoint: this.config.entryPoint,
+    };
+  }
+
+  /**
+   * Everything sendCalls does before the owner signs, in the same order
+   * and with the same requests (moved here unchanged in phase 23 so the
+   * external-signer path below runs exactly the same pipeline): sender and
+   * deployment, nonce, the paymaster stub, the checked bundler estimate
+   * and padding, the deposit top-up headroom, the final paymaster data,
+   * the final impossible-limit check and `beforeSign`. Returns the
+   * operation with the estimation stub still in its signature field.
+   */
+  private async buildUnsignedOperation(
+    owner: DerivedAccount,
+    calls: Call[],
+    fees: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
+    beforeSign: ((op: UserOperation) => void | Promise<void>) | undefined,
+    preChecked?: { estimate: PreCheckedGasEstimate; nowMs: () => number },
+  ): Promise<UserOperation> {
+    let op = await this.estimationStub(owner, calls, fees);
 
     // An estimate with an impossible (zero) limit is refused and asked for
     // again before anything is padded or signed (gasLimitProblems).

@@ -69,6 +69,9 @@ import { assertFeatureAllowed, eip155Caip2 } from '../config/readiness.ts';
 import {
   AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
   aaEstimateRetriesFor,
+  aaPreCheckedEstimateFor,
+  addressOnlyOwner,
+  registerPrePromptEstimate,
   assertQuoteFeesMeetBundlerFloor,
   bundlerFeeFloor,
   claimQuoteForSubmission,
@@ -2694,7 +2697,7 @@ export async function prepareGuardianSubmission(args: {
         'Send a little ETH to the account first (anyone can).',
     );
   }
-  return {
+  const quote: GuardianSubmissionQuote = {
     request,
     approvals,
     submitter: checksum(args.submitter),
@@ -2707,6 +2710,53 @@ export async function prepareGuardianSubmission(args: {
     fee,
     accountBalance,
   };
+  // Phase 28 item 1: the pre-prompt estimate (aa.ts checkAaQuoteBeforeApproval,
+  // run by the Approve a recovery screen before the device prompt). It is
+  // asked through the very client submitGuardianRecovery builds
+  // (guardianSubmitClient: the engine's guardian spec with its nonce routing,
+  // the same call, fees and stub signature) with the submitting guardian as
+  // an address only (SmartAccountClient.estimateBeforeSigning: nothing is
+  // signed, no key is read), so an impossible (zero) answer is refused before
+  // the prompt. No paymaster takes part, so the estimate is kept and stands
+  // in for an impossible send-time answer (aaPreCheckedEstimateFor).
+  registerPrePromptEstimate(quote, () =>
+    guardianSubmitClient({ quote, node: args.node, bundler: args.bundler, chainId: args.chainId }).estimateBeforeSigning(
+      addressOnlyOwner(quote.submitter),
+      [recoveryCall(request)],
+      { maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas },
+    ),
+  );
+  return quote;
+}
+
+/**
+ * The client that submits a guardian recovery (and, since phase 28 item 1,
+ * asks for its pre-prompt estimate): the engine's kernelGuardianRecoverySpec
+ * for the quote's request, approvals and submitter, its nonce routing on the
+ * node, the deposit top-up headroom of every self-paid smart-account
+ * operation (aa.ts AA_DEPOSIT_TOPUP_VERIFICATION_GAS explains why) and the
+ * chain's retry policy for impossible estimates.
+ */
+function guardianSubmitClient(args: {
+  quote: GuardianSubmissionQuote;
+  node: JsonRpcTransport;
+  bundler: JsonRpcTransport;
+  chainId: bigint;
+}): SmartAccountClient {
+  const spec = kernelGuardianRecoverySpec({
+    request: args.quote.request,
+    approvals: args.quote.approvals,
+    submitter: args.quote.submitter,
+  });
+  return new SmartAccountClient({
+    chainId: args.chainId,
+    entryPoint: ENTRYPOINT_V07,
+    bundler: args.bundler,
+    node: spec.routeNode(args.node),
+    spec,
+    depositTopUpVerificationGas: AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
+    estimateRetries: aaEstimateRetriesFor(args.chainId),
+  });
 }
 
 /**
@@ -2732,22 +2782,7 @@ export async function submitGuardianRecovery(args: {
   claimQuoteForSubmission(args.quote);
   const fees = { maxFeePerGas: args.quote.maxFeePerGas, maxPriorityFeePerGas: args.quote.maxPriorityFeePerGas };
   await assertQuoteFeesMeetBundlerFloor(args.bundler, fees);
-  const spec = kernelGuardianRecoverySpec({
-    request: args.quote.request,
-    approvals: args.quote.approvals,
-    submitter: args.quote.submitter,
-  });
-  const client = new SmartAccountClient({
-    chainId: args.chainId,
-    entryPoint: ENTRYPOINT_V07,
-    bundler: args.bundler,
-    node: spec.routeNode(args.node),
-    spec,
-    // Same deposit top-up headroom as every other self-paid smart-account
-    // operation (aa.ts AA_DEPOSIT_TOPUP_VERIFICATION_GAS explains why).
-    depositTopUpVerificationGas: AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
-    estimateRetries: aaEstimateRetriesFor(args.chainId),
-  });
+  const client = guardianSubmitClient(args);
   // Listed in the pending registry before it is handed to the bundler
   // (phase 23 item 8); kept when the bundler does not answer in time.
   const { userOpHash } = await submitWithPendingRecord(
@@ -2763,6 +2798,9 @@ export async function submitGuardianRecovery(args: {
       client.sendCalls(args.signer, [recoveryCall(args.quote.request)], fees, {
         beforeSign: signedFeeGuard(fees, args.quote.fee),
         beforeSend,
+        // Phase 28 item 1: the estimate the pre-prompt check passed stands in
+        // only for an impossible send-time answer (no paymaster here).
+        ...(aaPreCheckedEstimateFor(args.quote) ? { preCheckedEstimate: aaPreCheckedEstimateFor(args.quote) } : {}),
       }),
   );
   // Accepted by the bundler (eth_sendUserOperation returned a hash): the

@@ -3,6 +3,7 @@ import { AccessibilityInfo, ActivityIndicator, StyleSheet, Text, View } from 're
 import { useTheme } from '../theme';
 import { useI18n } from '../i18n/useI18n';
 import {
+  coldSignCheckText,
   createPrePromptAnnouncer,
   createPrePromptGuard,
   prePromptStageText,
@@ -39,10 +40,25 @@ export function usePrePromptGuard(): { guard: PrePromptGuard; stage: PrePromptSt
  * Android in place of the live region is NOT yet heard on a device.
  */
 export function PrePromptCheckNote({ stage }: { stage: PrePromptStage }) {
-  const theme = useTheme();
   // Re-render on a language change; the line comes from the table.
   useI18n();
-  const text = prePromptStageText(stage);
+  return <BusyLine text={prePromptStageText(stage)} />;
+}
+
+/**
+ * The busy line of the off-line signing screen for a smart account (phase
+ * 28 item 1): no device prompt follows there, so PrePromptCheckNote's
+ * sentence would be untrue; coldSignCheckText says what runs at Show and at
+ * Submit instead. Drawn and announced exactly like PrePromptCheckNote.
+ */
+export function ColdSignCheckNote({ stage, kind }: { stage: PrePromptStage; kind: 'show' | 'submit' }) {
+  useI18n();
+  return <BusyLine text={coldSignCheckText(stage, kind)} />;
+}
+
+/** The shared row: a spinner and the line, announced once per distinct sentence. */
+function BusyLine({ text }: { text: string | null }) {
+  const theme = useTheme();
   const [announce] = useState(() =>
     createPrePromptAnnouncer((sentence) => AccessibilityInfo.announceForAccessibility(sentence)),
   );

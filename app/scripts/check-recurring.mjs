@@ -1519,5 +1519,28 @@ console.log('check-recurring: the open-outcome card lines say only what is known
       /Technical detail: No usable answer to eth_sendUserOperation \(the connection failed; cause: the answer could not be read/.test(dU.detail), dU.detail);
 }
 
+// ---------------------------------------------------------------------------
+// Phase 28 item 1: a payment (and a swap, and every session operation) asks the
+// bundler for its gas estimate BEFORE the payment key is read: the fees are read
+// first, the estimate is asked with the key's address only, then the vault; the
+// passing estimate stands in for an impossible send-time answer.
+// ---------------------------------------------------------------------------
+{
+  const sess = src('../src/wallet/sessions.ts');
+  const bodyOf = (text) => text.slice(text.indexOf('export async function sendSessionCalls'), text.indexOf('export function sessionOperationNonceKey'));
+  const orderOk = (text) => {
+    const b = bodyOf(text);
+    const feesAt = b.indexOf('const fees = quoteFeesOverFloor(suggested, floor);');
+    const estAt = b.indexOf('const preChecked = await client.estimateBeforeSigning(addressOnlyOwner(grant.sessionKey), args.calls, fees);');
+    const loadAt = b.indexOf('args.vault.load(');
+    return feesAt > 0 && estAt > feesAt && loadAt > estAt && b.includes('client.sendCalls(sessionAccount, args.calls, fees, { beforeSend, preCheckedEstimate: preChecked })');
+  };
+  check('phase 28 item 1: sendSessionCalls reads the fees, asks the estimate with the key\'s address, THEN reads the payment key, and hands the estimate to the send (source)', orderOk(sess));
+  check('phase 28 item 1 (mutant): the vault read moved before the estimate is caught',
+    !orderOk(sess.replace('  const preChecked = await client.estimateBeforeSigning(', '  await args.vault.load(sessionVaultId(record.chain, record.account, record.permissionId));\n  const preChecked = await client.estimateBeforeSigning(')));
+  check('phase 28 item 1 (mutant): the stand-in not handed to the send is caught',
+    !orderOk(sess.replace('{ beforeSend, preCheckedEstimate: preChecked }', '{ beforeSend }')));
+}
+
 console.log(`\ncheck-recurring: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

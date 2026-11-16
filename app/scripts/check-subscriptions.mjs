@@ -1073,5 +1073,38 @@ console.log('\ncheck-subscriptions: pass p20c findings 8 and 19');
     formFeeHintShown({ feeEdited: false, formError: null }) && !formFeeHintShown({ feeEdited: false, formError: 'x' }) && !formFeeHintShown({ feeEdited: true, formError: null }));
 }
 
+// ---------------------------------------------------------------------------
+// Phase 28 item 1: Start runs under the pre-prompt guard; after the new quote
+// (prepareSessionInstall, a prepareAaCalls quote with its registered estimate)
+// the bundler's fee floor and its gas estimate of that very install are checked
+// (aa.ts checkAaQuoteBeforeApproval) BEFORE the device prompt; the busy line is
+// drawn only while the stage text is the re-quote's (never during signing).
+// ---------------------------------------------------------------------------
+{
+  const startScreen = readFileSync(new URL('../src/screens/SessionsScreen.tsx', import.meta.url), 'utf8');
+  const startOk = (src, name, tapLine, authNeedle) => {
+    const start = src.indexOf(`const ${name} = async (step: PrePromptStep) => {`);
+    if (start < 0 || !src.includes(tapLine)) return false;
+    const body = src.slice(start, src.indexOf('\n  };\n', start));
+    const quoteAt = body.indexOf('await quoteOnNode((b) => prepareSessionInstall(b, owner, account, grant, { now }));');
+    const requoteAt = body.indexOf('if (subscriptionRequoteNeedsReview(reviewed.quote, p.quote)) {');
+    const checkAt = body.indexOf('await checkAaQuoteBeforeApproval(p.bundle.bundler, p.quote);');
+    const finalAt = body.indexOf("step('final');");
+    const authAt = body.indexOf(authNeedle);
+    return quoteAt > 0 && requoteAt > quoteAt && checkAt > requoteAt && finalAt > checkAt && authAt > finalAt;
+  };
+  const subTap = 'const onSubInstallTap = () => void prePrompt.guard.run((step) => onSubInstall(step));';
+  check('phase 28 item 1: subscription / recurring Start — under the guard: the re-quote, the fee floor and estimate check, "final", then the device prompt (source)',
+    startOk(startScreen, 'onSubInstall', subTap, 'await requireLocalAuth(\'Approve this recurring payment\')'));
+  check('phase 28 item 1: …the Start button goes through the guard and is disabled while it runs; the busy line only during the re-quote stage (source)',
+    startScreen.includes("{funding.canStart ? <Button title={startButton} onPress={onSubInstallTap} disabled={prePrompt.stage !== 'idle'} /> : null}") &&
+      startScreen.includes("{subSendStage === 'requote' ? <PrePromptCheckNote stage={prePrompt.stage} /> : null}") &&
+      !startScreen.includes('onPress={() => void onSubInstall()}'));
+  check('phase 28 item 1 (mutant): the check removed from the subscription Start is caught',
+    !startOk(startScreen.replace('await checkAaQuoteBeforeApproval(p.bundle.bundler, p.quote);', 'void 0;'), 'onSubInstall', subTap, 'await requireLocalAuth(\'Approve this recurring payment\')'));
+  check('phase 28 item 1 (mutant): the "final" step removed (the line would keep naming the estimate during the device prompt) is caught',
+    !startOk(startScreen.replace("    step('final');\n    const auth =\n      p.mode === 'recurring'", "    const auth =\n      p.mode === 'recurring'"), 'onSubInstall', subTap, 'await requireLocalAuth(\'Approve this recurring payment\')'));
+}
+
 console.log(`\ncheck-subscriptions: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

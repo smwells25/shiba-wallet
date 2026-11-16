@@ -65,7 +65,7 @@ import { ethers } from 'ethers';
 // independent verifier next to Node's crypto.
 import { p256 } from '../../node_modules/@noble/curves/nist.js';
 import { keccak_256 } from '../../node_modules/@noble/hashes/sha3.js';
-import { AA_DEPOSIT_TOPUP_VERIFICATION_GAS, AA_MAX_PROBE_VALUE_WEI, AA_QUOTE_ALREADY_USED, AaFeeRoseError, addAaOperationSentListener, createAaClient, sendAa } from '../src/wallet/aa.ts';
+import { AA_DEPOSIT_TOPUP_VERIFICATION_GAS, AA_MAX_PROBE_VALUE_WEI, AA_QUOTE_ALREADY_USED, AaFeeRoseError, aaPreCheckedEstimateFor, aaQuoteHasPrePromptEstimate, addAaOperationSentListener, checkAaQuoteBeforeApproval, createAaClient, isImpossibleGasEstimateError, sendAa } from '../src/wallet/aa.ts';
 import { PASSKEY_RP_ID, PASSKEY_RP_ID_PLACEHOLDER } from '../src/config/passkey.ts';
 import {
   PASSKEYS_KEY,
@@ -361,6 +361,8 @@ function hashingBundler({ receipt = { success: true, receipt: { transactionHash:
     if (method === 'eth_supportedEntryPoints') return [ENTRYPOINT_V07];
     if (method === 'eth_estimateUserOperationGas') {
       transport.lastEstimated = params[0];
+      // Phase 28 item 1: a zero burst when a check sets one (ZeroDev's Arbitrum Sepolia answer shape).
+      if (transport.estimateOverride) return transport.estimateOverride;
       return { callGasLimit: '0x10000', verificationGasLimit: '0x20000', preVerificationGas: '0x30000' };
     }
     if (method === 'eth_sendUserOperation') {
@@ -376,6 +378,7 @@ function hashingBundler({ receipt = { success: true, receipt: { transactionHash:
   };
   transport.calls = calls;
   transport.floor = null;
+  transport.estimateOverride = null;
   transport.sends = () => calls.filter((c) => c.method === 'eth_sendUserOperation').length;
   return transport;
 }
@@ -443,7 +446,8 @@ console.log('check-passkeys: feature gate (Expo Go, rpId placeholder)');
   // it: the one notifyAaOperationSent sits after the awaited sendPasskeyCalls
   // and before the catch, so a refused submit (which throws) never reaches it.
   const announceOk = (src) => {
-    const start = src.indexOf('const onTest = async () => {');
+    // Phase 28 item 1: the handler takes the pre-prompt guard's step (the pin changed in place).
+    const start = src.indexOf('const onTest = async (step: PrePromptStep) => {');
     const end = src.indexOf('const onRemoveQuote = async', start);
     if (start < 0 || end < 0) return false;
     const body = src.slice(start, end);
@@ -460,6 +464,30 @@ console.log('check-passkeys: feature gate (Expo Go, rpId placeholder)');
     );
   };
   check('Passkey screen: the test operation is announced exactly once, after the bundler accepted it, kind "other" (source)', announceOk(screenSrc));
+  // Phase 28 item 1: the test operation runs under the pre-prompt guard, and the bundler's fee floor and the passkey
+  // quote's estimate are checked (checkAaQuoteBeforeApproval) BEFORE sendPasskeyCalls (whose signing raises the passkey
+  // prompt); the busy line names the estimate only when the quote has one; Approve and Back are disabled while it runs.
+  const testGuardOk = (src) => {
+    const start = src.indexOf('const onTest = async (step: PrePromptStep) => {');
+    const end = src.indexOf('const onRemoveQuote = async', start);
+    if (start < 0 || end < 0) return false;
+    const body = src.slice(start, end);
+    const stepAt = body.indexOf("step(aaQuoteHasPrePromptEstimate(t.quote) ? 'bundler' : 'final');");
+    const checkAt = body.indexOf('await checkAaQuoteBeforeApproval(t.pbundle.bundler, t.quote);');
+    const finalAt = body.indexOf("step('final');");
+    const sendAt = body.indexOf('await sendPasskeyCalls(t.pbundle, t.quote, {');
+    return (
+      src.includes('const onTestTap = () => void prePrompt.guard.run((step) => onTest(step));') &&
+      stepAt >= 0 && checkAt > stepAt && finalAt > checkAt && sendAt > finalAt &&
+      src.includes("<Button title=\"Sign with passkey and send\" onPress={onTestTap} disabled={prePrompt.stage !== 'idle'} />\n            <PrePromptCheckNote stage={prePrompt.stage} />") &&
+      !src.includes('onPress={() => void onTest()}')
+    );
+  };
+  check('phase 28 item 1: the passkey test runs under the guard, the fee floor and estimate checked before sendPasskeyCalls (the passkey prompt), with the busy line (source)', testGuardOk(screenSrc));
+  check('phase 28 item 1 (mutant): the check removed from the passkey test is caught',
+    !testGuardOk(screenSrc.replace('      await checkAaQuoteBeforeApproval(t.pbundle.bundler, t.quote);\n', '')));
+  check('phase 28 item 1 (mutant): the "final" step removed (the line would still name the estimate during the passkey prompt) is caught',
+    !testGuardOk(screenSrc.replace("    step('final');\n    // No app-level biometric gate here", '    // No app-level biometric gate here')));
   const notifyBlock = /\n\s*notifyAaOperationSent\(\{[\s\S]*?\n\s*\}\);/;
   const noAnnounce = screenSrc.replace(notifyBlock, '');
   check('…mutant caught: the announcement removed', noAnnounce !== screenSrc && !announceOk(noAnnounce));
@@ -801,6 +829,93 @@ console.log('check-passkeys: passkey-signed operation (the owner key is never us
   }
   check('no refused passkey submit announced anything (zero events across every refusal above)', passkeyOpEvents.length === 0, String(passkeyOpEvents.length));
   offPasskeyOpEvents();
+
+  // Phase 28 item 1: the passkey quote carries the pre-prompt estimate of its
+  // own stub operation (passkeys.ts preparePasskeyCalls → aa.ts
+  // carryPrePromptEstimate), so checkAaQuoteBeforeApproval refuses a zero
+  // burst before the passkey prompt, and sendPasskeyCalls hands the passing
+  // estimate to the engine as the stand-in for an impossible send-time answer.
+  {
+    const ZERO_EST = { callGasLimit: '0xcb36', verificationGasLimit: '0x0', preVerificationGas: '0xdae9' };
+    const estimatesNow = () => bundler.calls.filter((c) => c.method === 'eth_estimateUserOperationGas').length;
+    const q = await preparePasskeyCalls(pbundle, calls);
+    check('phase 28 item 1: the passkey quote carries a pre-prompt estimate (the busy line may name it)', aaQuoteHasPrePromptEstimate(q) === true);
+    const getsNow = auth.calls.get;
+    const at = estimatesNow();
+    await checkAaQuoteBeforeApproval(pbundle.bundler, q);
+    const kept = aaPreCheckedEstimateFor(q);
+    check('phase 28 item 1: the pre-prompt check asks the bundler once, with NO passkey prompt, for the passkey stub operation (its nonce key, the engine stub)',
+      estimatesNow() === at + 1 && auth.calls.get === getsNow && kept !== undefined && kept.op.nonce >> 64n === webAuthnNonceKey(VALIDATOR) &&
+        abi.decode(['bytes', 'string', 'uint256', 'uint256', 'uint256', 'bool'], toHex(kept.op.signature))[5] === true);
+    // A zero burst that starts after the check: the stand-in is used, one prompt, sent with the quote's limits.
+    bundler.estimateOverride = ZERO_EST;
+    const before = bundler.sends();
+    const sent = await caught(() => sendPasskeyCalls(pbundle, q));
+    bundler.estimateOverride = null;
+    const op = fromRpcOp(bundler.lastOp);
+    check('phase 28 item 1: zeros at send time after a passing check → sent once with ONE passkey prompt, the limits of the passkey quote, never above its fee',
+      sent === null && bundler.sends() === before + 1 && auth.calls.get === getsNow + 1 &&
+        op.verificationGasLimit === q.verificationGasLimit && op.preVerificationGas === q.preVerificationGas && op.callGasLimit === q.callGasLimit &&
+        (op.callGasLimit + op.verificationGasLimit + op.preVerificationGas) * op.maxFeePerGas <= q.fee,
+      sent?.message);
+    // A zero burst AT the check: refused there, with no prompt and nothing sent (a short retry policy for the check).
+    const quick = { ...pbundle, estimateRetries: { attempts: 2, delayMs: 0 } };
+    const q2 = await preparePasskeyCalls(quick, calls);
+    bundler.estimateOverride = ZERO_EST;
+    const sendsBefore = bundler.sends();
+    const getsBefore = auth.calls.get;
+    const refused = await caught(() => checkAaQuoteBeforeApproval(quick.bundler, q2));
+    bundler.estimateOverride = null;
+    check('phase 28 item 1: a zero burst at the pre-prompt check → the engine\'s ImpossibleGasEstimateError before the passkey prompt; nothing signed or sent, no estimate kept',
+      isImpossibleGasEstimateError(refused) && auth.calls.get === getsBefore && bundler.sends() === sendsBefore && aaPreCheckedEstimateFor(q2) === undefined, refused?.message);
+
+    // MUTANTS on passkeys.ts: the carry removed; the hand-over removed.
+    const PK_MUTANT_DIR = join(dirname(fileURLToPath(import.meta.url)), `.mutants-passkeys-p28-${process.pid}`);
+    process.on('exit', () => rmSync(PK_MUTANT_DIR, { recursive: true, force: true }));
+    const pkPath = new URL('../src/wallet/passkeys.ts', import.meta.url);
+    const pkSource = readFileSync(pkPath, 'utf8');
+    const pkDir = dirname(fileURLToPath(pkPath));
+    let pkCount = 0;
+    const pkMutant = async (pairs) => {
+      let src = pkSource;
+      for (const [from, to] of pairs) {
+        if (!src.includes(from)) throw new Error(`mutation anchor not found: ${from}`);
+        src = src.replace(from, to);
+      }
+      src = src.replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolve(pkDir, spec)).href}'`);
+      mkdirSync(PK_MUTANT_DIR, { recursive: true });
+      pkCount += 1;
+      const file = join(PK_MUTANT_DIR, `m${pkCount}-passkeys.ts`);
+      writeFileSync(file, src);
+      return import(pathToFileURL(file).href);
+    };
+    {
+      const m = await pkMutant([['  carryPrePromptEstimate(base, quote);\n', '']]);
+      const mb = m.createPasskeyBundle(bundle, record, makePasskeyAssert(auth, record));
+      const mq = await m.preparePasskeyCalls(mb, calls);
+      bundler.estimateOverride = ZERO_EST;
+      const e = await caught(() => checkAaQuoteBeforeApproval(mb.bundler, mq));
+      bundler.estimateOverride = null;
+      check('MUTANT (the carry removed) is caught: the passkey quote has no pre-prompt estimate and a zero burst passes the check to the prompt',
+        aaQuoteHasPrePromptEstimate(mq) === false && e === null);
+    }
+    {
+      const m = await pkMutant([
+        ['      ...(aaPreCheckedEstimateFor(quote) ? { preCheckedEstimate: aaPreCheckedEstimateFor(quote) } : {}),\n', ''],
+        // The bundle's send-time policy without waits, so the mutant fails fast.
+        ['    estimateRetries: aaEstimateRetriesFor(base.chainId),\n', '    estimateRetries: { attempts: 2, delayMs: 0 },\n'],
+      ]);
+      const mb = m.createPasskeyBundle(bundle, record, makePasskeyAssert(auth, record));
+      const mq = await m.preparePasskeyCalls(mb, calls);
+      await checkAaQuoteBeforeApproval(mb.bundler, mq);
+      bundler.estimateOverride = ZERO_EST;
+      const sendsB = bundler.sends();
+      const e = await caught(() => m.sendPasskeyCalls(mb, mq));
+      bundler.estimateOverride = null;
+      check('MUTANT (the hand-over removed) is caught: the send-time zero burst refuses after the check passed (the stand-in check above would fail)',
+        isImpossibleGasEstimateError(e) && bundler.sends() === sendsB, e?.message);
+    }
+  }
   check('self-call refused (the engine\'s client-side D1 guard)', /may not call the account itself/.test((await caught(() => preparePasskeyCalls(pbundle, [{ to: ACCOUNT, value: 0n, data: new Uint8Array(0) }])))?.message ?? ''));
   check('the passkey bundle refuses to quote for another address', /own smart account/.test((await caught(() => pbundle.client.getAddress({ ...owner })))?.message ?? ''));
   check('an owner-signed quote cannot be sent through the passkey path', /not prepared for the passkey/.test((await caught(() => sendPasskeyCalls(pbundle, { ...quote, passkey: undefined })))?.message ?? ''));

@@ -9,8 +9,10 @@ import {
   type DerivedAccount,
 } from '@shiba-wallet/core';
 import {
+  ESTIMATE_BEFORE_SIGNING_7702_REFUSAL,
   PRE_CHECKED_ESTIMATE_MAX_AGE_MS,
   SmartAccountClient,
+  addressOnlyOwner,
   needsDepositTopUp,
   preCheckedEstimateMismatch,
   requiredPrefund,
@@ -1028,5 +1030,130 @@ describe('a pre-checked estimate stands in for an impossible send-time estimate 
       nowMs: () => NOW,
     });
     expect(r2.userOp).toEqual(r1.userOp);
+  });
+});
+
+describe('estimateBeforeSigning: the estimate sendCalls would ask for, signing nothing (phase 28 item 1)', () => {
+  const REAL = { callGasLimit: '0x111', verificationGasLimit: '0x222', preVerificationGas: '0x333' };
+  const ZERO = { callGasLimit: '0xcb36', verificationGasLimit: '0x0', preVerificationGas: '0xdae9' };
+  const TO = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const CALLS: Call[] = [{ to: TO, value: 1n, data: new Uint8Array(0) }];
+  const NO_WAIT = { attempts: 3, delayMs: 0 };
+  const NOW = 1_800_000_000_000;
+
+  function recording(answers: Array<Record<string, string>>, deployed = true) {
+    const { node, paymaster, calls } = makeTransports({ deployed, sponsored: false });
+    const seen: unknown[] = [];
+    let sends = 0;
+    const bundler: JsonRpcTransport = async (method, params) => {
+      calls.push({ method, params });
+      if (method === 'eth_estimateUserOperationGas') {
+        seen.push(params[0]);
+        return answers[Math.min(seen.length - 1, answers.length - 1)];
+      }
+      if (method === 'eth_sendUserOperation') {
+        sends++;
+        return '0xuserophash';
+      }
+      throw new Error(`unexpected bundler method ${method}`);
+    };
+    return { node, paymaster, bundler, calls, seen, sends: () => sends };
+  }
+
+  function signCounting() {
+    let signed = 0;
+    const counted: SmartAccountSpec = {
+      ...spec,
+      signUserOpHash: (owner, hash) => {
+        signed++;
+        return spec.signUserOpHash(owner, hash);
+      },
+    };
+    return { spec: counted, signed: () => signed };
+  }
+
+  it('asks the bundler for exactly the stub operation sendCalls asks for, with an address-only owner, and signs and sends nothing', async () => {
+    const a = recording([REAL]);
+    const sa = signCounting();
+    const c = new SmartAccountClient({ chainId: 1n, entryPoint: ENTRYPOINT_V07, bundler: a.bundler, node: a.node, spec: sa.spec, estimateRetries: NO_WAIT });
+    const pre = await c.estimateBeforeSigning(addressOnlyOwner(ownerAccount().address, 1n), CALLS, FEES, { nowMs: () => NOW });
+    expect(sa.signed()).toBe(0);
+    expect(a.sends()).toBe(0);
+    expect(pre.checkedAtMs).toBe(NOW);
+    expect(pre.chainId).toBe(1n);
+    expect(pre.entryPoint).toBe(ENTRYPOINT_V07);
+    expect(pre.estimate.verificationGasLimit).toBe(0x222n);
+    const b = recording([REAL]);
+    const sb = signCounting();
+    const c2 = new SmartAccountClient({ chainId: 1n, entryPoint: ENTRYPOINT_V07, bundler: b.bundler, node: b.node, spec: sb.spec, estimateRetries: NO_WAIT });
+    await c2.sendCalls(ownerAccount(), CALLS, FEES);
+    // The same estimate request, and the same node requests in the same order before it.
+    expect(a.seen).toEqual([b.seen[0]]);
+    const until = (cs: RecordedCall[]) => cs.slice(0, cs.findIndex((x) => x.method === 'eth_estimateUserOperationGas') + 1);
+    expect(until(a.calls)).toEqual(until(b.calls));
+    expect(preCheckedEstimateMismatch(pre, pre.op, { chainId: 1n, entryPoint: ENTRYPOINT_V07, nowMs: NOW, clientHasPaymaster: false })).toBeNull();
+  });
+
+  it('an undeployed account: the factory arguments are in the estimated operation, as in sendCalls', async () => {
+    const a = recording([REAL], false);
+    const c = new SmartAccountClient({ chainId: 1n, entryPoint: ENTRYPOINT_V07, bundler: a.bundler, node: a.node, spec, estimateRetries: NO_WAIT });
+    const pre = await c.estimateBeforeSigning(addressOnlyOwner(ownerAccount().address, 1n), CALLS, FEES);
+    expect(pre.op.factory).toBe(FACTORY);
+    expect(toHex(pre.op.factoryData!)).toBe(toHex(utf8ToBytes('init')));
+  });
+
+  it('an impossible answer is asked for again under the client\'s policy and then thrown, before anything is signed', async () => {
+    const a = recording([ZERO]);
+    const sa = signCounting();
+    const c = new SmartAccountClient({ chainId: 1n, entryPoint: ENTRYPOINT_V07, bundler: a.bundler, node: a.node, spec: sa.spec, estimateRetries: NO_WAIT });
+    const err = await c.estimateBeforeSigning(addressOnlyOwner(ownerAccount().address, 1n), CALLS, FEES).catch((e) => e);
+    expect(err).toBeInstanceOf(ImpossibleGasEstimateError);
+    expect(err.attempts).toBe(NO_WAIT.attempts);
+    expect(a.seen.length).toBe(NO_WAIT.attempts);
+    expect(sa.signed()).toBe(0);
+    expect(a.sends()).toBe(0);
+  });
+
+  it('with a paymaster: the stub data is asked for and carried, the final data is not', async () => {
+    const a = recording([{ ...REAL, paymasterVerificationGasLimit: '0x444' }]);
+    const c = new SmartAccountClient({
+      chainId: 1n, entryPoint: ENTRYPOINT_V07, bundler: a.bundler, node: a.node, spec, estimateRetries: NO_WAIT,
+      paymaster: { transport: a.paymaster },
+    });
+    const pre = await c.estimateBeforeSigning(addressOnlyOwner(ownerAccount().address, 1n), CALLS, FEES);
+    expect(a.calls.map((x) => x.method)).toContain('pm_getPaymasterStubData');
+    expect(a.calls.map((x) => x.method)).not.toContain('pm_getPaymasterData');
+    expect(pre.op.paymaster).toBe('0x' + '66'.repeat(20));
+    // …and such an estimate never stands in at send time.
+    expect(preCheckedEstimateMismatch(pre, pre.op, { chainId: 1n, entryPoint: ENTRYPOINT_V07, nowMs: pre.checkedAtMs, clientHasPaymaster: true })).toMatch(/paymaster/);
+  });
+
+  it('refuses an EIP-7702 spec before any request', async () => {
+    const a = recording([REAL]);
+    let authorizations = 0;
+    const s7702: SmartAccountSpec = {
+      ...spec,
+      getEip7702Authorization: async () => {
+        authorizations++;
+        return undefined;
+      },
+    };
+    const c = new SmartAccountClient({ chainId: 1n, entryPoint: ENTRYPOINT_V07, bundler: a.bundler, node: a.node, spec: s7702, estimateRetries: NO_WAIT });
+    const err = await c.estimateBeforeSigning(addressOnlyOwner(ownerAccount().address, 1n), CALLS, FEES).catch((e) => e);
+    expect(err?.message).toBe(ESTIMATE_BEFORE_SIGNING_7702_REFUSAL);
+    expect(authorizations).toBe(0);
+    expect(a.calls).toEqual([]);
+  });
+
+  it('its estimate stands in at send time for a zero burst that starts after it (good once, zeros after)', async () => {
+    const a = recording([REAL, ZERO]);
+    const sa = signCounting();
+    const c = new SmartAccountClient({ chainId: 1n, entryPoint: ENTRYPOINT_V07, bundler: a.bundler, node: a.node, spec: sa.spec, estimateRetries: NO_WAIT });
+    const pre = await c.estimateBeforeSigning(addressOnlyOwner(ownerAccount().address, 1n), CALLS, FEES, { nowMs: () => NOW });
+    const { userOp } = await c.sendCalls(ownerAccount(), CALLS, FEES, { preCheckedEstimate: pre, nowMs: () => NOW + 10_000 });
+    expect(a.seen.length).toBe(2);
+    expect(a.sends()).toBe(1);
+    expect(sa.signed()).toBe(1);
+    expect(userOp.verificationGasLimit).toBe(0x222n);
   });
 });

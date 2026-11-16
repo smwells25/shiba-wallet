@@ -35,7 +35,9 @@ import type { DerivedAccount } from '@shiba-wallet/core';
 // Explicit .ts extensions: this module is imported by scripts/check-passkeys.mjs
 // under Node's type stripping, which resolves relative specifiers literally.
 import {
+  aaPreCheckedEstimateFor,
   assertQuoteFeesMeetBundlerFloor,
+  carryPrePromptEstimate,
   claimQuoteForSubmission,
   prepareAaCalls,
   signedFeeGuard,
@@ -1474,7 +1476,16 @@ export async function preparePasskeyCalls(
         `worst-case fee of ${fee} wei exceeds its balance of ${base.senderBalance} wei.`,
     );
   }
-  return { ...base, verificationGasLimit, preVerificationGas, fee, total: base.amount + fee, passkey: true };
+  const quote: AaSendQuote = { ...base, verificationGasLimit, preVerificationGas, fee, total: base.amount + fee, passkey: true };
+  // Phase 28 item 1: the pre-prompt estimate prepareAaCalls registered for
+  // `base` asks the bundler for the stub operation of this passkey bundle's
+  // own spec (its nonce key and stub signature, the same calls and fees),
+  // which is exactly what sendPasskeyCalls' client estimates; the padding
+  // above is applied after the estimate, by the client as here. So the
+  // passkey quote carries it, and checkAaQuoteBeforeApproval runs it before
+  // the passkey prompt.
+  carryPrePromptEstimate(base, quote);
+  return quote;
 }
 
 /**
@@ -1551,6 +1562,10 @@ export async function sendPasskeyCalls(
     bundle.client.sendCalls(bundle.passkey.spec.signer, quote.calls, fees, {
       beforeSign: signedFeeGuard(fees, quote.sponsored ? 0n : quote.fee),
       ...(beforeSend ? { beforeSend } : {}),
+      // Phase 28 item 1: the estimate the pre-prompt check passed stands in
+      // only for an impossible send-time answer, as on sendAa (no paymaster
+      // on this path; the engine compares the stub operation exactly).
+      ...(aaPreCheckedEstimateFor(quote) ? { preCheckedEstimate: aaPreCheckedEstimateFor(quote) } : {}),
     });
   // `spend` (with `listAs` only): counted against the spending limits before
   // the broadcast (./broadcast-spend.ts), as submitWithPendingRecord describes.

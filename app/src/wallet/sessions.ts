@@ -45,6 +45,7 @@ import { toChecksumAddress, type DerivedAccount } from '@shiba-wallet/core';
 // Explicit .ts extensions: this module is imported by scripts/check-sessions.mjs
 // under Node's type stripping, which resolves relative specifiers literally.
 import {
+  addressOnlyOwner,
   bundlerFeeFloor,
   describeAaError,
   paymasterProbeTransport,
@@ -1487,12 +1488,16 @@ export function sessionTestCall(call: SessionAllowedCall): Call {
  *      any network request and before the vault is read;
  *   2. the node's chain id is read (the first network request) and must
  *      be the record's chain;
- *   3. the session key is loaded from the vault and must derive to the
+ *   3. the fees are read, a SmartAccountClient is built around the engine's
+ *      kernelSessionSpec (signs only with that key, checks the grant again,
+ *      routes the nonce to the permission's nonce key via routeNode), and
+ *      the bundler is asked for the operation's gas estimate with the
+ *      session key's address only (phase 28 item 1: an impossible answer is
+ *      refused before the key's system prompt);
+ *   4. the session key is loaded from the vault and must derive to the
  *      grant's session address;
- *   4. a SmartAccountClient is built around the engine's kernelSessionSpec
- *      (signs only with that key, checks the grant again, routes the nonce
- *      to the permission's nonce key via routeNode) and sendCalls runs the
- *      usual stub → estimate → sign → submit. No paymaster: session
+ *   5. sendCalls runs the usual stub → estimate → sign → submit, with the
+ *      estimate of step 3 as the stand-in for an impossible answer. No paymaster: session
  *      operations are paid by the account (GasPolicy / paymaster interplay
  *      was not run live; engine caveat).
  * Every node request of the engine's SmartAccountClient.sendCalls (the
@@ -1570,18 +1575,6 @@ export async function sendSessionCalls(args: {
   if (reported !== bundle.chainId) {
     throw new Error(`Endpoint is chain id ${reported}, expected ${bundle.chainId}.`);
   }
-  const stored = await args.vault.load(sessionVaultId(record.chain, record.account, record.permissionId));
-  if (!stored) throw new Error('The session key is not on this device (it may have been deleted).');
-  const keyBytes = toBytes(stored);
-  let sessionAccount: DerivedAccount;
-  try {
-    sessionAccount = createSessionKeyAccount(keyBytes);
-  } finally {
-    keyBytes.fill(0);
-  }
-  if (!same(sessionAccount.address, grant.sessionKey)) {
-    throw new Error('The stored session key does not match this session. Nothing was signed.');
-  }
   // A recurring swap signs through the engine's kernelDcaSpec, which runs
   // assertDcaSwap again right before encoding (and so before signing).
   const spec = dcaTerms
@@ -1600,9 +1593,13 @@ export async function sendSessionCalls(args: {
         ...(args.now !== undefined ? { now: () => args.now! } : {}),
       });
   // No quote is shown for a session-key operation; the fees are read here,
-  // right before sending, with the same floor rule as every smart-account
-  // quote (aa.ts quoteFeesOverFloor, which also meets a bundler's
-  // maxFeePerGas minimum).
+  // with the same floor rule as every smart-account quote (aa.ts
+  // quoteFeesOverFloor, which also meets a bundler's maxFeePerGas minimum).
+  // Since phase 28 item 1 they are read BEFORE the session key (and its
+  // system prompt, when the key is protected), because the estimate below
+  // must be of the operation that will be signed, fees included; until then
+  // they were read just after the key. The operation is signed with exactly
+  // these fees.
   const [suggested, floor] = await Promise.all([suggestFeesRetryingOnce(nodeClient), bundlerFeeFloor(bundler)]);
   const fees = quoteFeesOverFloor(suggested, floor);
   const client = new SmartAccountClient({
@@ -1617,6 +1614,29 @@ export async function sendSessionCalls(args: {
     // whenever the account's deposit is below the required prefund.
     depositTopUpVerificationGas: AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
   });
+  // Phase 28 item 1: the bundler's estimate of exactly the operation
+  // sendCalls will estimate (the same session spec, nonce lane, calls, fees
+  // and stub signature), asked with the session key's ADDRESS only
+  // (SmartAccountClient.estimateBeforeSigning: nothing is signed) BEFORE the
+  // key is read, so an impossible (zero) answer, or any other refusal of the
+  // estimate, stops here: no system prompt for the key, nothing signed or
+  // handed to the bundler (describeRecurringPaymentError: "not sent"). It is
+  // passed to sendCalls as the stand-in for an impossible send-time answer
+  // (no paymaster on this path; the engine compares the stub operation
+  // exactly and refuses it after 90 s).
+  const preChecked = await client.estimateBeforeSigning(addressOnlyOwner(grant.sessionKey), args.calls, fees);
+  const stored = await args.vault.load(sessionVaultId(record.chain, record.account, record.permissionId));
+  if (!stored) throw new Error('The session key is not on this device (it may have been deleted).');
+  const keyBytes = toBytes(stored);
+  let sessionAccount: DerivedAccount;
+  try {
+    sessionAccount = createSessionKeyAccount(keyBytes);
+  } finally {
+    keyBytes.fill(0);
+  }
+  if (!same(sessionAccount.address, grant.sessionKey)) {
+    throw new Error('The stored session key does not match this session. Nothing was signed.');
+  }
   // Listed in the pending registry before it is handed to the bundler
   // (phase 23 item 8); kept when the bundler does not answer in time.
   const { userOpHash } = await submitWithPendingRecord(
@@ -1628,7 +1648,7 @@ export async function sendSessionCalls(args: {
       kind: sessionOperationKind(record.source),
       resend: null,
     },
-    (beforeSend) => client.sendCalls(sessionAccount, args.calls, fees, { beforeSend }),
+    (beforeSend) => client.sendCalls(sessionAccount, args.calls, fees, { beforeSend, preCheckedEstimate: preChecked }),
     args.spend ?? null,
   );
   // Accepted by the bundler: the pending-operation registry records it

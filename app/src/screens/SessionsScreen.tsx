@@ -1091,7 +1091,15 @@ export function SessionsScreen({ navigation }: Props) {
     }
   };
 
-  const onSubInstall = async () => {
+  /**
+   * Start (a subscription or a recurring payment), under the pre-prompt
+   * guard (phase 28 item 1, as on the Lend screen): from the tap until the
+   * handler returns a second tap starts nothing, and while the new quote and
+   * the bundler check run (before the device prompt) the busy line shows
+   * under the stage text.
+   */
+  const onSubInstallTap = () => void prePrompt.guard.run((step) => onSubInstall(step));
+  const onSubInstall = async (step: PrePromptStep) => {
     const reviewed = subPending.current;
     if (!reviewed || !account || !owner || !resolution?.ok || !activeAccount) return;
     // Finding 1 of the rehearsal: the clock starts NOW, when Start was tapped,
@@ -1130,6 +1138,21 @@ export function SessionsScreen({ navigation }: Props) {
       setPhase('sub-confirm');
       return;
     }
+    // Phase 28 item 1: the bundler's fee floor and its gas estimate of this
+    // very install (aa.ts checkAaQuoteBeforeApproval: the quote above came
+    // from prepareAaCalls, which registered the estimate), BEFORE the device
+    // prompt, so an impossible (zero) estimate or a floor that rose is
+    // refused here with nothing approved, signed or stored; the estimate
+    // that passes stands in for an impossible answer at send time (sendAa).
+    try {
+      await checkAaQuoteBeforeApproval(p.bundle.bundler, p.quote);
+    } catch (e) {
+      const { title, detail } = describe(e, 'send');
+      Alert.alert(title, detail);
+      setPhase('sub-confirm');
+      return;
+    }
+    step('final');
     const auth =
       p.mode === 'recurring'
         ? await requireLocalAuth('Approve this recurring payment')
@@ -1408,7 +1431,8 @@ export function SessionsScreen({ navigation }: Props) {
   };
 
   /** Start: the clock restarts now (same floor, amount and key), the set-up is quoted again, then the device check. */
-  const onDcaInstall = async () => {
+  const onDcaInstallTap = () => void prePrompt.guard.run((step) => onDcaInstall(step));
+  const onDcaInstall = async (step: PrePromptStep) => {
     const reviewed = dcaPending.current;
     if (!reviewed || !account || !owner || !resolution?.ok || !activeAccount) return;
     setSubSendStage('requote');
@@ -1437,6 +1461,21 @@ export function SessionsScreen({ navigation }: Props) {
       setPhase('sub-confirm');
       return;
     }
+    // Phase 28 item 1: the bundler's fee floor and its gas estimate of this
+    // very install (aa.ts checkAaQuoteBeforeApproval: the quote above came
+    // from prepareAaCalls, which registered the estimate), BEFORE the device
+    // prompt, so an impossible (zero) estimate or a floor that rose is
+    // refused here with nothing approved, signed or stored; the estimate
+    // that passes stands in for an impossible answer at send time (sendAa).
+    try {
+      await checkAaQuoteBeforeApproval(p.bundle.bundler, p.quote);
+    } catch (e) {
+      const { title, detail } = describe(e, 'send');
+      Alert.alert(title, detail);
+      setPhase('sub-confirm');
+      return;
+    }
+    step('final');
     const auth = await requireLocalAuth('Approve this recurring swap');
     if (!auth.ok) {
       Alert.alert(tx('Not granted'), auth.message);
@@ -2170,7 +2209,10 @@ export function SessionsScreen({ navigation }: Props) {
           feePricing={dcaPendingView.feePricing}
           sending={phase === 'sub-sending'}
           sendStage={subSendStage}
-          onStart={() => void onDcaInstall()}
+          // Phase 28 item 1: the busy line, only while the new quote and the
+          // bundler check run (never during "Signing and sending…").
+          prePromptNote={subSendStage === 'requote' ? <PrePromptCheckNote stage={prePrompt.stage} /> : null}
+          onStart={onDcaInstallTap}
           onBack={() => {
             discardPending();
             setPhase('sub-form');
@@ -2321,10 +2363,12 @@ export function SessionsScreen({ navigation }: Props) {
                 ? tx('Starting the clock now and asking the bundler again…')
                 : tx('Signing and sending…')}
             </Text>
+            {/* Phase 28 item 1: the busy line, only before the device prompt (never during "Signing and sending…"). */}
+            {subSendStage === 'requote' ? <PrePromptCheckNote stage={prePrompt.stage} /> : null}
           </View>
         ) : (
           <>
-            {funding.canStart ? <Button title={startButton} onPress={() => void onSubInstall()} /> : null}
+            {funding.canStart ? <Button title={startButton} onPress={onSubInstallTap} disabled={prePrompt.stage !== 'idle'} /> : null}
             <Button
               title="Back"
               variant="secondary"

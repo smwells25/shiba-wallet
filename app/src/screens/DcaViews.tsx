@@ -316,6 +316,8 @@ export function DcaReviewView(props: {
   feePricing: { maxFeePerGas: bigint | null; source: SubscriptionFeeSource | null; edited: boolean };
   sending: boolean;
   sendStage: 'requote' | 'signing';
+  /** Phase 28 item 1: the pre-prompt busy line the screen draws under the stage text while sending, or null. */
+  prePromptNote?: React.ReactNode;
   onStart: () => void;
   onBack: () => void;
   row: (label: string, value: string, sub?: string | null, monoFont?: boolean) => React.ReactNode;
@@ -440,6 +442,7 @@ export function DcaReviewView(props: {
           <Text style={[styles.hint, { color: theme.textMuted }]}>
             {props.sendStage === 'requote' ? tx('Starting the clock now and asking the bundler again…') : tx('Signing and sending…')}
           </Text>
+          {props.prePromptNote ?? null}
         </View>
       ) : (
         <>

@@ -3876,9 +3876,6 @@ export async function prepareAaCalls(
   // device prompt.
   const finalCalls = currentCalls;
   prePromptEstimates.set(quote, async () => {
-    // A pre-checked estimate is kept only from a check that passed (pass
-    // p27-emu2 finding 1); a later check that fails leaves none behind.
-    prePromptPassed.delete(quote);
     const [nonceNow, deployedNow] = await Promise.all([
       bundle.client.getNonce(owner),
       eip7702 ? Promise.resolve(deployed) : bundle.client.isDeployed(owner),
@@ -3896,16 +3893,17 @@ export async function prepareAaCalls(
       stubNow,
       bundle.estimateRetries ?? aaEstimateRetriesFor(bundle.chainId),
     );
-    // Kept for sendAa (pass p27-emu2 finding 1): the engine uses it only if
-    // the send-time estimate of the very same stub operation comes back
-    // impossible, and only within PRE_CHECKED_ESTIMATE_MAX_AGE_MS.
-    prePromptPassed.set(quote, {
+    // Kept for sendAa (pass p27-emu2 finding 1, by checkAaQuoteBeforeApproval):
+    // the engine uses it only if the send-time estimate of the very same stub
+    // operation comes back impossible, and only within
+    // PRE_CHECKED_ESTIMATE_MAX_AGE_MS.
+    return {
       op: stubNow,
       estimate,
       checkedAtMs: Date.now(),
       chainId: bundle.chainId,
       entryPoint: ENTRYPOINT_V07,
-    });
+    };
   });
   return quote;
 }
@@ -4621,7 +4619,10 @@ export function assertErc7677ApprovalCall(quote: Pick<AaSendQuote, 'calls' | 'to
  * bound is above it (TokenGasChargeAboveLimitError) before the owner signs.
  * No key is needed for the paymaster: the owner signs only the operation.
  */
-function erc7677TokenGasClient(bundle: AaClientBundle, sender: string, quote: AaSendQuote): SmartAccountClient {
+// Exported for ./token-gas.ts (phase 28 item 1): the ERC-7677 quote's
+// pre-prompt estimate is asked through this very client, so it estimates the
+// operation sendAa will estimate (the same calls, fees and paymaster stub).
+export function erc7677TokenGasClient(bundle: AaClientBundle, sender: string, quote: AaSendQuote): SmartAccountClient {
   const tokenGas = quote.tokenGas!;
   assertErc7677ApprovalCall(quote);
   const transport = createErc7677TokenPaymasterTransport({
@@ -4660,11 +4661,47 @@ const submittedQuotes = new WeakSet<object>();
  * finding 1): one checked bundler estimate (estimateUserOperationGasChecked
  * with the bundle's retry policy, aaEstimateRetriesFor) of the same stub
  * operation, run by checkAaQuoteBeforeApproval. Kept beside the quote, not
- * in it, so a quote's fields and every screen's copy of it are unchanged; a
- * quote made elsewhere (the passkey, guardian-recovery and USDC-fee
- * wrappers build their own objects) has none and is checked as before.
+ * in it, so a quote's fields and every screen's copy of it are unchanged.
+ * Each entry resolves to the estimate to keep for the send-time stand-in
+ * (prePromptPassed), or null when none may be kept (a paymaster takes part).
+ *
+ * Phase 28 item 1: quotes made by the other wrappers get one too where an
+ * honest estimate exists before the prompt — the passkey quote carries its
+ * prepareAaCalls estimate (carryPrePromptEstimate: the same spec, stub and
+ * calls), the ERC-7677 USDC-fee quote (./token-gas.ts) and the guardian
+ * recovery submission (./recovery.ts) register theirs
+ * (registerPrePromptEstimate). Circle's USDC-fee quote has none: its
+ * paymaster stub carries a permit signed by the owner key (./token-gas.ts,
+ * "WHY THE QUOTE HAS NO BUNDLER ESTIMATE"), which is never read before the
+ * device prompt.
  */
-const prePromptEstimates = new WeakMap<object, () => Promise<void>>();
+const prePromptEstimates = new WeakMap<object, () => Promise<PreCheckedGasEstimate | null>>();
+
+/**
+ * Registers `check` as `quote`'s pre-prompt estimate (phase 28 item 1), run
+ * by checkAaQuoteBeforeApproval after the fee-floor check. `check` must ask
+ * the bundler for the operation the send will actually estimate (the same
+ * spec, calls, fees and stub) and throw what the bundler throws
+ * (ImpossibleGasEstimateError for an answer that stays impossible); it
+ * returns the estimate when sendCalls may use it as a stand-in, or null when
+ * not (a paymaster takes part). Exported for ./token-gas.ts and
+ * ./recovery.ts.
+ */
+export function registerPrePromptEstimate(quote: object, check: () => Promise<PreCheckedGasEstimate | null>): void {
+  prePromptEstimates.set(quote, check);
+}
+
+/**
+ * Gives `to` the pre-prompt estimate of `from` (phase 28 item 1): for a
+ * wrapper that returns a copy of a prepareAaCalls quote with figures of its
+ * own (./passkeys.ts preparePasskeyCalls), whose send estimates exactly the
+ * stub operation `from`'s check estimates. A `from` without one gives
+ * nothing.
+ */
+export function carryPrePromptEstimate(from: object, to: object): void {
+  const check = prePromptEstimates.get(from);
+  if (check) prePromptEstimates.set(to, check);
+}
 
 /**
  * The estimate of each quote's LAST pre-prompt check that passed (pass
@@ -4682,25 +4719,29 @@ const prePromptEstimates = new WeakMap<object, () => Promise<void>>();
 const prePromptPassed = new WeakMap<object, PreCheckedGasEstimate>();
 
 /**
- * The pre-checked estimate sendAa passes for `quote`, or undefined: only
- * for a quote prepareAaCalls made whose pre-prompt check passed, and never
- * for a sponsored or USDC-fee quote (a paymaster changes the operation the
- * bundler estimates; the engine refuses those as well). Exported for
+ * The pre-checked estimate a send passes for `quote`, or undefined: only for
+ * a quote whose pre-prompt check passed and kept one, and never for a
+ * sponsored or USDC-fee quote (a paymaster changes the operation the
+ * bundler estimates; the engine refuses those as well). Since phase 28 item
+ * 1 a passkey quote may have one (its check estimates the passkey spec's own
+ * stub operation, with no paymaster); sendPasskeyCalls and
+ * submitGuardianRecovery pass it like sendAa. Exported for those and for
  * scripts/check-aa.mjs.
  */
 export function aaPreCheckedEstimateFor(
-  quote: Pick<AaSendQuote, 'sponsored' | 'tokenGas' | 'passkey'>,
+  quote: object & { sponsored?: boolean; tokenGas?: unknown },
 ): PreCheckedGasEstimate | undefined {
-  if (quote.sponsored || quote.tokenGas || quote.passkey) return undefined;
+  if (quote.sponsored || quote.tokenGas) return undefined;
   return prePromptPassed.get(quote);
 }
 
 /**
  * True when checkAaQuoteBeforeApproval will also run the bundler estimate
- * for `quote` (a quote prepareAaCalls made), false when it reads only the
- * bundler's fee floor (the passkey, guardian-recovery and USDC-fee
- * wrappers). Phase 27 item 2's busy line uses it so that it says "the
- * bundler's gas estimate" only when one is really asked for.
+ * for `quote` (a quote prepareAaCalls made, and since phase 28 item 1 a
+ * passkey, ERC-7677 USDC-fee or guardian-recovery quote), false when it
+ * reads only the bundler's fee floor (Circle's USDC-fee quote). Phase 27
+ * item 2's busy line uses it so that it says "the bundler's gas estimate"
+ * only when one is really asked for.
  */
 export function aaQuoteHasPrePromptEstimate(quote: object): boolean {
   return prePromptEstimates.has(quote);
@@ -4734,8 +4775,9 @@ export function claimQuoteForSubmission(quote: object): void {
  * gas-estimate check (signedFeeGuard) can only run there, because the
  * client re-estimates the operation while it signs.
  *
- * Then, for a quote prepareAaCalls made, ONE checked bundler estimate of
- * the same operation (pass p26-emu2 finding 1: on Arbitrum Sepolia ZeroDev
+ * Then, for a quote prepareAaCalls made (and, since phase 28 item 1, a
+ * quote registered by registerPrePromptEstimate or carryPrePromptEstimate),
+ * ONE checked bundler estimate of the same operation (pass p26-emu2 finding 1: on Arbitrum Sepolia ZeroDev
  * answered impossible zero limits in bursts, and two sends were refused at
  * send time only after the device prompt): an impossible answer is asked
  * for again under the bundle's retry policy and, if it stays impossible,
@@ -4763,7 +4805,13 @@ export async function checkAaQuoteBeforeApproval(
     maxPriorityFeePerGas: quote.maxPriorityFeePerGas,
   });
   const estimate = prePromptEstimates.get(quote);
-  if (estimate) await estimate();
+  if (estimate) {
+    // A pre-checked estimate is kept only from a check that passed (pass
+    // p27-emu2 finding 1); a later check that fails leaves none behind.
+    prePromptPassed.delete(quote);
+    const passed = await estimate();
+    if (passed) prePromptPassed.set(quote, passed);
+  }
 }
 
 /**

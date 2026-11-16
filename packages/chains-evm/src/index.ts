@@ -41,6 +41,7 @@ export {
   toWord,
 } from './encoding.js';
 export {
+  ESTIMATE_BEFORE_SIGNING_7702_REFUSAL,
   PRE_CHECKED_ESTIMATE_MAX_AGE_MS,
   SmartAccountClient,
   eip191PrefixedMessage,

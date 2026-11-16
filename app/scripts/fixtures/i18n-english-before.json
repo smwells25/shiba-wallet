@@ -13243,7 +13243,9 @@
   "handle.renew.buttonLabel",
   "send.btc.assetsWarning",
   "activity.solana.receivedWithheld",
-  "activity.solana.receivedUnnamedWithheld"
+  "activity.solana.receivedUnnamedWithheld",
+  "coldSign.prePrompt.show",
+  "coldSign.prePrompt.submit"
  ],
  "changed": {
   "activity.note.privacy": {

@@ -63,6 +63,9 @@ import {
   aaUserCalls,
   AA_IMPOSSIBLE_ESTIMATE_TITLE,
   isImpossibleGasEstimateError,
+  aaPreCheckedEstimateFor,
+  aaQuoteHasPrePromptEstimate,
+  checkAaQuoteBeforeApproval,
 } from '../src/wallet/aa.ts';
 import {
   TOKEN_GAS_7702_NOTE,
@@ -1794,6 +1797,75 @@ console.log('check-token-gas: the ERC-7677 source (Pimlico’s ERC-20 paymaster 
     const m2 = await mAa.sendAa(m2Bundle, owner, m2Quote).then((x) => x, (e) => e);
     check('M-T2 caught: a Circle client that ignores the bundle’s retry policy refuses instead of asking again (the recovery check above would fail)',
       isImpossibleGasEstimateError(m2) && m2Inner.sent.length === 0);
+
+    // Phase 28 item 1: the pre-prompt estimate (aa.ts checkAaQuoteBeforeApproval, before the device prompt).
+    // ERC-7677: asked through the very client sendAa uses (erc7677TokenGasClient: the paymaster's STUB data, the
+    // quote's calls with the exact approval first, its fees), signing nothing; nothing is kept for the stand-in
+    // (a paymaster takes part). Circle: none — its stub carries a permit signed by the owner key.
+    {
+      const pb = pimBundler(pimNode());
+      const { bundle: pBundle } = pimBundle({ bundler: pb, estimateRetries: NO_WAIT });
+      const q = await tg.prepareAaTokenGasSend(pBundle, OWNER_0, RECIPIENT, 0n, { acceptsErc7677: true });
+      check('phase 28 item 1: the ERC-7677 USDC-fee quote carries a pre-prompt estimate', aaQuoteHasPrePromptEstimate(q) === true);
+      const stubsBefore = pb.calls.filter((c) => c.method === 'pm_getPaymasterStubData').length;
+      const finalsBefore = pb.calls.filter((c) => c.method === 'pm_getPaymasterData').length;
+      const estBefore = pb.estimated.length;
+      await checkAaQuoteBeforeApproval(pBundle.bundler, q);
+      const op = pb.estimated[pb.estimated.length - 1];
+      const first = decodeKernelExecute(op.callData).calls[0];
+      const approveIface = new ethers.Interface(['function approve(address,uint256)']);
+      const [spender, amount] = approveIface.decodeFunctionData('approve', first.data);
+      check('phase 28 item 1: the check asks for the paymaster\'s stub data and ONE estimate of the operation sendAa will estimate (the exact approval of the displayed maximum first, the quote\'s fees), and never for the final data',
+        pb.estimated.length === estBefore + 1 &&
+          pb.calls.filter((c) => c.method === 'pm_getPaymasterStubData').length === stubsBefore + 1 &&
+          pb.calls.filter((c) => c.method === 'pm_getPaymasterData').length === finalsBefore &&
+          same(first.to, SEP_USDC) && same(spender, PIM) && amount === q.tokenGas.maxTokenCharge &&
+          BigInt(op.maxFeePerGas) === q.maxFeePerGas && BigInt(op.maxPriorityFeePerGas) === q.maxPriorityFeePerGas && same(op.paymaster, PIM));
+      check('phase 28 item 1: …nothing sent and nothing kept for the send-time stand-in (a paymaster takes part)',
+        pb.sent.length === 0 && aaPreCheckedEstimateFor(q) === undefined);
+      // A zero burst at the check: refused there, before any prompt.
+      const zeroAt = await rejection(async () => {
+        const zb2 = pimBundler(pimNode(), { estimate: PIM_ZERO });
+        const pass = pimBundler(pimNode());
+        let zero = false;
+        const switching = async (method, params) => (zero && method === 'eth_estimateUserOperationGas' ? zb2(method, params) : pass(method, params));
+        const { bundle: sBundle } = pimBundle({ bundler: switching, estimateRetries: NO_WAIT });
+        const sq = await tg.prepareAaTokenGasSend(sBundle, OWNER_0, RECIPIENT, 0n, { acceptsErc7677: true });
+        zero = true;
+        try {
+          await checkAaQuoteBeforeApproval(sBundle.bundler, sq);
+        } finally {
+          if (pass.sent.length + zb2.sent.length !== 0) throw new Error('sent');
+        }
+      });
+      check('phase 28 item 1: a zero burst at the ERC-7677 check → the engine\'s ImpossibleGasEstimateError before the device prompt, nothing sent',
+        isImpossibleGasEstimateError(zeroAt), zeroAt?.message);
+      // Circle: no estimate before the prompt, and no permit (no USDC nonce read) at the check.
+      const cbNode = tgNode({ usdc: 2_000_000n, eth: 0n });
+      const cbBundler = tgBundler(cbNode);
+      const { bundle: cbBundle } = kernelBundle({ node: cbNode, bundler: cbBundler, estimateRetries: NO_WAIT });
+      const cq = await prepareAaTokenGasSend(cbBundle, OWNER_0, RECIPIENT, 0n);
+      const cEst = cbBundler.estimated.length;
+      const nonceReadsOf = () => cbNode.calls.filter((c) => c.method === 'eth_call' && same(c.params[0].to, USDC) && c.params[0].data.startsWith(sel('nonces(address)'))).length;
+      const cNonces = nonceReadsOf();
+      await checkAaQuoteBeforeApproval(cbBundle.bundler, cq);
+      check('phase 28 item 1: a Circle quote has NO pre-prompt estimate (its stub needs the owner\'s permit): the check asks no estimate and builds no permit',
+        aaQuoteHasPrePromptEstimate(cq) === false && cbBundler.estimated.length === cEst && nonceReadsOf() === cNonces);
+      // M-T3: the ERC-7677 registration removed (the quote assembled as before this slice).
+      const regAnchor = '  return registerErc7677PrePromptEstimate(\n    bundle,\n    ownerAddress,\n    assembleQuote(';
+      if (!tgSource.includes(regAnchor)) throw new Error('mutation anchor not found (the ERC-7677 pre-prompt registration)');
+      const mTg3 = await importMutantTg('src/wallet/token-gas.ts', tgSource.replace(regAnchor, '  return ((_b, _o, q) => q)(\n    bundle,\n    ownerAddress,\n    assembleQuote('));
+      const zb3 = pimBundler(pimNode(), { estimate: PIM_ZERO });
+      const pass3 = pimBundler(pimNode());
+      let zero3 = false;
+      const switching3 = async (method, params) => (zero3 && method === 'eth_estimateUserOperationGas' ? zb3(method, params) : pass3(method, params));
+      const { bundle: m3Bundle } = pimBundle({ bundler: switching3, estimateRetries: NO_WAIT });
+      const m3q = await mTg3.prepareAaTokenGasSend(m3Bundle, OWNER_0, RECIPIENT, 0n, { acceptsErc7677: true });
+      zero3 = true;
+      const m3e = await rejection(() => checkAaQuoteBeforeApproval(m3Bundle.bundler, m3q));
+      check('M-T3 caught: without the ERC-7677 registration a zero burst passes the pre-prompt check to the device prompt (the check above would fail)',
+        m3e === null && aaQuoteHasPrePromptEstimate(m3q) === false);
+    }
   }
 }
 

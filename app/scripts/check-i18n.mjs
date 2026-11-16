@@ -323,6 +323,9 @@ const ONLY_BLOCKS_THEN_CLOSE = /^(?:\s*\/\/ ---- BEGIN [^\n]*\n[\s\S]*?\/\/ ----
 // Phase 27 item 1 (Activity): the recipient's row of a Solana Token-2022 transfer that withheld the issuer's transfer fee
 // (wallet/solana-activity.ts); one delimited block at the end of en.ts / es.ts.
 const P27_ACTIVITY_NEW = ['activity.solana.receivedWithheld', 'activity.solana.receivedUnnamedWithheld'];
+// Phase 28 item 1: the busy line of the off-line signing screen for a smart account, at Show and at Submit
+// (wallet/pre-prompt-guard.ts coldSignCheckText); one delimited block at the end of en.ts / es.ts.
+const P28_PROMPT_NEW = ['coldSign.prePrompt.show', 'coldSign.prePrompt.submit'];
 const NFT_ENS_NEW = ['nft.ens.collection', 'nft.ens.is', 'nft.ens.isUnchecked', 'nft.ens.handover', 'nft.ens.resolver', 'nft.ens.expiry',
   'nft.ens.expired', 'nft.ens.stale', 'nft.ens.reading', 'nft.ens.unread'];
 {
@@ -342,8 +345,8 @@ const NFT_ENS_NEW = ['nft.ens.collection', 'nft.ens.is', 'nft.ens.isUnchecked', 
   // broadcast sentences (an HTTP 5xx or a dropped connection, not a timeout).
   const BROADCAST_OPEN_NEW = ['broadcast.open.title', 'broadcast.tx.open', 'broadcast.tx.openUnlisted', 'broadcast.userop.open',
     'broadcast.userop.openUnlisted', 'broadcast.open'];
-  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the Solana token-send readiness row, the wallet handle\'s, the six open-outcome broadcast sentences, the co-signer card\'s numbered Scan label, the eight period words of the hygiene slice, the four Bridge lines of pass p23-mint, the five lines of the p23-build fixes, the three Bridge lines of pass p23-bridge-recheck and the three navigation-bar lines of pass p23-navbar and the three iOS-pass lines (two iOS reminder notes, the "an" scanner sentence) and the five lines of the Solana-pass fix slice (the Solana devnet banner, the Solana token-fee line, the Solana devnet readiness line, two Max-lowering sentences) and the two smart-account Max-lowering sentences of the trim slice and the devnet form of the Solana token-fee line (pass p24-recheck) and the nine lines of the p24-unblock fixes (the Solana token Send link and its hint, seven Solana Activity sentences) and the hidden-fee word of an Activity row and the four gains-report lines of phase 25 item 3 and the ten ENS name-token lines of pass p25-emu1 and the three pending-list lines of phase 26 item 4 (account removal) and the Dogecoin no-endpoint line of pass p25-emu2 and the Solana spending-limit lines of phase 26 item 3b and the Lend screen\'s lines with its readiness row (phase 26 item 2) and the profit-and-loss devnet sentence of the p26-emu1 fixes and the three lines of the p26-emu2 fixes and the two withheld-fee lines of phase 27 item 1',
-    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || SPL_TOKENS_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id) || NAVBAR_FIX_NEW.includes(id) || IOS_FIX_NEW.includes(id) || SOLANA_FIX_NEW.includes(id) || AA_TRIM_NEW.includes(id) || RECHECK_FIX_NEW.includes(id) || UNBLOCK_FIX_NEW.includes(id) || SOLHIST_NEW.includes(id) || GAINS_NEW.includes(id) || NFT_ENS_NEW.includes(id) || PENDING_FORGET_NEW.includes(id) || DOGE_ENDPOINT_NEW.includes(id) || insightsNew(id) || spendingSolNew(id) || lendNew(id) || EMU1_FIX_NEW.includes(id) || EMU2_FIX_NEW.includes(id) || P27_SCREENS_NEW.includes(id) || P27_ACTIVITY_NEW.includes(id)) &&
+  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the Solana token-send readiness row, the wallet handle\'s, the six open-outcome broadcast sentences, the co-signer card\'s numbered Scan label, the eight period words of the hygiene slice, the four Bridge lines of pass p23-mint, the five lines of the p23-build fixes, the three Bridge lines of pass p23-bridge-recheck and the three navigation-bar lines of pass p23-navbar and the three iOS-pass lines (two iOS reminder notes, the "an" scanner sentence) and the five lines of the Solana-pass fix slice (the Solana devnet banner, the Solana token-fee line, the Solana devnet readiness line, two Max-lowering sentences) and the two smart-account Max-lowering sentences of the trim slice and the devnet form of the Solana token-fee line (pass p24-recheck) and the nine lines of the p24-unblock fixes (the Solana token Send link and its hint, seven Solana Activity sentences) and the hidden-fee word of an Activity row and the four gains-report lines of phase 25 item 3 and the ten ENS name-token lines of pass p25-emu1 and the three pending-list lines of phase 26 item 4 (account removal) and the Dogecoin no-endpoint line of pass p25-emu2 and the Solana spending-limit lines of phase 26 item 3b and the Lend screen\'s lines with its readiness row (phase 26 item 2) and the profit-and-loss devnet sentence of the p26-emu1 fixes and the three lines of the p26-emu2 fixes and the two withheld-fee lines of phase 27 item 1 and the two cold-signing busy lines of phase 28 item 1',
+    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || SPL_TOKENS_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id) || NAVBAR_FIX_NEW.includes(id) || IOS_FIX_NEW.includes(id) || SOLANA_FIX_NEW.includes(id) || AA_TRIM_NEW.includes(id) || RECHECK_FIX_NEW.includes(id) || UNBLOCK_FIX_NEW.includes(id) || SOLHIST_NEW.includes(id) || GAINS_NEW.includes(id) || NFT_ENS_NEW.includes(id) || PENDING_FORGET_NEW.includes(id) || DOGE_ENDPOINT_NEW.includes(id) || insightsNew(id) || spendingSolNew(id) || lendNew(id) || EMU1_FIX_NEW.includes(id) || EMU2_FIX_NEW.includes(id) || P27_SCREENS_NEW.includes(id) || P27_ACTIVITY_NEW.includes(id) || P28_PROMPT_NEW.includes(id)) &&
       BUILD_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && BRIDGE_RECHECK_NEW.every((id) => FIXTURE.new.includes(id)) &&
       LOCK_KIND_NEW.every((id) => FIXTURE.new.includes(id)) && COLD_AA_NEW.every((id) => FIXTURE.new.includes(id)) && SPL_TOKENS_NEW.every((id) => FIXTURE.new.includes(id)) &&
       BROADCAST_OPEN_NEW.every((id) => FIXTURE.new.includes(id)) && THIRD_PASS_NEW.every((id) => FIXTURE.new.includes(id)) && PERIOD_NEW.every((id) => FIXTURE.new.includes(id)) &&
@@ -353,7 +356,7 @@ const NFT_ENS_NEW = ['nft.ens.collection', 'nft.ens.is', 'nft.ens.isUnchecked', 
       SOLHIST_NEW.every((id) => FIXTURE.new.includes(id)) && GAINS_NEW.every((id) => FIXTURE.new.includes(id)) &&
       NFT_ENS_NEW.every((id) => FIXTURE.new.includes(id)) && PENDING_FORGET_NEW.every((id) => FIXTURE.new.includes(id)) && DOGE_ENDPOINT_NEW.every((id) => FIXTURE.new.includes(id)) &&
       EMU1_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && EMU2_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && P27_SCREENS_NEW.every((id) => FIXTURE.new.includes(id)) &&
-      P27_ACTIVITY_NEW.every((id) => FIXTURE.new.includes(id)) &&
+      P27_ACTIVITY_NEW.every((id) => FIXTURE.new.includes(id)) && P28_PROMPT_NEW.every((id) => FIXTURE.new.includes(id)) &&
       Object.keys(en).filter(insightsNew).length > 0 && Object.keys(en).filter(insightsNew).every((id) => FIXTURE.new.includes(id)) &&
       Object.keys(en).filter(spendingSolNew).length > 0 && Object.keys(en).filter(spendingSolNew).every((id) => FIXTURE.new.includes(id)) &&
       Object.keys(en).filter(lendNew).length > 0 && Object.keys(en).filter(lendNew).every((id) => FIXTURE.new.includes(id)));
@@ -442,6 +445,22 @@ const NFT_ENS_NEW = ['nft.ens.collection', 'nft.ens.is', 'nft.ens.isUnchecked', 
         en['activity.solana.receivedUnnamedWithheld'] === 'Received {amount} {asset}; {fee} {asset} more was withheld in this account’s token account as the issuer’s transfer fee; the transaction does not name one sender' &&
         P27_ACTIVITY_NEW.every((id) => typeof es[id] === 'string' && es[id] !== en[id] && ph(es[id]) === ph(en[id])) &&
         block(enSrc) && block(esSrc) && P27_ACTIVITY_NEW.every((id) => solSrc.includes(`'${id}'`)));
+    // Phase 28 item 1: the two cold-signing busy lines, English exact, a Spanish draft keeping the placeholders (none), in one
+    // delimited block of each table (followed only by the closing brace or another pass's delimited block), used by
+    // wallet/pre-prompt-guard.ts; neither says an approval prompt follows (none does on that screen).
+    const p28Block = (src) => {
+      const b = src.lastIndexOf('// ---- BEGIN phase 28 item 1');
+      const e = src.lastIndexOf('// ---- END phase 28 item 1 ----');
+      return b > 0 && e > b && P28_PROMPT_NEW.every((id) => { const at = src.indexOf(`'${id}'`); return at > b && at < e; }) &&
+        ONLY_BLOCKS_THEN_CLOSE.test(src.slice(src.indexOf('\n', e) + 1));
+    };
+    check('phase 28 item 1: the two cold-signing busy lines, English exact, a Spanish draft each, in one delimited block at the end of each table, used by pre-prompt-guard.ts, and neither promises an approval prompt',
+      en['coldSign.prePrompt.show'] === 'Checking the spending limits, the bundler’s minimum fee and its gas estimate before the request for the off-line signer is shown. This can take up to about a minute; nothing has been signed or sent.' &&
+        en['coldSign.prePrompt.submit'] === 'Checking the signature, the account’s nonce and deployment and the bundler’s minimum fee, then handing the signed operation to the bundler. This phone signs nothing here.' &&
+        P28_PROMPT_NEW.every((id) => typeof es[id] === 'string' && es[id] !== en[id] && ph(es[id]) === ph(en[id]) && !/approve/i.test(en[id])) &&
+        p28Block(enSrc) && p28Block(esSrc) && P28_PROMPT_NEW.every((id) => guardSrc.includes(`t('${id}')`)));
+    check('phase 28 item 1 (mutant): a loose entry after the phase 28 block is refused',
+      !p28Block(enSrc.replace('  // ---- END phase 28 item 1 ----\n', "  // ---- END phase 28 item 1 ----\n  'x.loose': 'Loose',\n")));
   }
   // Phase 26 item 4: the three account-removal lines about the pending list, English and Spanish exact, the placeholders
   // matching, and each one used by wallet/pending-transactions.ts.

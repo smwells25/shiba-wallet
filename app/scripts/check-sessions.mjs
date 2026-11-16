@@ -556,6 +556,67 @@ console.log('check-sessions: session-signed operation (owner never involved)');
     node.calls.length === nodeBefore && bundler.calls.length === bundlerBefore && vault.loads === loadsBefore,
     `${node.calls.length - nodeBefore}/${bundler.calls.length - bundlerBefore}/${vault.loads - loadsBefore}`);
 
+  // Phase 28 item 1: the bundler's estimate of the session operation is asked BEFORE the session key is read (its
+  // system prompt when the key is protected), with the session key's address only; an impossible answer is refused
+  // there with no key read and nothing sent; the passing estimate stands in for an impossible send-time answer.
+  {
+    const ZERO_EST = { callGasLimit: '0xcb36', verificationGasLimit: '0x0', preVerificationGas: '0x333' };
+    const run = async (sessionsModule, { zeroAtStart, zeroAfterKey }) => {
+      const inner = fakeBundler({ receipt: { success: true, receipt: { transactionHash: TX_HASH } } });
+      let zero = zeroAtStart;
+      let estimates = 0;
+      let estimatesAtLoad = null;
+      const zb = async (method, params) => {
+        if (method === 'eth_estimateUserOperationGas') {
+          estimates += 1;
+          if (zero) {
+            await inner(method, params);
+            return ZERO_EST;
+          }
+        }
+        return inner(method, params);
+      };
+      const watched = {
+        ...vault,
+        load: async (id) => {
+          estimatesAtLoad = estimates;
+          if (zeroAfterKey) zero = true;
+          return vault.load(id);
+        },
+      };
+      const result = await sessionsModule.sendSessionCalls({ bundle: { node, bundler: zb, chainId: CHAIN_ID }, record: installRecord, calls: [allowed], vault: watched, now: NOW })
+        .then((x) => x, (e) => e);
+      return { result, estimates, estimatesAtLoad, sends: inner.calls.filter((c) => c.method === 'eth_sendUserOperation').length, lastOp: inner.lastOp };
+    };
+    const clean = await run({ sendSessionCalls }, { zeroAtStart: false, zeroAfterKey: false });
+    check('phase 28 item 1: one bundler estimate BEFORE the session key is read, then the send-time estimate (asked once), one send',
+      typeof clean.result?.userOpHash === 'string' && clean.estimatesAtLoad === 1 && clean.estimates === 2 && clean.sends === 1, clean.result?.message);
+    const standIn = await run({ sendSessionCalls }, { zeroAtStart: false, zeroAfterKey: true });
+    const sop = standIn.lastOp;
+    check('phase 28 item 1: zeros after the key was read → sent once with the pre-checked estimate standing in (asked once at send time, no retries)',
+      typeof standIn.result?.userOpHash === 'string' && standIn.estimates === 2 && standIn.sends === 1 && sop && BigInt(sop.verificationGasLimit) > 0n, standIn.result?.message);
+    const zeroAll = await run({ sendSessionCalls }, { zeroAtStart: true, zeroAfterKey: false });
+    check('phase 28 item 1: a zero burst at the estimate before the key → the engine\'s ImpossibleGasEstimateError, the session key NEVER read (no system prompt), nothing sent',
+      zeroAll.result?.name === 'ImpossibleGasEstimateError' && zeroAll.estimatesAtLoad === null && zeroAll.sends === 0, zeroAll.result?.message);
+    // MUTANT on sessions.ts: the estimate before the key removed (the order before this slice).
+    const sessSource = readFileSync(new URL('../src/wallet/sessions.ts', import.meta.url), 'utf8');
+    const preAnchor = '  const preChecked = await client.estimateBeforeSigning(addressOnlyOwner(grant.sessionKey), args.calls, fees);\n';
+    if (!sessSource.includes(preAnchor)) throw new Error('mutation anchor not found (the session pre-key estimate)');
+    const { mkdirSync: mk, rmSync: rm, writeFileSync: wf } = await import('node:fs');
+    const mDir = new URL(`./.mutants-sessions-${process.pid}/`, import.meta.url);
+    process.on('exit', () => rm(mDir, { recursive: true, force: true }));
+    mk(mDir, { recursive: true });
+    const srcDir = new URL('../src/wallet/', import.meta.url);
+    const mFile = new URL('m1-sessions.ts', mDir);
+    wf(mFile, sessSource
+      .replace(preAnchor, '  const preChecked = undefined;\n')
+      .replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${new URL(spec, srcDir).href}'`));
+    const mSess = await import(mFile.href);
+    const mRun = await run(mSess, { zeroAtStart: false, zeroAfterKey: false });
+    check('MUTANT (the estimate before the key removed) is caught: the key is read before any estimate (the order check above would fail)',
+      mRun.estimatesAtLoad === 0);
+  }
+
   const src = readFileSync(new URL('../src/wallet/sessions.ts', import.meta.url), 'utf8');
   check('sessions.ts has no path to the owner key (no signWith, mnemonic or storage.ts import)',
     !/signWith\(|loadMnemonic|mnemonicToSeed|from '\.\/storage/.test(src));
@@ -878,7 +939,8 @@ console.log('check-sessions: revoke and progress copy (phase 12 rehearsal findin
   check('sendSessionCalls announces the operation only after the bundler accepted it',
     // The bounded-broadcast follow-ups added the spend (counted before the
     // broadcast) as submitWithPendingRecord's third argument; the order is the same.
-    /\(beforeSend\) => client\.sendCalls\(sessionAccount, args\.calls, fees, \{ beforeSend \}\),\s*args\.spend \?\? null,\s*\);\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*notifyAaOperationSent\(\{/.test(sessSrcK));
+    // Phase 28 item 1: the pre-prompt estimate is passed as the stand-in (the pin changed in place).
+    /\(beforeSend\) => client\.sendCalls\(sessionAccount, args\.calls, fees, \{ beforeSend, preCheckedEstimate: preChecked \}\),\s*args\.spend \?\? null,\s*\);\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*notifyAaOperationSent\(\{/.test(sessSrcK));
   const subInstall = screen.slice(screen.indexOf('const onSubInstall = async'), screen.indexOf('const onShowKey = async'));
   check('the subscription install reports progress kind "subscription"; the screen title comes from sessionProgressTitle',
     /setProgress\(\{\s*kind: p\.mode === 'recurring' \? 'recurring' : 'subscription',/.test(subInstall) && /\{sessionProgressTitle\(progress\.kind\)\}/.test(screen) && !/\{what\} sent to the bundler/.test(screen));

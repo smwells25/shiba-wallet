@@ -993,16 +993,40 @@ console.log('check-cold-aa: mutation checks (broken copies must fail)');
 // ---------------------------------------------------------------------------
 // Phase 27 item 2 (rollout): the cold smart-account Show and Submit taps run
 // under the pre-prompt guard (a second tap starts nothing; Show/Submit and
-// Back disabled until the handler returns) but render NO busy line: no device
-// prompt follows these checks, so the shared line's "before asking you to
-// approve" would be untrue there (source pins).
+// Back disabled until the handler returns) but never render the confirm's
+// busy line: no device prompt follows these checks, so its "before asking you
+// to approve" would be untrue there (source pins). Since phase 28 item 1 each
+// place shows its own true line instead (ColdSignCheckNote).
 // ---------------------------------------------------------------------------
 {
   const { readFileSync: readGuardSrc } = await import('node:fs');
   const guardScreen = readGuardSrc(new URL('../src/screens/ColdSignScreen.tsx', import.meta.url), 'utf8');
   check('phase 27 item 2: Show and Submit run under the guard; their buttons and Back are disabled while it runs',
     ["  const prePrompt = usePrePromptGuard();\n", "  const onAaShowTap = () => void prePrompt.guard.run(() => onAaShow());\n", "  const onAaSubmitTap = () => void prePrompt.guard.run(() => onAaSubmit());\n", "<Button title={COLD_SIGN_SHOW_BUTTON} onPress={onAaShowTap} disabled={prePrompt.stage !== 'idle'} />\n            <Button title=\"Back\" variant=\"secondary\" onPress={aaBackToForm} disabled={prePrompt.stage !== 'idle'} />", "<Button title={COLD_AA_SUBMIT_BUTTON} disabled={!aaSignature || prePrompt.stage !== 'idle'} onPress={onAaSubmitTap} />\n            {/* The quote was used for this request: going back means a new review. */}\n            <Button title=\"Back\" variant=\"secondary\" onPress={aaBackToForm} disabled={prePrompt.stage !== 'idle'} />"].every((s) => guardScreen.includes(s)) && !guardScreen.includes('onPress={() => void onAaShow()}') && !guardScreen.includes('onPress={() => void onAaSubmit()}'));
-  check('phase 27 item 2: …and no busy line on this screen (its sentence would say an approval prompt follows)', !guardScreen.includes('<PrePromptCheckNote'));
+  // Phase 28 item 1: the label changed in place (the screen now has its own true lines, below); the condition is unchanged.
+  check('phase 27 item 2: …and never the confirm\'s busy line on this screen (its sentence would say an approval prompt follows)', !guardScreen.includes('<PrePromptCheckNote'));
+  // Phase 28 item 1: each place shows its OWN true line (ColdSignCheckNote / coldSignCheckText): Show names the spending
+  // limits, the bundler's minimum fee and its gas estimate before the request is shown, nothing signed or sent; Submit names
+  // the signature, nonce and deployment checks and the minimum fee, then the hand-over, and that the phone signs nothing.
+  // Neither says an approval prompt follows (the pin above changed in place: it now forbids the UNTRUE line, not any line).
+  const { coldSignCheckText, prePromptStageText } = await import('../src/wallet/pre-prompt-guard.ts');
+  const notesOk = (src) =>
+    src.includes("<Button title={COLD_SIGN_SHOW_BUTTON} onPress={onAaShowTap} disabled={prePrompt.stage !== 'idle'} />\n            <Button title=\"Back\" variant=\"secondary\" onPress={aaBackToForm} disabled={prePrompt.stage !== 'idle'} />\n          </>\n        )}\n        {/* Phase 28 item 1: what runs while Show holds the guard (no device prompt follows on this screen). */}\n        <ColdSignCheckNote stage={prePrompt.stage} kind=\"show\" />") &&
+    src.includes("{/* Phase 28 item 1: what runs while Submit holds the guard (no device prompt follows on this screen). */}\n        <ColdSignCheckNote stage={prePrompt.stage} kind=\"submit\" />") &&
+    !src.includes('<PrePromptCheckNote');
+  check('phase 28 item 1: Show and Submit each show their own busy line (ColdSignCheckNote show / submit), never the confirm\'s', notesOk(guardScreen));
+  const show = coldSignCheckText('bundler', 'show');
+  const submit = coldSignCheckText('bundler', 'submit');
+  check('phase 28 item 1: the two lines say what runs there and never promise an approval prompt; idle draws nothing; the stage does not change the line',
+    show === 'Checking the spending limits, the bundler\u2019s minimum fee and its gas estimate before the request for the off-line signer is shown. This can take up to about a minute; nothing has been signed or sent.' &&
+      submit === 'Checking the signature, the account\u2019s nonce and deployment and the bundler\u2019s minimum fee, then handing the signed operation to the bundler. This phone signs nothing here.' &&
+      !/approve/i.test(show) && !/approve/i.test(submit) && show !== prePromptStageText('bundler') &&
+      coldSignCheckText('idle', 'show') === null && coldSignCheckText('idle', 'submit') === null &&
+      coldSignCheckText('final', 'show') === show && coldSignCheckText('final', 'submit') === submit);
+  check('phase 28 item 1 (mutant): the confirm\'s untrue line on this screen is caught',
+    !notesOk(guardScreen.replace('<ColdSignCheckNote stage={prePrompt.stage} kind="show" />', '<PrePromptCheckNote stage={prePrompt.stage} />')));
+  check('phase 28 item 1 (mutant): the Submit line swapped for the Show line is caught',
+    !notesOk(guardScreen.replace('<ColdSignCheckNote stage={prePrompt.stage} kind="submit" />', '<ColdSignCheckNote stage={prePrompt.stage} kind="show" />')));
 }
 console.log(`\ncheck-cold-aa: ${passed} passed, ${failed} failed (${mutantCount} mutants loaded)`);
 process.exit(failed === 0 ? 0 : 1);

@@ -1101,5 +1101,37 @@ console.log('check-dca: phase 20 item 0 finding 8 (a review never started leaves
       /useEffect\(\(\) => discardPending, \[discardPending\]\);/.test(screen));
 }
 
+// ---------------------------------------------------------------------------
+// Phase 28 item 1: Start runs under the pre-prompt guard; after the new quote
+// (prepareSessionInstall, a prepareAaCalls quote with its registered estimate)
+// the bundler's fee floor and its gas estimate of that very install are checked
+// (aa.ts checkAaQuoteBeforeApproval) BEFORE the device prompt; the busy line is
+// drawn only while the stage text is the re-quote's (never during signing).
+// ---------------------------------------------------------------------------
+{
+  const startScreen = readFileSync(new URL('../src/screens/SessionsScreen.tsx', import.meta.url), 'utf8');
+  const startOk = (src, name, tapLine, authNeedle) => {
+    const start = src.indexOf(`const ${name} = async (step: PrePromptStep) => {`);
+    if (start < 0 || !src.includes(tapLine)) return false;
+    const body = src.slice(start, src.indexOf('\n  };\n', start));
+    const quoteAt = body.indexOf('await quoteOnNode((b) => prepareSessionInstall(b, owner, account, grant, { now }));');
+    const requoteAt = body.indexOf('if (subscriptionRequoteNeedsReview(reviewed.quote, p.quote)) {');
+    const checkAt = body.indexOf('await checkAaQuoteBeforeApproval(p.bundle.bundler, p.quote);');
+    const finalAt = body.indexOf("step('final');");
+    const authAt = body.indexOf(authNeedle);
+    return quoteAt > 0 && requoteAt > quoteAt && checkAt > requoteAt && finalAt > checkAt && authAt > finalAt;
+  };
+  const dcaTap = 'const onDcaInstallTap = () => void prePrompt.guard.run((step) => onDcaInstall(step));';
+  check('phase 28 item 1: recurring-swap Start — under the guard: the re-quote, the fee floor and estimate check, "final", then the device prompt (source)',
+    startOk(startScreen, 'onDcaInstall', dcaTap, "await requireLocalAuth('Approve this recurring swap');"));
+  const dcaViewsSrc = readFileSync(new URL('../src/screens/DcaViews.tsx', import.meta.url), 'utf8');
+  check('phase 28 item 1: …Start goes through the guard and the busy line is passed to the review view only during the re-quote stage, drawn under the stage text (source)',
+    startScreen.includes('onStart={onDcaInstallTap}') &&
+      startScreen.includes("prePromptNote={subSendStage === 'requote' ? <PrePromptCheckNote stage={prePrompt.stage} /> : null}") &&
+      dcaViewsSrc.includes('          {props.prePromptNote ?? null}\n        </View>') && !startScreen.includes('onStart={() => void onDcaInstall()}'));
+  check('phase 28 item 1 (mutant): the check removed from the recurring-swap Start is caught',
+    !startOk(startScreen.replace(/await checkAaQuoteBeforeApproval\(p\.bundle\.bundler, p\.quote\);(?![\s\S]*await checkAaQuoteBeforeApproval\(p\.bundle\.bundler, p\.quote\);)/, 'void 0;'), 'onDcaInstall', dcaTap, "await requireLocalAuth('Approve this recurring swap');"));
+}
+
 console.log(`check-dca: ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
