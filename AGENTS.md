@@ -21482,3 +21482,60 @@ tails); 2 — the emulator pass; 5 last. Subagents on Opus.
       Metro node 60303 on 8081 from wt-app at 0ea0e27; qemu 86708 with
       caffeinate 86986, the window in front. Ethereum Sepolia and Solana
       devnet balances unchanged.
+- [x] Pass p27-emu2 findings FIXED — THE PRE-PROMPT ESTIMATE STANDS IN WHEN
+      THE SEND-TIME ESTIMATE IS IMPOSSIBLE (F-97's remainder), ONE BUSY-LINE
+      ANNOUNCEMENT, THE HANDLE CANCEL ALERT (commit f146133; 10 files, +723
+      / −42, no new file, no new dependency — packages/chains-evm/src/
+      smart-account.ts, index.ts, test/smart-account.test.ts (34 → 55),
+      app/src/wallet/aa.ts, pre-prompt-guard.ts, components/
+      PrePromptCheckNote.tsx, screens/HandleScreen.tsx, check-aa 467 (was
+      452), check-lending 118 (113), check-handle 223 (220); offline runner
+      ALL GREEN in the CTO's isolated worktree on HEAD 192aa54 with
+      --skip-bundle: checkout 0 / apply 0 / 10 files, the staged patch id
+      fdd337f5e655 equal to the verified worktree's and the agent's, the
+      engine rebuilt, engine 1,441 (chains-evm 965), app 12,203 across 68
+      suites, lint 0/0, tsc clean; the pre-commit scan clean; thirteen hand
+      mutants and six in-suite mutants caught by the agent; the CTO read the
+      smart-account.ts hunk; not seen on a device). (1) ENGINE:
+      PreCheckedGasEstimate {op, estimate, checkedAtMs, chainId, entryPoint},
+      PRE_CHECKED_ESTIMATE_MAX_AGE_MS = 90,000 (a judgement: the pass saw
+      about 15 s between the two estimates; the room is for a slow
+      fingerprint), preCheckedEstimateMismatch (pure, exported) and an
+      optional sendCalls option preCheckedEstimate (+ nowMs for tests); the
+      estimate is used ONLY AS A FALLBACK — when it matches, the bundler is
+      still asked at send time, but once instead of under the retry policy; a
+      usable answer is used as always, an ImpossibleGasEstimateError is
+      replaced by the pre-checked estimate, any other bundler error is
+      thrown as before; it matches only when no paymaster takes part (client
+      or either operation — the paymaster's stub data changes the operation
+      the bundler estimates), no EIP-7702 authorization, the same chain and
+      EntryPoint, an age of 0–90,000 ms, the two stub operations identical as
+      the exact JSON-RPC object (sender, nonce, factory and factoryData,
+      callData, fees, stub signature) and the estimate itself free of
+      impossible limits; padding, the deposit top-up headroom, the final
+      zero-limit check and beforeSign run on the stand-in exactly as on a
+      fresh estimate, so signedFeeGuard still refuses anything above the
+      displayed fee; with no option passed the requests, the refusal and the
+      signed operation are pinned identical to before. APP (aa.ts): the
+      pre-prompt check keeps its passing estimate with the stub it estimated
+      (deleted first, set only after a pass); aaPreCheckedEstimateFor returns
+      nothing for sponsored, USDC-fee and passkey quotes; sendAa hands it to
+      sendCalls. PINNED end to end (a fake bundler good once, then zeros for
+      ever → sent with the quote's limits, never above quote.fee; a pre-check
+      above the quote refused by signedFeeGuard; a changed nonce, changed
+      callData or a 91-second-old estimate → the old refusal). LEFT AS BEFORE
+      (no pre-prompt estimate exists for them): passkey, USDC-fee, guardian
+      recovery, session operations, EIP-7702 upgrade operations. (2) THE
+      DOUBLE ANNOUNCEMENT — CAUSE NOT ESTABLISHED (React Native only maps the
+      live-region prop to the view; how Android and TalkBack count content
+      changes is not on this machine); the live region is REMOVED and
+      createPrePromptAnnouncer calls announceForAccessibility once per
+      distinct sentence on both platforms, forgetting the sentence when the
+      line goes away — UNVERIFIED on a device, including whether TalkBack's
+      "disabled" for the button can interrupt it. (5) HandleScreen's cancel
+      alert and, beyond the brief, its pre-flight-failure alert are titled
+      "Not sent" (the existing entry; no new id). UNVERIFIED: the stand-in
+      during a real ZeroDev burst (the bundler's own simulation at
+      eth_sendUserOperation stays the final judge of limits up to 90 s old);
+      the speech. Slip: the agent's `git add -N .` marked its worktree's
+      .ready file intent-to-add (the patch excludes it).
