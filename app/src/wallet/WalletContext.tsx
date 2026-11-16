@@ -114,6 +114,15 @@ import { wipeInbox } from './inbox';
 import { resetPriceAlerts } from './price-alerts';
 import { resetPendingHandles } from './handle';
 import { forgetInsightSnapshots } from './insights';
+import { usePrefs } from './PrefsContext';
+import {
+  BITCOIN_SIGNET_DERIVE_PROMPT,
+  deriveSignetAddress,
+  signetAddressFromCache,
+  signetCacheEntry,
+  withBitcoinSignetRow,
+  type SignetAddress,
+} from './bitcoin-signet';
 import { resetContacts } from './contacts';
 import { resetTrackedTokens } from './tokens';
 import { resetTakeoverScanStates } from './inheritance';
@@ -234,6 +243,19 @@ interface WalletContextValue {
    * and WalletConnect at once.
    */
   accounts: ChainAccount[];
+  /**
+   * Phase 28 item 2: true while "Use Bitcoin signet" is on and the active
+   * recovery-phrase account's signet address is not known on this phone yet
+   * (its Bitcoin row is then left out of `accounts`).
+   */
+  bitcoinSignetPending: boolean;
+  /**
+   * Works out every listed phrase account's missing Bitcoin signet address
+   * from one opening of the phrase (one device prompt when it is protected);
+   * resolves to how many were added. Rejects with the phrase error when the
+   * prompt is cancelled or the phrase cannot be opened.
+   */
+  deriveBitcoinSignetAddresses: () => Promise<number>;
   /** The active account (possibly a watch-only one); null until status is 'ready'. */
   activeAccount: AccountView | null;
   /**
@@ -399,11 +421,21 @@ const WalletContext = createContext<WalletContextValue | null>(null);
  * closures) are dropped inside deriveChainAccounts; only addresses and
  * paths leave this function. Signing re-derives on demand (signWith).
  */
-function derivePublic(mnemonic: string, indices: number[]): Record<number, ChainAccount[]> {
+function derivePublic(
+  mnemonic: string,
+  indices: number[],
+  signetOut?: Record<number, SignetAddress>,
+): Record<number, ChainAccount[]> {
   const seed = mnemonicToSeed(mnemonic);
   try {
     const out: Record<number, ChainAccount[]> = {};
-    for (const index of indices) out[index] = deriveChainAccounts(seed, index);
+    for (const index of indices) {
+      out[index] = deriveChainAccounts(seed, index);
+      // Phase 28 item 2: the account's Bitcoin signet address (coin type 1)
+      // from the same seed, so the switch never needs a prompt for an
+      // account derived from now on (./bitcoin-signet.ts).
+      if (signetOut) signetOut[index] = deriveSignetAddress(seed, index);
+    }
     return out;
   } finally {
     seed.fill(0);
@@ -440,10 +472,21 @@ function hydratePublic(entries: PublicChainEntry[] | null): ChainAccount[] | nul
   return out;
 }
 
-/** Best-effort write of the public cache; a failure only costs a later re-derivation. */
-async function cachePublic(derived: Record<number, ChainAccount[]>): Promise<void> {
+/**
+ * Best-effort write of the public cache; a failure only costs a later
+ * re-derivation. An account's Bitcoin signet address (phase 28 item 2), when
+ * known, is stored as one more entry after the launch chains' entries;
+ * hydratePublic ignores it (it reads the launch chains only), so an older
+ * reader of the cache is unaffected.
+ */
+async function cachePublic(
+  derived: Record<number, ChainAccount[]>,
+  signet: Record<number, SignetAddress> = {},
+): Promise<void> {
   for (const [index, accounts] of Object.entries(derived)) {
-    await savePublicAccount(Number(index), toPublicEntries(accounts)).catch(() => undefined);
+    const sig = signet[Number(index)];
+    const entries = toPublicEntries(accounts);
+    await savePublicAccount(Number(index), sig ? [...entries, signetCacheEntry(sig)] : entries).catch(() => undefined);
   }
 }
 
@@ -575,6 +618,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [pendingMnemonic, setPendingMnemonic] = useState<string | null>(null);
   // Facts per multisig account id (record network, signer, shape label).
   const [multisigInfo, setMultisigInfo] = useState<Record<number, MultisigAccountInfo>>({});
+  // Phase 28 item 2: each phrase account's Bitcoin signet address, from the
+  // public cache or derived with the other addresses (./bitcoin-signet.ts).
+  // An account missing here has no known signet address yet.
+  const [signet, setSignet] = useState<Record<number, SignetAddress>>({});
+  const { bitcoinSignet } = usePrefs();
   // App PIN (duress wallet Stage 2): whether the launch waits for a PIN,
   // which slot opened this session (memory only), a key that changes when
   // a PIN opened a different wallet, and the load requests the PIN unlock
@@ -705,6 +753,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           // profile before this run): drop the other wallet's state first.
           setStatus('loading');
           setDerived({});
+          setSignet({});
           setMultisigInfo({});
           commitAccounts(null);
         }
@@ -723,11 +772,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           }
           const { state, imported } = await loadAccountsWithImported();
           if (cancelled) return;
-          const fresh = derivePublic(mnemonic, derivedIndices(state));
+          const freshSignet: Record<number, SignetAddress> = {};
+          const fresh = derivePublic(mnemonic, derivedIndices(state), freshSignet);
           setDerived({ ...fresh, ...imported, ...watchOnlyRowsFrom(state), ...multisigRowsFrom(state) });
+          setSignet(freshSignet);
           commitAccounts(state);
           setStatus('ready');
-          void cachePublic(fresh);
+          void cachePublic(fresh, freshSignet);
           return;
         }
         const { state, imported } = await loadAccountsWithImported();
@@ -738,10 +789,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           ...multisigRowsFrom(state),
         };
         const missing: number[] = [];
+        const signetFromCache: Record<number, SignetAddress> = {};
         for (const index of derivedIndices(state)) {
-          const rows = hydratePublic(await loadPublicAccount(index));
+          const entries = await loadPublicAccount(index);
+          const rows = hydratePublic(entries);
           if (rows) fromCache[index] = rows;
           else missing.push(index);
+          const sig = rows ? signetAddressFromCache(entries) : null;
+          if (sig) signetFromCache[index] = sig;
         }
         if (missing.length > 0) {
           // Rare (the cache is written whenever addresses are derived). If
@@ -751,9 +806,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           try {
             const mnemonic = await readPhrase(PROMPT_LOAD_ACCOUNTS);
             if (mnemonic && isValidMnemonic(mnemonic)) {
-              const fresh = derivePublic(mnemonic, missing);
+              const freshSignet: Record<number, SignetAddress> = {};
+              const fresh = derivePublic(mnemonic, missing, freshSignet);
               Object.assign(fromCache, fresh);
-              void cachePublic(fresh);
+              Object.assign(signetFromCache, freshSignet);
+              void cachePublic(fresh, freshSignet);
             }
           } catch {
             // Shown later: signing reports why the phrase cannot be opened.
@@ -761,6 +818,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         }
         if (cancelled) return;
         setDerived(fromCache);
+        setSignet(signetFromCache);
         commitAccounts(state);
         setStatus('ready');
       } catch {
@@ -973,8 +1031,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       await saveNewPhrase(mnemonic);
       // A cache left by a previous wallet must never label this one.
       await deletePublicAccounts(ALL_CACHE_INDICES);
-      const fresh = derivePublic(mnemonic, [0]);
-      await cachePublic(fresh);
+      const freshSignet: Record<number, SignetAddress> = {};
+      const fresh = derivePublic(mnemonic, [0], freshSignet);
+      await cachePublic(fresh, freshSignet);
       await upgradePhraseProtectionIfAutomatic();
       // A new or imported wallet starts with the default list (Account 1 =
       // index 0). Further accounts of an imported phrase reappear with
@@ -996,6 +1055,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       const { state, entries } = await withStoredMultisigs(withImported);
       setMultisigInfo(multisigInfoFrom(entries));
       setDerived({ ...fresh, ...importedRowsFrom(list.keys), ...multisigRowsFrom(state) });
+      setSignet(freshSignet);
       commitAccounts(state);
       setPendingMnemonic(null);
       setStatus('ready');
@@ -1042,6 +1102,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   useLayoutEffect(() => {
     derivedRef.current = derived;
   });
+  const signetRef = useRef(signet);
+  useLayoutEffect(() => {
+    signetRef.current = signet;
+  });
 
   /** Derives public data for indices not derived yet (e.g. after an add). */
   const ensureDerived = useCallback(async (indices: number[]) => {
@@ -1079,19 +1143,24 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     if (missing.length === 0) return;
     // The public cache first (no prompt), then the phrase for the rest.
     const cached: Record<number, ChainAccount[]> = {};
+    const signetFound: Record<number, SignetAddress> = {};
     for (const index of missing) {
-      const rows = hydratePublic(await loadPublicAccount(index));
+      const entries = await loadPublicAccount(index);
+      const rows = hydratePublic(entries);
       if (rows) cached[index] = rows;
+      const sig = rows ? signetAddressFromCache(entries) : null;
+      if (sig) signetFound[index] = sig;
     }
     missing = missing.filter((i) => cached[i] === undefined);
     let fresh: Record<number, ChainAccount[]> = {};
     if (missing.length > 0) {
       const mnemonic = await readPhrase(PROMPT_NEW_ACCOUNT);
       if (!mnemonic) throw new Error('No wallet found in secure storage');
-      fresh = derivePublic(mnemonic, missing);
-      await cachePublic(fresh);
+      fresh = derivePublic(mnemonic, missing, signetFound);
+      await cachePublic(fresh, signetFound);
     }
     Object.assign(fresh, cached);
+    setSignet((prev) => ({ ...prev, ...signetFound }));
     setDerived((prev) => ({ ...prev, ...fresh }));
     derivedRef.current = { ...derivedRef.current, ...fresh };
   }, []);
@@ -1524,6 +1593,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       });
       dropPhraseTicket();
       setDerived({});
+      setSignet({});
       setMultisigInfo({});
       commitAccounts(null);
       setPendingMnemonic(null);
@@ -1588,6 +1658,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     await deletePublicAccounts(ALL_CACHE_INDICES);
     await resetAccounts().catch(() => undefined);
     setDerived({});
+    setSignet({});
     setMultisigInfo({});
     commitAccounts(null);
     setPendingMnemonic(null);
@@ -1668,7 +1739,42 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         : null,
     [accountsState, accountList, watchOnlyAccounts, multisigAccounts, activeIndex],
   );
-  const accounts = useMemo(() => derived[activeIndex] ?? [], [derived, activeIndex]);
+  // Phase 28 item 2: with "Use Bitcoin signet" on, the Bitcoin row carries
+  // the active account's signet address, or is left out while that address
+  // is not known yet (bitcoinSignetPending); with it off, exactly the
+  // derived rows (./bitcoin-signet.ts withBitcoinSignetRow).
+  const signetView = useMemo(
+    () => withBitcoinSignetRow(derived[activeIndex] ?? [], bitcoinSignet, signet[activeIndex]),
+    [derived, activeIndex, bitcoinSignet, signet],
+  );
+  const accounts = signetView.rows;
+  const bitcoinSignetPending = signetView.pending;
+
+  // Phase 28 item 2: works out the Bitcoin signet address of every listed
+  // recovery-phrase account (hidden ones included) whose address is not on
+  // this phone yet, from ONE opening of the phrase (one device prompt when
+  // it is protected), and stores them in the public cache beside the other
+  // addresses. Nothing is signed. Returns how many were added.
+  const deriveBitcoinSignetAddresses = useCallback(
+    () =>
+      serialized(async () => {
+        const state = accountsRef.current;
+        if (!state) return 0;
+        const indices = derivedIndices(state).filter((i) => signetRef.current[i] === undefined);
+        if (indices.length === 0) return 0;
+        const mnemonic = await readPhrase(BITCOIN_SIGNET_DERIVE_PROMPT);
+        if (!mnemonic) throw new Error('No wallet found in secure storage');
+        const added: Record<number, SignetAddress> = {};
+        const rows = derivePublic(mnemonic, indices, added);
+        // The launch-chain rows just derived are the cached ones again (the
+        // same phrase); they are written back together with the signet entry.
+        await cachePublic(rows, added);
+        setSignet((prev) => ({ ...prev, ...added }));
+        signetRef.current = { ...signetRef.current, ...added };
+        return Object.keys(added).length;
+      }),
+    [serialized],
+  );
 
   // Searches `accountList` only: a watched address is never "one of your
   // accounts" (WalletConnect labels and bindings, recovery screens).
@@ -1698,6 +1804,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     () => ({
       status,
       accounts,
+      bitcoinSignetPending,
+      deriveBitcoinSignetAddresses,
       activeAccount,
       accountList,
       watchOnlyAccounts,
@@ -1738,6 +1846,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     [
       status,
       accounts,
+      bitcoinSignetPending,
+      deriveBitcoinSignetAddresses,
       activeAccount,
       accountList,
       watchOnlyAccounts,

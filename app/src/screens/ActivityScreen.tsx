@@ -21,12 +21,14 @@ import type { HistoryEntry } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
 import { Button, screenStyle, useFieldLabels } from '../components';
 import { SolanaDevnetBanner } from '../components/SolanaDevnetBanner';
+import { BitcoinSignetBanner } from '../components/BitcoinSignetBanner';
+import { bitcoinSignetNetworkFor } from '../wallet/bitcoin-signet';
 import { T } from '../i18n/T';
 import { useI18n } from '../i18n/useI18n';
 import { localTimestampLabel } from '../i18n/format';
 import { activityRowSpokenFee, activityRowSpokenLead, spokenMaskedText, spokenShortAddress } from '../a11y';
 import { Theme, useTheme } from '../theme';
-import { SOLANA_DEVNET_CAIP2, SOLANA_DEVNET_NETWORK, networkDefaultFor } from '../config/defaults';
+import { BITCOIN_SIGNET_CAIP2, SOLANA_DEVNET_CAIP2, SOLANA_DEVNET_NETWORK, networkDefaultFor } from '../config/defaults';
 import { maskAmount } from '../config/prefs';
 import {
   formatBalanceDisplay,
@@ -742,7 +744,7 @@ export function ActivityScreen({ navigation, route }: Props) {
   const { language, t, tx, localize } = useI18n();
   const { chainId } = route.params;
   const { accounts, activeAccount, accountList, watchOnlyAccounts } = useWallet();
-  const { hideAmounts, evmChain, solanaDevnet } = usePrefs();
+  const { hideAmounts, evmChain, solanaDevnet, bitcoinSignet } = usePrefs();
   // The id the explorer link is built for: on Solana devnet (phase 24 item 1)
   // the devnet id, for which history.ts explorerTxUrl has no explorer (none
   // verified), so a devnet transaction gets no link rather than a mainnet
@@ -752,9 +754,15 @@ export function ActivityScreen({ navigation, route }: Props) {
   // "test SOL" (config/defaults.ts SOLANA_DEVNET_NETWORK), not the mainnet
   // slot it is listed under (pass p24-solana finding 1).
   const solanaDevnetSlot = chainId === SOLANA_CHAIN_ID && solanaDevnet;
-  const explorerChainId = solanaDevnetSlot ? SOLANA_DEVNET_CAIP2 : chainId;
+  // The Bitcoin slot on signet (phase 28 item 2; "Use Bitcoin signet"): the
+  // same treatment — the signet network entry ("Bitcoin signet", "test BTC"),
+  // the TESTNET line, and the signet id for links, which history.ts
+  // explorerTxUrl has no explorer for (none verified), so a signet
+  // transaction never gets a mainnet blockstream.info link.
+  const btcSignetSlot = bitcoinSignetNetworkFor(chainId, bitcoinSignet) !== null;
+  const explorerChainId = solanaDevnetSlot ? SOLANA_DEVNET_CAIP2 : btcSignetSlot ? BITCOIN_SIGNET_CAIP2 : chainId;
   const account = accounts.find((a) => a.chainId === chainId);
-  const network = networkDefaultFor(solanaDevnetSlot ? SOLANA_DEVNET_CAIP2 : chainId);
+  const network = networkDefaultFor(solanaDevnetSlot ? SOLANA_DEVNET_CAIP2 : btcSignetSlot ? BITCOIN_SIGNET_CAIP2 : chainId);
   // The active regular account's smart account is listed too, when the
   // network's smart-account settings give one without a network request
   // (activity-sentences.ts historySmartAccountFor; not for a watch-only or
@@ -926,7 +934,7 @@ export function ActivityScreen({ navigation, route }: Props) {
   // p25-emu1), the chain itself otherwise. The same id names the network in
   // the CSV export and its file name. Re-read on focus so a note saved on
   // the Send success screen shows on return.
-  const noteNetwork = activitySlotNetwork(chainId, { evmSlot: isEvmSlot, evmCaip2: evmChain.caip2, solanaDevnet });
+  const noteNetwork = activitySlotNetwork(chainId, { evmSlot: isEvmSlot, evmCaip2: evmChain.caip2, solanaDevnet, bitcoinSignet });
   const [noteBook, setNoteBook] = useState<NoteBook | null>(null);
   const [notesVersion, setNotesVersion] = useState(0);
   const reloadNotes = useCallback(() => {
@@ -970,10 +978,11 @@ export function ActivityScreen({ navigation, route }: Props) {
   // (Send, NFTs, Approvals): which network this history comes from and
   // whose address it is. The EVM slot follows the active chain profile.
   const networkLabel = isEvmSlot ? evmChain.label : network?.label ?? chainId;
-  const testnet = (isEvmSlot && evmChain.testnet) || solanaDevnetSlot;
+  const testnet = (isEvmSlot && evmChain.testnet) || solanaDevnetSlot || btcSignetSlot;
   const networkHeader = account ? (
     <View style={styles.headerBlock}>
       <SolanaDevnetBanner chainId={chainId} />
+      <BitcoinSignetBanner chainId={chainId} />
       <Text style={[styles.networkLine, { color: testnet ? theme.testnetFill : theme.textMuted }]}>
         {networkLabel} · {testnet ? tx('TESTNET') : tx('Mainnet')}
         {activeAccount ? ` · ${activeAccount.name}` : ''}

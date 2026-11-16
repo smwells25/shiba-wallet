@@ -2338,4 +2338,21 @@ export const es: Readonly<Partial<Record<StringId, string>>> = {
   'coldSign.prePrompt.show': 'Comprobando los límites de gasto, la comisión mínima del bundler y su estimación de gas antes de mostrar la solicitud para el firmante sin conexión. Puede tardar hasta un minuto; no se ha firmado ni enviado nada.',
   'coldSign.prePrompt.submit': 'Comprobando la firma, el nonce y el despliegue de la cuenta y la comisión mínima del bundler, y después entregando la operación firmada al bundler. Este teléfono no firma nada aquí.',
   // ---- END phase 28 item 1 ----
+  // ---- BEGIN phase 28 item 2 (Bitcoin signet). Spanish drafts, pending a native reviewer. The Developer switch "Use Bitcoin
+  // signet" and its notes, the signet banner and Home card line, the Bitcoin row while the account's signet address is not on this phone yet, the profit-and-loss
+  // and risk-overview lines (wallet/bitcoin-signet.ts bitcoinSignetText), and the note on Bitcoin mainnet's send form that
+  // the app-wide TESTNET banner is about the Ethereum choice (pass p27-emu2 finding 9).
+  'settings.btcSignet.label': 'Usar Bitcoin signet',
+  'settings.btcSignet.offNote': 'Desactivado: la fila de Bitcoin está en la red principal de Bitcoin. Activado: la fila de Bitcoin, su dirección, la recepción, los envíos, el historial y Máx. usan Bitcoin signet, una red de prueba cuyas monedas no tienen valor. Esta opción es independiente de la red de Ethereum de arriba y de Solana devnet; Dogecoin no cambia.',
+  'settings.btcSignet.onNote': 'Bitcoin signet está activado: la fila de Bitcoin muestra BTC de prueba, que no tiene valor. La dirección signet de cada cuenta sale de tu frase de recuperación con el tipo de moneda de las redes de prueba (ruta m/84\'/1\'/N\'/0/0), así que es una dirección distinta de la de la red principal de esa cuenta. Desactívalo para devolver la fila de Bitcoin a la red principal.',
+  'banner.btcSignet': 'RED DE PRUEBA: Bitcoin signet está activado. Los importes son BTC de prueba, no fondos reales.',
+  'home.btcSignet.cardLine': 'Bitcoin signet: BTC de prueba, sin valor',
+  'home.btcSignet.pending': 'Bitcoin signet: la dirección signet de esta cuenta aún no está en este teléfono. Es una dirección distinta de la de la red principal, así que calcularla lee tu frase de recuperación una vez (una solicitud del dispositivo si la frase está protegida). No se firma nada.',
+  'home.btcSignet.derive': 'Calcular la dirección signet',
+  'home.btcSignet.deriveFailed': 'No se calculó la dirección signet. {reason}',
+  'receive.btcSignet.pending': 'La dirección signet de Bitcoin de esta cuenta aún no está en este teléfono. Calcúlala primero desde la fila de Bitcoin en Inicio.',
+  'send.btc.mainnetNote': 'Este envío es en la red principal de Bitcoin, con fondos reales. El aviso RED DE PRUEBA de la parte inferior de la pantalla se refiere a la red de Ethereum elegida en Ajustes → Desarrollador, no a este envío.',
+  'pnl.btcSignet': 'Las ganancias y pérdidas de BTC no se ofrecen mientras Bitcoin signet está activado: el BTC de signet no tiene precio.',
+  'insights.network.btcSignet': 'Bitcoin signet está activado: la fila de Bitcoin muestra BTC de prueba, que no tiene valor.',
+  // ---- END phase 28 item 2 (Bitcoin signet) ----
 };

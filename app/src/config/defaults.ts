@@ -266,6 +266,60 @@ export const SOLANA_DEVNET_NETWORK: NetworkDefault = {
 };
 
 /**
+ * Bitcoin SIGNET (phase 28 item 2): the network the Bitcoin slot uses while
+ * Settings → Developer → "Use Bitcoin signet" is on (AppPrefs.bitcoinSignet,
+ * off by default). Its CAIP-2 id is core's bitcoinSignetKeyProvider.chainId
+ * (packages/core/src/chains/utxo.ts: the first 32 characters of signet's
+ * genesis block hash from bitcoin/bitcoin chainparams.cpp SigNetParams, per
+ * the ChainAgnostic bip122 namespace); scripts/check-btc-signet.mjs pins the
+ * two equal. The endpoint probe (./endpoint-probe.ts) reads GET
+ * /block-height/0 and compares it with this reference before an endpoint is
+ * used, so a mainnet (or testnet3 / testnet4) Esplora can never serve the
+ * signet slot. Every signet, the default one and a custom one, shares this
+ * genesis block, so the probe cannot tell a custom signet from the default
+ * one; both candidates below are documented by their providers as serving
+ * the (default) Bitcoin signet.
+ *
+ * Candidates, in order (both verified live on 2026-11-16 17:18 UTC: GET
+ * /blocks/tip/height answered 331153 on both; GET /block-height/0 returned
+ * 00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6 on both;
+ * GET /block/:hash/header returned the 80-byte genesis header; GET /blocks
+ * returned a newest block about 250 s old; GET /address/:addr/utxo and
+ * /address/:addr/txs answered in the Esplora shapes for a signet address;
+ * GET /fee-estimates answered; both refused a mainnet bc1 address with
+ * "Address on invalid network", HTTP 400):
+ *  1. https://mempool.space/signet/api — mempool.space's REST API; its API
+ *     documentation (mempool/mempool frontend/src/app/docs/api-docs/
+ *     api-docs-data.ts at head 0dbf32d0, read 2026-11-16, line 1:
+ *     bitcoinNetworks = ['', 'testnet', 'testnet4', 'signet']) shows every
+ *     Bitcoin endpoint the app uses for the signet network, with a signet
+ *     sample answer (for example GET /blocks/tip/height, lines 4495-4540).
+ *     The same caveat as mainnet: GET /fee-estimates is not in those docs
+ *     (they document /v1/fees/recommended) but answered live.
+ *  2. https://blockstream.info/signet/api — "Bitcoin Signet:
+ *     https://blockstream.info/signet/api/" in Blockstream/esplora API.md
+ *     (head 1617f164, read 2026-11-16, line 9).
+ * Signet coins have no value, so the symbol reads "test BTC" and no price is
+ * ever requested for them (wallet/prices.ts nativePriceAssetId: the slot id
+ * differs from this one).
+ */
+export const BITCOIN_SIGNET_CAIP2 = 'bip122:00000008819873e925422c1ff0f99f7c';
+const BITCOIN_SIGNET_ESPLORA_DEFAULTS: readonly string[] = [
+  'https://mempool.space/signet/api',
+  'https://blockstream.info/signet/api',
+];
+export const BITCOIN_SIGNET_NETWORK: NetworkDefault = {
+  chainId: BITCOIN_SIGNET_CAIP2,
+  label: 'Bitcoin signet',
+  kind: 'esplora',
+  defaultUrls: BITCOIN_SIGNET_ESPLORA_DEFAULTS,
+  defaultUrl: BITCOIN_SIGNET_ESPLORA_DEFAULTS[0],
+  decimals: 8,
+  symbol: 'test BTC',
+  note: 'Bitcoin signet — balances and sends here are test BTC, not real funds.',
+};
+
+/**
  * The network entry of a test profile that has no hand-written entry
  * above: derived from the profile alone, so a new profile in
  * ./evm-chain.ts gets its row without another list to edit here.
@@ -325,6 +379,7 @@ export function customEvmNetworks(): NetworkDefault[] {
 
 export function networkDefaultFor(chainId: string): NetworkDefault | undefined {
   if (chainId === SOLANA_DEVNET_CAIP2) return SOLANA_DEVNET_NETWORK;
+  if (chainId === BITCOIN_SIGNET_CAIP2) return BITCOIN_SIGNET_NETWORK;
   const test = TEST_EVM_NETWORKS.find((n) => n.chainId === chainId);
   if (test) return test;
   const builtIn = DEFAULT_NETWORKS.find((n) => n.chainId === chainId);
@@ -368,7 +423,13 @@ function evmNetworkFor(selection: boolean | string | null): NetworkDefault | nul
   return custom ? customNetworkDefault(custom) : SEPOLIA_NETWORK;
 }
 
-export function resolveActiveNetworks(selection: boolean | string | null, solanaDevnet = false): ActiveNetwork[] {
+/**
+ * Since phase 28 item 2 the Bitcoin slot (the mainnet Bitcoin entry only —
+ * never Dogecoin, which is an esplora-family chain too) swaps to
+ * BITCOIN_SIGNET_NETWORK while `bitcoinSignet` is true (a third Developer
+ * switch, off by default). With it false every entry is exactly the old one.
+ */
+export function resolveActiveNetworks(selection: boolean | string | null, solanaDevnet = false, bitcoinSignet = false): ActiveNetwork[] {
   const testNetwork = evmNetworkFor(selection);
   return DEFAULT_NETWORKS.map((n) => ({
     slot: n.chainId,
@@ -377,6 +438,11 @@ export function resolveActiveNetworks(selection: boolean | string | null, solana
         ? testNetwork
         : n.kind === 'solana-jsonrpc' && solanaDevnet
           ? SOLANA_DEVNET_NETWORK
-          : n,
+          : n.chainId === BITCOIN_MAINNET_SLOT && bitcoinSignet
+            ? BITCOIN_SIGNET_NETWORK
+            : n,
   }));
 }
+
+/** The Bitcoin slot's id (the mainnet entry above; wallet/send.ts BITCOIN_CHAIN_ID, pinned equal by check-btc-signet). */
+export const BITCOIN_MAINNET_SLOT = 'bip122:000000000019d6689c085ae165831e93';

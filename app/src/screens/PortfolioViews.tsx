@@ -67,12 +67,14 @@ function subjectKey(subject: PnlSubject): string {
 export function PnlSection({
   slots,
   solanaDevnet,
+  bitcoinSignet = false,
   accounts,
   activeAccount,
   evmCaip2,
 }: {
   slots: PortfolioSlot[];
   solanaDevnet: boolean;
+  bitcoinSignet?: boolean;
   accounts: ChainAccount[];
   activeAccount: AccountView | null;
   evmCaip2: string;
@@ -80,7 +82,7 @@ export function PnlSection({
   const theme = useTheme();
   const { t } = useI18n();
   const [chosen, setChosen] = useState<string | null>(null);
-  const offer = pnlNativeOffer(slots, { solanaDevnet, accountSlots: accounts.map((a) => a.chainId) });
+  const offer = pnlNativeOffer(slots, { solanaDevnet, bitcoinSignet, accountSlots: accounts.map((a) => a.chainId) });
   const usable = offer.slots;
   // The EVM slot, only when it is priced now (a main network) and the account has an address on it.
   const evmSlot = usable.find((s) => s.evm && s.networkChainId === evmCaip2) ?? null;
@@ -112,6 +114,7 @@ export function PnlSection({
       <Text style={[styles.hint, { color: theme.textMuted }]}>{PNL_INTRO}</Text>
       {usable.length === 0 ? <Text style={[styles.hint, { color: theme.textMuted }]}>{PNL_NO_SLOTS}</Text> : null}
       {offer.solanaDevnetNote ? <Text style={[styles.hint, { color: theme.textMuted }]}>{t('pnl.solanaDevnet')}</Text> : null}
+      {offer.bitcoinSignetNote ? <Text style={[styles.hint, { color: theme.textMuted }]}>{t('pnl.btcSignet')}</Text> : null}
       <View style={styles.chips}>
         {subjects.map((x) => {
           const key = subjectKey(x);

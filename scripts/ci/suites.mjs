@@ -84,6 +84,7 @@ export const APP_SCRIPTS = {
   'check-cold-aa.mjs': { kind: 'offline', summary: 'counts' }, // Phase 23 item 5: cold signing for a watched owner's smart account, the app half (feature 11; fakes only).
   'check-handle.mjs': { kind: 'offline', summary: 'counts' }, // Phase 23 item 6: the wallet handle (ENSv2 on Sepolia; fakes and the engine's recorded Sepolia answers).
   'check-spl-tokens.mjs': { kind: 'offline', summary: 'counts' }, // Phase 24 item 1: Solana tokens in the app (devnet slot, tracked lists, Track prompt, Home rows, the spl-tokens gate, the send; fake RPC over the recorded devnet fixture).
+  'check-btc-signet.mjs': { kind: 'offline', summary: 'counts' }, // Phase 28 item 2: the Bitcoin slot on signet ("Use Bitcoin signet"): the network entry, the coin-type-1 address and its cache entry, signing and validation per network, never valued, notes keyed by signet, the screens' wiring (fakes only).
   'check-passkeys.mjs': { kind: 'offline', summary: 'counts' },
   'check-proof.mjs': { kind: 'offline', summary: 'counts' },
   'check-qr.mjs': { kind: 'offline', summary: 'counts' },

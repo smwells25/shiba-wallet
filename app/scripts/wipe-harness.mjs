@@ -73,6 +73,9 @@ export const WIPE_NON_STORE_CALLS = new Set([
   'setProfileKey', 'setStatus',
   // The risk overview's in-memory snapshots (wallet/insights.ts; phase 25 item 2): no store.
   'forgetInsightSnapshots',
+  // The in-memory Bitcoin signet addresses (phase 28 item 2): React state; their cache entries go with
+  // deletePublicAccounts like every other public address.
+  'setSignet',
 ]);
 
 function walk(node, visit) {

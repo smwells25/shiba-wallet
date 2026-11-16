@@ -18,7 +18,15 @@ import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
 import { Button, ImportedKeyNotice, WarningBox, screenStyle, switchColors, useFieldLabels } from '../components';
 import { SolanaDevnetBanner } from '../components/SolanaDevnetBanner';
-import { SOLANA_DEVNET_CAIP2, SOLANA_DEVNET_NETWORK } from '../config/defaults';
+import { BITCOIN_SIGNET_CAIP2, SOLANA_DEVNET_CAIP2, SOLANA_DEVNET_NETWORK } from '../config/defaults';
+import { BitcoinSignetBanner } from '../components/BitcoinSignetBanner';
+import {
+  bitcoinMainnetSendNoteShown,
+  bitcoinSignetNetworkFor,
+  bitcoinSignetText,
+  utxoNetworkForEndpoint,
+  utxoSignChainFor,
+} from '../wallet/bitcoin-signet';
 import { T } from '../i18n/T';
 import { localize, t, tx } from '../i18n/index';
 import { sendScanRationale } from '../i18n/article';
@@ -283,7 +291,7 @@ export function SendScreen({ route, navigation }: Props) {
   // explorer links, badges and the AA config key all come from it, so
   // Sepolia test mode switches every EVM-touching piece of this screen
   // at once and the two modes never mix.
-  const { evmChain, hideAmounts } = usePrefs();
+  const { evmChain, hideAmounts, bitcoinSignet, sepolia } = usePrefs();
   // The wallet's own EVM addresses (accounts and their smart accounts): the
   // success screen names them instead of offering "Save as contact".
   const ownAddresses = useOwnEvmAddresses();
@@ -575,14 +583,23 @@ export function SendScreen({ route, navigation }: Props) {
   // above it), e.g. after a Review-time re-check refused the name.
   const shownFormError = formErrorBesideName(formError, nameView?.status === 'refused' ? nameView.message : null);
 
+  // The chain a recipient is validated for: the Bitcoin slot on signet
+  // (phase 28 item 2) validates against signet's address parameters (HRP
+  // "tb"), so a mainnet bc1 address is refused there and a tb1 address is
+  // refused on mainnet; every other slot as before.
+  const recipientChainId = bitcoinSignetNetworkFor(route.params.chainId, bitcoinSignet)?.chainId ?? route.params.chainId;
   const validation = useMemo(() => {
     if (nameKey) {
       return nameResolvedAddress ? validateRecipient(route.params.chainId, nameResolvedAddress) : null;
     }
-    return recipient.trim() ? validateRecipient(route.params.chainId, recipient) : null;
-  }, [route.params.chainId, recipient, nameKey, nameResolvedAddress]);
+    return recipient.trim() ? validateRecipient(recipientChainId, recipient) : null;
+  }, [route.params.chainId, recipientChainId, recipient, nameKey, nameResolvedAddress]);
 
-  const contactsNetworkId = endpoint?.network.chainId ?? null;
+  // Contacts are kept for the launch chains and the EVM test networks
+  // (wallet/contacts.ts CONTACT_NETWORK_IDS); Bitcoin signet is not one of
+  // them (phase 28 item 2), so the picker and "Save as contact" are not
+  // offered there rather than offered and refused.
+  const contactsNetworkId = endpoint && endpoint.network.chainId !== BITCOIN_SIGNET_CAIP2 ? endpoint.network.chainId : null;
   const reloadContacts = useCallback(() => {
     if (!contactsNetworkId) {
       setContacts([]);
@@ -843,7 +860,7 @@ export function SendScreen({ route, navigation }: Props) {
   // testnet and this screen is on the EVM slot, and on the Solana slot while
   // it is served by Solana devnet ("Use Solana devnet"; pass p24-solana
   // finding 1: the SOL send's line read "Solana devnet · Mainnet").
-  const testnet = (isEvmKind && evmChain.testnet) || network?.chainId === SOLANA_DEVNET_CAIP2;
+  const testnet = (isEvmKind && evmChain.testnet) || network?.chainId === SOLANA_DEVNET_CAIP2 || network?.chainId === BITCOIN_SIGNET_CAIP2;
   // Token mode: amounts are in the token's on-chain decimals and carry the
   // token's symbol; the fee stays in the native coin (see nativeDecimals).
   const decimals = token ? token.decimals : network?.decimals ?? 8;
@@ -867,7 +884,11 @@ export function SendScreen({ route, navigation }: Props) {
   );
   // For displaying the ETH fee of a token send (EVM native decimals).
   const nativeDecimals = network?.decimals ?? 18;
-  const utxoNetwork = route.params.chainId === BITCOIN_CHAIN_ID ? BITCOIN : DOGECOIN;
+  // The UTXO network's address parameters follow the endpoint that quotes
+  // (phase 28 item 2): Bitcoin signet's when the endpoint is signet's, else
+  // the slot's own (Bitcoin or Dogecoin), exactly as before.
+  const utxoNetworkFor = (ep: NetworkEndpoint | null | undefined) =>
+    utxoNetworkForEndpoint(ep?.network.chainId, route.params.chainId === BITCOIN_CHAIN_ID ? BITCOIN : DOGECOIN);
   // Backend selection for the UTXO engine calls: Dogecoin's endpoint is a
   // Blockbook instance (config/defaults.ts) whose optional API key rides
   // along as the api-key header resolved by config/networks.ts; Bitcoin
@@ -1142,7 +1163,7 @@ export function SendScreen({ route, navigation }: Props) {
         }
         const normalized = validation.normalized;
         const { value: swept } = await viaFailover(start, (ep) =>
-          maxUtxoSend(ep.url, utxoNetwork, account.address, normalized, utxoOptionsFor(ep)),
+          maxUtxoSend(ep.url, utxoNetworkFor(ep), account.address, normalized, utxoOptionsFor(ep)),
         );
         max = swept.amount;
       }
@@ -1491,7 +1512,7 @@ export function SendScreen({ route, navigation }: Props) {
         quoteUrl = quoted.used.url;
       } else {
         const quoted = await viaFailover(start, (ep) =>
-          prepareUtxoSend(ep.url, utxoNetwork, account.address, recipientAddress, amount, utxoOptionsFor(ep)),
+          prepareUtxoSend(ep.url, utxoNetworkFor(ep), account.address, recipientAddress, amount, utxoOptionsFor(ep)),
         );
         next = quoted.value;
         quoteUrl = quoted.used.url;
@@ -1753,7 +1774,11 @@ export function SendScreen({ route, navigation }: Props) {
         );
         return;
       }
-      const sent = await signWith(route.params.chainId, quotedFrom, async (signer) => {
+      // A UTXO send quoted on Bitcoin signet is signed with the signet key
+      // (coin type 1; wallet/bitcoin-signet.ts utxoSignChainFor); the signer
+      // check refuses unless that key controls exactly the quoted address.
+      const signChainId = quote.kind === 'utxo' ? utxoSignChainFor(route.params.chainId, endpoint?.network.chainId) : route.params.chainId;
+      const sent = await signWith(signChainId, quotedFrom, async (signer) => {
         // Token transfer: value 0, to = token contract, data = transfer
         // calldata — through the same sendEvm signing/broadcast path.
         if (quote.kind === 'erc20') return sendErc20(sendUrl, signer, quote);
@@ -1762,7 +1787,7 @@ export function SendScreen({ route, navigation }: Props) {
         if (quote.kind === 'nft') return sendNft(sendUrl, signer, quote, evmChain.explorerTxBase);
         if (quote.kind === 'evm') return sendEvm(sendUrl, signer, quote, evmChain.explorerTxBase);
         if (quote.kind === 'sol') return sendSol(sendUrl, signer, quote, endpoint?.network.chainId);
-        return sendUtxo(sendUrl, route.params.chainId, signer, quote, utxoOptions);
+        return sendUtxo(sendUrl, signChainId, signer, quote, utxoOptions);
       });
       setResult(sent);
       // One-shot: a minimum-fee rehearsal quote that was just sent turns the
@@ -1911,6 +1936,7 @@ export function SendScreen({ route, navigation }: Props) {
     return (
       <ScrollView key="send-success" style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
         <SolanaDevnetBanner chainId={route.params.chainId} />
+        <BitcoinSignetBanner chainId={route.params.chainId} />
         <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}><T>Sent ✓</T></Text>
         <Text style={[styles.label, { color: theme.textMuted }]}><T>Transaction id</T></Text>
         <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
@@ -2400,6 +2426,7 @@ export function SendScreen({ route, navigation }: Props) {
     return (
       <ScrollView key="send-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <SolanaDevnetBanner chainId={route.params.chainId} />
+        <BitcoinSignetBanner chainId={route.params.chainId} />
         <NetworkBadge label={network.label} testnet={testnet} theme={theme} />
 
         <Row label="From account" value={fromName} sub={quotedFrom} theme={theme} />
@@ -2528,12 +2555,21 @@ export function SendScreen({ route, navigation }: Props) {
       keyboardShouldPersistTaps="handled"
     >
       <SolanaDevnetBanner chainId={route.params.chainId} />
+      <BitcoinSignetBanner chainId={route.params.chainId} />
       <Text style={[styles.networkLine, { color: testnet ? theme.testnetFill : theme.textMuted }]}>
         {network ? `${network.label} · ${testnet ? tx('TESTNET') : tx('Mainnet')}` : tx('Unknown network')}{' '}
         {t('send.from', { account: activeAccount ? `${activeAccount.name} ` : '', address: account.address.slice(0, 10) })}
       </Text>
 
       <OfflineNotice />
+      {/* Pass p27-emu2 finding 9: the app-wide TESTNET banner (App.tsx) is
+          drawn on every screen by design while an Ethereum test network is
+          chosen, so on Bitcoin MAINNET's form the line above is followed by
+          a sentence saying which network this send is on and what the banner
+          is about (wallet/bitcoin-signet.ts bitcoinMainnetSendNoteShown). */}
+      {bitcoinMainnetSendNoteShown(route.params.chainId, network?.chainId, sepolia) ? (
+        <Text style={[styles.hint, { color: theme.text }]}>{bitcoinSignetText.mainnetSendNote()}</Text>
+      ) : null}
       {/* Phase 27 item 3: Bitcoin mainnet only (send.ts bitcoinAssetsWarningShown). */}
       {bitcoinAssetsWarningShown(route.params.chainId, network?.chainId) ? <WarningBox>{bitcoinAssetsWarningText()}</WarningBox> : null}
 

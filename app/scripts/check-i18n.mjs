@@ -326,6 +326,13 @@ const P27_ACTIVITY_NEW = ['activity.solana.receivedWithheld', 'activity.solana.r
 // Phase 28 item 1: the busy line of the off-line signing screen for a smart account, at Show and at Submit
 // (wallet/pre-prompt-guard.ts coldSignCheckText); one delimited block at the end of en.ts / es.ts.
 const P28_PROMPT_NEW = ['coldSign.prePrompt.show', 'coldSign.prePrompt.submit'];
+// Phase 28 item 2 (Bitcoin signet): the Developer switch and its notes, the signet banner and Home card line, the Bitcoin
+// row while the account's signet address is not on this phone yet, the profit-and-loss and risk-overview lines
+// (wallet/bitcoin-signet.ts), and the note on Bitcoin mainnet's send form about the Ethereum banner (pass p27-emu2
+// finding 9); one delimited block at the end of en.ts / es.ts.
+const BTC_SIGNET_NEW = ['settings.btcSignet.label', 'settings.btcSignet.offNote', 'settings.btcSignet.onNote', 'banner.btcSignet',
+  'home.btcSignet.cardLine', 'home.btcSignet.pending', 'home.btcSignet.derive', 'home.btcSignet.deriveFailed', 'receive.btcSignet.pending',
+  'send.btc.mainnetNote', 'pnl.btcSignet', 'insights.network.btcSignet'];
 const NFT_ENS_NEW = ['nft.ens.collection', 'nft.ens.is', 'nft.ens.isUnchecked', 'nft.ens.handover', 'nft.ens.resolver', 'nft.ens.expiry',
   'nft.ens.expired', 'nft.ens.stale', 'nft.ens.reading', 'nft.ens.unread'];
 {
@@ -345,8 +352,8 @@ const NFT_ENS_NEW = ['nft.ens.collection', 'nft.ens.is', 'nft.ens.isUnchecked', 
   // broadcast sentences (an HTTP 5xx or a dropped connection, not a timeout).
   const BROADCAST_OPEN_NEW = ['broadcast.open.title', 'broadcast.tx.open', 'broadcast.tx.openUnlisted', 'broadcast.userop.open',
     'broadcast.userop.openUnlisted', 'broadcast.open'];
-  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the Solana token-send readiness row, the wallet handle\'s, the six open-outcome broadcast sentences, the co-signer card\'s numbered Scan label, the eight period words of the hygiene slice, the four Bridge lines of pass p23-mint, the five lines of the p23-build fixes, the three Bridge lines of pass p23-bridge-recheck and the three navigation-bar lines of pass p23-navbar and the three iOS-pass lines (two iOS reminder notes, the "an" scanner sentence) and the five lines of the Solana-pass fix slice (the Solana devnet banner, the Solana token-fee line, the Solana devnet readiness line, two Max-lowering sentences) and the two smart-account Max-lowering sentences of the trim slice and the devnet form of the Solana token-fee line (pass p24-recheck) and the nine lines of the p24-unblock fixes (the Solana token Send link and its hint, seven Solana Activity sentences) and the hidden-fee word of an Activity row and the four gains-report lines of phase 25 item 3 and the ten ENS name-token lines of pass p25-emu1 and the three pending-list lines of phase 26 item 4 (account removal) and the Dogecoin no-endpoint line of pass p25-emu2 and the Solana spending-limit lines of phase 26 item 3b and the Lend screen\'s lines with its readiness row (phase 26 item 2) and the profit-and-loss devnet sentence of the p26-emu1 fixes and the three lines of the p26-emu2 fixes and the two withheld-fee lines of phase 27 item 1 and the two cold-signing busy lines of phase 28 item 1',
-    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || SPL_TOKENS_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id) || NAVBAR_FIX_NEW.includes(id) || IOS_FIX_NEW.includes(id) || SOLANA_FIX_NEW.includes(id) || AA_TRIM_NEW.includes(id) || RECHECK_FIX_NEW.includes(id) || UNBLOCK_FIX_NEW.includes(id) || SOLHIST_NEW.includes(id) || GAINS_NEW.includes(id) || NFT_ENS_NEW.includes(id) || PENDING_FORGET_NEW.includes(id) || DOGE_ENDPOINT_NEW.includes(id) || insightsNew(id) || spendingSolNew(id) || lendNew(id) || EMU1_FIX_NEW.includes(id) || EMU2_FIX_NEW.includes(id) || P27_SCREENS_NEW.includes(id) || P27_ACTIVITY_NEW.includes(id) || P28_PROMPT_NEW.includes(id)) &&
+  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the Solana token-send readiness row, the wallet handle\'s, the six open-outcome broadcast sentences, the co-signer card\'s numbered Scan label, the eight period words of the hygiene slice, the four Bridge lines of pass p23-mint, the five lines of the p23-build fixes, the three Bridge lines of pass p23-bridge-recheck and the three navigation-bar lines of pass p23-navbar and the three iOS-pass lines (two iOS reminder notes, the "an" scanner sentence) and the five lines of the Solana-pass fix slice (the Solana devnet banner, the Solana token-fee line, the Solana devnet readiness line, two Max-lowering sentences) and the two smart-account Max-lowering sentences of the trim slice and the devnet form of the Solana token-fee line (pass p24-recheck) and the nine lines of the p24-unblock fixes (the Solana token Send link and its hint, seven Solana Activity sentences) and the hidden-fee word of an Activity row and the four gains-report lines of phase 25 item 3 and the ten ENS name-token lines of pass p25-emu1 and the three pending-list lines of phase 26 item 4 (account removal) and the Dogecoin no-endpoint line of pass p25-emu2 and the Solana spending-limit lines of phase 26 item 3b and the Lend screen\'s lines with its readiness row (phase 26 item 2) and the profit-and-loss devnet sentence of the p26-emu1 fixes and the three lines of the p26-emu2 fixes and the two withheld-fee lines of phase 27 item 1 and the two cold-signing busy lines of phase 28 item 1 and the twelve Bitcoin signet lines of phase 28 item 2',
+    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || SPL_TOKENS_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id) || NAVBAR_FIX_NEW.includes(id) || IOS_FIX_NEW.includes(id) || SOLANA_FIX_NEW.includes(id) || AA_TRIM_NEW.includes(id) || RECHECK_FIX_NEW.includes(id) || UNBLOCK_FIX_NEW.includes(id) || SOLHIST_NEW.includes(id) || GAINS_NEW.includes(id) || NFT_ENS_NEW.includes(id) || PENDING_FORGET_NEW.includes(id) || DOGE_ENDPOINT_NEW.includes(id) || insightsNew(id) || spendingSolNew(id) || lendNew(id) || EMU1_FIX_NEW.includes(id) || EMU2_FIX_NEW.includes(id) || P27_SCREENS_NEW.includes(id) || P27_ACTIVITY_NEW.includes(id) || P28_PROMPT_NEW.includes(id) || BTC_SIGNET_NEW.includes(id)) &&
       BUILD_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && BRIDGE_RECHECK_NEW.every((id) => FIXTURE.new.includes(id)) &&
       LOCK_KIND_NEW.every((id) => FIXTURE.new.includes(id)) && COLD_AA_NEW.every((id) => FIXTURE.new.includes(id)) && SPL_TOKENS_NEW.every((id) => FIXTURE.new.includes(id)) &&
       BROADCAST_OPEN_NEW.every((id) => FIXTURE.new.includes(id)) && THIRD_PASS_NEW.every((id) => FIXTURE.new.includes(id)) && PERIOD_NEW.every((id) => FIXTURE.new.includes(id)) &&
@@ -356,7 +363,7 @@ const NFT_ENS_NEW = ['nft.ens.collection', 'nft.ens.is', 'nft.ens.isUnchecked', 
       SOLHIST_NEW.every((id) => FIXTURE.new.includes(id)) && GAINS_NEW.every((id) => FIXTURE.new.includes(id)) &&
       NFT_ENS_NEW.every((id) => FIXTURE.new.includes(id)) && PENDING_FORGET_NEW.every((id) => FIXTURE.new.includes(id)) && DOGE_ENDPOINT_NEW.every((id) => FIXTURE.new.includes(id)) &&
       EMU1_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && EMU2_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && P27_SCREENS_NEW.every((id) => FIXTURE.new.includes(id)) &&
-      P27_ACTIVITY_NEW.every((id) => FIXTURE.new.includes(id)) && P28_PROMPT_NEW.every((id) => FIXTURE.new.includes(id)) &&
+      P27_ACTIVITY_NEW.every((id) => FIXTURE.new.includes(id)) && P28_PROMPT_NEW.every((id) => FIXTURE.new.includes(id)) && BTC_SIGNET_NEW.every((id) => FIXTURE.new.includes(id)) &&
       Object.keys(en).filter(insightsNew).length > 0 && Object.keys(en).filter(insightsNew).every((id) => FIXTURE.new.includes(id)) &&
       Object.keys(en).filter(spendingSolNew).length > 0 && Object.keys(en).filter(spendingSolNew).every((id) => FIXTURE.new.includes(id)) &&
       Object.keys(en).filter(lendNew).length > 0 && Object.keys(en).filter(lendNew).every((id) => FIXTURE.new.includes(id)));
@@ -461,6 +468,28 @@ const NFT_ENS_NEW = ['nft.ens.collection', 'nft.ens.is', 'nft.ens.isUnchecked', 
         p28Block(enSrc) && p28Block(esSrc) && P28_PROMPT_NEW.every((id) => guardSrc.includes(`t('${id}')`)));
     check('phase 28 item 1 (mutant): a loose entry after the phase 28 block is refused',
       !p28Block(enSrc.replace('  // ---- END phase 28 item 1 ----\n', "  // ---- END phase 28 item 1 ----\n  'x.loose': 'Loose',\n")));
+  }
+  // Phase 28 item 2 (Bitcoin signet): the twelve ids, English exact for the claims, a Spanish draft keeping the
+  // placeholders, in one delimited block of each table (followed only by the closing brace or another delimited block),
+  // each id named in wallet/bitcoin-signet.ts or the screen that shows it.
+  {
+    const enSrc = readFileSync(join(APP, 'src/i18n/en.ts'), 'utf8');
+    const esSrc = readFileSync(join(APP, 'src/i18n/es.ts'), 'utf8');
+    const ph = (x) => (x.match(/\{[a-z]+\}/gi) ?? []).sort().join(',');
+    const block = (src) => {
+      const b = src.lastIndexOf('// ---- BEGIN phase 28 item 2 (Bitcoin signet)');
+      const e = src.lastIndexOf('// ---- END phase 28 item 2 (Bitcoin signet) ----');
+      return b > 0 && e > b && BTC_SIGNET_NEW.every((id) => { const at = src.indexOf(`'${id}'`); return at > b && at < e; }) &&
+        ONLY_BLOCKS_THEN_CLOSE.test(src.slice(src.indexOf('\n', e) + 1));
+    };
+    const users = ['src/wallet/bitcoin-signet.ts', 'src/screens/PortfolioViews.tsx', 'src/wallet/insights.ts']
+      .map((f) => readFileSync(join(APP, f), 'utf8')).join('\n');
+    check('phase 28 item 2 (Bitcoin signet): the twelve ids, English exact, a Spanish draft keeping the placeholders, in one delimited block at the end of each table, each used',
+      en['banner.btcSignet'] === 'TESTNET — Bitcoin signet is on. Amounts are test BTC, not real funds.' &&
+        en['settings.btcSignet.label'] === 'Use Bitcoin signet' && en['home.btcSignet.deriveFailed'] === 'The signet address was not worked out. {reason}' &&
+        en['pnl.btcSignet'] === 'Profit and loss for BTC is not offered while Bitcoin signet is on: signet BTC has no price.' &&
+        BTC_SIGNET_NEW.every((id) => typeof en[id] === 'string' && typeof es[id] === 'string' && es[id] !== en[id] && ph(es[id]) === ph(en[id])) &&
+        block(enSrc) && block(esSrc) && BTC_SIGNET_NEW.every((id) => users.includes(`'${id}'`)));
   }
   // Phase 26 item 4: the three account-removal lines about the pending list, English and Spanish exact, the placeholders
   // matching, and each one used by wallet/pending-transactions.ts.

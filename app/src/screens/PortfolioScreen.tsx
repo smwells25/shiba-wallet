@@ -14,6 +14,7 @@ import { listTokens } from '../wallet/tokens';
 import { getAaConfig } from '../wallet/aa';
 import { historySmartAccountFor } from '../wallet/activity-sentences';
 import { loadPublicAccount } from '../wallet/storage';
+import { cachedSlotAddresses } from '../wallet/bitcoin-signet';
 import { resolveActiveNetworks } from '../config/defaults';
 import { EVM_CHAIN_ID } from '../wallet/send';
 import {
@@ -58,6 +59,7 @@ async function accountInputs(args: {
   activeIndex: number | null;
   activeOthers: Record<string, string>;
   evmCaip2: string;
+  bitcoinSignet: boolean;
 }): Promise<PortfolioAccountInput[]> {
   const aa = await getAaConfig(args.evmCaip2).catch(() => null);
   const out: PortfolioAccountInput[] = [];
@@ -67,10 +69,11 @@ async function accountInputs(args: {
     if (kind === 'phrase') {
       if (a.index === args.activeIndex) otherAddresses = args.activeOthers;
       else {
+        // The Bitcoin slot carries the cached SIGNET address while "Use
+        // Bitcoin signet" is on (phase 28 item 2), and is left out when that
+        // address is not cached: never the mainnet one on a signet endpoint.
         const cached = await loadPublicAccount(a.index).catch(() => null);
-        otherAddresses = cached
-          ? Object.fromEntries(cached.filter((c) => c.chainId !== EVM_CHAIN_ID).map((c) => [c.chainId, c.address]))
-          : null;
+        otherAddresses = cachedSlotAddresses(cached, { bitcoinSignet: args.bitcoinSignet, evmSlot: EVM_CHAIN_ID });
       }
     }
     let smartAccount: string | null = null;
@@ -142,7 +145,7 @@ async function readTask(task: PortfolioReadTask): Promise<PortfolioReadResult> {
 export function PortfolioScreen({ navigation }: Props) {
   const theme = useTheme();
   const { t } = useI18n();
-  const { hideAmounts, showFiat, evmChain, solanaDevnet } = usePrefs();
+  const { hideAmounts, showFiat, evmChain, solanaDevnet, bitcoinSignet } = usePrefs();
   const { accounts, activeAccount, accountList, watchOnlyAccounts, multisigAccounts } = useWallet();
 
   // Each slot as the network that serves it now (pass p26-emu1 finding 2):
@@ -150,13 +153,13 @@ export function PortfolioScreen({ navigation }: Props) {
   // no value), never Solana mainnet.
   const slots: PortfolioSlot[] = useMemo(
     () =>
-      portfolioSlotsFor(resolveActiveNetworks(null, solanaDevnet), {
+      portfolioSlotsFor(resolveActiveNetworks(null, solanaDevnet, bitcoinSignet), {
         caip2: evmChain.caip2,
         label: evmChain.label,
         displaySymbol: evmChain.displaySymbol,
         testnet: evmChain.testnet,
       }),
-    [evmChain.caip2, evmChain.label, evmChain.displaySymbol, evmChain.testnet, solanaDevnet],
+    [evmChain.caip2, evmChain.label, evmChain.displaySymbol, evmChain.testnet, solanaDevnet, bitcoinSignet],
   );
 
   const [plan, setPlan] = useState<PortfolioPlan | null>(null);
@@ -183,6 +186,7 @@ export function PortfolioScreen({ navigation }: Props) {
       activeIndex: activeAccount && !activeAccount.watchOnly && !activeAccount.multisig ? activeAccount.index : null,
       activeOthers,
       evmCaip2: evmChain.caip2,
+      bitcoinSignet,
     });
     try {
       const inputs = await inputsPromise;
@@ -358,6 +362,7 @@ export function PortfolioScreen({ navigation }: Props) {
       <PnlSection
         slots={slots}
         solanaDevnet={solanaDevnet}
+        bitcoinSignet={bitcoinSignet}
         accounts={accounts}
         activeAccount={activeAccount}
         evmCaip2={evmChain.caip2}

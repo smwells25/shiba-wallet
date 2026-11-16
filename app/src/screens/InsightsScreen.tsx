@@ -56,7 +56,7 @@ export function InsightsScreen({ navigation }: Props) {
   // Subscribing re-renders the screen when the language changes; the
   // sections are built in render, so every t() runs again.
   const { t } = useI18n();
-  const { hideAmounts, evmChain, solanaDevnet, autoLockMs } = usePrefs();
+  const { hideAmounts, evmChain, solanaDevnet, bitcoinSignet, autoLockMs } = usePrefs();
   const { accounts, activeAccount, accountList, watchOnlyAccounts, multisigAccounts } = useWallet();
   const lockOn = useSyncExternalStore(appPinPresence.subscribe, appPinPresence.get);
   const lockKind = useSyncExternalStore(appLockKind.subscribe, appLockKind.get);
@@ -150,6 +150,7 @@ export function InsightsScreen({ navigation }: Props) {
           portfolioKey,
           evm: { caip2: evmChain.caip2, label: evmChain.label, testnet: evmChain.testnet },
           solanaDevnet,
+          bitcoinSignet,
           account: activeAccount ? { name: activeAccount.name, evmAddress: owner } : null,
           counts: {
             watched: watchOnlyAccounts.length,

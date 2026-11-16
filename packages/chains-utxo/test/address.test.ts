@@ -137,3 +137,23 @@ describe('testnet networks', () => {
     expect(() => addressToScriptPubKey('bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu', BITCOIN_TESTNET)).toThrow();
   });
 });
+
+describe('Bitcoin signet network (phase 28 item 2)', () => {
+  it('has bitcoinjs-lib testnet\'s parameters (signet shares them, chainparams.cpp SigNetParams) and its own name', async () => {
+    const { BITCOIN_SIGNET, BITCOIN_TESTNET } = await import('../src/address.js');
+    expect(BITCOIN_SIGNET.bech32Hrp).toBe(bitcoin.networks.testnet.bech32);
+    expect(BITCOIN_SIGNET.p2pkhVersion).toBe(bitcoin.networks.testnet.pubKeyHash);
+    expect(BITCOIN_SIGNET.p2shVersion).toBe(bitcoin.networks.testnet.scriptHash);
+    expect({ ...BITCOIN_SIGNET, name: '' }).toEqual({ ...BITCOIN_TESTNET, name: '' });
+    expect(BITCOIN_SIGNET.name).toBe('Bitcoin signet');
+  });
+
+  it('accepts a tb1 address as bitcoinjs-lib decodes it and refuses a mainnet one with its own name', async () => {
+    const { BITCOIN_SIGNET, BITCOIN, addressToScriptPubKey } = await import('../src/address.js');
+    const { bech32: b } = await import('@scure/base');
+    const tb = b.encode('tb', [0, ...b.toWords(new Uint8Array(20).fill(9))]);
+    expect(bytesToHex(addressToScriptPubKey(tb, BITCOIN_SIGNET))).toBe(bjsScript(tb, bitcoin.networks.testnet));
+    expect(() => addressToScriptPubKey('bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu', BITCOIN_SIGNET)).toThrow(/^Bitcoin signet: segwit address/);
+    expect(() => addressToScriptPubKey(tb, BITCOIN)).toThrow(/^Bitcoin: segwit address/);
+  });
+});

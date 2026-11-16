@@ -341,5 +341,23 @@ async function importMutant(from, to) {
   check('mutant (bound removed) is caught', m5.planPortfolio({ accounts, slots: mainnetSlots, tokens, maxReads: 5 }).tasks.length !== 5);
 }
 
+// Phase 28 item 2 (Bitcoin signet): the portfolio's Bitcoin slot on signet is a test network named after it, never
+// valued; a non-active account's cached signet address is used there, never its mainnet one.
+{
+  const D = await import('../src/config/defaults.ts');
+  const SIG = await import('../src/wallet/bitcoin-signet.ts');
+  const BTC = 'bip122:000000000019d6689c085ae165831e93';
+  const EVM = { caip2: 'eip155:1', label: 'Ethereum', displaySymbol: 'ETH', testnet: false };
+  const on = P.portfolioSlotsFor(D.resolveActiveNetworks(null, false, true), EVM).find((x) => x.slot === BTC);
+  const off = P.portfolioSlotsFor(D.resolveActiveNetworks(null, false, false), EVM).find((x) => x.slot === BTC);
+  check('phase 28: the Bitcoin slot on signet is "Bitcoin signet" / "test BTC", a test network; off it is mainnet as before',
+    on.testnet === true && on.label === 'Bitcoin signet' && on.symbol === 'test BTC' && off.testnet === false && off.networkChainId === BTC);
+  const main = { chainId: BTC, address: 'bc1qmainnet', path: "m/84'/0'/1'/0/0" };
+  const evm = { chainId: 'eip155:1', address: '0x1', path: "m/44'/60'/0'/0/1" };
+  check('phase 28: a non-active account without a cached signet address has no Bitcoin address on signet (never the mainnet one)',
+    !(BTC in SIG.cachedSlotAddresses([evm, main], { bitcoinSignet: true, evmSlot: 'eip155:1' })) &&
+      SIG.cachedSlotAddresses([evm, main], { bitcoinSignet: false, evmSlot: 'eip155:1' })[BTC] === 'bc1qmainnet');
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

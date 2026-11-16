@@ -89,6 +89,15 @@ export interface AppPrefs {
    * separate from `testNetwork`, which chooses only the EVM network.
    */
   solanaDevnet: boolean;
+  /**
+   * The Bitcoin slot on SIGNET instead of mainnet (phase 28 item 2; Settings
+   * → Developer → "Use Bitcoin signet"). Default OFF, and only an explicit
+   * stored `true` reads as on, as for `solanaDevnet`. While it is on, the
+   * Bitcoin row, its address (BIP-84 with coin type 1, m/84'/1'/N'/0/0),
+   * receive, sends, history and Max all use Bitcoin signet
+   * (config/defaults.ts BITCOIN_SIGNET_NETWORK). Dogecoin is not affected.
+   */
+  bitcoinSignet: boolean;
 }
 
 export const DEFAULT_PREFS: AppPrefs = {
@@ -100,6 +109,7 @@ export const DEFAULT_PREFS: AppPrefs = {
   screenProtection: true,
   notifications: false,
   solanaDevnet: false,
+  bitcoinSignet: false,
 };
 
 /** The selectable auto-lock thresholds: off, 1 minute, 5 minutes. */
@@ -128,6 +138,7 @@ function sanitize(parsed: unknown): AppPrefs {
       typeof p.screenProtection === 'boolean' ? p.screenProtection : DEFAULT_PREFS.screenProtection,
     notifications: p.notifications === true,
     solanaDevnet: p.solanaDevnet === true,
+    bitcoinSignet: p.bitcoinSignet === true,
   };
 }
 

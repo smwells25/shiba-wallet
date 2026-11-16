@@ -909,5 +909,23 @@ console.log('check-doge: the Ordinals / Runes warning, Bitcoin mainnet only (pha
     !pin(screen.replace('{bitcoinAssetsWarningShown(route.params.chainId, network?.chainId) ? <WarningBox>', '{true ? <WarningBox>')));
 }
 
+// Phase 28 item 2 (Bitcoin signet): Dogecoin is untouched by the switch — its network entry, its UTXO parameters and
+// its recipient validation are the same with "Use Bitcoin signet" on.
+{
+  const D = await import('../src/config/defaults.ts');
+  const SIG = await import('../src/wallet/bitcoin-signet.ts');
+  const S = await import('../src/wallet/send.ts');
+  const DOGE_ID = 'bip122:1a91e3dace36e2be3bf030a65679fe82';
+  const at = (mode) => mode.find((e) => e.slot === DOGE_ID).network;
+  check('phase 28: the Dogecoin slot is the same entry with the Bitcoin signet switch on or off',
+    at(D.resolveActiveNetworks(null, false, true)) === at(D.resolveActiveNetworks(null, false, false)) && at(D.resolveActiveNetworks(null, false, true)).chainId === DOGE_ID);
+  check('phase 28: Dogecoin keeps its own UTXO parameters, sign chain and banner rule',
+    SIG.utxoNetworkForEndpoint(DOGE_ID, DOGECOIN) === DOGECOIN &&
+      SIG.utxoSignChainFor(DOGE_ID, DOGE_ID) === DOGE_ID && !SIG.bitcoinSignetBannerShown(DOGE_ID, true) &&
+      SIG.bitcoinMainnetSendNoteShown(DOGE_ID, DOGE_ID, true) === false);
+  const tb = 'tb1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq';
+  check('phase 28: a Dogecoin recipient is validated as before; a signet (tb1) string is not a Dogecoin address', S.validateRecipient(DOGE_ID, tb).ok === false);
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

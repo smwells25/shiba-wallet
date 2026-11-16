@@ -19,6 +19,7 @@ import { KNOWN_SOLANA_TOKENS, SOLANA_DEVNET_CAIP2, SOLANA_MAINNET_CAIP2 } from '
 import { t } from '../i18n/index.ts';
 import { maskAmount } from '../config/prefs.ts';
 import { formatUnits } from './balances.ts';
+import { BITCOIN_MAINNET_SLOT, BITCOIN_SIGNET_CAIP2 } from '../config/defaults.ts';
 
 /**
  * mint → symbol for one Solana network: the tracked tokens of that network
@@ -146,9 +147,13 @@ export function isSolanaTokenCompanion(entry: HistoryEntry, entries: readonly Hi
  */
 export function activitySlotNetwork(
   routeChainId: string,
-  options: { evmSlot: boolean; evmCaip2: string; solanaDevnet: boolean },
+  options: { evmSlot: boolean; evmCaip2: string; solanaDevnet: boolean; bitcoinSignet?: boolean },
 ): string {
   if (options.evmSlot) return options.evmCaip2;
   if (routeChainId === SOLANA_MAINNET_CAIP2 && options.solanaDevnet) return SOLANA_DEVNET_CAIP2;
+  // Phase 28 item 2: the Bitcoin slot with "Use Bitcoin signet" on is keyed
+  // by the signet id, for the same reason (the Send screen saves its note
+  // under endpoint.network.chainId, the signet id there). Absent = off.
+  if (routeChainId === BITCOIN_MAINNET_SLOT && options.bitcoinSignet === true) return BITCOIN_SIGNET_CAIP2;
   return routeChainId;
 }

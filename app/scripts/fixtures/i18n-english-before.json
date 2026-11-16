@@ -13245,7 +13245,19 @@
   "activity.solana.receivedWithheld",
   "activity.solana.receivedUnnamedWithheld",
   "coldSign.prePrompt.show",
-  "coldSign.prePrompt.submit"
+  "coldSign.prePrompt.submit",
+  "settings.btcSignet.label",
+  "settings.btcSignet.offNote",
+  "settings.btcSignet.onNote",
+  "banner.btcSignet",
+  "home.btcSignet.cardLine",
+  "home.btcSignet.pending",
+  "home.btcSignet.derive",
+  "home.btcSignet.deriveFailed",
+  "receive.btcSignet.pending",
+  "send.btc.mainnetNote",
+  "pnl.btcSignet",
+  "insights.network.btcSignet"
  ],
  "changed": {
   "activity.note.privacy": {

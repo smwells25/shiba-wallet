@@ -15,6 +15,8 @@ import { Button, ImportedKeyNotice, WarningBox, WatchOnlyNotice, screenStyle } f
 import { T } from '../i18n/T';
 import { useI18n } from '../i18n/useI18n';
 import { SolanaDevnetBanner } from '../components/SolanaDevnetBanner';
+import { BitcoinSignetBanner } from '../components/BitcoinSignetBanner';
+import { badgeSymbol, bitcoinSignetText } from '../wallet/bitcoin-signet';
 import { IMPORTED_KEY_NO_CHAIN, IMPORTED_KEY_PATH, MULTISIG_NO_CHAIN, WATCH_ONLY_NO_CHAIN } from '../wallet/account-ids';
 import {
   MULTISIG_RECEIVE_NOTE,
@@ -25,7 +27,7 @@ import {
 import { evmProfileByCaip2 } from '../config/evm-chain';
 import { useTheme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
-import { EVM_CHAIN_ID, SOLANA_CHAIN_ID } from '../wallet/send';
+import { BITCOIN_CHAIN_ID, EVM_CHAIN_ID, SOLANA_CHAIN_ID } from '../wallet/send';
 import { SOLANA_DEVNET_NETWORK } from '../config/defaults';
 import { useAccountDelegation } from '../wallet/useDelegation';
 import { delegationLabelSuffix } from '../wallet/delegation';
@@ -53,7 +55,7 @@ export function ReceiveScreen({ route, navigation }: Props) {
   // Localisation (phase 22 item 6): the screen and its title follow the language.
   const { language, t, tx, localize } = useI18n();
   const { width } = useWindowDimensions();
-  const { accounts, activeAccount } = useWallet();
+  const { accounts, activeAccount, bitcoinSignetPending } = useWallet();
   const account = accounts.find((a) => a.chainId === route.params.chainId);
   // A watch-only account (feature 10) gets a plain view of the watched
   // address: the address, its QR code and the watch-only notice. Nothing
@@ -171,7 +173,9 @@ export function ReceiveScreen({ route, navigation }: Props) {
               ? localize(MULTISIG_NO_CHAIN)
               : activeAccount?.imported
                 ? localize(IMPORTED_KEY_NO_CHAIN)
-                : tx('Unknown chain.')}
+                : bitcoinSignetPending && route.params.chainId === BITCOIN_CHAIN_ID
+                  ? bitcoinSignetText.receivePending()
+                  : tx('Unknown chain.')}
         </Text>
       </View>
     );
@@ -180,12 +184,13 @@ export function ReceiveScreen({ route, navigation }: Props) {
   return (
     <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
       <SolanaDevnetBanner chainId={route.params.chainId} />
+      <BitcoinSignetBanner chainId={route.params.chainId} />
       <View
         style={[styles.badge, { backgroundColor: account.accent }]}
         accessibilityElementsHidden
         importantForAccessibility="no-hide-descendants"
       >
-        <Text style={styles.badgeText}>{account.symbol}</Text>
+        <Text style={styles.badgeText}>{badgeSymbol(account.symbol)}</Text>
       </View>
       <Text style={[styles.chainName, { color: theme.text }]}>{networkName}</Text>
       {activeAccount ? (

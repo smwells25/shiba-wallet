@@ -2316,7 +2316,7 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
       textOnFill(btc) === TEXT_ON_LIGHT_FILL && textOnFill(doge) === TEXT_ON_LIGHT_FILL);
   const homeSrc = files.find((x) => x.f === 'screens/HomeScreen.tsx').src;
   check('…Home draws both badge kinds with textOnFill and the badge style no longer forces white (source)',
-    homeSrc.includes('<Text style={[styles.badgeText, { color: textOnFill(item.accent) }]}>{item.symbol}</Text>') &&
+    homeSrc.includes('<Text style={[styles.badgeText, { color: textOnFill(item.accent) }]}>{badgeSymbol(item.symbol)}</Text>') &&
       homeSrc.includes('<Text style={[styles.badgeText, { color: textOnFill(c.accent) }]}>{c.symbol}</Text>') &&
       !/badgeText: \{\s*color: '#ffffff'/.test(homeSrc));
 
@@ -2558,6 +2558,19 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
     !/\bdependencies\s*\{/.test(gradle);
   check('navigation bar (p23-navbar): the local module is Android only, named ShibaNavigationBar, uses setSystemBarsAppearance on API 31 and up (the navigation-bar bit only) and the compat flag on API 26-30, on the main thread, with no extra dependency', moduleOk(kotlin));
   check('mutant caught (p23-navbar): the module renamed away from the name the app looks up', !moduleOk(kotlin.replace('Name("ShibaNavigationBar")', 'Name("ShibaNavBar")')));
+}
+
+// Phase 28 item 2: Settings → Developer carries the "Use Bitcoin signet" switch after the Solana devnet one, labelled
+// by its visible text once (the switch's own label), with its off and on notes from the string table.
+{
+  const { readFileSync } = await import('node:fs');
+  const settingsSrc = readFileSync(new globalThis.URL('../src/screens/SettingsScreen.tsx', import.meta.url), 'utf8');
+  const ok = (src) =>
+    src.includes('accessibilityLabel={bitcoinSignetText.switchLabel()}') && src.includes('accessibilityState={{ checked: bitcoinSignet }}') &&
+    src.includes('onValueChange={(v) => void setBitcoinSignet(v)}') && src.indexOf('setBitcoinSignet(v)') > src.indexOf('setSolanaDevnet(v)') &&
+    src.includes('{bitcoinSignet ? bitcoinSignetText.onNote() : bitcoinSignetText.offNote()}');
+  check('phase 28: the Bitcoin signet switch in Settings → Developer, after Solana devnet, with its notes (source)', ok(settingsSrc));
+  check('mutant caught (phase 28): the switch wired to the Solana setter', !ok(settingsSrc.replace('onValueChange={(v) => void setBitcoinSignet(v)}', 'onValueChange={(v) => void setSolanaDevnet(v)}')));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

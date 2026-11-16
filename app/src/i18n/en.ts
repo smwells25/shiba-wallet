@@ -2344,4 +2344,21 @@ export const en = {
   'coldSign.prePrompt.show': 'Checking the spending limits, the bundler’s minimum fee and its gas estimate before the request for the off-line signer is shown. This can take up to about a minute; nothing has been signed or sent.',
   'coldSign.prePrompt.submit': 'Checking the signature, the account’s nonce and deployment and the bundler’s minimum fee, then handing the signed operation to the bundler. This phone signs nothing here.',
   // ---- END phase 28 item 1 ----
+  // ---- BEGIN phase 28 item 2 (Bitcoin signet): the Developer switch "Use Bitcoin signet" and its notes, the signet banner
+  // and Home card line, the Bitcoin row while the account's signet address is not on this phone yet, the profit-and-loss
+  // and risk-overview lines (wallet/bitcoin-signet.ts bitcoinSignetText), and the note on Bitcoin mainnet's send form that
+  // the app-wide TESTNET banner is about the Ethereum choice (pass p27-emu2 finding 9).
+  'settings.btcSignet.label': 'Use Bitcoin signet',
+  'settings.btcSignet.offNote': 'Off: the Bitcoin row is on Bitcoin mainnet. On: the Bitcoin row, its address, receiving, sends, history and Max use Bitcoin signet, a test network whose coins have no value. This choice is separate from the Ethereum network above and from Solana devnet; Dogecoin is not affected.',
+  'settings.btcSignet.onNote': 'Bitcoin signet is on: the Bitcoin row shows test BTC, which has no value. Each account’s signet address comes from your recovery phrase with the test-network coin type (path m/84\'/1\'/N\'/0/0), so it is a different address from the account’s mainnet one. Turn it off to return the Bitcoin row to mainnet.',
+  'banner.btcSignet': 'TESTNET — Bitcoin signet is on. Amounts are test BTC, not real funds.',
+  'home.btcSignet.cardLine': 'Bitcoin signet: test BTC, no value',
+  'home.btcSignet.pending': 'Bitcoin signet: this account’s signet address is not on this phone yet. It is a different address from the mainnet one, so working it out reads your recovery phrase once (one device prompt when the phrase is protected). Nothing is signed.',
+  'home.btcSignet.derive': 'Work out the signet address',
+  'home.btcSignet.deriveFailed': 'The signet address was not worked out. {reason}',
+  'receive.btcSignet.pending': 'This account’s Bitcoin signet address is not on this phone yet. Work it out from the Bitcoin row on Home first.',
+  'send.btc.mainnetNote': 'This send is on Bitcoin mainnet, with real funds. The TESTNET banner at the bottom of the screen is about the Ethereum network chosen in Settings → Developer, not about this send.',
+  'pnl.btcSignet': 'Profit and loss for BTC is not offered while Bitcoin signet is on: signet BTC has no price.',
+  'insights.network.btcSignet': 'Bitcoin signet is on: the Bitcoin row shows test BTC, which has no value.',
+  // ---- END phase 28 item 2 (Bitcoin signet) ----
 } as const;

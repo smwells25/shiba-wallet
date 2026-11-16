@@ -20,6 +20,7 @@ import {
 } from '@shiba-wallet/chains-evm';
 import {
   BITCOIN,
+  BITCOIN_SIGNET,
   DOGECOIN,
   addressToScriptPubKey,
   blockbookTransport,
@@ -165,8 +166,19 @@ export type RecipientValidation =
   | { ok: true; normalized: string; note?: string }
   | { ok: false; error: string };
 
+/**
+ * Bitcoin signet's CAIP-2 id (phase 28 item 2; config/defaults.ts
+ * BITCOIN_SIGNET_CAIP2 and core's bitcoinSignetKeyProvider.chainId, pinned
+ * equal by scripts/check-btc-signet.mjs). Written out here because this
+ * module does not import the network table.
+ */
+const BITCOIN_SIGNET_CHAIN_ID = 'bip122:00000008819873e925422c1ff0f99f7c';
+
 function utxoNetworkFor(chainId: string): UtxoNetwork | undefined {
   if (chainId === BITCOIN_CHAIN_ID) return BITCOIN;
+  // A signet recipient is validated with signet's parameters (HRP "tb"):
+  // the Send form passes this id while "Use Bitcoin signet" is on.
+  if (chainId === BITCOIN_SIGNET_CHAIN_ID) return BITCOIN_SIGNET;
   if (chainId === DOGECOIN_CHAIN_ID) return DOGECOIN;
   return undefined;
 }

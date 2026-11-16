@@ -774,6 +774,13 @@ export async function setActiveAccount(
 const BITCOIN_CAIP2 = 'bip122:000000000019d6689c085ae165831e93';
 const DOGECOIN_CAIP2 = 'bip122:1a91e3dace36e2be3bf030a65679fe82';
 const SOLANA_CAIP2 = 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp';
+/**
+ * Bitcoin signet (phase 28 item 2; core's bitcoinSignetKeyProvider.chainId,
+ * pinned equal by scripts/check-btc-signet.mjs). It takes Bitcoin's mapping:
+ * account N, address index 0, so account N's signet path is m/84'/1'/N'/0/0
+ * (coin type 1, the provider's own).
+ */
+const BITCOIN_SIGNET_CAIP2 = 'bip122:00000008819873e925422c1ff0f99f7c';
 
 /**
  * Maps the user-facing account index to the (account, addressIndex)
@@ -811,7 +818,7 @@ export function derivationArgsFor(
     throw new Error(`Invalid account index ${String(accountIndex)}.`);
   }
   if (chainId.startsWith('eip155:')) return { account: 0, addressIndex: accountIndex };
-  if (chainId === BITCOIN_CAIP2 || chainId === DOGECOIN_CAIP2 || chainId === SOLANA_CAIP2) {
+  if (chainId === BITCOIN_CAIP2 || chainId === BITCOIN_SIGNET_CAIP2 || chainId === DOGECOIN_CAIP2 || chainId === SOLANA_CAIP2) {
     return { account: accountIndex, addressIndex: 0 };
   }
   throw new Error(`No account derivation mapping is defined for chain ${chainId}.`);

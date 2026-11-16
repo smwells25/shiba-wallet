@@ -14,7 +14,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { formatAssetId } from '@shiba-wallet/core';
 import type { FungibleAsset } from '@shiba-wallet/core';
 import type { RootStackParamList } from '../navigation';
-import { ImportedKeyNotice, WarningBox, WatchOnlyNotice, screenStyle } from '../components';
+import { Button, ImportedKeyNotice, WarningBox, WatchOnlyNotice, screenStyle } from '../components';
 import { T } from '../i18n/T';
 import { localize, t, tx } from '../i18n/index';
 import { useI18n } from '../i18n/useI18n';
@@ -38,7 +38,7 @@ import { COLD_SIGN_HOME_LINK, COLD_SIGN_LINK_HINT } from '../wallet/cold-signing
 import { httpTransport } from '@shiba-wallet/chains-evm';
 import { MULTISIG_DEPOSIT_ROW_LABEL, readMultisigFunds } from '../wallet/multisig';
 import { getEndpoint } from '../config/networks';
-import { SOLANA_DEVNET_CAIP2, SOLANA_DEVNET_NETWORK } from '../config/defaults';
+import { BITCOIN_SIGNET_NETWORK, SOLANA_DEVNET_CAIP2, SOLANA_DEVNET_NETWORK } from '../config/defaults';
 import { OfflineNotice } from '../wallet/connectivity';
 import { usePrefs } from '../wallet/PrefsContext';
 import { maskAmount } from '../config/prefs';
@@ -73,6 +73,7 @@ import { usePrices } from '../wallet/usePrices';
 import { tokenSendFeeSentence } from '../wallet/token-gas';
 import { rebasingTokenNote, tokenRowSubtitle } from '../wallet/tokens';
 import { inboxLinkText } from '../wallet/inbox';
+import { badgeSymbol, bitcoinSignetNetworkFor, bitcoinSignetText } from '../wallet/bitcoin-signet';
 import { useInboxUnreadCount } from './InboxScreen';
 import { usePrimaryNameLine } from './HandleViews';
 import { handleLinkShown } from '../wallet/handle';
@@ -326,6 +327,47 @@ function UnavailableChains({ accounts, sentence: englishSentence }: { accounts: 
   );
 }
 
+/**
+ * The Bitcoin card while "Use Bitcoin signet" is on and the active account's
+ * signet address is not on this phone yet (phase 28 item 2): what is missing,
+ * why it needs the phrase once, and the button that works it out (one device
+ * prompt when the phrase is protected; nothing is signed). A failure or a
+ * cancelled prompt is said in one line and changes nothing.
+ */
+function BitcoinSignetPendingCard({ onDerive }: { onDerive: () => Promise<number> }) {
+  const theme = useTheme();
+  useI18n();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const accent = CHAINS.find((c) => c.symbol === 'BTC')?.accent ?? '#f7931a';
+  return (
+    <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
+      <View style={styles.cardTop} accessible>
+        <View style={[styles.badge, { backgroundColor: accent, opacity: 0.4 }]}>
+          <Text style={[styles.badgeText, { color: textOnFill(accent) }]}>BTC</Text>
+        </View>
+        <View style={styles.cardBody}>
+          <Text style={[styles.chainName, { color: theme.text }]}>{BITCOIN_SIGNET_NETWORK.label}</Text>
+          <Text style={[styles.address, { color: theme.testnetFill }]}>{bitcoinSignetText.pending()}</Text>
+        </View>
+      </View>
+      {error ? <Text style={[styles.address, { color: theme.danger }]}>{error}</Text> : null}
+      <Button
+        title={bitcoinSignetText.deriveButton()}
+        variant="secondary"
+        disabled={busy}
+        onPress={() => {
+          setBusy(true);
+          setError(null);
+          onDerive()
+            .catch((e: unknown) => setError(bitcoinSignetText.deriveFailed(e instanceof Error ? e.message : String(e))))
+            .finally(() => setBusy(false));
+        }}
+      />
+    </View>
+  );
+}
+
 /** The Solana devnet CAIP-2 id the Solana token list is compared with (config/defaults.ts). */
 const SOLANA_DEVNET_ROW_CAIP2 = SOLANA_DEVNET_CAIP2;
 
@@ -455,7 +497,7 @@ export function HomeScreen({ navigation }: Props) {
   // `accounts` holds the ACTIVE account's addresses (phase 6 item 3);
   // switching accounts remounts the navigator (App.tsx), so this screen
   // never shows one account's balances under another's name.
-  const { accounts, activeAccount } = useWallet();
+  const { accounts, activeAccount, bitcoinSignetPending, deriveBitcoinSignetAddresses } = useWallet();
   // The notifications inbox's unread count for its link (phase 22 item 5).
   const inboxUnread = useInboxUnreadCount();
   // Watch-only accounts (feature 10): the wallet holds no key, so Home
@@ -471,15 +513,17 @@ export function HomeScreen({ navigation }: Props) {
   const multisig = activeAccount?.multisig === true;
   // No key of this wallet signs alone for the active account.
   const noKey = watchOnly || multisig;
-  const { hideAmounts, setHideAmounts, evmChain, sepolia, showFiat, solanaDevnet } = usePrefs();
+  const { hideAmounts, setHideAmounts, evmChain, sepolia, showFiat, solanaDevnet, bitcoinSignet } = usePrefs();
   // The active EVM chain is passed so a mode flip (mainnet <-> Sepolia)
   // re-fetches the EVM row (useBalances handles it).
   // The Solana slot's network (phase 24 item 1) is part of the reload key
   // too: a switch to or from Solana devnet re-reads the rows at once. With
   // devnet off the key is exactly the EVM chain id, as before.
+  // The Bitcoin slot's network (phase 28 item 2) joins the reload key the
+  // same way; with both switches off the key is exactly the EVM chain id.
   const { balances, refreshing, refreshAll, refreshOne } = useBalances(
     accounts,
-    solanaDevnet ? `${evmChain.caip2}|solana-devnet` : evmChain.caip2,
+    `${evmChain.caip2}${solanaDevnet ? '|solana-devnet' : ''}${bitcoinSignet ? '|bitcoin-signet' : ''}`,
   );
   const evmAccount = accounts.find((a) => a.chainId === EVM_CHAIN_ID);
   // The EVM address's ENS primary name (phase 23 item 6): read on mainnet
@@ -529,7 +573,7 @@ export function HomeScreen({ navigation }: Props) {
   // tokens are never priced). The hook requests nothing while "Show fiat
   // values" is off.
   const priceIds = [
-    ...nativePriceIds(sepolia, solanaDevnet),
+    ...nativePriceIds(sepolia, solanaDevnet, bitcoinSignet),
     ...tokens.map((t) => tokenPriceAssetId(t, evmChain.caip2)),
   ];
   const { quotes, refresh: refreshPrices } = usePrices(priceIds);
@@ -668,6 +712,10 @@ export function HomeScreen({ navigation }: Props) {
     // The Solana card on devnet (phase 24 item 1) keeps its title and says
     // on its own line which network it shows.
     const solanaDevnetLine = item.chainId === SOLANA_CHAIN_ID && solanaDevnet ? SOLANA_DEVNET_CARD_LINE : null;
+    // The Bitcoin card on signet (phase 28 item 2) keeps its title and says
+    // on its own line which network it shows, as the Solana card does.
+    const btcSignetLine = bitcoinSignetNetworkFor(item.chainId, bitcoinSignet) ? bitcoinSignetText.cardLine() : null;
+    const networkLine = solanaDevnetLine ?? btcSignetLine;
     // Account tools that appear only after asynchronous eligibility checks
     // (session keys, guardians, passkey). They get their own row with its
     // height reserved from the start, so nothing above or below moves when
@@ -749,7 +797,7 @@ export function HomeScreen({ navigation }: Props) {
               ownership or smart-account box). */}
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`${title}, ${watchOnly ? t('home.card.watchedAddress', { address: item.address }) : shortAddress(item.address)}${isEvm && evmNameLine ? `, ${evmNameLine}` : ''}${solanaDevnetLine ? `, ${solanaDevnetLine}` : ''}`}
+            accessibilityLabel={`${title}, ${watchOnly ? t('home.card.watchedAddress', { address: item.address }) : shortAddress(item.address)}${isEvm && evmNameLine ? `, ${evmNameLine}` : ''}${networkLine ? `, ${networkLine}` : ''}`}
             accessibilityHint={
               watchOnly ? tx('Opens the watched address and its QR code') : t('home.card.receive.hint', { title })
             }
@@ -757,7 +805,7 @@ export function HomeScreen({ navigation }: Props) {
             style={({ pressed }) => [styles.receiveArea, { opacity: pressed ? 0.7 : 1 }]}
           >
             <View style={[styles.badge, { backgroundColor: item.accent }]}>
-              <Text style={[styles.badgeText, { color: textOnFill(item.accent) }]}>{item.symbol}</Text>
+              <Text style={[styles.badgeText, { color: textOnFill(item.accent) }]}>{badgeSymbol(item.symbol)}</Text>
             </View>
             <View style={styles.cardBody}>
               <Text style={[styles.chainName, { color: theme.text }]}>{title}</Text>
@@ -767,8 +815,8 @@ export function HomeScreen({ navigation }: Props) {
               {isEvm && evmNameLine ? (
                 <Text style={[styles.address, { color: theme.textMuted }]}>{evmNameLine}</Text>
               ) : null}
-              {solanaDevnetLine ? (
-                <Text style={[styles.address, { color: theme.testnetFill }]}>{solanaDevnetLine}</Text>
+              {networkLine ? (
+                <Text style={[styles.address, { color: theme.testnetFill }]}>{networkLine}</Text>
               ) : null}
             </View>
           </Pressable>
@@ -804,6 +852,8 @@ export function HomeScreen({ navigation }: Props) {
                     // The coin as this network names it ("test ETH" on a test
                     // network; pass p20d finding 6), and "test SOL" on the Solana
                     // card while Solana devnet is on (pass p24-solfix2 finding D).
+                    // On Bitcoin signet item.symbol is already "test BTC" (the
+                    // row's own; wallet/bitcoin-signet.ts withBitcoinSignetRow).
                     sendLinkHint(isEvm ? evmChain.displaySymbol : solanaDevnetLine ? SOLANA_DEVNET_NETWORK.symbol : item.symbol),
                   )}
             </React.Fragment>
@@ -1145,6 +1195,13 @@ export function HomeScreen({ navigation }: Props) {
               Dogecoin or Solana address; those networks are shown as not
               available rather than left out silently. Feature 10: neither
               has a watched Ethereum address. */}
+          {/* Phase 28 item 2: with "Use Bitcoin signet" on and the active
+              account's signet address not on this phone yet, its Bitcoin card
+              is left out (wallet/bitcoin-signet.ts withBitcoinSignetRow) and
+              this card says why, with the one action that works it out. */}
+          {bitcoinSignetPending ? (
+            <BitcoinSignetPendingCard onDerive={deriveBitcoinSignetAddresses} />
+          ) : null}
           {activeAccount?.imported ? (
             <UnavailableChains accounts={accounts} sentence={IMPORTED_KEY_NO_CHAIN} />
           ) : watchOnly ? (

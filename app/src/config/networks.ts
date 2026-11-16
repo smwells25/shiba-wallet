@@ -199,7 +199,7 @@ export async function getEndpoint(
 ): Promise<NetworkEndpoint | undefined> {
   const store = options.store ?? AsyncStorage;
   const [overrides, prefs] = await Promise.all([loadOverrides(store), loadPrefs(store)]);
-  const match = resolveActiveNetworks(prefs.testNetwork, prefs.solanaDevnet).find(
+  const match = resolveActiveNetworks(prefs.testNetwork, prefs.solanaDevnet, prefs.bitcoinSignet).find(
     (e) => e.slot === chainId || e.network.chainId === chainId,
   );
   return match ? resolveSlot(match.slot, match.network, overrides, store) : undefined;
@@ -212,7 +212,7 @@ export async function getAllEndpoints(
   const store = options.store ?? AsyncStorage;
   const [overrides, prefs] = await Promise.all([loadOverrides(store), loadPrefs(store)]);
   return Promise.all(
-    resolveActiveNetworks(prefs.testNetwork, prefs.solanaDevnet).map(({ slot, network }) =>
+    resolveActiveNetworks(prefs.testNetwork, prefs.solanaDevnet, prefs.bitcoinSignet).map(({ slot, network }) =>
       resolveSlot(slot, network, overrides, store),
     ),
   );
@@ -269,7 +269,7 @@ export async function peekEndpointHealth(options: { store?: KeyValueStore } = {}
   const store = options.store ?? AsyncStorage;
   const [overrides, prefs] = await Promise.all([loadOverrides(store), loadPrefs(store)]);
   const out: EndpointHealthPeek[] = [];
-  for (const { slot, network } of resolveActiveNetworks(prefs.testNetwork, prefs.solanaDevnet)) {
+  for (const { slot, network } of resolveActiveNetworks(prefs.testNetwork, prefs.solanaDevnet, prefs.bitcoinSignet)) {
     let overrideUrl: string | null = null;
     if (network.kind === 'blockbook') {
       overrideUrl = (await getBlockbookConfig(network.chainId, store)).url;

@@ -23,6 +23,7 @@ export {
 } from './chains/evm.js';
 export {
   bitcoinKeyProvider,
+  bitcoinSignetKeyProvider,
   dogecoinKeyProvider,
   createUtxoKeyProvider,
   p2pkhAddress,

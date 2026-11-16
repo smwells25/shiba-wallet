@@ -677,5 +677,18 @@ console.log('check-insights: DEMO step 51 names the exact labels (phase 26 item 
     !ok(demo, settings.replace("<Button title={t('insights.open')} variant=\"secondary\"", '{/* moved */}')));
 }
 
+// Phase 28 item 2 (Bitcoin signet): the network section says the Bitcoin row is on signet, with no value, only while
+// the switch is on; without the flag the section is exactly as before.
+{
+  const ctx = { evm: { caip2: 'eip155:1', label: 'Ethereum', testnet: false }, solanaDevnet: false };
+  const on = I.networkSection({ ...ctx, bitcoinSignet: true });
+  const off = I.networkSection(ctx);
+  check('phase 28: the signet line (English exact) only with the switch on; the section unchanged without the flag',
+    on.lines.map((l) => l.text).includes('Bitcoin signet is on: the Bitcoin row shows test BTC, which has no value.') &&
+      off.lines.length === on.lines.length - 1 && JSON.stringify(off) === JSON.stringify(I.networkSection({ ...ctx, bitcoinSignet: false })));
+  const screenSrc = readFileSync(new URL('../src/screens/InsightsScreen.tsx', import.meta.url), 'utf8');
+  check('phase 28: the screen passes the switch', screenSrc.includes('          bitcoinSignet,\n          account:'));
+}
+
 console.log(`\ncheck-insights: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

@@ -247,6 +247,8 @@ export interface InsightContext {
   portfolioKey: string;
   evm: { caip2: string; label: string; testnet: boolean };
   solanaDevnet: boolean;
+  /** Phase 28 item 2: "Use Bitcoin signet" is on (absent = off). */
+  bitcoinSignet?: boolean;
   /** The active account, or null. */
   account: { name: string; evmAddress: string | null } | null;
   counts: { watched: number; imported: number; multisig: number; hidden: number };
@@ -697,6 +699,7 @@ export function networkSection(ctx: InsightContext): InsightSection {
     line('evm', ctx.evm.testnet ? t('insights.network.test', { network: ctx.evm.label }) : t('insights.network.main', { network: ctx.evm.label })),
   ];
   if (ctx.solanaDevnet) out.push(line('solana', t('insights.network.solanaDevnet')));
+  if (ctx.bitcoinSignet === true) out.push(line('bitcoin', t('insights.network.btcSignet')));
   return { id: 'network', title: t('insights.section.network'), lines: out, source: t('insights.source.network'), link: null };
 }
 

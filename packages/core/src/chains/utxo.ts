@@ -93,6 +93,42 @@ export const bitcoinKeyProvider = createUtxoKeyProvider({
 });
 
 /**
+ * Bitcoin SIGNET, native segwit (BIP-84), for the app's "Use Bitcoin
+ * signet" switch (phase 28 item 2). Every value is sourced:
+ *  - chainId: CAIP-2 bip122 references are "a 32-character prefix from the
+ *    hash of the genesis block of a given chain, in lowercase hex"
+ *    (ChainAgnostic/namespaces bip122/caip2.md, read 2026-11-16 at head
+ *    2a9193da, lines 25-26 and 50-53). Signet's genesis block hash is
+ *    00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6
+ *    (bitcoin/bitcoin src/kernel/chainparams.cpp class SigNetParams, the
+ *    assert on consensus.hashGenesisBlock, line 539 at head 8130b3b8, read
+ *    2026-11-16), so the reference is its first 32 characters. Every signet
+ *    (the default one and any custom-challenge signet) shares that genesis
+ *    block (the same CreateGenesisBlock call, line 537), so this id does
+ *    not tell the default signet from a custom one; the app's default
+ *    endpoints serve the default signet (their providers' own pages).
+ *  - coinType 1: BIP-44 "Registered coin types" lists index 1, hexa
+ *    0x80000001, "Bitcoin Testnet" (bitcoin/bips bip-0044.mediawiki lines
+ *    148-150 at head c0614759) and its example table derives
+ *    m/44'/1'/0'/0/0 for "Bitcoin Testnet" (line 222); SLIP-44 registers 1 as "Testnet (all coins)"
+ *    (satoshilabs/slips slip-0044.md line 34 at head 7a2abdd1). BIP-84
+ *    keeps BIP-44's levels, m / purpose' / coin_type' / account' / change /
+ *    address_index (bip-0084.mediawiki line 38). The repository's own
+ *    testnet scripts use coin type 1 as well (scripts/testnet/setup.mjs,
+ *    smoke.mjs). Using 1, not 0, means a signet address is NOT the mainnet
+ *    address of the same account re-encoded: posting one never reveals the
+ *    other.
+ *  - bech32Hrp "tb": chainparams.cpp SigNetParams bech32_hrp (line 569).
+ */
+export const bitcoinSignetKeyProvider = createUtxoKeyProvider({
+  chainId: 'bip122:00000008819873e925422c1ff0f99f7c',
+  name: 'Bitcoin signet',
+  coinType: 1,
+  purpose: 84,
+  bech32Hrp: 'tb',
+});
+
+/**
  * Dogecoin mainnet, legacy p2pkh (Dogecoin has no segwit). Version byte 30
  * (0x1e, "D" prefix) and the genesis hash behind the bip122 identifier are
  * taken from dogecoin/dogecoin src/chainparams.cpp (mainnet):

@@ -715,5 +715,25 @@ console.log('check-home: the Risk overview link');
       watchOnlyRouteRefusal('Insights') === null && multisigRouteRefusal('Insights') === null);
 }
 
+// Phase 28 item 2 (Bitcoin signet): with the switch off Home's Bitcoin card is exactly as before (its symbol, its
+// badge, its Send hint); on signet the row's own "test BTC" feeds the unchanged hint, the badge keeps "BTC", the card
+// says which network it shows, and the reload key and price ids follow the switch.
+{
+  const SIG = await import('../src/wallet/bitcoin-signet.ts');
+  const PRICES = await import('../src/wallet/prices.ts');
+  const homeSrc = readFileSync(new URL('../src/screens/HomeScreen.tsx', import.meta.url), 'utf8');
+  check('phase 28: Home\'s Send hint line is unchanged (the signet row carries "test BTC" itself), the badge strips only "test "',
+    homeSrc.includes('sendLinkHint(isEvm ? evmChain.displaySymbol : solanaDevnetLine ? SOLANA_DEVNET_NETWORK.symbol : item.symbol),') &&
+      SIG.badgeSymbol('test BTC') === 'BTC' && SIG.badgeSymbol('BTC') === 'BTC' && SIG.badgeSymbol('ETH') === 'ETH');
+  check('phase 28: the Bitcoin card names signet on its own line only with the switch on, and the reload key follows the switch',
+    homeSrc.includes("const btcSignetLine = bitcoinSignetNetworkFor(item.chainId, bitcoinSignet) ? bitcoinSignetText.cardLine() : null;") &&
+      homeSrc.includes("${bitcoinSignet ? '|bitcoin-signet' : ''}") &&
+      SIG.bitcoinSignetNetworkFor('bip122:000000000019d6689c085ae165831e93', true)?.label === 'Bitcoin signet' &&
+      SIG.bitcoinSignetNetworkFor('bip122:000000000019d6689c085ae165831e93', false) === null);
+  check('phase 28: Home\'s native price ids — switch off identical to before, switch on no Bitcoin price',
+    JSON.stringify(PRICES.nativePriceIds(false, false, false)) === JSON.stringify(PRICES.nativePriceIds(false, false)) &&
+      PRICES.nativePriceIds(false, false, true)[1] === null);
+}
+
 console.log(`\ncheck-home: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

@@ -79,6 +79,27 @@ export const BITCOIN_TESTNET: UtxoNetwork = {
 };
 
 /**
+ * Bitcoin SIGNET (phase 28 item 2, the app's "Use Bitcoin signet" switch).
+ * The same address parameters as BITCOIN_TESTNET: bitcoin/bitcoin
+ * src/kernel/chainparams.cpp, class SigNetParams (master, read 2026-11-16 at
+ * head 8130b3b8, lines 563-569): base58Prefixes PUBKEY_ADDRESS = 1,111 (0x6f),
+ * SCRIPT_ADDRESS = 1,196 (0xc4), bech32_hrp = "tb". It is a separate object
+ * only so that an error names the network the user is on ("Bitcoin
+ * signet: segwit address ... is not valid on this network"). A signet
+ * address and a testnet3 / testnet4 address are therefore
+ * indistinguishable by their text; the app tells the networks apart by the
+ * endpoint's genesis block hash (config/endpoint-probe.ts), never by the
+ * address.
+ */
+export const BITCOIN_SIGNET: UtxoNetwork = {
+  name: 'Bitcoin signet',
+  bech32Hrp: 'tb',
+  p2pkhVersion: 0x6f,
+  p2shVersion: 0xc4,
+  dustPolicy: BITCOIN_CORE_DUST_POLICY,
+};
+
+/**
  * Dogecoin testnet: PUBKEY_ADDRESS = 113 (0x71, "n..."), SCRIPT_ADDRESS =
  * 196 (0xc4), per dogecoin/dogecoin src/chainparams.cpp (CTestNetParams).
  * The dust limits are global policy defaults in Dogecoin Core (not chain

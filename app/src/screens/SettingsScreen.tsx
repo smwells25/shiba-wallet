@@ -77,6 +77,7 @@ import {
 import { useTheme, type Theme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
+import { bitcoinSignetText } from '../wallet/bitcoin-signet';
 import {
   SCREEN_PROTECTION_ALWAYS_NOTE,
   SCREEN_PROTECTION_PLATFORM_NOTE,
@@ -2017,6 +2018,8 @@ export function SettingsScreen({ navigation, route }: Props) {
   const { screenProtection, setScreenProtection } = usePrefs();
   // Settings → Developer (phase 24 item 1): the Solana slot on devnet.
   const { solanaDevnet, setSolanaDevnet } = usePrefs();
+  // Settings → Developer (phase 28 item 2): the Bitcoin slot on signet.
+  const { bitcoinSignet, setBitcoinSignet } = usePrefs();
   const screenProtectionStatus = React.useSyncExternalStore(
     appScreenProtection().subscribe,
     appScreenProtection().status,
@@ -2997,6 +3000,25 @@ export function SettingsScreen({ navigation, route }: Props) {
         </View>
         <Text style={[styles.hint, { color: solanaDevnet ? theme.testnetFill : theme.textMuted }]}>
           {solanaDevnet ? SOLANA_DEVNET_ON_NOTE : SOLANA_DEVNET_OFF_NOTE}
+        </Text>
+        {/* The Bitcoin slot on signet (phase 28 item 2): separate from the EVM
+            network and from Solana devnet, off by default. Turning it on asks
+            for nothing; an account whose signet address is not on this phone
+            yet says so on Home, where it is worked out with one prompt. */}
+        <View style={styles.toggleRow}>
+          <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text, flexShrink: 1, marginRight: 12 }]}>
+            {bitcoinSignetText.switchLabel()}
+          </Text>
+          <Switch {...switchColors(theme)}
+            accessibilityLabel={bitcoinSignetText.switchLabel()}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: bitcoinSignet }}
+            value={bitcoinSignet}
+            onValueChange={(v) => void setBitcoinSignet(v)}
+          />
+        </View>
+        <Text style={[styles.hint, { color: bitcoinSignet ? theme.testnetFill : theme.textMuted }]}>
+          {bitcoinSignet ? bitcoinSignetText.onNote() : bitcoinSignetText.offNote()}
         </Text>
         <CustomNetworksSection customNetworks={customNetworks} choice={testNetwork} onChoose={setTestNetwork} />
       </View>

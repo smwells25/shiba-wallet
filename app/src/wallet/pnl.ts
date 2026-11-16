@@ -363,6 +363,13 @@ export function pnlTokenChoices(tokens: readonly FungibleAsset[], activeEvmCaip2
  */
 export const PNL_SOLANA_SLOT = 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp';
 
+/**
+ * The Bitcoin slot's id (the mainnet CAIP-2 id; phase 28 item 2). Written out
+ * here like PNL_SOLANA_SLOT; scripts/check-btc-signet.mjs pins it equal to
+ * wallet/send.ts BITCOIN_CHAIN_ID.
+ */
+export const PNL_BITCOIN_SLOT = 'bip122:000000000019d6689c085ae165831e93';
+
 /** A network slot as the profit-and-loss section sees it (wallet/portfolio.ts PortfolioSlot). */
 export interface PnlNativeSlot {
   slot: string;
@@ -388,13 +395,19 @@ export interface PnlNativeSlot {
  */
 export function pnlNativeOffer<S extends PnlNativeSlot>(
   slots: readonly S[],
-  options: { solanaDevnet: boolean; accountSlots: readonly string[] },
-): { slots: S[]; solanaDevnetNote: boolean } {
+  options: { solanaDevnet: boolean; bitcoinSignet?: boolean; accountSlots: readonly string[] },
+): { slots: S[]; solanaDevnetNote: boolean; bitcoinSignetNote: boolean } {
   const held = (s: S) => options.accountSlots.includes(s.slot);
-  const withheld = (s: S) => options.solanaDevnet && s.slot === PNL_SOLANA_SLOT;
+  const solanaWithheld = (s: S) => options.solanaDevnet && s.slot === PNL_SOLANA_SLOT;
+  // Phase 28 item 2: NEVER the Bitcoin slot while Bitcoin signet is on, for
+  // the reason above (its history is signet's, signet BTC has no price), even
+  // when a caller hands in a Bitcoin slot still labelled as mainnet.
+  const bitcoinWithheld = (s: S) => options.bitcoinSignet === true && s.slot === PNL_BITCOIN_SLOT;
+  const withheld = (s: S) => solanaWithheld(s) || bitcoinWithheld(s);
   return {
     slots: slots.filter((s) => held(s) && !withheld(s) && nativePriceAssetId(s.slot, s.networkChainId) !== null),
-    solanaDevnetNote: slots.some((s) => held(s) && withheld(s)),
+    solanaDevnetNote: slots.some((s) => held(s) && solanaWithheld(s)),
+    bitcoinSignetNote: slots.some((s) => held(s) && bitcoinWithheld(s)),
   };
 }
 

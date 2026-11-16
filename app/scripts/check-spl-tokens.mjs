@@ -265,7 +265,8 @@ check('the devnet entry: Solana JSON-RPC, 9 decimals, "test SOL", the two docume
     HISTORY.explorerTxUrl(DEVNET, 'sig') === null && HISTORY.explorerTxUrl(SOLANA_MAINNET_CAIP2, 'sig') === 'https://solscan.io/tx/sig' &&
       // The devnet test is one named condition since the p24-solana fix slice (it also sets the header).
       activity.includes('const solanaDevnetSlot = chainId === SOLANA_CHAIN_ID && solanaDevnet;') &&
-      activity.includes('const explorerChainId = solanaDevnetSlot ? SOLANA_DEVNET_CAIP2 : chainId;') &&
+      // Phase 28 item 2: the Bitcoin slot on signet joins the same chain of choices.
+      activity.includes('const explorerChainId = solanaDevnetSlot ? SOLANA_DEVNET_CAIP2 : btcSignetSlot ? BITCOIN_SIGNET_CAIP2 : chainId;') &&
       activity.includes('chainId={explorerChainId}') && activity.includes('explorerTxUrl(explorerChainId, id, evmChain.explorerTxBase)'));
   const sendSrc = readFileSync(resolve(HERE, '../src/wallet/send.ts'), 'utf8');
   const sendScreen = readFileSync(resolve(HERE, '../src/screens/SendScreen.tsx'), 'utf8');
@@ -653,12 +654,12 @@ console.log('check-spl-tokens: the fixes of pass p24-solana (transfer fee, Send 
       count('../src/screens/SendScreen.tsx', '<SolanaDevnetBanner chainId={route.params.chainId} />') === 3);
   const activity = readFileSync(resolve(HERE, '../src/screens/ActivityScreen.tsx'), 'utf8');
   check('Solana Activity on devnet: the devnet network entry (its label "Solana devnet", its "test SOL") and the TESTNET line, not "Mainnet"',
-    activity.includes('const network = networkDefaultFor(solanaDevnetSlot ? SOLANA_DEVNET_CAIP2 : chainId);') &&
-      activity.includes('const testnet = (isEvmSlot && evmChain.testnet) || solanaDevnetSlot;') &&
+    activity.includes('const network = networkDefaultFor(solanaDevnetSlot ? SOLANA_DEVNET_CAIP2 : btcSignetSlot ? BITCOIN_SIGNET_CAIP2 : chainId);') &&
+      activity.includes('const testnet = (isEvmSlot && evmChain.testnet) || solanaDevnetSlot || btcSignetSlot;') &&
       DEFAULTS.networkDefaultFor(DEFAULTS.SOLANA_DEVNET_CAIP2).label === 'Solana devnet' && DEFAULTS.networkDefaultFor(DEFAULTS.SOLANA_DEVNET_CAIP2).symbol === 'test SOL');
   const send = readFileSync(resolve(HERE, '../src/screens/SendScreen.tsx'), 'utf8');
   check('the SOL send on devnet reads TESTNET too (its network line said "Solana devnet · Mainnet")',
-    send.includes('const testnet = (isEvmKind && evmChain.testnet) || network?.chainId === SOLANA_DEVNET_CAIP2;'));
+    send.includes('const testnet = (isEvmKind && evmChain.testnet) || network?.chainId === SOLANA_DEVNET_CAIP2 || network?.chainId === BITCOIN_SIGNET_CAIP2;'));
 }
 
 // ---------------------------------------------------------------------------
@@ -1556,7 +1557,7 @@ console.log('check-spl-tokens: Activity notes and the CSV keyed by the active So
 
   // The screen uses the helper for every note and CSV use, and the old rule is gone.
   const activityNotesPinned = (src) =>
-    src.includes('const noteNetwork = activitySlotNetwork(chainId, { evmSlot: isEvmSlot, evmCaip2: evmChain.caip2, solanaDevnet });') &&
+    src.includes('const noteNetwork = activitySlotNetwork(chainId, { evmSlot: isEvmSlot, evmCaip2: evmChain.caip2, solanaDevnet, bitcoinSignet });') &&
     !src.includes('const noteNetwork = isEvmSlot ? evmChain.caip2 : chainId;') &&
     src.includes('findNote(noteIndex, noteNetwork, id,') &&
     src.includes('      network: noteNetwork,\n      networkLabel,') &&
@@ -1568,7 +1569,7 @@ console.log('check-spl-tokens: Activity notes and the CSV keyed by the active So
   check('ActivityScreen keys its notes, the "Add note" target, the CSV network and file name by activitySlotNetwork', activityNotesPinned(activitySrc));
   // Source mutant: the old rule restored in the screen.
   const oldRule = activitySrc.replace(
-    'const noteNetwork = activitySlotNetwork(chainId, { evmSlot: isEvmSlot, evmCaip2: evmChain.caip2, solanaDevnet });',
+    'const noteNetwork = activitySlotNetwork(chainId, { evmSlot: isEvmSlot, evmCaip2: evmChain.caip2, solanaDevnet, bitcoinSignet });',
     'const noteNetwork = isEvmSlot ? evmChain.caip2 : chainId;',
   );
   const okS = oldRule !== activitySrc && !activityNotesPinned(oldRule);

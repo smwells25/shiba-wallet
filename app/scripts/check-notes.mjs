@@ -793,5 +793,18 @@ async function importMutant(from, to) {
   check('mutant (the gains file written to the activity export\'s directory, whose next export would sweep it) is caught', !gainsDirOk(m12));
 }
 
+// Phase 28 item 2 (Bitcoin signet): a note on a signet transaction is filed under signet's id (the Send screen saves it
+// under endpoint.network.chainId; Activity looks it up through activitySlotNetwork) and the CSV file name carries it.
+{
+  const SOLACT = await import('../src/wallet/solana-activity.ts');
+  const SIGNET = 'bip122:00000008819873e925422c1ff0f99f7c';
+  const BTC = 'bip122:000000000019d6689c085ae165831e93';
+  const net = (on) => SOLACT.activitySlotNetwork(BTC, { evmSlot: false, evmCaip2: 'eip155:1', solanaDevnet: false, bitcoinSignet: on });
+  check('phase 28: the Bitcoin slot\'s notes and CSV network are signet\'s id with the switch on, mainnet\'s with it off',
+    net(true) === SIGNET && net(false) === BTC && notes.normalizeTxId(SIGNET, 'cd'.repeat(32)) === 'cd'.repeat(32));
+  check('phase 28: the CSV file name names signet\'s id',
+    notes.activityExportFileName(net(true), 'tb1qexample', new Date('2026-11-16T00:00:00Z')).startsWith('shiba-activity_bip122-00000008819873e925422c1ff0f99f7c_'));
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

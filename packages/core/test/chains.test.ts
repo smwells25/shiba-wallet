@@ -3,7 +3,7 @@ import { bytesToHex } from '@noble/hashes/utils.js';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { HDNodeWallet, Signature, SigningKey, Wallet } from 'ethers';
 import { derivePath as refDerivePath } from 'ed25519-hd-key';
-import { base58check } from '@scure/base';
+import { base58check, bech32 } from '@scure/base';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { mnemonicToSeed } from '../src/keyring/mnemonic.js';
 import {
@@ -12,7 +12,7 @@ import {
   isValidEvmPrivateKey,
   toChecksumAddress,
 } from '../src/chains/evm.js';
-import { bitcoinKeyProvider, dogecoinKeyProvider } from '../src/chains/utxo.js';
+import { bitcoinKeyProvider, bitcoinSignetKeyProvider, dogecoinKeyProvider, hash160 } from '../src/chains/utxo.js';
 import { solanaKeyProvider } from '../src/chains/solana.js';
 import { slip10DerivePath } from '../src/keyring/slip10.js';
 import { HdKeyring } from '../src/keyring/keyring.js';
@@ -39,6 +39,37 @@ describe('Bitcoin key provider (BIP-84)', () => {
 
   it('uses the BIP-84 purpose and coin type in its path', () => {
     expect(bitcoinKeyProvider.derivationPath(0, 5)).toBe("m/84'/0'/0'/0/5");
+  });
+});
+
+describe('Bitcoin signet key provider (BIP-84, coin type 1)', () => {
+  // Phase 28 item 2. CAIP-2: the first 32 hex characters of signet's genesis
+  // block hash (bitcoin/bitcoin chainparams.cpp SigNetParams); coin type 1 per
+  // BIP-44's "Bitcoin Testnet" row and SLIP-44's "Testnet (all coins)".
+  it('carries the signet CAIP-2 id, coin type 1 and the m/84\'/1\' path', () => {
+    expect(bitcoinSignetKeyProvider.chainId).toBe('bip122:00000008819873e925422c1ff0f99f7c');
+    expect('00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6'.slice(0, 32)).toBe(
+      bitcoinSignetKeyProvider.chainId.slice('bip122:'.length),
+    );
+    expect(bitcoinSignetKeyProvider.coinType).toBe(1);
+    expect(bitcoinSignetKeyProvider.derivationPath(3, 0)).toBe("m/84'/1'/3'/0/0");
+  });
+
+  it('derives the key ethers derives at m/84\'/1\'/0\'/0/0 (independent implementation) and encodes it with HRP tb', () => {
+    const account = bitcoinSignetKeyProvider.deriveAccount(seed, 0, 0);
+    const ref = HDNodeWallet.fromPhrase(TEST_MNEMONIC, undefined, "m/84'/1'/0'/0/0");
+    expect(bytesToHex(account.publicKey)).toBe(ref.publicKey.slice(2));
+    const words = bech32.toWords(hash160(account.publicKey));
+    expect(account.address).toBe(bech32.encode('tb', [0, ...words]));
+    expect(account.address.startsWith('tb1q')).toBe(true);
+  });
+
+  it('is NOT the mainnet address re-encoded (coin type 1, a different key)', () => {
+    const main = bitcoinKeyProvider.deriveAccount(seed, 0, 0);
+    const signet = bitcoinSignetKeyProvider.deriveAccount(seed, 0, 0);
+    const mainProgram = bech32.fromWords(bech32.decode(main.address as `${string}1${string}`).words.slice(1));
+    const signetProgram = bech32.fromWords(bech32.decode(signet.address as `${string}1${string}`).words.slice(1));
+    expect(bytesToHex(signetProgram)).not.toBe(bytesToHex(mainProgram));
   });
 });
 

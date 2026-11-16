@@ -986,19 +986,43 @@ console.log('check-pnl: no SOL profit and loss while Solana devnet is on (pass p
   const views = readFileSync(join(HERE, '..', 'src', 'screens', 'PortfolioViews.tsx'), 'utf8');
   const screen = readFileSync(join(HERE, '..', 'src', 'screens', 'PortfolioScreen.tsx'), 'utf8');
   const wired = (v, sc) =>
-    v.includes('const offer = pnlNativeOffer(slots, { solanaDevnet, accountSlots: accounts.map((a) => a.chainId) });') && v.includes('const usable = offer.slots;') &&
+    v.includes('const offer = pnlNativeOffer(slots, { solanaDevnet, bitcoinSignet, accountSlots: accounts.map((a) => a.chainId) });') && v.includes('const usable = offer.slots;') &&
     v.includes("{offer.solanaDevnetNote ? <Text style={[styles.hint, { color: theme.textMuted }]}>{t('pnl.solanaDevnet')}</Text> : null}") &&
-    sc.includes('portfolioSlotsFor(resolveActiveNetworks(null, solanaDevnet), {') && sc.includes('solanaDevnet={solanaDevnet}') && !sc.includes('networkChainId: n.chainId');
+    sc.includes('portfolioSlotsFor(resolveActiveNetworks(null, solanaDevnet, bitcoinSignet), {') && sc.includes('solanaDevnet={solanaDevnet}') && !sc.includes('networkChainId: n.chainId');
   check('the section offers through pnlNativeOffer with the switch, says the sentence, and the screen builds its slots from the switch (source)', wired(views, screen));
   check('…mutant caught: the section back on its own slot filter', !wired(views.replace('const usable = offer.slots;', 'const usable = slots.filter((s) => accounts.some((a) => a.chainId === s.slot));'), screen));
-  const o1 = await importMutant('  const withheld = (s: S) => options.solanaDevnet && s.slot === PNL_SOLANA_SLOT;', '  const withheld = (_s: S) => false;');
+  const o1 = await importMutant('  const solanaWithheld = (s: S) => options.solanaDevnet && s.slot === PNL_SOLANA_SLOT;', '  const solanaWithheld = (_s: S) => false;');
   check('mutant caught: the devnet rule removed (a Solana slot still labelled mainnet offered while devnet is on)',
     o1.pnlNativeOffer(oldShape, { solanaDevnet: true, accountSlots: ALL }).slots.some((x) => x.slot === SOLANA_CHAIN_ID));
-  const o2 = await importMutant('    solanaDevnetNote: slots.some((s) => held(s) && withheld(s)),', '    solanaDevnetNote: false,');
+  const o2 = await importMutant('    solanaDevnetNote: slots.some((s) => held(s) && solanaWithheld(s)),', '    solanaDevnetNote: false,');
   check('mutant caught: SOL withheld with no sentence saying why', o2.pnlNativeOffer(slotsFor(true), { solanaDevnet: true, accountSlots: ALL }).solanaDevnetNote === false);
   const o3 = await importMutant('          networkChainId: network.chainId,\n', '          networkChainId: slot,\n', 'src/wallet/portfolio.ts');
   const o3sol = o3.portfolioSlotsFor(resolveActiveNetworks(null, true), EVM).find((x) => x.slot === SOLANA_CHAIN_ID);
   check('mutant caught: the portfolio\'s Solana slot claiming mainnet while devnet is on (the old builder)', nativePriceAssetId(o3sol.slot, o3sol.networkChainId) !== null);
+}
+
+// Phase 28 item 2 (Bitcoin signet): no BTC profit and loss while the Bitcoin slot is on signet (signet BTC has no
+// price), even for a slot still labelled as mainnet — the F-94 lesson applied to the new switch — with its sentence.
+console.log('check-pnl: no BTC profit and loss while Bitcoin signet is on (phase 28 item 2)');
+{
+  const { resolveActiveNetworks } = await import('../src/config/defaults.ts');
+  const { portfolioSlotsFor } = await import('../src/wallet/portfolio.ts');
+  const { BITCOIN_CHAIN_ID } = await import('../src/wallet/send.ts');
+  const EVM = { caip2: 'eip155:1', label: 'Ethereum', displaySymbol: 'ETH', testnet: false };
+  const mainShape = portfolioSlotsFor(resolveActiveNetworks(null, false, false), EVM);
+  const signetShape = portfolioSlotsFor(resolveActiveNetworks(null, false, true), EVM);
+  const ALL = mainShape.map((x) => x.slot);
+  const has = (o) => o.slots.some((x) => x.slot === BITCOIN_CHAIN_ID);
+  check('phase 28: BTC withheld on signet (both shapes) with the note; offered with the switch off; PNL_BITCOIN_SLOT is the Bitcoin slot',
+    L.PNL_BITCOIN_SLOT === BITCOIN_CHAIN_ID &&
+      !has(L.pnlNativeOffer(signetShape, { solanaDevnet: false, bitcoinSignet: true, accountSlots: ALL })) &&
+      !has(L.pnlNativeOffer(mainShape, { solanaDevnet: false, bitcoinSignet: true, accountSlots: ALL })) &&
+      L.pnlNativeOffer(mainShape, { solanaDevnet: false, bitcoinSignet: true, accountSlots: ALL }).bitcoinSignetNote === true &&
+      has(L.pnlNativeOffer(mainShape, { solanaDevnet: false, bitcoinSignet: false, accountSlots: ALL })) &&
+      L.pnlNativeOffer(mainShape, { solanaDevnet: false, accountSlots: ALL }).bitcoinSignetNote === false);
+  const b1 = await importMutant('  const bitcoinWithheld = (s: S) => options.bitcoinSignet === true && s.slot === PNL_BITCOIN_SLOT;', '  const bitcoinWithheld = (_s: S) => false;');
+  check('mutant caught: the signet rule removed (BTC still labelled mainnet offered while signet is on)',
+    b1.pnlNativeOffer(mainShape, { solanaDevnet: false, bitcoinSignet: true, accountSlots: ALL }).slots.some((x) => x.slot === BITCOIN_CHAIN_ID));
 }
 
 console.log(`\nformatMoney sanity: ${formatMoney(usd(2500n), { hidden: false, signed: true })}`);

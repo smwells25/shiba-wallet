@@ -727,7 +727,7 @@ console.log('check-key-import: signing selection (the signWith half) and refusal
       JSON.stringify(approvalTargetFor(0xc0000000)) === JSON.stringify({ kind: 'none' }));
   const wipe = ctx.slice(ctx.indexOf('const wipe = useCallback('));
   check('wipe deletes imported keys FIRST, before the phrase', wipe.indexOf('await importedKeyVault.removeAll()') >= 0 && wipe.indexOf('await importedKeyVault.removeAll()') < wipe.indexOf('await deleteMnemonic()'));
-  check('launch derives only phrase indices (imported ids never reach derivePublic)', /derivePublic\(mnemonic, derivedIndices\(state\)\)/.test(ctx) && /for \(const index of derivedIndices\(state\)\)/.test(ctx));
+  check('launch derives only phrase indices (imported ids never reach derivePublic)', /derivePublic\(mnemonic, derivedIndices\(state\), freshSignet\)/.test(ctx) && /for \(const index of derivedIndices\(state\)\)/.test(ctx));
   check('import validates with the engine, refuses duplicates, then stores through the vault', /parsePrivateKeyInput\(input\)/.test(ctx) && /duplicateImportError\(parsed\.address, existing\)/.test(ctx) && /importedKeyVault\.save\(parsed\.hex, parsed\.address\)/.test(ctx));
   check('removing an imported account deletes the key before the entry', ctx.indexOf('await importedKeyVault.remove(slot);') < ctx.indexOf('removeImportedAccountEntry(index)'));
 }
