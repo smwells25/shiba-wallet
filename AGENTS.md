@@ -21721,3 +21721,64 @@ item 5, the fixes from the pass, item 6; 7 last. Subagents on Opus.
       line; ZeroDev's answer to an ERC-7677 stub estimate from an
       address-only owner; any live run. Slip: one build log written to /tmp
       and deleted at once.
+- [x] Item 2 — A BITCOIN SIGNET SWITCH, AND THE BITCOIN MAINNET SEND FORM
+      NAMING ITS NETWORK (commit d3a79be; 44 files, +1,517 / −87, three new
+      — app/src/wallet/bitcoin-signet.ts, components/BitcoinSignetBanner.tsx,
+      app/scripts/check-btc-signet.mjs (65 checks, 10 in-suite mutants)
+      registered in suites.mjs; engine +5 (core +3, chains-utxo +2);
+      check-pnl 208, check-devmode 478, check-home 145, check-doge 112,
+      check-notes 229, check-insights 144, check-portfolio 75; the agent's
+      patch (id 1472d74be606, cut against 924cdfb) REBASED onto f5e3adc by
+      the CTO with a three-way apply — conflicts only in the two string
+      tables' and the fixture's appended tails (both blocks kept, item 1
+      first) and in check-i18n (both id lists, the new-entries rule naming
+      both); the rebased patch id 0309909b5377 equals what was committed; the
+      offline runner ALL GREEN on the merged tree with --skip-bundle after an
+      engine rebuild: engine 1,452, app 12,338 across 69 suites (= 12,256
+      plus this slice's 82), lint 0/0, tsc clean; the pre-commit scan clean;
+      ten hand mutants caught by the agent; not seen on a device; nothing
+      signed or broadcast; network use read-only). FACTS (read 2026-11-16):
+      signet's genesis hash 00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6,
+      base58 versions 0x6f / 0xc4 and bech32 HRP "tb" from bitcoin/bitcoin
+      src/kernel/chainparams.cpp at 8130b3b8 (SigNetParams); the CAIP-2 id
+      bip122:00000008819873e925422c1ff0f99f7c (the first 32 hex characters,
+      per the bip122 namespace at 2a9193da) — every signet, custom ones
+      included, shares that genesis, so the id cannot tell the default signet
+      from a custom one; coin type 1 for test networks (BIP-44, SLIP-44; the
+      repository's own testnet scripts already use it); endpoints
+      mempool.space/signet/api then blockstream.info/signet/api, each from
+      its provider's own documentation and read live (tip 331153 on both, the
+      genesis, a header, an address query, fee estimates; a mainnet address
+      refused HTTP 400) and through the app's own probe (fresh; a mainnet
+      Esplora and testnet4 reported wrong-chain). DESIGN: Settings →
+      Developer "Use Bitcoin signet", off by default, only a stored explicit
+      true reads as on; DERIVATION m/84'/1'/N'/0/0 — the signet address is
+      NOT the mainnet address re-encoded, and the on-note says so; the
+      address is cached as public data, and an EXISTING wallet needs the
+      phrase once — Home shows a pending card "Work out the signet address"
+      (one device prompt "Work out your Bitcoin signet addresses" when the
+      phrase is protected, nothing signed) and until then the Bitcoin row is
+      LEFT OUT on signet, never the mainnet address on a signet endpoint; the
+      whole slot moves (Home, Receive, Send, Max, Activity, the CSV name and
+      note key, the pending network id) as "Bitcoin signet" / "test BTC"; a
+      bc1 recipient refused on signet and a tb1 one on mainnet; the UTXO
+      network and the signing chain come from the endpoint that quoted, so a
+      signet quote can only be signed with the signet key; NEVER VALUED (no
+      fiat, no profit and loss while the switch is on, the F-94 rule); the
+      Ordinals and Runes warning stays mainnet-only (pinned); contacts not
+      offered on signet (the store does not take the id); no explorer link
+      (none verified); NO readiness row (an ordinary send of valueless coins,
+      as the devnet SOL send has none — CTO accepted); Dogecoin and Solana
+      untouched. FINDING 9 of pass p27-emu2: the Ethereum TESTNET banner is
+      app-wide by design, so it is unchanged and the Bitcoin mainnet Send
+      form instead says "This send is on Bitcoin mainnet, with real funds.
+      The TESTNET banner at the bottom of the screen is about the Ethereum
+      network chosen in Settings → Developer, not about this send." Twelve
+      ids with Spanish drafts. KNOWN GAP: the import-check derivePublic call
+      in WalletContext still derives without signet (the launch, activate and
+      ensureDerived paths add the entry). INPUT for a live send: signet coins
+      at Account 1's signet address (a faucet). UNVERIFIED: everything on a
+      device; any signet transaction; the endpoints' rate limits. Agent
+      slips: a first run red on a check-names pin and two lint warnings
+      (fixed); a peek script truncated four files, each restored from its
+      copy and confirmed byte-identical.
