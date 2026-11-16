@@ -21210,3 +21210,153 @@ the Bitcoin protect-only slice, address screening) stay as they are.
 Waves: 1 — (A) item 1, (B) items 2 and 3, (C) item 4, in parallel on
 disjoint files (A and B both append string ids; the CTO rebases the
 tails); 2 — the emulator pass; 5 last. Subagents on Opus.
+
+## Phase 27 progress
+- [x] Item 4 — THE AAVE V3 ARBITRUM SEPOLIA PINS IN verify-pins.mjs (commit
+      eb2683f; 3 files — scripts/audit/verify-pins.mjs, docs/AUDIT_SCOPE.md
+      sections 4.1 / 5.3 / 5.7, the Aave bullet of docs/MAINNET_READINESS.md;
+      verified in the CTO's isolated worktree on HEAD 77108cc: checkout 0 /
+      apply 0 / 3 files, the staged patch id ec61d6f18304… equal to the
+      agent's, node --check clean, `--offline` listing 196 (network, address)
+      pairs from 115 pins (was 190 / 109) with no request, check-readiness
+      238, check-screen-protection 87, check-devmode 476; the pre-commit scan
+      clean; CI green). A new collector takes the six contracts of the
+      engine's LENDING_DEPLOYMENTS (the addresses provider, the Pool proxy,
+      the Pool implementation, the data provider, the oracle, the aToken),
+      each cited to packages/chains-evm/src/lending.ts by line, with USDC
+      merged into the existing Arbitrum Sepolia token row; pass-or-fail
+      facts against the engine's constants through eth_call and
+      eth_getStorageAt (the provider's getPool / getPoolDataProvider /
+      getPriceOracle / getMarketId; the Pool's ERC-1967 slot,
+      ADDRESSES_PROVIDER and POOL_REVISION 3; the data provider's aToken and
+      decimals for USDC; the aToken's underlying, POOL, symbol and decimals;
+      the engine's own readReserveState, whose methods are all on the
+      script's allow-list, unchanged); report-only: the provider's owner
+      (0xC08C…0005, 1,808 bytes of code — an Executor, as LENDING_VAULTS 5.1
+      says; its own owner not read), the reserve's flags and caps. THE LIVE
+      RUN IS THE AGENT'S, NOT RE-RUN BY THE CTO (`--network arbitrum-sepolia`,
+      2026-11-16 08:25 UTC, exit 0, heads 329,725,425–329,725,432): verified
+      27, present-unverified 7, confirmed-no-code 3, no missing code, no hash
+      mismatch, no failed fact; every Aave row Sourcify "match" (USDC
+      exact_match). NOT VERIFIED: no engine constant pins a code hash for
+      any Aave contract, so the binding to source rests on Sourcify's
+      "match"; the oracle's own facts; who holds the Executor owner's key;
+      an all-network run (section 5.7's all-network table stays at its
+      2026-10-25 figures). FOLLOW-UP: MAINNET_READINESS line 19 still says
+      "190 pairs" (the refresh).
+- [x] Items 2 and 3 — A BUSY STATE BEFORE THE DEVICE PROMPT, ACCOUNT LABELS
+      ON THE RENEWAL ROWS, SPOKEN BUTTON NAMES, THE BITCOIN INSCRIPTIONS
+      WARNING (commit 7ce4b67; 17 files, two new —
+      app/src/wallet/pre-prompt-guard.ts and
+      app/src/components/PrePromptCheckNote.tsx; check-lending 113 (was 103),
+      check-handle 220 (211), check-spending-policy 196 (192), check-doge 109
+      (102), check-i18n 212 (210); offline runner ALL GREEN in the CTO's
+      isolated worktree on HEAD eb2683f with --skip-bundle: checkout 0 /
+      apply 0 / 17 files, the staged patch id 803d90a11466… equal to the
+      agent's, engine 1,415, app 12,114 across 68 suites, lint 0/0, tsc
+      clean; the pre-commit scan clean; eight hand mutants and eight new
+      in-suite mutants caught by the agent; not seen on a device). (1) THE
+      GUARD: createPrePromptGuard() — stages idle / bundler / final, run(task)
+      a synchronous test-and-set so a second tap in the same frame returns
+      false before any await, released in finally; usePrePromptGuard() and
+      <PrePromptCheckNote> (an always-mounted polite live region on Android,
+      announceForAccessibility on iOS); LendScreen's smart-account onAaSend
+      and HandleScreen's onAaApprove (prepare, register, renew, the reverse
+      record) run under it, Approve and Back disabled while it is not idle,
+      the line under Approve: "Checking the bundler's gas estimate before
+      asking you to approve. This can take up to about half a minute; nothing
+      has been signed." then "Running the last checks before asking you to
+      approve; nothing has been signed." ("half a minute", not the brief's
+      20 seconds: the retry policy allows 8 asks 3 s apart plus round trips).
+      (2) the smart-account confirm's owner row and the renewal review's
+      "Paid by" row show the account label with the short address beneath,
+      one spoken stop (handle.ts handleAccountRowParts / handleAccountRowSpoken).
+      (3) "Renew for 28 days" spoken "Renew {name} for {days} days"
+      (handle.renew.buttonLabel), the visible text unchanged. (4) the EVM
+      spending-limit card's Remove spoken "Remove the {symbol} limit on
+      {network}" (evmLimitRemoveLabel reusing limits.solana.removeLabel).
+      ITEM 3: send.ts bitcoinAssetsWarningShown(routeChainId,
+      endpointChainId) — true only when BOTH equal BITCOIN_CHAIN_ID (the
+      mainnet genesis id), so a future Bitcoin test-network slot never shows
+      it — and one WarningBox on the Send form (after the offline notice) and
+      on the native confirm for a utxo quote: "This wallet does not track
+      Ordinals inscriptions or Runes. An ordinary Bitcoin send, and Max in
+      particular, can spend outputs that hold them, which can give them away
+      to the recipient or to the miner. If this address has ever received an
+      inscription or Runes, do not send from it with this wallet." ("can",
+      not the brief's "would": an inscription may also land in the wallet's
+      own change). Four new ids with Spanish drafts in one delimited block;
+      check-i18n's "block at the end" rule for the p26-emu2 block now allows
+      only further delimited BEGIN / END blocks after it, a loose entry
+      still refused (pinned). FOUND, NOT FIXED IN THIS SLICE: the same
+      busy-state gap on the smart-account confirms of Send, Staking, Swap,
+      Sessions, Bridge, Guardians, Inheritance, OwnerRotation, Passkey,
+      ApproveRecovery, the WalletConnect sheet, Multisig (a state-only guard,
+      no line) and cold signing — a follow-up slice is dispatched; Android's
+      hardware Back is not blocked during the check (as before). UNVERIFIED
+      (device): the live region under TalkBack, the layout, the labels, the
+      warning on screen (the Bitcoin confirm is most likely unreachable —
+      Account 1 holds 0 BTC), the Spanish lengths, iOS.
+- [x] Item 1 — THE KERNEL RENEWAL NAMED IN ACTIVITY (THE CAUSE: A SECOND
+      RECEIPT READ ANSWERED NULL), "RENEWED" AS A VERB, THE LENDING TOKEN
+      LABELLED, THE WITHHELD FEE ON THE RECIPIENT'S ROW (commit f7a9b18; 17
+      files, two new fixtures — app/scripts/fixtures/sepolia-kernel-renewal-
+      2026-11-16.json and packages/chains-solana/test/fixtures/devnet-fee-
+      transfer-2026-11-16.json; engine 1,415 → 1,420 (chains-evm +1,
+      chains-solana +4), check-activity 354 (was 342), check-spl-tokens 278
+      (269); the agent's patch (id 3696a156de45…, cut against 77108cc)
+      REBASED onto 7ce4b67 by the CTO with a three-way apply — conflicts only
+      in the two string tables' and the fixture's appended tails (both
+      blocks kept, items 2–3 first) and in check-i18n (both id lists, both
+      checks, the new-entries rule naming both, the stricter
+      ONLY_BLOCKS_THEN_CLOSE tail rule kept); the rebased patch id
+      8ec70bf5bdc0… equals what was committed; the offline runner ALL GREEN
+      on the merged tree with --skip-bundle after an engine rebuild: engine
+      1,420, app 12,136 across 68 suites (= 12,114 plus this slice's 22),
+      lint 0/0, tsc clean; the pre-commit scan clean; eight hand mutants
+      caught by the agent; not seen on a device; network use read-only
+      public JSON-RPC). (a) THE CAUSE of pass p27-emu1 finding 1, established
+      on the live bundle 0x874eceae…51af: the decoder and the renewal reader
+      both work on that data; createActivityDecoder decoded through one
+      transport and then ensRenewalForDescription read the RECEIPT A SECOND
+      TIME, and publicnode's Sepolia endpoint is load-balanced — in the
+      agent's 8 batched reads 6 reached reth/v2.11.0 and returned a null
+      receipt while returning the transaction, 2 reached Geth/v1.17.9 and
+      returned it — so the second read could come back null and the row was
+      cached without the renewal facts; the regular account's row re-reads
+      only the transaction, which reth answers; FIX: rememberingTransport
+      (inner, hash) keeps the first non-null answer to
+      eth_getTransactionByHash and eth_getTransactionReceipt for that hash
+      and serves the decode and every follow-up reader, so no second read is
+      made (two request-count pins tightened: a bridge row 2 reads, was 4;
+      renewals 5 + 0). (b) "renewed" → "renew" in the engine's verb table;
+      the sentences are now "Renewed qzv7hk2wmt.eth for 28 days with ENS's
+      registrar 0xf633…a3d3: sent 0.613701 USDC", "Failed: tried to renew …;
+      only the network fee was paid", and for the Kernel "Smart-account
+      operation: approved USDC for ENS's registrar 0xf633…a3d3 (up to
+      0.613701 USDC), renewed xk9fdq4rvz.eth for 28 days with ENS's registrar
+      0xf633…a3d3: sent 0.613701 USDC" (pinned against the live fixture; the
+      earlier records quote the old "Called ENS's registrar … to renew"
+      wording). (c) ActivityTokenMeta.pinnedLending in the engine — the app's
+      resolver already set it — labels "aArbSepUSDC (pinned lending token)"
+      (a tracked token keeps its plain symbol; a look-alike and another
+      chain stay "untracked token"). (d) F-95'S ACTIVITY HALF, with no extra
+      request: solanaWithheldTransferFee(detail, address, move) reads the fee
+      from the TransferCheckedWithFee instruction in the getTransaction
+      answer already fetched (Token-2022 tag 26, sub-tag 1, exactly 19
+      bytes) and returns null unless every condition holds — no inner
+      instruction running Token-2022 or a non-static program, every
+      top-level program a static key, exactly one such instruction, its
+      accounts static, its mint and decimals matching, the address's change
+      equal to amount − fee, the destination owned by the address and risen
+      by exactly amount − fee, 0 < fee ≤ amount; a new optional
+      HistoryEntry.withheldFee (absent = not known; entries without it
+      unchanged key for key); the recipient's row reads "Received 0.99 SFEE
+      from EK5j…rYPv; 0.01 SFEE more was withheld in this account's token
+      account as the issuer's transfer fee" (and an unnamed-sender form),
+      masked under Hide amounts; two new ids with Spanish drafts. LIMITS,
+      stated: a plain TransferChecked on a fee mint carries no fee field and
+      stays unsaid; the sender's row and the CSV do not mention the withheld
+      part; the SFEE transaction was read on one RPC (OnFinality answered
+      null); the reth null-receipt behaviour is observed, not documented.
+      DOCS for the refresh: THREAT_MODEL F-95, LENDING_VAULTS line 314.
