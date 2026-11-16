@@ -43,6 +43,7 @@ import { formatUnits, groupThousands } from './balances.ts';
 import { simulationTransport } from './simulation.ts';
 import { maskAmount } from '../config/prefs.ts';
 import { t } from '../i18n/index.ts';
+import { spokenShortAddress } from '../a11y.ts';
 
 /**
  * App-enforced spending policy (phase 12 item 3; feature 19 at the honest
@@ -1627,4 +1628,28 @@ export function solanaSpendingTokenOptions(chain: string, tracked: readonly Fung
     out.push({ token: mint, symbol: asset.symbol, decimals: asset.decimals, label: `${asset.symbol} · ${mint.slice(0, 4)}…${mint.slice(-4)}` });
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Pass p26-emu2 finding 9: the Solana limit card under TalkBack
+// ---------------------------------------------------------------------------
+
+/**
+ * The spoken label of a Solana limit card's Remove button, "Remove the USDC
+ * limit on Solana devnet" (pass p26-emu2 finding 9: TalkBack read a bare
+ * "Remove. Button" that named no limit). The visible title stays "Remove".
+ */
+export function solanaLimitRemoveLabel(symbol: string, network: string): string {
+  return t('limits.solana.removeLabel', { symbol, network });
+}
+
+/**
+ * The spoken form of a Solana limit card's mint line, "Mint 4zMMC9…ncDU"
+ * (pass p26-emu2 finding 9: the 44-character base58 mint was read in full).
+ * The first six and last four characters through a11y.ts spokenShortAddress,
+ * which slices characters and so shortens a base58 mint exactly as it does a
+ * hex address; the full mint stays visible.
+ */
+export function solanaLimitMintSpoken(mint: string): string {
+  return t('spendingSol.mint', { mint: spokenShortAddress(mint) });
 }

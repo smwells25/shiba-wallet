@@ -1054,6 +1054,36 @@ export const AA_FEE_ROSE_NEXT_STEP =
  */
 export const AA_ESTIMATE_RETRIES: { attempts: number; delayMs: number } = { attempts: 4, delayMs: 2_000 };
 
+/**
+ * The longer impossible-estimate retry policy for the networks where the
+ * bundler's zero-estimate bursts were recorded (pass p26-emu2 finding 1).
+ * ZeroDev's Arbitrum Sepolia endpoint answered impossible (zero) limits in
+ * about 27 of 35 answers in bursts "of tens of seconds" on 2026-10-09
+ * (phase 15), and again on 2026-11-10 during the Lend pass: 4 Review
+ * refusals and 2 refusals at send time, each after the device prompt, the
+ * third attempt going through only after about 3.75 minutes. Four asks 2 s
+ * apart (about 6 s) did not outlast such a burst; eight asks 3 s apart wait
+ * up to 21 s plus eight round trips — a judgement between riding out a
+ * burst of that length and keeping a person on the Approve button for too
+ * long. A burst longer than that is still refused with
+ * AA_IMPOSSIBLE_ESTIMATE_TITLE ("…The operation was not signed or sent.").
+ */
+export const AA_ESTIMATE_RETRIES_BURSTY: { attempts: number; delayMs: number } = { attempts: 8, delayMs: 3_000 };
+
+/** The chains with recorded zero-estimate bursts (Arbitrum Sepolia, 421614): they get AA_ESTIMATE_RETRIES_BURSTY. */
+export const AA_BURSTY_ESTIMATE_CHAIN_IDS: readonly bigint[] = [421_614n];
+
+/**
+ * The impossible-estimate retry policy for a chain: AA_ESTIMATE_RETRIES_BURSTY
+ * where bursts were recorded (AA_BURSTY_ESTIMATE_CHAIN_IDS), else
+ * AA_ESTIMATE_RETRIES (the same object, so a bundle on any other chain keeps
+ * exactly the policy it had). Every bundle built here takes its default from
+ * this function; the check scripts still pass their own no-wait policy.
+ */
+export function aaEstimateRetriesFor(chainId: bigint): { attempts: number; delayMs: number } {
+  return AA_BURSTY_ESTIMATE_CHAIN_IDS.includes(chainId) ? AA_ESTIMATE_RETRIES_BURSTY : AA_ESTIMATE_RETRIES;
+}
+
 /** Title describeAaError shows for an impossible gas estimate. */
 export const AA_IMPOSSIBLE_ESTIMATE_TITLE = 'The bundler’s gas estimate was impossible.';
 
@@ -1872,7 +1902,7 @@ export interface AaClientBundle {
   recovered?: { account: string };
   /**
    * The impossible-estimate retry policy this bundle's client and quotes
-   * use (AA_ESTIMATE_RETRIES unless createAaClient was given another, which
+   * use (aaEstimateRetriesFor(chainId) unless createAaClient was given another, which
    * only the check scripts do, to avoid real waits).
    */
   estimateRetries?: { attempts: number; delayMs: number };
@@ -1962,18 +1992,19 @@ export function createAaClient(options: {
    * kernelRecoveredAccountSpec for this address.
    */
   recoveredAccount?: string;
-  /** Impossible-estimate retries; defaults to AA_ESTIMATE_RETRIES (check scripts pass a no-wait policy). */
+  /** Impossible-estimate retries; defaults to aaEstimateRetriesFor(chainId) (check scripts pass a no-wait policy). */
   estimateRetries?: { attempts: number; delayMs: number };
 }): AaClientBundle {
   if (options.accountType === 'kernel-multisig') {
     throw new Error('A multi-signature bundle is built only by createMultisigAaClient.');
   }
   if (options.accountType === 'kernel-7702') return createKernel7702Bundle(options);
-  const estimateRetries = options.estimateRetries ?? AA_ESTIMATE_RETRIES;
   const transportFor = options.transportFor ?? httpTransport;
   const node = transportFor(options.nodeUrl);
   const bundler = transportFor(options.bundlerUrl);
   const chainId = options.chainId ?? BigInt(EVM_CHAIN_ID.split(':')[1]!);
+  // Per chain (pass p26-emu2 finding 1): longer where zero-estimate bursts were recorded.
+  const estimateRetries = options.estimateRetries ?? aaEstimateRetriesFor(chainId);
   const accountIndex = options.accountIndex ?? 0;
   if (!Number.isSafeInteger(accountIndex) || accountIndex < 0) {
     throw new Error(`Invalid account index ${String(options.accountIndex)}.`);
@@ -2083,7 +2114,7 @@ function createKernel7702Bundle(options: {
   const node = transportFor(options.nodeUrl);
   const bundler = transportFor(options.bundlerUrl);
   const chainId = options.chainId ?? BigInt(EVM_CHAIN_ID.split(':')[1]!);
-  const estimateRetries = options.estimateRetries ?? AA_ESTIMATE_RETRIES;
+  const estimateRetries = options.estimateRetries ?? aaEstimateRetriesFor(chainId);
   const delegate = KERNEL_V3_3_7702_DELEGATE;
   assertWalletDelegate(delegate);
   const engineSpec = createKernel7702AccountSpec({ node, chainId });
@@ -2292,7 +2323,7 @@ export function createMultisigAaClient(options: {
   if (!isMultisigAccountId(options.accountId)) {
     throw new Error(`Account ${String(options.accountId)} is not a multi-signature account.`);
   }
-  const estimateRetries = options.estimateRetries ?? AA_ESTIMATE_RETRIES;
+  const estimateRetries = options.estimateRetries ?? aaEstimateRetriesFor(options.chainId);
   const transportFor = options.transportFor ?? httpTransport;
   const node = transportFor(options.nodeUrl);
   const bundler = transportFor(options.bundlerUrl);
@@ -2428,7 +2459,7 @@ export function createColdOwnerAaClient(
     chainId: bigint;
     ownerAddress: string;
     transportFor?: TransportFactory;
-    /** Impossible-estimate retries; defaults to AA_ESTIMATE_RETRIES (check scripts pass a no-wait policy). */
+    /** Impossible-estimate retries; defaults to aaEstimateRetriesFor(chainId) (check scripts pass a no-wait policy). */
     estimateRetries?: { attempts: number; delayMs: number };
   },
 ): AaClientBundle {
@@ -3619,24 +3650,34 @@ export async function prepareAaCalls(
           BigInt((await bundle.node('eth_getTransactionCount', [sender, 'pending'])) as string),
         )
       : undefined;
+  // The stub-signed operation the bundler estimates: shaped exactly like
+  // the one SmartAccountClient.sendCalls will submit. Also used again by the
+  // pre-prompt estimate (prePromptEstimates, checkAaQuoteBeforeApproval) with the nonce and
+  // deployment state read again at that moment.
+  const stubOpFor = (
+    candidate: Call[],
+    opNonce: bigint,
+    opFactory: typeof factoryArgs,
+    opAuth: typeof stubAuth,
+  ): UserOperation => ({
+    sender,
+    nonce: opNonce,
+    ...(opFactory
+      ? { factory: opFactory.factory, factoryData: opFactory.factoryData }
+      : {}),
+    callData: bundle.spec.encodeCalls(candidate),
+    callGasLimit: 0n,
+    verificationGasLimit: 0n,
+    preVerificationGas: 0n,
+    maxFeePerGas: fees.maxFeePerGas,
+    maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+    signature: bundle.spec.stubSignature(),
+    ...(opAuth ? { eip7702Auth: opAuth } : {}),
+  });
   // Prices one candidate call list: the bundler estimate (the AA path's
   // pre-flight gate) plus the deposit top-up headroom, and the worst-case fee.
   const price = async (candidate: Call[]) => {
-    const op: UserOperation = {
-      sender,
-      nonce,
-      ...(factoryArgs
-        ? { factory: factoryArgs.factory, factoryData: factoryArgs.factoryData }
-        : {}),
-      callData: bundle.spec.encodeCalls(candidate),
-      callGasLimit: 0n,
-      verificationGasLimit: 0n,
-      preVerificationGas: 0n,
-      maxFeePerGas: fees.maxFeePerGas,
-      maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
-      signature: bundle.spec.stubSignature(),
-      ...(stubAuth ? { eip7702Auth: stubAuth } : {}),
-    };
+    const op = stubOpFor(candidate, nonce, factoryArgs, stubAuth);
     let estimated: Awaited<ReturnType<BundlerClient['estimateUserOperationGas']>>;
     try {
       // Checked: an estimate with an impossible (zero) limit is asked for
@@ -3645,7 +3686,7 @@ export async function prepareAaCalls(
       // describeAaError).
       estimated = await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGasChecked(
         op,
-        bundle.estimateRetries ?? AA_ESTIMATE_RETRIES,
+        bundle.estimateRetries ?? aaEstimateRetriesFor(bundle.chainId),
       );
     } catch (e) {
       // The pre-check above cannot see the gas, so an account holding a
@@ -3785,7 +3826,7 @@ export async function prepareAaCalls(
     );
   }
 
-  return {
+  const quote: AaSendQuote = {
     kind: 'aa',
     calls: currentCalls,
     to: options.displayTo ?? currentCalls[0]!.to,
@@ -3828,6 +3869,30 @@ export async function prepareAaCalls(
         }
       : {}),
   };
+  // The pre-prompt estimate (pass p26-emu2 finding 1): the same stub
+  // operation, with the nonce and the deployment state read again, asked of
+  // the bundler once more by checkAaQuoteBeforeApproval just before the
+  // device prompt.
+  const finalCalls = currentCalls;
+  prePromptEstimates.set(quote, async () => {
+    const [nonceNow, deployedNow] = await Promise.all([
+      bundle.client.getNonce(owner),
+      eip7702 ? Promise.resolve(deployed) : bundle.client.isDeployed(owner),
+    ]);
+    const authNow =
+      eip7702?.upgrade === true
+        ? stubEip7702Authorization(
+            bundle.chainId,
+            eip7702.delegate,
+            BigInt((await bundle.node('eth_getTransactionCount', [sender, 'pending'])) as string),
+          )
+        : undefined;
+    await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGasChecked(
+      stubOpFor(finalCalls, nonceNow, deployedNow ? undefined : factoryArgs, authNow),
+      bundle.estimateRetries ?? aaEstimateRetriesFor(bundle.chainId),
+    );
+  });
+  return quote;
 }
 
 /**
@@ -4501,7 +4566,7 @@ function tokenGasClient(
     spec: bundle.spec,
     paymaster: { transport },
     gasPaddingPct: { ...TOKEN_GAS_PADDING_PCT },
-    estimateRetries: bundle.estimateRetries ?? AA_ESTIMATE_RETRIES,
+    estimateRetries: bundle.estimateRetries ?? aaEstimateRetriesFor(bundle.chainId),
   });
 }
 
@@ -4561,7 +4626,7 @@ function erc7677TokenGasClient(bundle: AaClientBundle, sender: string, quote: Aa
     spec: bundle.spec,
     paymaster: { transport },
     gasPaddingPct: { ...TOKEN_GAS_PADDING_PCT },
-    estimateRetries: bundle.estimateRetries ?? AA_ESTIMATE_RETRIES,
+    estimateRetries: bundle.estimateRetries ?? aaEstimateRetriesFor(bundle.chainId),
   });
 }
 
@@ -4574,6 +4639,17 @@ function erc7677TokenGasClient(bundle: AaClientBundle, sender: string, quote: Aa
  * with the same quote object is refused and the screen re-quotes.
  */
 const submittedQuotes = new WeakSet<object>();
+
+/**
+ * The pre-prompt estimate of each quote prepareAaCalls made (pass p26-emu2
+ * finding 1): one checked bundler estimate (estimateUserOperationGasChecked
+ * with the bundle's retry policy, aaEstimateRetriesFor) of the same stub
+ * operation, run by checkAaQuoteBeforeApproval. Kept beside the quote, not
+ * in it, so a quote's fields and every screen's copy of it are unchanged; a
+ * quote made elsewhere (the passkey, guardian-recovery and USDC-fee
+ * wrappers build their own objects) has none and is checked as before.
+ */
+const prePromptEstimates = new WeakMap<object, () => Promise<void>>();
 
 /** Refusal for a quote that was already submitted once. */
 export const AA_QUOTE_ALREADY_USED =
@@ -4603,6 +4679,17 @@ export function claimQuoteForSubmission(quote: object): void {
  * gas-estimate check (signedFeeGuard) can only run there, because the
  * client re-estimates the operation while it signs.
  *
+ * Then, for a quote prepareAaCalls made, ONE checked bundler estimate of
+ * the same operation (pass p26-emu2 finding 1: on Arbitrum Sepolia ZeroDev
+ * answered impossible zero limits in bursts, and two sends were refused at
+ * send time only after the device prompt): an impossible answer is asked
+ * for again under the bundle's retry policy and, if it stays impossible,
+ * throws the engine's ImpossibleGasEstimateError here, before the prompt —
+ * describeAaError shows AA_IMPOSSIBLE_ESTIMATE_TITLE ("…The operation was
+ * not signed or sent."). Any other bundler refusal of the estimate is also
+ * thrown here, before the prompt, instead of after it. The estimate at send
+ * time stays: this check cannot promise the next answer.
+ *
  * `quote` needs only the quoted fees; `bundler` is the transport the quote
  * was priced against (AaClientBundle.bundler, or the guardian submit's).
  */
@@ -4615,6 +4702,8 @@ export async function checkAaQuoteBeforeApproval(
     maxFeePerGas: quote.maxFeePerGas,
     maxPriorityFeePerGas: quote.maxPriorityFeePerGas,
   });
+  const estimate = prePromptEstimates.get(quote);
+  if (estimate) await estimate();
 }
 
 /**

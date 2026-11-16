@@ -13234,7 +13234,10 @@
   "lend.error.technical",
   "insights.pending.solanaUncached",
   "insights.pending.solanaUncachedNote",
-  "pnl.solanaDevnet"
+  "pnl.solanaDevnet",
+  "handle.renew.aaBatch",
+  "handle.renew.ownerSmart",
+  "limits.solana.removeLabel"
  ],
  "changed": {
   "activity.note.privacy": {

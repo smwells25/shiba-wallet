@@ -962,5 +962,41 @@ console.log('check-spending-policy: phase 26 item 3b — a Solana scope (Solana 
   check(`phase 26 item 3b: every spending-policy.ts mutant caught (${caught} of ${made})`, made >= 7 && caught === made);
 }
 
+// Pass p26-emu2 finding 9: under TalkBack the Solana limit card's Remove button
+// read a bare "Remove. Button" and the 44-character mint was spoken in full.
+console.log('check-spending-policy: the Solana limit card under TalkBack (pass p26-emu2 finding 9)');
+{
+  const { readFileSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs');
+  const { dirname, join, resolve } = await import('node:path');
+  const { fileURLToPath, pathToFileURL } = await import('node:url');
+  const SP = await import('../src/wallet/spending-policy.ts');
+  const { spokenShortAddress } = await import('../src/a11y.ts');
+  const MINT = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'; // Circle's devnet USDC (the live limit's mint)
+  check('Remove is spoken "Remove the USDC limit on Solana devnet"', SP.solanaLimitRemoveLabel('USDC', 'Solana devnet') === 'Remove the USDC limit on Solana devnet');
+  check('the mint is spoken short, "Mint 4zMMC9…ncDU" — a11y.ts spokenShortAddress slices characters, so it shortens base58 as it does hex',
+    SP.solanaLimitMintSpoken(MINT) === 'Mint 4zMMC9…ncDU' && spokenShortAddress(MINT) === '4zMMC9…ncDU' && spokenShortAddress('0x772eAA1d3BEf14C0BD5cee980b90dB3FC680F44F') === '0x772e…F44F');
+  const screen = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'screens', 'SpendingLimitsScreen.tsx'), 'utf8');
+  const cardOk = (src) =>
+    src.includes("<Text accessibilityLabel={solanaLimitMintSpoken(r.policy.token)} style={[styles.mono, { color: theme.textMuted }]}>{t('spendingSol.mint', { mint: r.policy.token })}</Text>") &&
+    /<Button\s+title=\{tx\('Remove'\)\}\s+accessibilityLabel=\{solanaLimitRemoveLabel\(r\.policy\.symbol, network\)\}/.test(src);
+  check('the Solana card (source): the full mint stays visible and is spoken short; Remove keeps its visible title and names the limit and the network', cardOk(screen));
+  check('…mutant caught: Remove without its label', !cardOk(screen.replace('              accessibilityLabel={solanaLimitRemoveLabel(r.policy.symbol, network)}\n', '')));
+  check('…mutant caught: the mint without its spoken form', !cardOk(screen.replace('<Text accessibilityLabel={solanaLimitMintSpoken(r.policy.token)} style', '<Text style')));
+  const SRC = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'wallet', 'spending-policy.ts'), 'utf8');
+  const from = "  return t('spendingSol.mint', { mint: spokenShortAddress(mint) });";
+  check('mutation anchor present (the short mint)', SRC.includes(from));
+  const DIR = join(dirname(fileURLToPath(import.meta.url)), `.mutants-spending-emu2-${process.pid}`);
+  mkdirSync(DIR, { recursive: true });
+  try {
+    const file = join(DIR, 'spending-policy.ts');
+    const PATH = resolve(dirname(fileURLToPath(import.meta.url)), '../src/wallet/spending-policy.ts');
+    writeFileSync(file, SRC.replace(from, "  return t('spendingSol.mint', { mint });").replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolve(dirname(PATH), spec)).href}'`));
+    const M = await import(pathToFileURL(file).href);
+    check('mutant caught: the mint spoken in full again', M.solanaLimitMintSpoken(MINT) !== SP.solanaLimitMintSpoken(MINT));
+  } finally {
+    rmSync(DIR, { recursive: true, force: true });
+  }
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

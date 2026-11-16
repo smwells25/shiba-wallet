@@ -1,5 +1,6 @@
 import type { FungibleAsset, HistoryEntry } from '@shiba-wallet/core';
 import {
+  ENS_V2_SEPOLIA,
   ENTRYPOINT_V07,
   OFT_SEND_LAYOUT,
   OFT_SEND_SELECTOR,
@@ -15,6 +16,10 @@ import {
   resolveRocketPool,
   rocketPoolDeploymentFor,
   shortActivityAddress,
+  decodeEnsNameRenewedLogs,
+  encodeEnsRenew,
+  toBytes,
+  toHex,
 } from '@shiba-wallet/chains-evm';
 import type { ActivityDescription, ActivitySentenceContext, AssetChange, JsonRpcTransport } from '@shiba-wallet/chains-evm';
 // Explicit .ts extensions: scripts/check-activity.mjs loads this module
@@ -111,6 +116,28 @@ export interface DecodedActivity {
    * (bridgeSendForDescription). Absent for anything else.
    */
   bridgeSend?: BridgeSendFacts;
+  /**
+   * A renewal of a .eth name through ENS's pinned ETHRegistrar on Ethereum
+   * Sepolia (pass p26-emu2 finding 4), read at the decode
+   * (ensRenewalForDescription): the label and duration from the
+   * transaction's own calldata for a renew() sent directly, or from the
+   * registrar's NameRenewed log for a renew() inside a smart-account
+   * operation (whose calldata the description does not keep). Absent for
+   * anything else.
+   */
+  ensRenewal?: EnsRenewalFacts;
+}
+
+/** What a renew() of ENS's pinned registrar carried (DecodedActivity.ensRenewal). */
+export interface EnsRenewalFacts {
+  /** The pinned registrar the call went to (EIP-55, from the engine's ENS_V2_SEPOLIA table). */
+  registrar: string;
+  /** The name's label ("qzv7hk2wmt" for qzv7hk2wmt.eth), never guessed: decoded and re-encoded byte for byte, or the registrar's own log. */
+  label: string;
+  /** RenewData.duration, in seconds. */
+  duration: bigint;
+  /** Where the label and duration were read: the transaction's calldata, or the registrar's NameRenewed log. */
+  source: 'calldata' | 'log';
 }
 
 /** What a Stargate native-pool send carried, read from its calldata. */
@@ -372,7 +399,14 @@ export function createActivityDecoder(options: ActivityDecoderOptions): Activity
       : {};
     const rocketDepositPool = await rocketDepositPoolForDescription(httpTransport(url), options.chainCaip2, description);
     const bridgeSend = await bridgeSendForDescription(httpTransport(url), options.chainCaip2, description);
-    return { description, tokens, ...(rocketDepositPool ? { rocketDepositPool } : {}), ...(bridgeSend ? { bridgeSend } : {}) };
+    const ensRenewal = await ensRenewalForDescription(httpTransport(url), options.chainCaip2, description);
+    return {
+      description,
+      tokens,
+      ...(rocketDepositPool ? { rocketDepositPool } : {}),
+      ...(bridgeSend ? { bridgeSend } : {}),
+      ...(ensRenewal ? { ensRenewal } : {}),
+    };
   }
 
   type Attempt = { kind: 'ok'; value: DecodedActivity } | { kind: 'missing' | 'other'; url: string };
@@ -979,6 +1013,133 @@ export function bridgeSendPhrase(
   );
 }
 
+/** The CAIP-2 id of the one network ENS's contracts are pinned on (Ethereum Sepolia, the engine's ENS_V2_SEPOLIA table). */
+const ENS_ACTIVITY_CHAIN = `eip155:${ENS_V2_SEPOLIA.chainId.toString()}`;
+
+/**
+ * ETHRegistrar.renew((string,uint64,bytes32),address)'s selector
+ * (AbstractETHRegistrar.sol 93–95 at contracts-v2 07e55a05; the engine's
+ * encodeEnsRenew writes it — check-activity pins the two equal).
+ */
+export const ENS_RENEW_SELECTOR = '0x2d06649b';
+
+/** "ENS’s registrar 0xf633…a3d3": how a sentence names ENS's pinned ETHRegistrar (pass p26-emu2 finding 4). */
+export function ensRegistrarActivityLabel(registrar: string = ENS_V2_SEPOLIA.ethRegistrar): string {
+  return `ENS’s registrar ${shortActivityAddress(registrar)}`;
+}
+
+/** "28 days" / "1 day" / "90061 seconds": a renewal's duration as the sentence says it. */
+function renewDurationPhrase(seconds: bigint): string {
+  if (seconds > 0n && seconds % 86_400n === 0n) {
+    const days = seconds / 86_400n;
+    return `${days.toString()} day${days === 1n ? '' : 's'}`;
+  }
+  return `${seconds.toString()} second${seconds === 1n ? '' : 's'}`;
+}
+
+/**
+ * Decodes the calldata of ETHRegistrar.renew(RenewData{label, duration,
+ * referrer}, paymentToken). Accepted only when the engine's own encoder
+ * (encodeEnsRenew) rebuilds exactly the same bytes from what was read, so a
+ * non-canonical encoding, a label the registrar flow does not use (the
+ * engine refuses it) or trailing data gives null — never a guessed label.
+ * Pure.
+ */
+export function decodeEnsRenewCalldata(input: string): { label: string; duration: bigint; paymentToken: string; referrer: string } | null {
+  const hex = input.toLowerCase();
+  if (!/^0x[0-9a-f]*$/.test(hex) || hex.length % 2 !== 0 || !hex.startsWith(ENS_RENEW_SELECTOR)) return null;
+  const args = toBytes(hex).slice(4);
+  const word = (offset: number): bigint | null =>
+    offset + 32 <= args.length ? BigInt(toHex(args.slice(offset, offset + 32))) : null;
+  // Head: the offset of the RenewData tuple (0x40 for this layout) and the payment token.
+  if (word(0) !== 64n) return null;
+  const tokenWord = word(32);
+  if (tokenWord === null || tokenWord >> 160n !== 0n) return null;
+  const paymentToken = `0x${tokenWord.toString(16).padStart(40, '0')}`;
+  // The tuple at 0x40: the label's offset within the tuple (0x60), the duration, the referrer, then the label.
+  if (word(64) !== 96n) return null;
+  const duration = word(96);
+  const length = word(160);
+  if (duration === null || length === null || length > 255n) return null;
+  const referrer = args.slice(128, 160);
+  const labelBytes = args.slice(192, 192 + Number(length));
+  if (labelBytes.length !== Number(length)) return null;
+  let label: string;
+  try {
+    label = new TextDecoder('utf-8', { fatal: true }).decode(labelBytes);
+    if (toHex(encodeEnsRenew(label, duration, paymentToken, referrer)).toLowerCase() !== hex) return null;
+  } catch {
+    return null;
+  }
+  return { label, duration, paymentToken, referrer: toHex(referrer) };
+}
+
+/** True for a renew() to ENS's pinned registrar with no value (the only renewal the wallet builds). */
+function isEnsRenewCall(call: { kind: string; to?: string; selector?: string | null; value?: bigint }): boolean {
+  return (
+    call.kind === 'contract-call' &&
+    call.to?.toLowerCase() === ENS_V2_SEPOLIA.ethRegistrar.toLowerCase() &&
+    call.selector?.toLowerCase() === ENS_RENEW_SELECTOR &&
+    call.value === 0n
+  );
+}
+
+/**
+ * The renewal in a decoded transaction, or null (pass p26-emu2 finding 4).
+ * Only on Ethereum Sepolia, and only when a renew() of ENS's pinned
+ * registrar is in it: a top-level call is read once more
+ * (eth_getTransactionByHash) for its calldata (decodeEnsRenewCalldata); a
+ * renew() inside a successful smart-account operation — exactly one — is
+ * read from the receipt's NameRenewed log of that registrar
+ * (eth_getTransactionReceipt, the engine's decodeEnsNameRenewedLogs; exactly
+ * one log). A failed read or anything else gives null (the generic
+ * sentence), never a guess. Other transactions cost no request.
+ */
+export async function ensRenewalForDescription(
+  transport: JsonRpcTransport,
+  chainCaip2: string,
+  description: ActivityDescription,
+): Promise<EnsRenewalFacts | null> {
+  if (chainCaip2 !== ENS_ACTIVITY_CHAIN) return null;
+  const registrar = ENS_V2_SEPOLIA.ethRegistrar;
+  try {
+    if (isEnsRenewCall(description.call)) {
+      const tx = (await transport('eth_getTransactionByHash', [description.hash])) as { input?: unknown; to?: unknown } | null;
+      if (!tx || typeof tx.input !== 'string' || typeof tx.to !== 'string' || tx.to.toLowerCase() !== registrar.toLowerCase()) return null;
+      const decoded = decodeEnsRenewCalldata(tx.input);
+      return decoded ? { registrar, label: decoded.label, duration: decoded.duration, source: 'calldata' } : null;
+    }
+    const inner = description.userOps.flatMap((op) => (op.success ? (op.calls ?? []) : [])).filter((c) => isEnsRenewCall(c.decoded));
+    if (inner.length !== 1) return null;
+    const receipt = (await transport('eth_getTransactionReceipt', [description.hash])) as { logs?: unknown } | null;
+    if (!receipt || !Array.isArray(receipt.logs)) return null;
+    const renewed = decodeEnsNameRenewedLogs(receipt.logs as { address: string; topics: string[]; data: string }[]);
+    if (renewed.length !== 1) return null;
+    return { registrar, label: renewed[0]!.label, duration: renewed[0]!.duration, source: 'log' };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * "called ENS’s registrar 0xf633…a3d3 to renew qzv7hk2wmt.eth for 28 days"
+ * for exactly the renew() the facts were read for, else null. "called" is
+ * one of the engine's ACTIVITY_CALL_VERBS (activity-decode.ts 1826–1847);
+ * "renewed" is not, and a phrase starting with an unlisted verb is ignored
+ * by the engine (customPhrase, 1618–1624), so the wording says what was
+ * called and what for; what the logs show (the USDC paid) follows after a
+ * colon (added by the engine), and a reverted renewal reads "tried to call
+ * … to renew …".
+ */
+export function ensRenewPhrase(
+  facts: EnsRenewalFacts | null | undefined,
+  call: { to: string; selector: string | null; value: bigint },
+): string | null {
+  if (!facts || call.to.toLowerCase() !== facts.registrar.toLowerCase() || call.value !== 0n) return null;
+  if (call.selector === null || call.selector.toLowerCase() !== ENS_RENEW_SELECTOR) return null;
+  return `called ${ensRegistrarActivityLabel(facts.registrar)} to renew ${facts.label}.eth for ${renewDurationPhrase(facts.duration)}`;
+}
+
 /** "Lido wstETH contract 0xB823…067b": how a sentence names a pinned staking contract. */
 export function stakingContractLabel(contract: PinnedStakingContract): string {
   return `${contract.protocol} ${contract.name} contract ${shortActivityAddress(contract.address)}`;
@@ -1049,17 +1210,21 @@ export function renderActivitySentence(decoded: DecodedActivity, options: Senten
     const lower = address.toLowerCase();
     const own = labels.find((l) => l.address.toLowerCase() === lower);
     if (own) return own.label;
+    // ENS's pinned registrar on its network (pass p26-emu2 finding 4): "approved USDC for ENS’s registrar 0xf633…a3d3".
+    if (options.networkId === ENS_ACTIVITY_CHAIN && lower === ENS_V2_SEPOLIA.ethRegistrar.toLowerCase()) return ensRegistrarActivityLabel();
     const pinned = pinnedAt ? pinnedAt(address) : null;
     return pinned ? stakingContractLabel(pinned) : null;
   };
   const pool = decoded.rocketDepositPool ?? null;
   const bridge = decoded.bridgeSend ?? null;
+  const renewal = decoded.ensRenewal ?? null;
   const describeCall: ActivitySentenceContext['describeCall'] =
-    pinnedAt || pool || bridge
+    pinnedAt || pool || bridge || renewal
       ? (call, format) =>
           (pinnedAt ? stakingCallPhrase(pinnedAt(call.to), call, format) : null) ??
           rocketDepositPhrase(pool, call, format) ??
-          bridgeSendPhrase(bridge, call, format)
+          bridgeSendPhrase(bridge, call, format) ??
+          ensRenewPhrase(renewal, call)
       : undefined;
   return activitySentence(decoded.description, {
     nativeSymbol: options.nativeSymbol,

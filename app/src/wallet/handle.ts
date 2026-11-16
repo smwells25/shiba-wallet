@@ -1234,6 +1234,67 @@ export function renewalCallLines(plan: Pick<EnsRenewalPlan, 'name' | 'total' | '
   ];
 }
 
+/**
+ * The one-operation heading of a smart account's renewal confirm (pass
+ * p26-emu2 finding 3; the Lend confirm's "One operation, all-or-nothing"
+ * line, lend.aa.batch): the batch's two calls in the order they run.
+ */
+export function renewalBatchHeading(plan: Pick<EnsRenewalPlan, 'name' | 'total'>): string {
+  return t('handle.renew.aaBatch', { amount: formatUsdc(plan.total), symbol: HANDLE_USDC.symbol, name: plan.name, days: HANDLE_DURATION_DAYS });
+}
+
+/**
+ * The call a renewal's risk card describes (pass p26-emu2 finding 3): the
+ * renew call to ENS's pinned ETHRegistrar, not the batch's first call (the
+ * USDC approval, whose spender the call lines and the heading already
+ * name). Null when the calls hold no call to the pinned registrar.
+ */
+export function renewalRiskCall(calls: readonly Call[]): Call | null {
+  const registrar = ENS_V2_SEPOLIA.ethRegistrar.toLowerCase();
+  return calls.find((c) => c.to.toLowerCase() === registrar) ?? null;
+}
+
+/**
+ * How "Your names" names the account that holds a name (pass p26-emu2
+ * finding 5): the labels Activity uses (activity-sentences.ts
+ * activityAccountLabels: "Account 1", "Account 1’s smart account"), never
+ * the bare 42-character address; the short address goes beside it. Null
+ * when the account has no name to show (the address alone is then shown).
+ */
+export function handleOwnerAccountLabel(kind: HandleOwnerKind, accountName: string | null | undefined): string | null {
+  const name = accountName?.trim() ?? '';
+  if (name === '') return null;
+  return kind === 'smart' ? t('handle.renew.ownerSmart', { name }) : name;
+}
+
+/** The one spoken stop of an owner row: "Owner of the name: Account 1, 0x772e…F44F" (pass p26-emu2 finding 5). */
+export function handleOwnerRowSpoken(kind: HandleOwnerKind, accountName: string | null | undefined, owner: string): string {
+  const label = handleOwnerAccountLabel(kind, accountName);
+  return label === null ? `${t('handle.row.owner')}: ${spokenShortAddress(owner)}` : `${t('handle.row.owner')}: ${label}, ${spokenShortAddress(owner)}`;
+}
+
+/**
+ * One review row as one spoken stop, "Expires now: 2026-11-24 03:49:00 UTC"
+ * (pass p26-emu2 finding 10: TalkBack stopped on the label and the value
+ * separately). The value is said as shown — dates, and the pinned contracts
+ * in full, as on every confirm screen.
+ */
+export function reviewRowSpoken(label: string, value: string): string {
+  return `${label}: ${value}`;
+}
+
+/** "UserOperation hash 0x1234…abcd": a smart-account success view's operation hash, spoken short (pass p26-emu2 finding 2). */
+export function spokenUserOpHash(hash: string): string {
+  const short = /^0x[0-9a-fA-F]{64}$/.test(hash) ? `${hash.slice(0, 6)}…${hash.slice(-4)}` : hash;
+  return `${t('send.aa.userOpHash')} ${short}`;
+}
+
+/** "Approval transaction: 0x1234…abcd": the renewal's approval hash, spoken short (pass p26-emu2 finding 8). */
+export function spokenApprovalTx(hash: string): string {
+  const short = /^0x[0-9a-fA-F]{64}$/.test(hash) ? `${hash.slice(0, 6)}…${hash.slice(-4)}` : hash;
+  return t('staking.success.approvalTx', { hash: short });
+}
+
 export type RenewPreflight =
   | { kind: 'ok'; via: 'eth_call' | 'eth_simulateV1' }
   | { kind: 'not-renewable' }

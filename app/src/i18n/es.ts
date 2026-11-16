@@ -2316,4 +2316,9 @@ export const es: Readonly<Partial<Record<StringId, string>>> = {
   'insights.pending.solanaUncached': '{address} (no coincide con ninguna de las direcciones de Solana que este teléfono tiene registradas; la dirección de Solana de {accounts} no está registrada aquí, así que puede ser una de esas)',
   'insights.pending.solanaUncachedNote': 'La billetera guarda en este teléfono las direcciones públicas de cada cuenta de la frase de recuperación una vez que las ha calculado, normalmente al abrirse. Mientras la dirección de Solana de una cuenta no esté registrada, una entrada de Solana enviada desde esa cuenta no se puede nombrar aquí.',
   'pnl.solanaDevnet': 'Las ganancias y pérdidas de SOL no se ofrecen mientras Solana devnet está activada: el SOL de devnet no tiene precio.',
+  // ---- BEGIN pass p26-emu2 fixes. Spanish drafts, pending a native reviewer.
+  'handle.renew.aaBatch': 'Una operación, todo o nada: (1) aprobar exactamente {amount} {symbol} para el registrador de ENS, (2) la renovación de {name} por {days} días. Si la renovación fallara, la aprobación se deshace con ella.',
+  'handle.renew.ownerSmart': 'Cuenta inteligente de {name}',
+  'limits.solana.removeLabel': 'Quitar el límite de {symbol} en {network}',
+  // ---- END pass p26-emu2 fixes ----
 };

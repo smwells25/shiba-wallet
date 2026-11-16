@@ -1775,7 +1775,8 @@ console.log('check-token-gas: the ERC-7677 source (Pimlico’s ERC-20 paymaster 
     check('M-T1 caught: without the pass-through the zero estimate is mislabelled as the paymaster’s refusal (the check above would fail)',
       !isImpossibleGasEstimateError(me) && me instanceof mTg.TokenGasPaymasterRefusalError);
     const aaSource = readFileSync(new URL('../src/wallet/aa.ts', import.meta.url), 'utf8');
-    const circleRetries = '    gasPaddingPct: { ...TOKEN_GAS_PADDING_PCT },\n    estimateRetries: bundle.estimateRetries ?? AA_ESTIMATE_RETRIES,\n  });';
+    // The fallback reads aaEstimateRetriesFor since pass p26-emu2 finding 1 (the anchor follows; the mutant is unchanged).
+    const circleRetries = '    gasPaddingPct: { ...TOKEN_GAS_PADDING_PCT },\n    estimateRetries: bundle.estimateRetries ?? aaEstimateRetriesFor(bundle.chainId),\n  });';
     if (!aaSource.includes(circleRetries)) throw new Error('mutation anchor not found (token-gas client retries)');
     const mAa = await importMutantTg('src/wallet/aa.ts', aaSource.replace(circleRetries, '    gasPaddingPct: { ...TOKEN_GAS_PADDING_PCT },\n    estimateRetries: { attempts: 1, delayMs: 0 },\n  });'));
     const m2Node = tgNode({ usdc: 2_000_000n, eth: 0n });

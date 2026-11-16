@@ -2630,6 +2630,8 @@ await (async () => {
         return answer;
       }
       if (method === 'eth_sendUserOperation') state.sends += 1;
+      // A bundler fee floor when a check sets one (pass p26-emu2 finding 1: the floor check runs before the pre-prompt estimate).
+      if (method === 'pimlico_getUserOperationGasPrice' && state.floor) return { slow: state.floor, standard: state.floor, fast: state.floor };
       return base(method, params);
     };
     const create = aaModule ? aaModule.createAaClient : createAaClient;
@@ -2722,7 +2724,8 @@ await (async () => {
   {
     // M-I1: the quote's estimate unchecked (the code before this fix).
     const m = await mutant(
-      'estimated = await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGasChecked(\n        op,\n        bundle.estimateRetries ?? AA_ESTIMATE_RETRIES,\n      );',
+      // The fallback reads aaEstimateRetriesFor since pass p26-emu2 finding 1 (the anchor follows; the mutant is unchanged).
+      'estimated = await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGasChecked(\n        op,\n        bundle.estimateRetries ?? aaEstimateRetriesFor(bundle.chainId),\n      );',
       'estimated = await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGas(op);',
     );
     const b = scripted([ZERO], { estimateRetries: NO_WAIT }, m);
@@ -2746,6 +2749,136 @@ await (async () => {
     const r = await m.sendAa(b.bundle, owner, q).then(() => 'sent', (e) => e);
     check('M-I3 caught: a client that ignores the bundle’s retry policy does not ask again at send time (the recovery check above would fail)',
       isImpossibleGasEstimateError(r) && b.state.sends === 0);
+  }
+
+  // ---------------------------------------------------------------------
+  // Pass p26-emu2 finding 1: on Arbitrum Sepolia ZeroDev answered impossible
+  // (zero) limits in bursts; the guard refused every time, but two refusals
+  // came at SEND time, after the device prompt. checkAaQuoteBeforeApproval
+  // (run by every screen before the prompt) now also asks ONE checked
+  // estimate of the quoted operation, and the burst networks get a longer
+  // retry policy.
+  console.log('\ncheck-aa: the pre-prompt estimate and the per-chain retry policy (pass p26-emu2 finding 1)');
+  const preSigs = () => signatures;
+  {
+    // A burst that starts after the quote: refused BEFORE the prompt, nothing signed or sent.
+    const b = scripted([REAL], { estimateRetries: NO_WAIT });
+    const q = await prepareAaSend(b.bundle, owner.address, RECIPIENT, AMOUNT);
+    const atQuote = b.state.estimates;
+    b.answer([ZERO]);
+    signatures = 0;
+    const e = await checkAaQuoteBeforeApproval(b.bundle.bundler, q).then(() => null, (x) => x);
+    check('pre-prompt: zero on every attempt → the engine’s ImpossibleGasEstimateError from checkAaQuoteBeforeApproval, after the bundle’s 3 asks; nothing signed or sent',
+      isImpossibleGasEstimateError(e) && e.attempts === 3 && b.state.estimates === atQuote + 3 && b.state.sends === 0 && preSigs() === 0,
+      `${e?.message} estimates=${b.state.estimates - atQuote}`);
+    const d = describeAaError(e, { accountType: q.accountType, deployed: q.deployed });
+    check('…shown with AA_IMPOSSIBLE_ESTIMATE_TITLE and "The operation was not signed or sent." (the screens call describeAaError on this refusal)',
+      d?.title === AA_IMPOSSIBLE_ESTIMATE_TITLE && d.detail.startsWith(AA_IMPOSSIBLE_ESTIMATE_SENTENCE) && d.detail.includes('The operation was not signed or sent.'));
+    // The refusal does not use the quote up: once the burst ends the same quote is sent.
+    b.answer([REAL]);
+    const pre2 = await checkAaQuoteBeforeApproval(b.bundle.bundler, q).then(() => null, (x) => x);
+    const r = await sendAa(b.bundle, owner, q).then((x) => x, (x) => x);
+    check('…and does not use the quote up: when the burst ends the check passes and the same quote is sent once',
+      pre2 === null && r?.userOpHash === USEROP_HASH && b.state.sends === 1);
+  }
+  {
+    // A clean bundler: exactly ONE more estimate before the prompt, and the quote's figures unchanged.
+    const b = scripted([REAL], { estimateRetries: NO_WAIT });
+    const q = await prepareAaSend(b.bundle, owner.address, RECIPIENT, AMOUNT);
+    const before = { estimates: b.state.estimates, fee: q.fee, total: q.total, calls: q.calls };
+    await checkAaQuoteBeforeApproval(b.bundle.bundler, q);
+    check('pre-prompt: a clean answer → exactly one more eth_estimateUserOperationGas, nothing sent, the quote unchanged',
+      b.state.estimates === before.estimates + 1 && b.state.sends === 0 && q.fee === before.fee && q.total === before.total && q.calls === before.calls);
+    // A short burst inside the retries passes.
+    const b2 = scripted([REAL], { estimateRetries: NO_WAIT });
+    const q2 = await prepareAaSend(b2.bundle, owner.address, RECIPIENT, AMOUNT);
+    const at2 = b2.state.estimates;
+    b2.answer([ZERO, REAL]);
+    const pass2 = await checkAaQuoteBeforeApproval(b2.bundle.bundler, q2).then(() => null, (x) => x);
+    check('pre-prompt: zero once then real → asked twice and passes (the retry rides out a short burst)', pass2 === null && b2.state.estimates === at2 + 2);
+  }
+  {
+    // The fee-floor check still comes first: a floor above the quote refuses with no estimate asked.
+    const b = scripted([REAL], { estimateRetries: NO_WAIT });
+    const q = await prepareAaSend(b.bundle, owner.address, RECIPIENT, AMOUNT);
+    const at = b.state.estimates;
+    b.state.floor = { maxFeePerGas: '0x' + (q.maxFeePerGas * 10n).toString(16), maxPriorityFeePerGas: '0x' + (q.maxPriorityFeePerGas * 10n).toString(16) };
+    const e = await checkAaQuoteBeforeApproval(b.bundle.bundler, q).then(() => null, (x) => x);
+    check('pre-prompt: the fee-floor check runs first — a floor ten times the quote refuses (reason floor) before any estimate is asked',
+      e instanceof AaFeeRoseError && e.reason === 'floor' && b.state.estimates === at);
+  }
+  {
+    // A quote not made by prepareAaCalls (a guardian-recovery submission, a hand-built object) is checked exactly as before.
+    const b = scripted([ZERO], { estimateRetries: NO_WAIT });
+    const plain = { maxFeePerGas: 3n, maxPriorityFeePerGas: 1n };
+    const e = await checkAaQuoteBeforeApproval(b.bundle.bundler, plain).then(() => null, (x) => x);
+    check('pre-prompt: a quote prepareAaCalls did not make asks no estimate (the behaviour before this fix)', e === null && b.state.estimates === 0);
+  }
+  {
+    // The per-chain retry policy.
+    const { aaEstimateRetriesFor, AA_ESTIMATE_RETRIES_BURSTY, AA_BURSTY_ESTIMATE_CHAIN_IDS } = await import('../src/wallet/aa.ts');
+    check('per chain: Arbitrum Sepolia (421614) gets 8 asks 3 s apart; every other chain keeps the same AA_ESTIMATE_RETRIES object (4 × 2 s)',
+      AA_ESTIMATE_RETRIES_BURSTY.attempts === 8 && AA_ESTIMATE_RETRIES_BURSTY.delayMs === 3_000 &&
+        AA_BURSTY_ESTIMATE_CHAIN_IDS.length === 1 && AA_BURSTY_ESTIMATE_CHAIN_IDS[0] === 421_614n &&
+        aaEstimateRetriesFor(421_614n) === AA_ESTIMATE_RETRIES_BURSTY &&
+        [11_155_111n, 84_532n, 11_155_420n, 560_048n, 1n].every((id) => aaEstimateRetriesFor(id) === AA_ESTIMATE_RETRIES));
+    const arb = scripted([REAL], { chainId: 421_614n });
+    const sep = scripted([REAL], { chainId: 11_155_111n });
+    const own = scripted([REAL], { chainId: 421_614n, estimateRetries: NO_WAIT });
+    check('per chain: a bundle built for Arbitrum Sepolia carries the longer policy, one for Sepolia the old one, and an explicit policy still wins',
+      arb.bundle.estimateRetries === AA_ESTIMATE_RETRIES_BURSTY && sep.bundle.estimateRetries === AA_ESTIMATE_RETRIES && own.bundle.estimateRetries === NO_WAIT);
+    const sources = ['aa.ts', 'token-gas.ts', 'passkeys.ts', 'recovery.ts'].map((f) => readFileSync(new URL(`../src/wallet/${f}`, import.meta.url), 'utf8'));
+    check('per chain (source): the three bundle constructors default to aaEstimateRetriesFor, and no client or estimate falls back to the flat AA_ESTIMATE_RETRIES any more',
+      (sources[0].match(/options\.estimateRetries \?\? aaEstimateRetriesFor\(/g) ?? []).length === 3 &&
+        sources.every((src) => !/\?\? AA_ESTIMATE_RETRIES\b|estimateRetries: AA_ESTIMATE_RETRIES\b|,\s*AA_ESTIMATE_RETRIES,\s*\)/.test(src)));
+    // The screens run the pre-prompt check before the device prompt (Lend and the wallet handle, the pass's two screens).
+    const lend = readFileSync(new URL('../src/screens/LendScreen.tsx', import.meta.url), 'utf8');
+    const handle = readFileSync(new URL('../src/screens/HandleScreen.tsx', import.meta.url), 'utf8');
+    check('the Lend and Handle screens call checkAaQuoteBeforeApproval with the quote from prepareAaCalls before their device prompt',
+      lend.indexOf('await checkAaQuoteBeforeApproval(bundle.bundler, aaQuote);') > 0 &&
+        lend.indexOf('await checkAaQuoteBeforeApproval(bundle.bundler, aaQuote);') < lend.indexOf('requireLocalAuth(`${lendingActionTitle(plan)} from your smart account`)') &&
+        handle.indexOf('await checkAaQuoteBeforeApproval(bundle.bundler, aaQuote);') > 0 &&
+        handle.indexOf('await checkAaQuoteBeforeApproval(bundle.bundler, aaQuote);') < handle.indexOf('if (!(await authorizeJob(job, aaQuote, url))) return;'));
+  }
+  {
+    // M-P1: the pre-prompt estimate not run.
+    const m = await mutant('  const estimate = prePromptEstimates.get(quote);\n  if (estimate) await estimate();\n', '');
+    const b = scripted([REAL], { estimateRetries: NO_WAIT }, m);
+    const q = await m.prepareAaSend(b.bundle, owner.address, RECIPIENT, AMOUNT);
+    b.answer([ZERO]);
+    const e = await m.checkAaQuoteBeforeApproval(b.bundle.bundler, q).then(() => null, (x) => x);
+    check('M-P1 caught: without the pre-prompt estimate a zero burst passes the check and reaches the prompt', e === null);
+  }
+  {
+    // M-P2: the pre-prompt estimate unchecked.
+    const m = await mutant(
+      '    await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGasChecked(\n      stubOpFor(finalCalls, nonceNow, deployedNow ? undefined : factoryArgs, authNow),\n      bundle.estimateRetries ?? aaEstimateRetriesFor(bundle.chainId),\n    );',
+      '    await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGas(\n      stubOpFor(finalCalls, nonceNow, deployedNow ? undefined : factoryArgs, authNow),\n    );',
+    );
+    const b = scripted([REAL], { estimateRetries: NO_WAIT }, m);
+    const q = await m.prepareAaSend(b.bundle, owner.address, RECIPIENT, AMOUNT);
+    b.answer([ZERO]);
+    const e = await m.checkAaQuoteBeforeApproval(b.bundle.bundler, q).then(() => null, (x) => x);
+    check('M-P2 caught: an unchecked pre-prompt estimate lets the zero answer through', e === null);
+  }
+  {
+    // M-P3: the per-chain policy ignored.
+    const m = await mutant('  return AA_BURSTY_ESTIMATE_CHAIN_IDS.includes(chainId) ? AA_ESTIMATE_RETRIES_BURSTY : AA_ESTIMATE_RETRIES;', '  return AA_ESTIMATE_RETRIES;');
+    const b = scripted([REAL], { chainId: 421_614n }, m);
+    check('M-P3 caught: without the per-chain rule an Arbitrum Sepolia bundle keeps the short policy', b.bundle.estimateRetries.attempts === 4);
+  }
+  {
+    // M-P4: the estimate moved before the fee-floor check.
+    const m = await mutant(
+      "  if (submittedQuotes.has(quote)) throw new AaFeeRoseError(AA_QUOTE_ALREADY_USED, 'used');\n  await assertQuoteFeesMeetBundlerFloor(bundler, {",
+      "  if (submittedQuotes.has(quote)) throw new AaFeeRoseError(AA_QUOTE_ALREADY_USED, 'used');\n  { const early = prePromptEstimates.get(quote); if (early) await early(); }\n  await assertQuoteFeesMeetBundlerFloor(bundler, {",
+    );
+    const b = scripted([REAL], { estimateRetries: NO_WAIT }, m);
+    const q = await m.prepareAaSend(b.bundle, owner.address, RECIPIENT, AMOUNT);
+    const at = b.state.estimates;
+    b.state.floor = { maxFeePerGas: '0x' + (q.maxFeePerGas * 10n).toString(16), maxPriorityFeePerGas: '0x' + (q.maxPriorityFeePerGas * 10n).toString(16) };
+    await m.checkAaQuoteBeforeApproval(b.bundle.bundler, q).then(() => null, (x) => x);
+    check('M-P4 caught: an estimate before the floor check asks the bundler although the floor refuses (the order check above would fail)', b.state.estimates > at);
   }
 })();
 

@@ -66,6 +66,8 @@ import {
   handleCardLiveText,
   handleExpiryLine,
   handleOfferFor,
+  handleOwnerAccountLabel,
+  handleOwnerRowSpoken,
   handlePromptTitle,
   loadPendingHandles,
   newHandlePlan,
@@ -86,12 +88,17 @@ import {
   readSubnameState,
   refreshPrimaryNameUntil,
   renewPreflightSentence,
+  renewalBatchHeading,
   renewalDoneSentence,
+  renewalRiskCall,
+  reviewRowSpoken,
   resetPendingHandles,
   revokeRegistrarApprovalCall,
   savePendingHandle,
   smartOwnerRefusal,
+  spokenApprovalTx,
   spokenTxId,
+  spokenUserOpHash,
   spokenWithShortAddresses,
   waitForTx,
   waitingSentence,
@@ -242,7 +249,10 @@ export function HandleScreen({ navigation }: Props) {
   const [eoaQuote, setEoaQuote] = useState<EvmSendQuote | null>(null);
   const [aaQuote, setAaQuote] = useState<AaSendQuote | null>(null);
   const [quotedUrl, setQuotedUrl] = useState<string | null>(null);
-  const [result, setResult] = useState<{ txid: string; explorerUrl: string | null; title: string; body: string; anchor?: ScrollAnchor } | null>(null);
+  // userOpHash: set when a smart account sent it (pass p26-emu2 finding 2: the success view shows it beside the bundle transaction).
+  const [result, setResult] = useState<{ txid: string; explorerUrl: string | null; userOpHash?: string; title: string; body: string; anchor?: ScrollAnchor } | null>(null);
+  // Pass p26-emu2 finding 8: the regular account's renewal approval, shown on the renew step and the success view.
+  const [renewApproveTxid, setRenewApproveTxid] = useState<string | null>(null);
   const [subLabel, setSubLabel] = useState(HANDLE_SUB_LABEL_DEFAULT);
   const [subError, setSubError] = useState<string | null>(null);
   // Phase 26 item 1: the renewal being reviewed, and the names checked in
@@ -487,6 +497,7 @@ export function HandleScreen({ navigation }: Props) {
   const backToMain = (message: string | null, anchor: ScrollAnchor = message ? 'notice' : 'card') => {
     pendingAnchor.current = { anchor, until: null };
     setNotice(message);
+    setRenewApproveTxid(null);
     setJob(null);
     setEoaQuote(null);
     setAaQuote(null);
@@ -631,7 +642,7 @@ export function HandleScreen({ navigation }: Props) {
    * after renew, the new expiry read back from the registry with the
    * receipt's NameRenewed log.
    */
-  const afterRenewalStep = async (done: Job, plan: HandleRenewalPlan, sent: { txid: string; explorerUrl: string | null }) => {
+  const afterRenewalStep = async (done: Job, plan: HandleRenewalPlan, sent: { txid: string; explorerUrl: string | null; userOpHash?: string }) => {
     if (!url) {
       backToMain(null, 'names');
       return;
@@ -650,6 +661,7 @@ export function HandleScreen({ navigation }: Props) {
         backToMain(renewPreflightSentence(read.progress, done.name), 'names');
         return;
       }
+      setRenewApproveTxid(sent.txid);
       await openJob({
         kind: 'renew', path: 'eoa', calls: renewCalls, lines: [plan.lines[1]!], position: { index: 2, count: 2 },
         title: handlePromptTitle('renew', { name: done.name }), record: null, prepareIndex: null, name: done.name,
@@ -672,7 +684,7 @@ export function HandleScreen({ navigation }: Props) {
   };
 
   /** After an included step: read the chain again and open what comes next. */
-  const afterStep = async (done: Job, sent: { txid: string; explorerUrl: string | null }) => {
+  const afterStep = async (done: Job, sent: { txid: string; explorerUrl: string | null; userOpHash?: string }) => {
     if ((done.kind === 'renewApprove' || done.kind === 'renew') && done.renewal) {
       await afterRenewalStep(done, done.renewal, sent);
       return;
@@ -834,7 +846,7 @@ export function HandleScreen({ navigation }: Props) {
       const { userOpHash } = await signWith(EVM_CHAIN_ID, address, (signer) => sendAa(bundle, signer, aaQuote, { kind: 'handle' }));
       const { summary } = await waitForAaReceipt(bundle, userOpHash, { timeoutMs: 120_000, pollMs: 3_000 });
       if (summary.success === true && summary.txHash) {
-        await afterStep(job, { txid: summary.txHash, explorerUrl: evmChain.explorerTxBase ? `${evmChain.explorerTxBase}${summary.txHash}` : null });
+        await afterStep(job, { txid: summary.txHash, explorerUrl: evmChain.explorerTxBase ? `${evmChain.explorerTxBase}${summary.txHash}` : null, userOpHash });
       } else {
         backToMain(t('handle.tx.reverted', { hash: summary.txHash ?? userOpHash }));
       }
@@ -1024,6 +1036,8 @@ export function HandleScreen({ navigation }: Props) {
   );
   /** The ENS resolver a job's call lines may name in full (the owner's own resolver, a contract). */
   const jobResolver = (j: Job): string | null => (j.kind === 'subname' ? j.calls[0]!.to : (j.record?.resolver ?? null));
+  /** The call a smart-account confirm's risk card describes: a renewal's renew call (renewalRiskCall), else the first call. */
+  const aaRiskCall = (j: Job): Call => (j.kind === 'renew' ? renewalRiskCall(j.calls) ?? j.calls[0]! : j.calls[0]!);
   /** The owner of the name a job is for, so the risk card can name that owner's resolver (finding 5). */
   const jobNameOwner = (j: Job): string | null => (j.record ? j.record.owner : j.kind === 'subname' ? address : null);
   const stepTitle = (j: Job) =>
@@ -1038,6 +1052,19 @@ export function HandleScreen({ navigation }: Props) {
       <ScrollView key="handle-success" style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
         <Text accessibilityRole="header" style={[styles.successTitle, { color: theme.success }]}>{result.title}</Text>
         <Text accessibilityLabel={spokenWithShortAddresses(result.body)} style={[styles.hint, { color: theme.text }]}>{result.body}</Text>
+        {/* Pass p26-emu2 finding 8: the renewal's approval transaction (regular account, step 1 of 2). */}
+        {renewApproveTxid ? (
+          <Text accessibilityLabel={spokenApprovalTx(renewApproveTxid)} style={[styles.hint, { color: theme.textMuted }]}>{t('staking.success.approvalTx', { hash: renewApproveTxid })}</Text>
+        ) : null}
+        {/* Pass p26-emu2 finding 2: a smart account's operation hash beside its bundle transaction, as Lend's success view shows both. */}
+        {result.userOpHash ? (
+          <View accessible accessibilityLabel={spokenUserOpHash(result.userOpHash)}>
+            <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.label, { color: theme.textMuted }]}>{t('send.aa.userOpHash')}</Text>
+            <View style={[styles.box, { backgroundColor: theme.card, borderColor: theme.border }]}>
+              <Text selectable importantForAccessibility="no" accessibilityElementsHidden style={[styles.monoText, { color: theme.text }]}>{result.userOpHash}</Text>
+            </View>
+          </View>
+        ) : null}
         {/* Spoken as one stop, "Transaction id 0x1234…abcd" (finding 12); the full id stays visible and selectable. */}
         <View accessible accessibilityLabel={spokenTxId(result.txid)}>
           <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.label, { color: theme.textMuted }]}>{t('send.txId')}</Text>
@@ -1046,7 +1073,7 @@ export function HandleScreen({ navigation }: Props) {
           </View>
         </View>
         {result.explorerUrl ? <Button title={t('send.explorer')} variant="secondary" onPress={() => void Linking.openURL(result.explorerUrl!)} /> : null}
-        <TransactionNoteField network={caip2} txid={result.txid} userOpHash={null} />
+        <TransactionNoteField network={caip2} txid={result.txid} userOpHash={result.userOpHash ?? null} />
         <Button
           title={t('send.done')}
           onPress={() =>
@@ -1071,6 +1098,10 @@ export function HandleScreen({ navigation }: Props) {
           <Text accessibilityRole="header" style={[styles.label, { color: theme.textMuted }]}>
             {t('handle.tx.heading', { index: job.position.index, count: job.position.count })}
           </Text>
+        ) : null}
+        {/* Pass p26-emu2 finding 8: the approval this renew step follows. */}
+        {job.kind === 'renew' && renewApproveTxid ? (
+          <Text accessibilityLabel={spokenApprovalTx(renewApproveTxid)} style={[styles.hint, { color: theme.textMuted }]}>{t('staking.success.approvalTx', { hash: renewApproveTxid })}</Text>
         ) : null}
         <Row label={t('handle.row.owner')} value={activeAccount?.name ?? '—'} sub={address} spoken={`${t('handle.row.owner')}: ${activeAccount?.name ?? ''}, ${spokenShortAddress(address)}`} theme={theme} />
         <ImportedKeyNotice show={activeAccount?.imported === true} />
@@ -1117,6 +1148,10 @@ export function HandleScreen({ navigation }: Props) {
         <Row label={t('handle.row.owner')} value={aaQuote.sender} mono spoken={`${t('handle.row.owner')}: ${spokenShortAddress(aaQuote.sender)}`} theme={theme} />
         <ImportedKeyNotice show={activeAccount?.imported === true} />
         {job.kind === 'prepare' ? <Note text={t('handle.prepare.smartNote', { count: job.calls.length })} theme={theme} /> : null}
+        {/* Pass p26-emu2 finding 3: the renewal batch's one-operation heading, as the Lend confirm has. */}
+        {job.kind === 'renew' && job.renewal && job.calls.length > 1 ? (
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{renewalBatchHeading(job.renewal.plan)}</Text>
+        ) : null}
         <CallLines lines={job.lines} theme={theme} resolver={jobResolver(job)} />
         {job.kind === 'prepare' ? <Note text={t('handle.secretNote')} theme={theme} /> : null}
         <Row label={t('handle.row.feeSmart')} value={aaQuote.sponsored ? '0' : `${exact18(aaQuote.fee)} ${symbol}`} theme={theme} />
@@ -1126,7 +1161,8 @@ export function HandleScreen({ navigation }: Props) {
           request={{ from: aaQuote.sender, to: aaQuote.calls[0]!.to, value: aaQuote.calls[0]!.value, data: aaQuote.calls[0]!.data }}
           batch={aaQuote.calls.map((c) => ({ from: aaQuote.sender, to: c.to, value: c.value, data: c.data }))}
         />
-        <RiskWarnings url={url} wallet={aaQuote.sender} to={job.calls[0]!.to} data={job.calls[0]!.data} ensResolverOwner={jobNameOwner(job)} />
+        {/* Pass p26-emu2 finding 3: a renewal's card describes the renew call to ENS's pinned registrar, not the batch's approval. */}
+        <RiskWarnings url={url} wallet={aaQuote.sender} to={aaRiskCall(job).to} data={aaRiskCall(job).data} ensResolverOwner={jobNameOwner(job)} />
         <SpendingPolicyNotice
           owner={address}
           quote={aaQuote}
@@ -1169,9 +1205,10 @@ export function HandleScreen({ navigation }: Props) {
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
         <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>{t('handle.renew.title', { name: q.name })}</Text>
         <Text style={[styles.hint, { color: theme.text }]}>{t('handle.renew.price', { amount: formatUsdc(q.total), days: HANDLE_DURATION_DAYS })}</Text>
-        <Row label={q.inGrace ? t('handle.renew.row.currentGrace') : t('handle.renew.row.current')} value={formatBlockTime(q.currentExpiry)} theme={theme} />
-        {q.inGrace ? <Row label={t('handle.renew.row.graceEnds')} value={formatBlockTime(q.graceEndsAt)} theme={theme} /> : null}
-        <Row label={t('handle.renew.row.new')} value={formatBlockTime(q.newExpiry)} theme={theme} />
+        {/* Pass p26-emu2 finding 10: each row is one spoken stop, label and value together. */}
+        <Row label={q.inGrace ? t('handle.renew.row.currentGrace') : t('handle.renew.row.current')} value={formatBlockTime(q.currentExpiry)} spoken={reviewRowSpoken(q.inGrace ? t('handle.renew.row.currentGrace') : t('handle.renew.row.current'), formatBlockTime(q.currentExpiry))} theme={theme} />
+        {q.inGrace ? <Row label={t('handle.renew.row.graceEnds')} value={formatBlockTime(q.graceEndsAt)} spoken={reviewRowSpoken(t('handle.renew.row.graceEnds'), formatBlockTime(q.graceEndsAt))} theme={theme} /> : null}
+        <Row label={t('handle.renew.row.new')} value={formatBlockTime(q.newExpiry)} spoken={reviewRowSpoken(t('handle.renew.row.new'), formatBlockTime(q.newExpiry))} theme={theme} />
         <Note text={t('handle.renew.fromNote', { days: HANDLE_DURATION_DAYS })} theme={theme} />
         <Row label={t('handle.renew.row.payer')} value={rp.plan.payer} mono spoken={`${t('handle.renew.row.payer')}: ${spokenShortAddress(rp.plan.payer)}`} theme={theme} />
         <Note
@@ -1179,8 +1216,9 @@ export function HandleScreen({ navigation }: Props) {
           spoken={spokenWithShortAddresses(t('handle.quote.balance', { who: payerText, amount: formatUsdc(rq.usdcBalance) }))}
           theme={theme}
         />
-        <Row label={t('handle.row.registrar')} value={ENS_V2_SEPOLIA.ethRegistrar} mono theme={theme} />
-        <Row label={t('handle.row.usdc')} value={HANDLE_USDC.address} mono theme={theme} />
+        {/* The pinned contracts stay in full in speech, as on every confirm screen. */}
+        <Row label={t('handle.row.registrar')} value={ENS_V2_SEPOLIA.ethRegistrar} mono spoken={reviewRowSpoken(t('handle.row.registrar'), ENS_V2_SEPOLIA.ethRegistrar)} theme={theme} />
+        <Row label={t('handle.row.usdc')} value={HANDLE_USDC.address} mono spoken={reviewRowSpoken(t('handle.row.usdc'), HANDLE_USDC.address)} theme={theme} />
         <CallLines lines={rp.lines} theme={theme} />
         <Note text={rp.payerKind === 'smart' ? t('handle.renew.smartNote') : t('handle.renew.regularNote')} theme={theme} />
         <Note text={t('handle.renew.noRecord')} theme={theme} />
@@ -1373,11 +1411,12 @@ export function HandleScreen({ navigation }: Props) {
               <Text accessibilityRole="header" style={[styles.label, { color: theme.text }]}>{row.value?.name ?? `${row.label}.eth`}</Text>
               {row.value ? (
                 <>
+                  {/* Pass p26-emu2 finding 5: the account's label (as Activity names it) with the short address, one spoken stop. */}
                   <Row
                     label={t('handle.row.owner')}
-                    value={row.value.owner}
-                    mono
-                    spoken={`${t('handle.row.owner')}: ${spokenShortAddress(row.value.owner)}`}
+                    value={handleOwnerAccountLabel(row.value.ownerKind, activeAccount?.name) ?? spokenShortAddress(row.value.owner)}
+                    sub={handleOwnerAccountLabel(row.value.ownerKind, activeAccount?.name) === null ? null : spokenShortAddress(row.value.owner)}
+                    spoken={handleOwnerRowSpoken(row.value.ownerKind, activeAccount?.name, row.value.owner)}
                     theme={theme}
                   />
                   <Text style={[styles.hint, { color: row.value.state === 'grace' ? theme.warningText : theme.text }]}>{handleExpiryLine(row.value)}</Text>

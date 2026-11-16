@@ -2254,6 +2254,155 @@ installFakeNode();
   }
 }
 
+// Pass p26-emu2 finding 4: the renewals read "Called 0xf633…a3d3: sent 0.613701
+// USDC" and "approved USDC for 0xf633…a3d3 (up to 0.613701 USDC)". ENS's pinned
+// registrar is now named, and a renew() is described from its own calldata (a
+// direct call) or from the registrar's NameRenewed log (inside a smart-account
+// operation). Synthetic transactions in the live shapes, built with the engine's
+// own encoders.
+console.log('ENS renewals (pass p26-emu2, finding 4):');
+reset();
+installFakeNode();
+{
+  const { ENS_V2_SEPOLIA, ENS_V2_SEPOLIA_USDC, ENS_NAME_RENEWED_EVENT, encodeEnsRenew, encodeEnsExactApprove, ACTIVITY_CALL_VERBS } = await import('@shiba-wallet/chains-evm');
+  const { ENS_RENEW_SELECTOR, decodeEnsRenewCalldata, ensRenewPhrase, ensRenewalForDescription, ensRegistrarActivityLabel } = sentencesModule;
+  const REGISTRAR = getAddress(ENS_V2_SEPOLIA.ethRegistrar);
+  const USDC_ENS = getAddress(ENS_V2_SEPOLIA_USDC.address);
+  const BENEFICIARY = getAddress('0x84d3a426d4e12e955d1df95db0b24fe26afe39d3');
+  const PRICE = 613_701n;
+  const DAYS28 = 2_419_200n;
+  const pad = (a) => '0x' + '0'.repeat(24) + a.slice(2).toLowerCase();
+  const word = (v) => v.toString(16).padStart(64, '0');
+  const TRANSFER = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+  const APPROVAL = '0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925';
+  const renewIface = new Interface([`event ${ENS_NAME_RENEWED_EVENT.replace('NameRenewed(uint256,string,uint64,uint64,address,bytes32,uint256)', 'NameRenewed(uint256 indexed tokenId, string label, uint64 duration, uint64 newExpiry, address paymentToken, bytes32 indexed referrer, uint256 amount)')}`]);
+  const nameRenewedLog = (label, newExpiry) => {
+    const ev = renewIface.encodeEventLog('NameRenewed', [1n, label, DAYS28, newExpiry, USDC_ENS, '0x' + '00'.repeat(32), PRICE]);
+    return { address: REGISTRAR, topics: ev.topics, data: ev.data };
+  };
+  const usdcTransfer = (from) => ({ address: USDC_ENS, topics: [TRANSFER, pad(from), pad(BENEFICIARY)], data: '0x' + word(PRICE) });
+  const usdcApproval = (owner) => ({ address: USDC_ENS, topics: [APPROVAL, pad(owner), pad(REGISTRAR)], data: '0x' + word(PRICE) });
+  // The live shapes: qzv7hk2wmt.eth renewed from Account 1 (approve tx 0x88c69aeb…, renew tx 0x8e2f1d37…, block 12101954),
+  // xk9fdq4rvz.eth from the Kernel in one batch (bundle 0x874eceae…, block 12101968).
+  const renewInput = toHex(encodeEnsRenew('qzv7hk2wmt', DAYS28, USDC_ENS));
+  const approveInput = toHex(encodeEnsExactApprove(REGISTRAR, PRICE));
+  check('the renew calldata is the engine’s, selector 0x2d06649b = ENS_RENEW_SELECTOR', renewInput.startsWith('0x2d06649b') && ENS_RENEW_SELECTOR === renewInput.slice(0, 10));
+  const RENEW_TX = '0x' + 'e1'.repeat(32);
+  const RENEW_FAILED = '0x' + 'e2'.repeat(32);
+  const APPROVE_TX = '0x' + 'e3'.repeat(32);
+  const BATCH_TX = '0x' + 'e4'.repeat(32);
+  const LOOKALIKE_TX = '0x' + 'e5'.repeat(32);
+  const LOOKALIKE = getAddress('0x' + 'f6'.repeat(20));
+  const eoaTx = (hash, to, input, status, logs) => ({
+    transaction: { hash, from: ACCOUNT_1.toLowerCase(), to: to.toLowerCase(), input, value: '0x0', nonce: '0x36', type: '0x2', chainId: '0xaa36a7', blockNumber: '0xb8a8c2', blockHash: '0x' + 'cd'.repeat(32) },
+    receipt: { transactionHash: hash, blockNumber: '0xb8a8c2', blockHash: '0x' + 'cd'.repeat(32), status, logs: status === '0x1' ? logs : [] },
+  });
+  const batch = (() => {
+    const callData = toHex(encodeKernelExecute([
+      { to: USDC_ENS, value: 0n, data: encodeEnsExactApprove(REGISTRAR, PRICE) },
+      { to: REGISTRAR, value: 0n, data: encodeEnsRenew('xk9fdq4rvz', DAYS28, USDC_ENS) },
+    ]));
+    const op = [KERNEL_OF_ACCOUNT_1, 41n, '0x', callData, '0x' + '00'.repeat(32), 0n, '0x' + '00'.repeat(32), '0x', '0x'];
+    const input = new Interface(['function handleOps((address,uint256,bytes,bytes,bytes32,uint256,bytes32,bytes,bytes)[],address)']).encodeFunctionData('handleOps', [[op], BURN]);
+    return {
+      transaction: { hash: BATCH_TX, from: BURN.toLowerCase(), to: ENTRYPOINT_V07.toLowerCase(), input, value: '0x0', nonce: '0x9', type: '0x2', chainId: '0xaa36a7', blockNumber: '0xb8a8d0', blockHash: '0x' + 'ce'.repeat(32) },
+      receipt: {
+        transactionHash: BATCH_TX, blockNumber: '0xb8a8d0', blockHash: '0x' + 'ce'.repeat(32), status: '0x1',
+        logs: [
+          usdcApproval(KERNEL_OF_ACCOUNT_1),
+          usdcTransfer(KERNEL_OF_ACCOUNT_1),
+          nameRenewedLog('xk9fdq4rvz', 1_797_912_444n),
+          { address: ENTRYPOINT_V07, topics: [USER_OPERATION_EVENT_TOPIC, '0x' + 'dd'.repeat(32), pad(KERNEL_OF_ACCOUNT_1), pad('0x0000000000000000000000000000000000000000')], data: '0x' + word(41n) + word(1n) + word(959_255_210_864_236n) + word(348_621n) },
+        ],
+      },
+    };
+  })();
+  mode.extraTx = (h) =>
+    h === RENEW_TX ? eoaTx(h, REGISTRAR, renewInput, '0x1', [usdcTransfer(ACCOUNT_1), nameRenewedLog('qzv7hk2wmt', 1_797_911_340n)])
+    : h === RENEW_FAILED ? eoaTx(h, REGISTRAR, renewInput, '0x0', [])
+    : h === APPROVE_TX ? eoaTx(h, USDC_ENS, approveInput, '0x1', [usdcApproval(ACCOUNT_1)])
+    : h === LOOKALIKE_TX ? eoaTx(h, LOOKALIKE, renewInput, '0x1', [usdcTransfer(ACCOUNT_1)])
+    : h === BATCH_TX ? batch
+    : null;
+  const trackedUsdc = [{ assetId: { chainId: SEPOLIA, namespace: 'erc20', reference: USDC_ENS }, symbol: 'USDC', name: 'USDC', decimals: 6 }];
+  const decoder = createActivityDecoder({ chainCaip2: SEPOLIA, evmChainId: SEPOLIA_ID, wallet: [ACCOUNT_1, KERNEL_OF_ACCOUNT_1], trackedTokens: trackedUsdc, run: fixedRun, maxPerCall: 8 });
+  const before = { tx: count('eth_getTransactionByHash'), rc: count('eth_getTransactionReceipt') };
+  const out = await decoder.decodeEntries([RENEW_TX, RENEW_FAILED, APPROVE_TX, BATCH_TX, LOOKALIKE_TX]);
+  const r = (h, over) => render(out.get(h), { contacts: [], ...over });
+  check('the decode records the direct renewal from its own calldata: qzv7hk2wmt, 28 days, the pinned registrar',
+    out.get(RENEW_TX)?.ensRenewal?.label === 'qzv7hk2wmt' && out.get(RENEW_TX).ensRenewal.duration === DAYS28 && out.get(RENEW_TX).ensRenewal.source === 'calldata' &&
+      out.get(RENEW_TX).ensRenewal.registrar === REGISTRAR, out.get(RENEW_TX)?.ensRenewal);
+  check('LIVE SHAPE (Account 1) — "Called ENS’s registrar 0xf633…a3d3 to renew qzv7hk2wmt.eth for 28 days: sent 0.613701 USDC"',
+    r(RENEW_TX) === 'Called ENS’s registrar 0xf633…a3d3 to renew qzv7hk2wmt.eth for 28 days: sent 0.613701 USDC', r(RENEW_TX));
+  check('…a reverted renewal reads "Failed: tried to call ENS’s registrar 0xf633…a3d3 to renew qzv7hk2wmt.eth for 28 days; only the network fee was paid"',
+    r(RENEW_FAILED) === 'Failed: tried to call ENS’s registrar 0xf633…a3d3 to renew qzv7hk2wmt.eth for 28 days; only the network fee was paid', r(RENEW_FAILED));
+  check('LIVE SHAPE (step 1) — the approval names the registrar: "Approved USDC for ENS’s registrar 0xf633…a3d3 (up to 0.613701 USDC)"',
+    r(APPROVE_TX) === 'Approved USDC for ENS’s registrar 0xf633…a3d3 (up to 0.613701 USDC)', r(APPROVE_TX));
+  check('the Kernel batch: the renewal read from the registrar’s NameRenewed log (xk9fdq4rvz, 28 days)',
+    out.get(BATCH_TX)?.ensRenewal?.label === 'xk9fdq4rvz' && out.get(BATCH_TX).ensRenewal.source === 'log', out.get(BATCH_TX)?.ensRenewal);
+  check('LIVE SHAPE (the Kernel) — "Smart-account operation: approved USDC for ENS’s registrar 0xf633…a3d3 (up to 0.613701 USDC), called ENS’s registrar 0xf633…a3d3 to renew xk9fdq4rvz.eth for 28 days: sent 0.613701 USDC"',
+    r(BATCH_TX) === 'Smart-account operation: approved USDC for ENS’s registrar 0xf633…a3d3 (up to 0.613701 USDC), called ENS’s registrar 0xf633…a3d3 to renew xk9fdq4rvz.eth for 28 days: sent 0.613701 USDC', r(BATCH_TX));
+  check('a look-alike contract with the same calldata is neither named nor described (the pinned address only)',
+    out.get(LOOKALIKE_TX)?.ensRenewal === undefined && !/ENS|renew/.test(r(LOOKALIKE_TX)), r(LOOKALIKE_TX));
+  check('Hide amounts masks the amounts, not the name or the duration', !/0\.613701/.test(r(RENEW_TX, { hidden: true })) && /qzv7hk2wmt\.eth for 28 days/.test(r(RENEW_TX, { hidden: true })), r(RENEW_TX, { hidden: true }));
+  check('on another network the registrar address is not named (Ethereum Sepolia only)', !/ENS/.test(render(out.get(APPROVE_TX), { contacts: [], networkId: 'eip155:1' })));
+  check('requests: one more eth_getTransactionByHash for each DIRECT renew row (2), one more receipt for the batch, nothing for the approval or the look-alike',
+    count('eth_getTransactionByHash') - before.tx === 5 + 2 && count('eth_getTransactionReceipt') - before.rc === 5 + 1,
+    { tx: count('eth_getTransactionByHash') - before.tx, rc: count('eth_getTransactionReceipt') - before.rc });
+  // The calldata decoder: exact, refuses anything the engine would not encode the same way.
+  const decoded = decodeEnsRenewCalldata(renewInput);
+  check('decodeEnsRenewCalldata: label, duration, payment token and referrer of the live shape',
+    decoded?.label === 'qzv7hk2wmt' && decoded.duration === DAYS28 && decoded.paymentToken.toLowerCase() === USDC_ENS.toLowerCase() && decoded.referrer === '0x' + '00'.repeat(32), decoded);
+  check('…refuses another selector, a trailing word, a shortened label area, a non-canonical tuple offset and a label the registrar flow does not use',
+    decodeEnsRenewCalldata('0x2d06649c' + renewInput.slice(10)) === null &&
+      decodeEnsRenewCalldata(renewInput + '00'.repeat(32)) === null &&
+      decodeEnsRenewCalldata(renewInput.slice(0, -64)) === null &&
+      decodeEnsRenewCalldata('0x2d06649b' + word(96n) + renewInput.slice(74)) === null &&
+      decodeEnsRenewCalldata(renewInput.replace(Buffer.from('qzv7hk2wmt').toString('hex'), Buffer.from('QZV7HK2WMT').toString('hex'))) === null);
+  check('ensRenewPhrase: only for the registrar, the renew selector and no value',
+    ensRenewPhrase(out.get(RENEW_TX).ensRenewal, { to: REGISTRAR, selector: ENS_RENEW_SELECTOR, value: 0n }) !== null &&
+      ensRenewPhrase(out.get(RENEW_TX).ensRenewal, { to: LOOKALIKE, selector: ENS_RENEW_SELECTOR, value: 0n }) === null &&
+      ensRenewPhrase(out.get(RENEW_TX).ensRenewal, { to: REGISTRAR, selector: '0x095ea7b3', value: 0n }) === null &&
+      ensRenewPhrase(out.get(RENEW_TX).ensRenewal, { to: REGISTRAR, selector: ENS_RENEW_SELECTOR, value: 1n }) === null &&
+      ensRenewPhrase(null, { to: REGISTRAR, selector: ENS_RENEW_SELECTOR, value: 0n }) === null);
+  check('the label: "ENS’s registrar 0xf633…a3d3"', ensRegistrarActivityLabel() === 'ENS’s registrar 0xf633…a3d3');
+  const silent = { called: 0 };
+  check('ensRenewalForDescription: off Ethereum Sepolia, no request and no facts',
+    (await ensRenewalForDescription(async () => { silent.called += 1; return null; }, 'eip155:1', out.get(RENEW_TX).description)) === null && silent.called === 0);
+  check('the engine’s verbs: "called" is listed, "renewed" is not — so the phrase says "called … to renew" (an engine change would allow "Renewed …")',
+    ACTIVITY_CALL_VERBS.includes('called') && !ACTIVITY_CALL_VERBS.includes('renewed'));
+  const screen = readFileSync(join(here, '..', 'src', 'screens', 'ActivityScreen.tsx'), 'utf8');
+  check('the screen renders through renderActivitySentence (the renewal facts ride on the decode)', /renderActivitySentence\(decoded, sentenceOptions\)/.test(screen));
+  // Mutants on activity-sentences.ts.
+  const srcPath = join(here, '..', 'src', 'wallet', 'activity-sentences.ts');
+  const original = readFileSync(srcPath, 'utf8');
+  const mutantDir = join(here, `.mutants-activity-ens-${process.pid}`);
+  mkdirSync(mutantDir, { recursive: true });
+  const loadMutant = async (from, to, n) => {
+    if (!original.includes(from)) throw new Error(`mutation anchor not found: ${from}`);
+    const file = join(mutantDir, `m${n}-activity-sentences.ts`);
+    writeFileSync(file, original.replace(from, to).replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolvePath(dirname(srcPath), spec)).href}'`));
+    return import(pathToFileURL(file).href);
+  };
+  try {
+    const m1 = await loadMutant(
+      "    if (toHex(encodeEnsRenew(label, duration, paymentToken, referrer)).toLowerCase() !== hex) return null;\n",
+      '', 1);
+    check('M-ens1 caught: without the re-encode check a renew calldata with a trailing word is accepted', m1.decodeEnsRenewCalldata(renewInput + '00'.repeat(32)) !== null);
+    const m2 = await loadMutant('  if (chainCaip2 !== ENS_ACTIVITY_CHAIN) return null;\n  const registrar = ENS_V2_SEPOLIA.ethRegistrar;', '  const registrar = ENS_V2_SEPOLIA.ethRegistrar;', 2);
+    const asked = { n: 0 };
+    const mainnetFacts = await m2.ensRenewalForDescription(async (method) => { asked.n += 1; return method === 'eth_getTransactionByHash' ? { input: renewInput, to: REGISTRAR } : null; }, 'eip155:1', out.get(RENEW_TX).description);
+    check('M-ens2 caught: without the network rule a renewal on another network is read (a request made, facts returned)', asked.n > 0 && mainnetFacts !== null);
+    const m3 = await loadMutant(
+      "    if (options.networkId === ENS_ACTIVITY_CHAIN && lower === ENS_V2_SEPOLIA.ethRegistrar.toLowerCase()) return ensRegistrarActivityLabel();\n",
+      '', 3);
+    check('M-ens3 caught: without the naming rule the approval reads "for 0xf633…a3d3" again',
+      m3.renderActivitySentence(out.get(APPROVE_TX), { nativeSymbol: 'test ETH', hidden: false, contacts: [], networkId: SEPOLIA }) === 'Approved USDC for 0xf633…a3d3 (up to 0.613701 USDC)');
+  } finally {
+    rmSync(mutantDir, { recursive: true, force: true });
+  }
+}
+
 console.log('HistoryEntry.contract through the merged four-stream feed (phase 23 item 8):');
 {
   const sah = await import('../src/wallet/smart-account-history.ts');

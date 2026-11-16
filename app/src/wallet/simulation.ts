@@ -2,6 +2,7 @@ import type { FungibleAsset } from '@shiba-wallet/core';
 import {
   ENS_V2_SEPOLIA,
   SimulationUnsupportedError,
+  lendingDeploymentFor,
   simulateAssetChanges,
 } from '@shiba-wallet/chains-evm';
 import type {
@@ -156,6 +157,16 @@ export interface TokenMeta {
    * "stETH (pinned staking token)" instead of "untracked token 0x…".
    */
   pinned?: boolean;
+  /**
+   * True when the token is the aToken of the lending reserve this wallet
+   * pins for this chain (the engine's LENDING_DEPLOYMENTS: Aave v3's
+   * "aArbSepUSDC" on Arbitrum Sepolia) and is not tracked: its symbol and
+   * decimals come from that table, never from the contract, and the preview
+   * names it "aArbSepUSDC (pinned lending token)" (pass p26-emu2 finding 6:
+   * the Lend previews read "untracked token 0x460b…1216"). Kept apart from
+   * `pinned`, which the engine's Activity labels read as a staking token.
+   */
+  pinnedLending?: boolean;
 }
 
 /** Keyed by lowercase contract address. */
@@ -219,8 +230,12 @@ export async function resolveTokenMeta(
     const pinned = tracked
       ? undefined
       : knownStakingTokensForChain(options.chainCaip2).find((t) => t.assetId.reference.toLowerCase() === contract);
+    // The pinned lending reserve's aToken on exactly this chain (pass p26-emu2 finding 6).
+    const lendingAToken = tracked || pinned ? undefined : lendingDeploymentFor(options.chainCaip2)?.aToken;
     if (tracked) {
       meta[contract] = { symbol: sanitizeSymbol(tracked.symbol), decimals: tracked.decimals, tracked: true };
+    } else if (lendingAToken && lendingAToken.address.toLowerCase() === contract) {
+      meta[contract] = { symbol: sanitizeSymbol(lendingAToken.symbol), decimals: lendingAToken.decimals, tracked: false, pinnedLending: true };
     } else if (pinned) {
       meta[contract] = { symbol: sanitizeSymbol(pinned.symbol), decimals: pinned.decimals, tracked: false, pinned: true };
     } else if (lookups.length < maxLookups) {
@@ -347,11 +362,15 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 /** Appended to a pinned staking token's symbol in the preview (TokenMeta.pinned). */
 export const PINNED_STAKING_TOKEN_TAG = '(pinned staking token)';
 
+/** Appended to the pinned lending reserve's aToken symbol in the preview (TokenMeta.pinnedLending; pass p26-emu2 finding 6). */
+export const PINNED_LENDING_TOKEN_TAG = '(pinned lending token)';
+
 /** "USDC", "stETH (pinned staking token)", "PEPE (untracked token 0x1234…abcd)", or "token 0x1234…abcd". */
 function tokenLabel(token: string, meta: TokenMeta | undefined): string {
   const short = shortAddress(token);
   if (meta?.tracked && meta.symbol) return meta.symbol;
   if (meta?.pinned && meta.symbol) return `${meta.symbol} ${PINNED_STAKING_TOKEN_TAG}`;
+  if (meta?.pinnedLending && meta.symbol) return `${meta.symbol} ${PINNED_LENDING_TOKEN_TAG}`;
   if (meta?.symbol) return `${meta.symbol} (untracked token ${short})`;
   return `token ${short}`;
 }

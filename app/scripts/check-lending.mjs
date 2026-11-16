@@ -497,9 +497,18 @@ console.log('check-lending: the screen, the route and the Home link (source pins
   check('the device prompts: the English action title (the smart account\'s with "from your smart account")',
     screen.includes('requireLocalAuth(lendingActionTitle(plan))') && screen.includes('requireLocalAuth(`${lendingActionTitle(plan)} from your smart account`)') &&
       screen.includes("translateIn('en', 'lend.prompt.approve'"));
+  // Since pass p26-emu2 finding 7 the approve step has its own preview too: three previews (approve, confirm, smart-account confirm).
   check('the confirm: the preview, the risk card, the spending limits and the pre-flight gate on every confirm',
-    (screen.match(/<BalanceChangePreview/g) ?? []).length === 2 && (screen.match(/<RiskWarnings/g) ?? []).length === 3 && (screen.match(/<SpendingPolicyNotice/g) ?? []).length === 2 &&
+    (screen.match(/<BalanceChangePreview/g) ?? []).length === 3 && (screen.match(/<RiskWarnings/g) ?? []).length === 3 && (screen.match(/<SpendingPolicyNotice/g) ?? []).length === 2 &&
       screen.includes('disabled={!eoaQuote.simulation.ok}'));
+  // Pass p26-emu2 finding 7: the approve step (regular account, step 1 of 2) previews the approval it sends, as the renewal's approval step does.
+  const approveOk = (src) => {
+    const view = src.slice(src.indexOf("if ((phase === 'approve' || phase === 'approving') && plan?.approval && eoaQuote)"), src.indexOf("if ((phase === 'confirm' || phase === 'sending') && plan && eoaQuote)"));
+    return /<BalanceChangePreview\s+url=\{quotedUrl\}\s+request=\{\{ from: account\.address, to: eoaQuote\.to, value: eoaQuote\.amount, \.\.\.\(eoaQuote\.data \? \{ data: eoaQuote\.data \} : \{\}\) \}\}\s*\/>/.test(view) &&
+      view.indexOf('<BalanceChangePreview') > view.indexOf("t('send.row.maxFeePaidIn'") && view.indexOf('<BalanceChangePreview') < view.indexOf('<RiskWarnings');
+  };
+  check('finding 7: the approve step shows the balance-change preview of the approval (from the account, to the token, its calldata), between the fee and the risk card', approveOk(screen));
+  check('…mutant caught: the approve step without its preview', !approveOk(screen.replace(/\s*\{\/\* Pass p26-emu2 finding 7[^\n]*\n\s*<BalanceChangePreview\s+url=\{quotedUrl\}[\s\S]*?\/>/, '')));
   check('the success view: the receipt read, the explorer button gated on explorerTxBase, the note field for both paths',
     screen.includes('waitForTransactionReceipt(node, sent.txid)') && screen.includes('lendingOutcomeLines(receiptLogsOf(receipt), p, after)') &&
       screen.includes("result?.explorerUrl && evmChain.explorerTxBase ?") && (screen.match(/<TransactionNoteField/g) ?? []).length === 2);

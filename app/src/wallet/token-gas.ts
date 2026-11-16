@@ -36,7 +36,7 @@ import {
 // Explicit .ts extensions: this module is imported by
 // scripts/check-token-gas.mjs under Node's type stripping.
 import {
-  AA_ESTIMATE_RETRIES,
+  aaEstimateRetriesFor,
   AA_FUNDING_TITLE,
   AA_MAX_PROBE_VALUE_WEI,
   AaFundingError,
@@ -1234,7 +1234,7 @@ async function erc7677Price(
     // asked for again and then refused, never shown on the confirm screen.
     estimated = await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGasChecked(
       op,
-      bundle.estimateRetries ?? AA_ESTIMATE_RETRIES,
+      bundle.estimateRetries ?? aaEstimateRetriesFor(bundle.chainId),
     );
   } catch (e) {
     const raw = e instanceof Error ? e.message : String(e);

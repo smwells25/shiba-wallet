@@ -638,6 +638,11 @@ export function LendScreen({ navigation }: Props) {
         <Row label="Token" value={plan.approval.token} mono theme={theme} />
         <Row label="Spender" value={plan.approval.spender} mono theme={theme} />
         <Row label={t('send.row.maxFeePaidIn', { symbol })} value={`${formatUnits(eoaQuote.fee, 18, 18)} ${symbol}`} theme={theme} />
+        {/* Pass p26-emu2 finding 7: the approval's own preview (the allowance it sets), as the renewal's approval step shows. */}
+        <BalanceChangePreview
+          url={quotedUrl}
+          request={{ from: account.address, to: eoaQuote.to, value: eoaQuote.amount, ...(eoaQuote.data ? { data: eoaQuote.data } : {}) }}
+        />
         <RiskWarnings url={quotedUrl} wallet={account.address} to={eoaQuote.to} data={eoaQuote.data} />
         {eoaQuote.simulation.ok ? (
           <Text style={[styles.simulationOk, { color: theme.success }]}><T>Pre-flight simulation passed (eth_call).</T></Text>

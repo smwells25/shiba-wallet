@@ -575,6 +575,69 @@ console.log('check-simulation: pinned staking tokens are named by symbol (phase 
   check('Hoodi’s stETH address on another chain is not pinned there', otherChain[H_STETH.toLowerCase()]?.pinned !== true);
 }
 
+// Pass p26-emu2 finding 6: the Lend previews called Aave's aToken "untracked token
+// 0x460b…1216". The pinned lending reserve's aToken (the engine's
+// LENDING_DEPLOYMENTS, Arbitrum Sepolia) is named "aArbSepUSDC (pinned lending
+// token)" on exactly its chain, from the table, with no eth_call. The shape of
+// the live supply (block 327753539: 100,000 USDC to the pool's aToken,
+// 100,000 aArbSepUSDC minted to Account 1).
+console.log('check-simulation: the pinned lending token is named by symbol (pass p26-emu2 finding 6)');
+{
+  const sim = await import('../src/wallet/simulation.ts');
+  const { LENDING_DEPLOYMENTS } = await import('@shiba-wallet/chains-evm');
+  const { mkdirSync, rmSync, writeFileSync, readFileSync } = await import('node:fs');
+  const { dirname, join, resolve } = await import('node:path');
+  const { pathToFileURL, fileURLToPath } = await import('node:url');
+  const ARB = 'eip155:421614';
+  const dep = LENDING_DEPLOYMENTS[ARB];
+  const A_TOKEN = dep.aToken.address;
+  const USDC_ARB = dep.asset.address;
+  const ZERO = '0x0000000000000000000000000000000000000000';
+  const trackedUsdc = [{ kind: 'fungible', assetId: { chainId: ARB, namespace: 'erc20', reference: USDC_ARB }, symbol: 'USDC', name: 'USD Coin', decimals: 6 }];
+  const supply = [
+    { type: 'erc20', callIndex: 0, direction: 'out', token: USDC_ARB, from: ME, to: A_TOKEN, amount: 100_000n },
+    { type: 'erc20', callIndex: 0, direction: 'in', token: A_TOKEN, from: ZERO, to: ME, amount: 100_000n },
+  ];
+  requests.length = 0;
+  const meta = await sim.resolveTokenMeta(supply, { url: URL, chainCaip2: ARB, trackedTokens: trackedUsdc });
+  const lines = texts(describeAssetChanges(supply, meta, { nativeSymbol: 'test ETH', hidden: false, chainCaip2: ARB }));
+  check('Arbitrum Sepolia supply: "You receive 0.1 aArbSepUSDC (pinned lending token)", not "untracked token 0x460b…1216"',
+    JSON.stringify(lines) === JSON.stringify(['You send 0.1 USDC', 'You receive 0.1 aArbSepUSDC (pinned lending token)']), lines);
+  check('…symbol and decimals from the engine’s table (aArbSepUSDC, 6), no eth_call to the token, and not marked as a staking token',
+    dep.aToken.symbol === 'aArbSepUSDC' && meta[A_TOKEN.toLowerCase()]?.pinnedLending === true && meta[A_TOKEN.toLowerCase()]?.pinned !== true &&
+      meta[A_TOKEN.toLowerCase()]?.decimals === 6 && !requests.some((r) => r.body.method === 'eth_call'), requests.map((r) => r.body.method));
+  check('the tag text', sim.PINNED_LENDING_TOKEN_TAG === '(pinned lending token)');
+  const withdrawAll = [{ type: 'erc20', callIndex: 0, direction: 'out', token: A_TOKEN, from: ME, to: ZERO, amount: 100_000n }];
+  check('a withdrawal sends the pinned aToken by name',
+    texts(describeAssetChanges(withdrawAll, await sim.resolveTokenMeta(withdrawAll, { url: URL, chainCaip2: ARB, trackedTokens: [] }), { nativeSymbol: 'test ETH', hidden: false }))[0] === 'You send 0.1 aArbSepUSDC (pinned lending token)');
+  const tracked = await sim.resolveTokenMeta(withdrawAll, { url: URL, chainCaip2: ARB, trackedTokens: [{ kind: 'fungible', assetId: { chainId: ARB, namespace: 'erc20', reference: A_TOKEN }, symbol: 'aArbSepUSDC', name: 'aToken', decimals: 6 }] });
+  check('a tracked aToken keeps the plain symbol (tracked wins)', tracked[A_TOKEN.toLowerCase()]?.tracked === true && tracked[A_TOKEN.toLowerCase()]?.pinnedLending !== true);
+  requests.length = 0;
+  const lookalike = `${A_TOKEN.slice(0, -1)}7`;
+  const other = await sim.resolveTokenMeta([{ ...withdrawAll[0], token: lookalike }], { url: URL, chainCaip2: ARB, trackedTokens: [] });
+  check('a look-alike address (last digit changed) is not pinned (its metadata is read from the chain)', other[lookalike.toLowerCase()]?.pinnedLending !== true && requests.some((r) => r.body.method === 'eth_call'));
+  const otherChain = await sim.resolveTokenMeta(withdrawAll, { url: URL, chainCaip2: 'eip155:11155111', trackedTokens: [] });
+  check('the aToken’s address on another chain is not pinned there', otherChain[A_TOKEN.toLowerCase()]?.pinnedLending !== true);
+  // Mutant: the chain dropped — the Arbitrum Sepolia table would label any chain's contract at that address.
+  const here = dirname(fileURLToPath(import.meta.url));
+  const srcPath = join(here, '..', 'src', 'wallet', 'simulation.ts');
+  const original = readFileSync(srcPath, 'utf8');
+  const from = 'const lendingAToken = tracked || pinned ? undefined : lendingDeploymentFor(options.chainCaip2)?.aToken;';
+  check('mutation anchor present (the lending aToken lookup by chain)', original.includes(from));
+  const dir = join(here, `.mutants-simulation-lending-${process.pid}`);
+  mkdirSync(dir, { recursive: true });
+  try {
+    const file = join(dir, 'simulation.ts');
+    writeFileSync(file, original.replace(from, "const lendingAToken = tracked || pinned ? undefined : lendingDeploymentFor('eip155:421614')?.aToken;")
+      .replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolve(dirname(srcPath), spec)).href}'`));
+    const m = await import(pathToFileURL(file).href);
+    const mm = await m.resolveTokenMeta(withdrawAll, { url: URL, chainCaip2: 'eip155:11155111', trackedTokens: [] });
+    check('M-lend caught: a lookup that ignores the chain pins the address on Sepolia too (the check above would fail)', mm[A_TOKEN.toLowerCase()]?.pinnedLending === true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 // Phase 24 (the masked-amount follow-up to pass p24-solhist finding 1): under
 // Hide amounts a preview row such as "You send •••• USDC" was spoken
 // "You send 4 Bullet USDC". The card's row Texts now carry a spoken label

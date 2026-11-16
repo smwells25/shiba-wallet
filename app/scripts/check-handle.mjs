@@ -761,7 +761,8 @@ console.log('check-handle: the fourteen findings of emulator pass p23-handle');
   // (5) The screen gives the risk card the name's owner (risk.ts derives the resolver; check-approvals pins the lines).
   check('(5) both confirm screens pass the name’s owner to the risk card, so it can name that owner’s own resolver',
     screen.includes('<RiskWarnings url={quotedUrl} wallet={address} to={eoaQuote.to} data={eoaQuote.data} ensResolverOwner={jobNameOwner(job)} />') &&
-      screen.includes('<RiskWarnings url={url} wallet={aaQuote.sender} to={job.calls[0]!.to} data={job.calls[0]!.data} ensResolverOwner={jobNameOwner(job)} />'));
+      // Since pass p26-emu2 finding 3 the smart-account card is aimed through aaRiskCall (a renewal's renew call); the owner is still passed.
+      screen.includes('<RiskWarnings url={url} wallet={aaQuote.sender} to={aaRiskCall(job).to} data={aaRiskCall(job).data} ensResolverOwner={jobNameOwner(job)} />'));
 
   // (6) The name's ownership token, not its 75–78-digit id.
   {
@@ -1135,6 +1136,86 @@ console.log('check-handle: renewing a name (phase 26 item 1, the app half)');
   {
     const m = await handleMutant("  if (calls.length === 1) {\n    try {\n      await node('eth_call'", "  if (calls.length === 0) {\n    try {\n      await node('eth_call'");
     caught('renewal: the batch pre-flight used for renew alone (no eth_call)', (await m.preflightRenewal(renewNode({ simulate: okSim }), ACCOUNT_1, regular.sends[1])).via !== 'eth_call');
+  }
+
+  // -------------------------------------------------------------------------
+  // Pass p26-emu2 findings 2, 3, 5, 8 and 10 (the renewal's views).
+  console.log('check-handle: the p26-emu2 findings on the renewal’s views');
+  const HASH = '0x' + 'ab'.repeat(32);
+  // Finding 2: the Kernel renewal's success view shows the UserOperation hash beside the bundle transaction.
+  check('finding 2: the operation hash spoken short, "UserOperation hash 0xabab…abab"', H.spokenUserOpHash(HASH) === 'UserOperation hash 0xabab…abab', H.spokenUserOpHash(HASH));
+  check('finding 2 (screen): onAaApprove hands the userOpHash to afterStep, the result keeps it, and the success view shows it (label, value, one short spoken stop) and gives it to the note field',
+    /await afterStep\(job, \{ txid: summary\.txHash, explorerUrl: [^\n]*, userOpHash \}\);/.test(screen) &&
+      screen.includes('useState<{ txid: string; explorerUrl: string | null; userOpHash?: string; title: string; body: string; anchor?: ScrollAnchor } | null>(null)') &&
+      /\{result\.userOpHash \? \(\s*<View accessible accessibilityLabel=\{spokenUserOpHash\(result\.userOpHash\)\}>[\s\S]{0,300}\{t\('send\.aa\.userOpHash'\)\}[\s\S]{0,400}\{result\.userOpHash\}/.test(screen) &&
+      screen.includes('<TransactionNoteField network={caip2} txid={result.txid} userOpHash={result.userOpHash ?? null} />'));
+  // Finding 3: the smart-account renewal confirm's one-operation heading and the risk card on the renew call.
+  check('finding 3: the batch heading, exact ("One operation, all-or-nothing: (1) approve exactly 0.613701 USDC for ENS’s registrar, (2) the renewal of xk9fdq4rvz.eth for 28 days. …")',
+    H.renewalBatchHeading(smart.plan) === 'One operation, all-or-nothing: (1) approve exactly 0.613701 USDC for ENS’s registrar, (2) the renewal of xk9fdq4rvz.eth for 28 days. If the renewal would fail, the approval is undone with it.',
+    H.renewalBatchHeading(smart.plan));
+  const riskCall = H.renewalRiskCall(smart.sends[0]);
+  check('finding 3: the risk card describes the renew call to ENS’s pinned registrar (selector 0x2d06649b), not the batch’s first call (the USDC approval)',
+    smart.sends[0].length === 2 && same(smart.sends[0][0].to, ENS_V2_SEPOLIA_USDC.address) && riskCall === smart.sends[0][1] &&
+      same(riskCall.to, ENS_V2_SEPOLIA.ethRegistrar) && toHex(riskCall.data.slice(0, 4)) === '0x2d06649b' &&
+      H.renewalRiskCall([smart.sends[0][0]]) === null);
+  check('finding 3 (screen): the smart-account confirm shows the heading for a renewal batch and aims RiskWarnings at aaRiskCall (renewalRiskCall for a renewal)',
+    /\{job\.kind === 'renew' && job\.renewal && job\.calls\.length > 1 \? \(\s*<Text style=\{\[styles\.hint, \{ color: theme\.textMuted \}\]\}>\{renewalBatchHeading\(job\.renewal\.plan\)\}<\/Text>/.test(screen) &&
+      screen.includes("const aaRiskCall = (j: Job): Call => (j.kind === 'renew' ? renewalRiskCall(j.calls) ?? j.calls[0]! : j.calls[0]!);") &&
+      screen.includes('<RiskWarnings url={url} wallet={aaQuote.sender} to={aaRiskCall(job).to} data={aaRiskCall(job).data} ensResolverOwner={jobNameOwner(job)} />') &&
+      !screen.includes('to={job.calls[0]!.to} data={job.calls[0]!.data}'));
+  // Finding 5: "Your names" names the holder as Activity does, with the short address.
+  const activitySrc = source('src/wallet/activity-sentences.ts');
+  check('finding 5: the holder’s label — "Account 1" for the regular account, "Account 1’s smart account" for its Kernel (the wording Activity uses), null without a name',
+    H.handleOwnerAccountLabel('regular', 'Account 1') === 'Account 1' && H.handleOwnerAccountLabel('smart', 'Account 1') === 'Account 1’s smart account' &&
+      H.handleOwnerAccountLabel('smart', '') === null && H.handleOwnerAccountLabel('regular', undefined) === null &&
+      activitySrc.includes('add(smart, `${a.name}’s smart account`)'));
+  check('finding 5: one spoken stop with the short address ("Owner of the name: Account 1’s smart account, 0xD31c…D8FA"; without a name the short address alone)',
+    H.handleOwnerRowSpoken('smart', 'Account 1', KERNEL) === 'Owner of the name: Account 1’s smart account, 0xD31c…D8FA' &&
+      H.handleOwnerRowSpoken('regular', 'Account 1', ACCOUNT_1) === 'Owner of the name: Account 1, 0x772e…F44F' &&
+      H.handleOwnerRowSpoken('regular', null, ACCOUNT_1) === 'Owner of the name: 0x772e…F44F');
+  check('finding 5 (screen): the "Your names" owner row shows the label with the short address under it and is spoken through handleOwnerRowSpoken; the full 42-character value is gone',
+    screen.includes('value={handleOwnerAccountLabel(row.value.ownerKind, activeAccount?.name) ?? spokenShortAddress(row.value.owner)}') &&
+      screen.includes('sub={handleOwnerAccountLabel(row.value.ownerKind, activeAccount?.name) === null ? null : spokenShortAddress(row.value.owner)}') &&
+      screen.includes('spoken={handleOwnerRowSpoken(row.value.ownerKind, activeAccount?.name, row.value.owner)}') &&
+      !screen.includes('value={row.value.owner}'));
+  // Finding 8: the renewal's approval transaction on step 2 and on the success view.
+  check('finding 8: the approval hash spoken short, "Approval transaction: 0xabab…abab"', H.spokenApprovalTx(HASH) === 'Approval transaction: 0xabab…abab');
+  const afterRenewal = fn('afterRenewalStep');
+  check('finding 8 (screen): the approval is remembered when it is included (before the renew step opens), shown on the renew step and on the success view, and forgotten on the way back',
+    /if \(done\.kind === 'renewApprove'\) \{[\s\S]*?setRenewApproveTxid\(sent\.txid\);\s*await openJob\(\{\s*kind: 'renew'/.test(afterRenewal) &&
+      /\{job\.kind === 'renew' && renewApproveTxid \? \(\s*<Text accessibilityLabel=\{spokenApprovalTx\(renewApproveTxid\)\}[^>]*>\{t\('staking\.success\.approvalTx', \{ hash: renewApproveTxid \}\)\}<\/Text>/.test(screen) &&
+      /\{renewApproveTxid \? \(\s*<Text accessibilityLabel=\{spokenApprovalTx\(renewApproveTxid\)\}[^>]*>\{t\('staking\.success\.approvalTx', \{ hash: renewApproveTxid \}\)\}<\/Text>/.test(screen.slice(screen.indexOf("phase === 'success' && result"))) &&
+      /const backToMain = [^\n]*\n[\s\S]{0,200}setRenewApproveTxid\(null\);/.test(screen));
+  // Finding 10: each renewal review row is one spoken stop.
+  check('finding 10: a review row spoken as one stop, "label: value"', H.reviewRowSpoken('New expiry', '2026-12-22 03:49:00 UTC') === 'New expiry: 2026-12-22 03:49:00 UTC');
+  {
+    const review = screen.slice(screen.indexOf("if (phase === 'renew-review' && renewal)"), screen.indexOf("if (phase === 'review' && quoted)"));
+    const rows = review.match(/<Row [^\n]*/g) ?? [];
+    check('finding 10 (screen): every Row of the renewal review carries a spoken label (expiry rows via reviewRowSpoken, the pinned contracts in full)',
+      rows.length === 6 && rows.every((r) => r.includes('spoken={')) &&
+        review.includes("spoken={reviewRowSpoken(t('handle.row.registrar'), ENS_V2_SEPOLIA.ethRegistrar)}") &&
+        review.includes("spoken={reviewRowSpoken(t('handle.row.usdc'), HANDLE_USDC.address)}"), `${rows.length} rows`);
+  }
+  // In-suite mutants for these findings.
+  {
+    const m = await handleMutant('  return calls.find((c) => c.to.toLowerCase() === registrar) ?? null;', '  return calls[0] ?? null;');
+    caught('finding 3: the risk card aimed at the batch’s first call again (the approval)', m.renewalRiskCall(smart.sends[0]) !== smart.sends[0][1]);
+  }
+  {
+    const m = await handleMutant("  return kind === 'smart' ? t('handle.renew.ownerSmart', { name }) : name;", '  return name;');
+    caught('finding 5: the Kernel named as the regular account', m.handleOwnerAccountLabel('smart', 'Account 1') === 'Account 1');
+  }
+  {
+    const m = await handleMutant("  return `${t('send.aa.userOpHash')} ${short}`;", "  return `${t('send.aa.userOpHash')} ${hash}`;");
+    caught('finding 2: the operation hash spoken in full again', m.spokenUserOpHash(HASH) !== H.spokenUserOpHash(HASH));
+  }
+  {
+    const m = await handleMutant("  return t('staking.success.approvalTx', { hash: short });", "  return t('staking.success.approvalTx', { hash });");
+    caught('finding 8: the approval hash spoken in full again', m.spokenApprovalTx(HASH) !== H.spokenApprovalTx(HASH));
+  }
+  {
+    const m = await handleMutant('  return `${label}: ${value}`;', '  return value;');
+    caught('finding 10: a review row spoken without its label (two stops again)', m.reviewRowSpoken('New expiry', 'x') !== 'New expiry: x');
   }
 }
 

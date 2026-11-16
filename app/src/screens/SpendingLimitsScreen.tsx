@@ -38,6 +38,8 @@ import {
   spendingHistoryDamaged,
   spendingReadouts,
   solanaSpendingTokenOptions,
+  solanaLimitMintSpoken,
+  solanaLimitRemoveLabel,
   spendingTokenOptions,
   spentReadoutText,
   windowLabel,
@@ -705,9 +707,16 @@ function SolanaLimitsSection({
           <Text {...maskedSpokenProps(spentReadoutText(r, hideAmounts))} style={[styles.body, { color: theme.text }]}>
             {spentReadoutText(r, hideAmounts)}
           </Text>
-          <Text style={[styles.mono, { color: theme.textMuted }]}>{t('spendingSol.mint', { mint: r.policy.token })}</Text>
+          {/* Pass p26-emu2 finding 9: the mint visible in full, spoken short; Remove names the limit it removes. */}
+          <Text accessibilityLabel={solanaLimitMintSpoken(r.policy.token)} style={[styles.mono, { color: theme.textMuted }]}>{t('spendingSol.mint', { mint: r.policy.token })}</Text>
           <View style={styles.choiceRow}>
-            <Button title={tx('Remove')} variant="secondary" onPress={() => onRemove(r.policy)} style={styles.choiceButton} />
+            <Button
+              title={tx('Remove')}
+              accessibilityLabel={solanaLimitRemoveLabel(r.policy.symbol, network)}
+              variant="secondary"
+              onPress={() => onRemove(r.policy)}
+              style={styles.choiceButton}
+            />
           </View>
         </View>
       ))}

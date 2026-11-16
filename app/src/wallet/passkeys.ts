@@ -50,7 +50,7 @@ import {
   type AaTokenTransfer,
   type MaxAaReservation,
   AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
-  AA_ESTIMATE_RETRIES,
+  aaEstimateRetriesFor,
   AA_MAX_PROBE_VALUE_WEI,
   MULTISIG_CONFIG_BUNDLE_REFUSAL,
 } from './aa.ts';
@@ -1423,8 +1423,9 @@ export function createPasskeyBundle(
     // whenever the account's deposit is below the required prefund.
     depositTopUpVerificationGas: AA_DEPOSIT_TOPUP_VERIFICATION_GAS,
     // Impossible (zero) gas estimates are refused and asked for again, as
-    // for every smart-account client (aa.ts AA_ESTIMATE_RETRIES).
-    estimateRetries: AA_ESTIMATE_RETRIES,
+    // for every smart-account client (aa.ts aaEstimateRetriesFor: longer on
+    // the networks with recorded bursts, pass p26-emu2 finding 1).
+    estimateRetries: aaEstimateRetriesFor(base.chainId),
   });
   return {
     client,

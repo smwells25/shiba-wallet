@@ -2317,4 +2317,11 @@ export const en = {
   'insights.pending.solanaUncached': '{address} (it matches none of the Solana addresses this phone has on record; the Solana address of {accounts} is not on record here, so it may be one of those)',
   'insights.pending.solanaUncachedNote': 'The wallet keeps each recovery-phrase account’s public addresses on this phone once it has worked them out, normally when the wallet opens. Until an account’s Solana address is on record, a Solana entry sent from that account cannot be named here.',
   'pnl.solanaDevnet': 'Profit and loss for SOL is not offered while Solana devnet is on: devnet SOL has no price.',
+  // ---- BEGIN pass p26-emu2 fixes: the Kernel renewal confirm's one-operation heading (finding 3) and the smart account's
+  // label in "Your names" (finding 5) (wallet/handle.ts renewalBatchHeading, handleOwnerAccountLabel); the Solana limit's
+  // Remove label (finding 9, wallet/spending-policy.ts solanaLimitRemoveLabel).
+  'handle.renew.aaBatch': 'One operation, all-or-nothing: (1) approve exactly {amount} {symbol} for ENS’s registrar, (2) the renewal of {name} for {days} days. If the renewal would fail, the approval is undone with it.',
+  'handle.renew.ownerSmart': '{name}’s smart account',
+  'limits.solana.removeLabel': 'Remove the {symbol} limit on {network}',
+  // ---- END pass p26-emu2 fixes ----
 } as const;
