@@ -104,3 +104,42 @@ export function prePromptStageText(stage: PrePromptStage): string | null {
   if (stage === 'final') return t('aa.prePrompt.final');
   return null;
 }
+
+/**
+ * The one spoken path for the busy line (pass p27-emu2 finding 2: TalkBack
+ * announced the "Checking the bundler's gas estimate…" line twice per
+ * check). Returns a function the note calls with the line it currently
+ * shows (prePromptStageText; null while idle): it calls `announce` once per
+ * distinct sentence, never again for the same sentence while it stays on
+ * screen (a re-render, a language re-render with the same text), and
+ * forgets the sentence when the line goes away, so the next check is
+ * announced again. A stage change to another sentence ('bundler' →
+ * 'final') is a distinct sentence and is announced once.
+ *
+ * Why an explicit announcement and no live region on Android: until this
+ * fix the line sat in an Android polite live region
+ * (accessibilityLiveRegion, RN 0.86.3 BaseViewManager.java 532–540 maps it to
+ * ViewCompat.setAccessibilityLiveRegion and nothing else), and whatever
+ * content-change events the framework sent for that region's subtree — the
+ * row inserted with its label, the wrapper leaving its zero-size idle style,
+ * the ActivityIndicator's ProgressBar (RN's ProgressBarContainerView adds it
+ * as a child view) — were each TalkBack's to speak. How many events Android
+ * sends there, and how TalkBack merges them, is framework and TalkBack code
+ * not on this machine, so the exact second event is NOT established. An
+ * announcement is one TYPE_ANNOUNCEMENT event per call by construction (RN
+ * 0.86.3 AccessibilityInfo.js 474–480 → AccessibilityInfoModule.kt 282–292
+ * builds and sends exactly one event, only while a service is on), so the
+ * count is decided here, in code the checks can run.
+ */
+export function createPrePromptAnnouncer(announce: (sentence: string) => void): (shown: string | null) => void {
+  let last: string | null = null;
+  return (shown) => {
+    if (shown === null) {
+      last = null;
+      return;
+    }
+    if (shown === last) return;
+    last = shown;
+    announce(shown);
+  };
+}

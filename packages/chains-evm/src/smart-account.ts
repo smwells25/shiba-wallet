@@ -9,8 +9,11 @@ import {
   DEFAULT_ESTIMATE_RETRIES,
   ImpossibleGasEstimateError,
   PaymasterClient,
+  gasEstimateProblems,
   gasLimitProblems,
+  toRpcUserOperation,
   type EstimateRetryPolicy,
+  type GasEstimate,
   type JsonRpcTransport,
 } from './rpc.js';
 
@@ -241,6 +244,90 @@ const BALANCE_OF_SELECTOR = keccak_256(utf8ToBytes('balanceOf(address)')).slice(
  */
 export type BeforeSendHook = (op: UserOperation, userOpHash: string) => void | Promise<void>;
 
+/**
+ * A bundler gas estimate the caller already obtained, and checked for
+ * impossible (zero) limits, for exactly the stub operation sendCalls is
+ * about to estimate (pass p27-emu2 finding 1, what was left of F-97). The
+ * app asks the bundler once more just before the device prompt
+ * (aa.ts checkAaQuoteBeforeApproval); on Arbitrum Sepolia ZeroDev then
+ * answered zeros to the send-time estimate on all 8 attempts about 15 s
+ * after that pre-prompt estimate had passed, so the user approved on the
+ * device for nothing.
+ *
+ * Handed to sendCalls as `options.preCheckedEstimate`, it is used ONLY as
+ * the fallback when the send-time estimate is impossible: the send-time
+ * estimate is still asked for (a fresh answer is better when one comes),
+ * but just once instead of under the retry policy; if that one answer is
+ * impossible, the pre-checked estimate takes its place. A bundler error
+ * (a revert, an HTTP failure) is still thrown as before: only an
+ * impossible answer is replaced. Everything after the estimate (padding,
+ * the deposit top-up headroom, the final impossible-limit check,
+ * `beforeSign`) runs exactly as for a fresh estimate, so a caller's
+ * beforeSign still refuses limits whose worst case exceeds what the user
+ * reviewed.
+ *
+ * It is used only when preCheckedEstimateMismatch finds nothing: the same
+ * chain and EntryPoint, the same stub operation as eth_estimateUserOperationGas
+ * would receive (sender, nonce, factory and factoryData, callData, fees,
+ * stub signature — compared as the exact JSON-RPC operation), no paymaster
+ * on either side or on the client, no EIP-7702 authorization, an estimate
+ * still free of impossible limits, and an age of at most
+ * PRE_CHECKED_ESTIMATE_MAX_AGE_MS. Anything else falls back to the
+ * existing send-time estimate with its retries, as if nothing was passed.
+ */
+export interface PreCheckedGasEstimate {
+  /** The stub operation the estimate was asked for, as given to eth_estimateUserOperationGas. */
+  op: UserOperation;
+  /** The bundler's answer for `op`, already checked (estimateUserOperationGasChecked). */
+  estimate: GasEstimate;
+  /** When the answer arrived, in milliseconds since the epoch (Date.now()). */
+  checkedAtMs: number;
+  /** The chain and EntryPoint it was asked for. */
+  chainId: bigint;
+  entryPoint: string;
+}
+
+/**
+ * How old a pre-checked estimate may be and still stand in for the
+ * send-time one: 90 seconds. A judgement, not a protocol figure: the
+ * pre-prompt estimate runs immediately before the device prompt, and in
+ * pass p27-emu2 the send-time estimate followed it by about 15 s; 90 s
+ * leaves room for a slow fingerprint or PIN while keeping the estimate
+ * within a few blocks of the state it was made against. The nonce,
+ * callData and deployment state are compared exactly in any case.
+ */
+export const PRE_CHECKED_ESTIMATE_MAX_AGE_MS = 90_000;
+
+/**
+ * Why `pre` cannot stand in for the estimate of `op` (the stub operation
+ * sendCalls built, before the estimate), or null when it can. Pure; exported
+ * for the app's checks.
+ */
+export function preCheckedEstimateMismatch(
+  pre: PreCheckedGasEstimate,
+  op: UserOperation,
+  context: { chainId: bigint; entryPoint: string; nowMs: number; clientHasPaymaster: boolean },
+): string | null {
+  if (context.clientHasPaymaster || op.paymaster || pre.op.paymaster) {
+    return 'a paymaster takes part: its stub and final data change the operation the bundler estimates';
+  }
+  if (op.eip7702Auth || pre.op.eip7702Auth) return 'the operation carries an EIP-7702 authorization';
+  if (pre.chainId !== context.chainId) return 'another chain';
+  if (pre.entryPoint.toLowerCase() !== context.entryPoint.toLowerCase()) return 'another EntryPoint';
+  const age = context.nowMs - pre.checkedAtMs;
+  if (!Number.isFinite(age) || age < 0 || age > PRE_CHECKED_ESTIMATE_MAX_AGE_MS) {
+    return `the estimate is ${Number.isFinite(age) ? Math.round(age) : 'an unknown number of'} ms old, outside 0–${PRE_CHECKED_ESTIMATE_MAX_AGE_MS} ms`;
+  }
+  // The exact operation eth_estimateUserOperationGas would receive: sender,
+  // nonce, factory, factoryData, callData, the zero gas fields, fees and the
+  // stub signature. Any difference means another operation.
+  if (JSON.stringify(toRpcUserOperation(pre.op)) !== JSON.stringify(toRpcUserOperation(op))) {
+    return 'the estimate was made for another operation (sender, nonce, deployment, callData, fees or stub differ)';
+  }
+  if (gasEstimateProblems(pre.estimate, op).length > 0) return 'the estimate itself has an impossible limit';
+  return null;
+}
+
 export class SmartAccountClient {
   private bundlerClient: BundlerClient;
   private paymasterClient?: PaymasterClient;
@@ -327,15 +414,33 @@ export class SmartAccountClient {
    * over the userOpHash is made; callers use it to refuse an operation whose
    * re-estimated worst-case cost exceeds what the user reviewed. Omitting it
    * keeps the previous behaviour exactly.
+   *
+   * `options.preCheckedEstimate` (pass p27-emu2 finding 1), when given and
+   * matching (preCheckedEstimateMismatch), replaces a send-time estimate
+   * that comes back impossible; the send-time estimate is then asked for
+   * once instead of under the retry policy. See PreCheckedGasEstimate.
+   * Omitting it keeps the previous behaviour exactly. `options.nowMs` is
+   * the clock for its age (Date.now when absent; tests pass their own).
    */
   async sendCalls(
     owner: DerivedAccount,
     calls: Call[],
     fees: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
-    options: { beforeSign?: (op: UserOperation) => void | Promise<void>; beforeSend?: BeforeSendHook } = {},
+    options: {
+      beforeSign?: (op: UserOperation) => void | Promise<void>;
+      beforeSend?: BeforeSendHook;
+      preCheckedEstimate?: PreCheckedGasEstimate;
+      nowMs?: () => number;
+    } = {},
   ): Promise<{ userOpHash: string; userOp: UserOperation }> {
     const spec = this.config.spec;
-    let op = await this.buildUnsignedOperation(owner, calls, fees, options.beforeSign);
+    let op = await this.buildUnsignedOperation(
+      owner,
+      calls,
+      fees,
+      options.beforeSign,
+      options.preCheckedEstimate ? { estimate: options.preCheckedEstimate, nowMs: options.nowMs ?? Date.now } : undefined,
+    );
 
     const hash = getUserOpHash(op, this.config.entryPoint, this.config.chainId);
     // Awaited: a spec may sign asynchronously (for example behind a passkey
@@ -366,6 +471,7 @@ export class SmartAccountClient {
     calls: Call[],
     fees: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
     beforeSign: ((op: UserOperation) => void | Promise<void>) | undefined,
+    preChecked?: { estimate: PreCheckedGasEstimate; nowMs: () => number },
   ): Promise<UserOperation> {
     const spec = this.config.spec;
     // EIP-7702 senders are EOAs: no factory ever; the delegation (if not yet
@@ -405,10 +511,37 @@ export class SmartAccountClient {
 
     // An estimate with an impossible (zero) limit is refused and asked for
     // again before anything is padded or signed (gasLimitProblems).
-    const gas = await this.bundlerClient.estimateUserOperationGasChecked(
-      op,
-      this.config.estimateRetries ?? DEFAULT_ESTIMATE_RETRIES,
-    );
+    //
+    // With a matching pre-checked estimate (pass p27-emu2 finding 1) the
+    // bundler is asked ONCE: a usable answer is used as always; an
+    // impossible one is replaced by the pre-checked estimate instead of
+    // retried (each retry would keep the person who just approved on the
+    // device waiting during a zero burst). Other bundler errors are thrown
+    // as before. Without one, or when it does not match, exactly as before.
+    const usablePreChecked =
+      preChecked &&
+      preCheckedEstimateMismatch(preChecked.estimate, op, {
+        chainId: this.config.chainId,
+        entryPoint: this.config.entryPoint,
+        nowMs: preChecked.nowMs(),
+        clientHasPaymaster: this.paymasterClient !== undefined,
+      }) === null
+        ? preChecked.estimate.estimate
+        : null;
+    let gas: GasEstimate;
+    if (usablePreChecked) {
+      try {
+        gas = await this.bundlerClient.estimateUserOperationGasChecked(op, { attempts: 1, delayMs: 0 });
+      } catch (e) {
+        if (!(e instanceof ImpossibleGasEstimateError)) throw e;
+        gas = usablePreChecked;
+      }
+    } else {
+      gas = await this.bundlerClient.estimateUserOperationGasChecked(
+        op,
+        this.config.estimateRetries ?? DEFAULT_ESTIMATE_RETRIES,
+      );
+    }
     const pad = (value: bigint, pct: number | undefined): bigint =>
       pct === undefined || pct === 100 ? value : (value * BigInt(pct)) / 100n;
     const padding = this.config.gasPaddingPct;

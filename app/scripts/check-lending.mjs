@@ -678,9 +678,40 @@ console.log('check-lending: mutation checks (each mutant must be caught)');
         screen.includes("onPress={() => backToForm('')} disabled={prePrompt.stage !== 'idle'} />") &&
         !screen.includes('onPress={() => void onAaSend()}'));
     const note = read('src/components/PrePromptCheckNote.tsx');
-    check('phase 27 item 2: the busy line is an always-mounted polite live region (Android) and an announcement on iOS, one accessible element',
-      note.includes('<View collapsable={false} accessibilityLiveRegion="polite"') && note.includes("Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(text)") &&
-        note.includes('<View accessible accessibilityLabel={text}') && note.includes('useSyncExternalStore(guard.subscribe, guard.stage, guard.stage)'));
+    // Pass p27-emu2 finding 2 (TalkBack announced the line twice per check): one announcement per
+    // distinct sentence on both platforms, no live region (the pin changed in place from the live-region form).
+    check('phase 27 item 2 / pass p27-emu2 finding 2: the busy line is ONE accessible element, announced through createPrePromptAnnouncer on both platforms, with no live region and no other announcement path',
+      note.includes('<View accessible accessibilityLabel={text}') && note.includes('useSyncExternalStore(guard.subscribe, guard.stage, guard.stage)') &&
+        note.includes('createPrePromptAnnouncer((sentence) => AccessibilityInfo.announceForAccessibility(sentence)),') &&
+        note.includes('    announce(text);\n  }, [announce, text]);') &&
+        !/accessibilityLiveRegion|Platform\.OS/.test(note) && (note.match(/announceForAccessibility/g) ?? []).length === 2);
+    {
+      // The announcer: once per distinct sentence while it stays on screen; again after it went away.
+      const run = (mod, shownSequence) => {
+        const said = [];
+        const announce = mod.createPrePromptAnnouncer((sentence) => said.push(sentence));
+        for (const shown of shownSequence) announce(shown);
+        return said;
+      };
+      const B = G.prePromptStageText('bundler');
+      const F = G.prePromptStageText('final');
+      // One check as the screens render it: idle, the tap ('bundler', drawn on several renders while the
+      // estimate runs and the buttons disable), 'final', back to idle; then a second check.
+      const sequence = [null, B, B, B, F, F, null, B, B, null];
+      const said = run(G, sequence);
+      check('pass p27-emu2 finding 2: one check is announced once per distinct sentence (bundler once, final once); a re-render with the same line says nothing',
+        said.length === 3 && said[0] === B && said[1] === F && said[2] === B, JSON.stringify(said));
+      check('pass p27-emu2 finding 2: the same sentence drawn again while it stays on screen is never announced a second time',
+        run(G, [B, B, B, B]).length === 1 && run(G, [null, null]).length === 0);
+      // A refusal during the bundler check (back to idle), then a second tap: the same sentence is a new check.
+      const retry = [null, B, null, B];
+      check('pass p27-emu2 finding 2: a check refused during "bundler" and tapped again is announced again (the line went away in between)',
+        run(G, retry).length === 2);
+      const m4 = await guardMutant('    if (shown === last) return;\n', '');
+      caught('the same-sentence test removed: the line is announced on every render (the double announcement)', run(m4, sequence).length !== 3);
+      const m5 = await guardMutant('      last = null;\n      return;', '      return;');
+      caught('the sentence never forgotten: the next check after the line went away is not announced', run(m5, retry).length !== 2);
+    }
 
     const m1 = await guardMutant('      if (holding) return false;\n', '');
     const r1 = await exercise(m1);

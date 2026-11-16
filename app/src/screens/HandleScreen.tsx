@@ -228,7 +228,7 @@ function useHandleSmartAccount(
  */
 export function HandleScreen({ navigation }: Props) {
   const theme = useTheme();
-  const { t } = useI18n();
+  const { t, tx } = useI18n();
   const fieldLabel = useFieldLabels();
   const { accounts, activeAccount, signWith } = useWallet();
   const { evmChain } = usePrefs();
@@ -772,7 +772,8 @@ export function HandleScreen({ navigation }: Props) {
       });
       if (!withinLimits) return false;
       const auth = await requireLocalAuth(j.title);
-      if (!auth.ok) Alert.alert(t('send.back'), auth.message);
+      // Pass p27-emu2 finding 5: titled "Not sent" like Send, Staking, Swap, Bridge and Lend (it said "Back").
+      if (!auth.ok) Alert.alert(tx('Not sent'), auth.message);
       return auth.ok;
     };
     if (j.kind === 'renew' && j.renewal) {
@@ -811,7 +812,7 @@ export function HandleScreen({ navigation }: Props) {
       return;
     }
     if (!eoaQuote.simulation.ok) {
-      Alert.alert(t('send.back'), t('send.simulation.failed', { reason: eoaQuote.simulation.reason }));
+      Alert.alert(tx('Not sent'), t('send.simulation.failed', { reason: eoaQuote.simulation.reason }));
       return;
     }
     if (!(await authorizeJob(job, eoaQuote, sendUrl))) return;

@@ -41,10 +41,12 @@ export {
   toWord,
 } from './encoding.js';
 export {
+  PRE_CHECKED_ESTIMATE_MAX_AGE_MS,
   SmartAccountClient,
   eip191PrefixedMessage,
   hashEip191Message,
   needsDepositTopUp,
+  preCheckedEstimateMismatch,
   requiredPrefund,
   toEthSignedMessageHash,
   withDepositTopUpHeadroom,
@@ -53,6 +55,7 @@ export {
 export type {
   BeforeSendHook,
   Call,
+  PreCheckedGasEstimate,
   SmartAccountClientConfig,
   SmartAccountSignatureContext,
   SmartAccountSpec,

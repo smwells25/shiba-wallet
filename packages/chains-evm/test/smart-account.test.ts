@@ -9,13 +9,16 @@ import {
   type DerivedAccount,
 } from '@shiba-wallet/core';
 import {
+  PRE_CHECKED_ESTIMATE_MAX_AGE_MS,
   SmartAccountClient,
   needsDepositTopUp,
+  preCheckedEstimateMismatch,
   requiredPrefund,
   toEthSignedMessageHash,
   withDepositTopUpHeadroom,
   withEthereumV,
   type Call,
+  type PreCheckedGasEstimate,
   type SmartAccountSpec,
 } from '../src/smart-account.js';
 import { ENTRYPOINT_V07, getUserOpHash, type UserOperation } from '../src/userop.js';
@@ -802,5 +805,228 @@ describe('beforeSend: the signed operation and its hash, right before eth_sendUs
     await make(a).sendCalls(ownerAccount(), [], FEES);
     await make(b).sendCalls(ownerAccount(), [], FEES, { beforeSend: () => undefined });
     expect(b.calls).toEqual(a.calls);
+  });
+});
+
+describe('a pre-checked estimate stands in for an impossible send-time estimate (pass p27-emu2 finding 1)', () => {
+  const REAL = { callGasLimit: '0x111', verificationGasLimit: '0x222', preVerificationGas: '0x333' };
+  const ZERO = { callGasLimit: '0xcb36', verificationGasLimit: '0x0', preVerificationGas: '0xdae9' };
+  const TO = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const CALLS: Call[] = [{ to: TO, value: 1n, data: new Uint8Array(0) }];
+  const NO_WAIT = { attempts: 3, delayMs: 0 };
+  const NOW = 1_800_000_000_000;
+
+  /** Answers the first estimate with `first`, every later one with `rest`; counts estimates and sends. */
+  function burstBundler(first: Record<string, string>, rest: Record<string, string> | Error) {
+    let estimates = 0;
+    let sends = 0;
+    const seen: unknown[] = [];
+    const bundler: JsonRpcTransport = async (method, params) => {
+      if (method === 'eth_estimateUserOperationGas') {
+        seen.push(params[0]);
+        estimates++;
+        if (estimates === 1) return first;
+        if (rest instanceof Error) throw rest;
+        return rest;
+      }
+      if (method === 'eth_sendUserOperation') {
+        sends++;
+        return '0xuserophash';
+      }
+      throw new Error(`unexpected bundler method ${method}`);
+    };
+    return { bundler, seen, counts: () => ({ estimates, sends }) };
+  }
+
+  /** The stub operation sendCalls builds for CALLS on the deployed fake account (nonce 5). */
+  const stubOp = (over: Partial<UserOperation> = {}): UserOperation => ({
+    sender: ACCOUNT_ADDRESS,
+    nonce: 5n,
+    callData: spec.encodeCalls(CALLS),
+    callGasLimit: 0n,
+    verificationGasLimit: 0n,
+    preVerificationGas: 0n,
+    maxFeePerGas: FEES.maxFeePerGas,
+    maxPriorityFeePerGas: FEES.maxPriorityFeePerGas,
+    signature: spec.stubSignature(),
+    ...over,
+  });
+
+  /** The pre-prompt step: one checked estimate of the stub op through the same bundler. */
+  async function prePrompt(bundler: JsonRpcTransport, op = stubOp(), at = NOW): Promise<PreCheckedGasEstimate> {
+    const estimate = await new BundlerClient(bundler, ENTRYPOINT_V07).estimateUserOperationGasChecked(op, { attempts: 1, delayMs: 0 });
+    return { op, estimate, checkedAtMs: at, chainId: 1n, entryPoint: ENTRYPOINT_V07 };
+  }
+
+  function client(bundler: JsonRpcTransport, over: Record<string, unknown> = {}) {
+    let signed = 0;
+    const counted: SmartAccountSpec = {
+      ...spec,
+      signUserOpHash: (owner, hash) => {
+        signed++;
+        return spec.signUserOpHash(owner, hash);
+      },
+    };
+    const c = new SmartAccountClient({
+      chainId: 1n, entryPoint: ENTRYPOINT_V07, bundler, node: makeTransports({ deployed: true, sponsored: false }).node,
+      spec: counted, estimateRetries: NO_WAIT, ...over,
+    });
+    return { client: c, signed: () => signed };
+  }
+
+  it('the age bound is 90 seconds', () => {
+    expect(PRE_CHECKED_ESTIMATE_MAX_AGE_MS).toBe(90_000);
+  });
+
+  it('good once, zeros forever after: the send succeeds with the pre-checked limits, asking the bundler once', async () => {
+    const b = burstBundler(REAL, ZERO);
+    const pre = await prePrompt(b.bundler);
+    const { client: c, signed } = client(b.bundler);
+    const seenBySign: UserOperation[] = [];
+    const { userOp } = await c.sendCalls(ownerAccount(), CALLS, FEES, {
+      preCheckedEstimate: pre,
+      nowMs: () => NOW + 15_000,
+      beforeSign: (op) => void seenBySign.push(op),
+    });
+    // 1 pre-prompt estimate + exactly 1 send-time estimate (no retries), 1 send.
+    expect(b.counts()).toEqual({ estimates: 2, sends: 1 });
+    expect(signed()).toBe(1);
+    expect(userOp.callGasLimit).toBe(0x111n);
+    expect(userOp.verificationGasLimit).toBe(0x222n);
+    expect(userOp.preVerificationGas).toBe(0x333n);
+    expect(userOp.maxFeePerGas).toBe(FEES.maxFeePerGas);
+    expect(userOp.maxPriorityFeePerGas).toBe(FEES.maxPriorityFeePerGas);
+    expect(seenBySign[0]!.callGasLimit).toBe(0x111n);
+    // The send-time request was the same operation the pre-prompt estimate saw.
+    expect(b.seen[1]).toEqual(b.seen[0]);
+  });
+
+  it('beforeSign still decides: a worst case above the displayed fee is refused, nothing signed or sent', async () => {
+    const b = burstBundler(REAL, ZERO);
+    const pre = await prePrompt(b.bundler);
+    const { client: c, signed } = client(b.bundler);
+    const displayed = requiredPrefund({ ...stubOp(), callGasLimit: 0x111n, verificationGasLimit: 0x222n, preVerificationGas: 0x333n }) - 1n;
+    const err = await c
+      .sendCalls(ownerAccount(), CALLS, FEES, {
+        preCheckedEstimate: pre,
+        nowMs: () => NOW,
+        beforeSign: (op) => {
+          if (requiredPrefund(op) > displayed) throw new Error('above the displayed fee');
+        },
+      })
+      .catch((e) => e);
+    expect(err.message).toBe('above the displayed fee');
+    expect(signed()).toBe(0);
+    expect(b.counts().sends).toBe(0);
+  });
+
+  it('the final impossible-limit check still applies to the pre-checked limits', async () => {
+    const b = burstBundler({ ...REAL, verificationGasLimit: '0x1' }, ZERO);
+    const pre = await prePrompt(b.bundler);
+    const { client: c, signed } = client(b.bundler, { gasPaddingPct: { verification: 50 } });
+    const err = await c.sendCalls(ownerAccount(), CALLS, FEES, { preCheckedEstimate: pre, nowMs: () => NOW }).catch((e) => e);
+    expect(err).toBeInstanceOf(ImpossibleGasEstimateError);
+    expect(err.source).toBe('operation');
+    expect(signed()).toBe(0);
+    expect(b.counts().sends).toBe(0);
+  });
+
+  it('a usable send-time answer is preferred to the pre-checked one', async () => {
+    const fresh = { callGasLimit: '0x999', verificationGasLimit: '0x888', preVerificationGas: '0x777' };
+    const b = burstBundler(REAL, fresh);
+    const pre = await prePrompt(b.bundler);
+    const { client: c } = client(b.bundler);
+    const { userOp } = await c.sendCalls(ownerAccount(), CALLS, FEES, { preCheckedEstimate: pre, nowMs: () => NOW });
+    expect(userOp.callGasLimit).toBe(0x999n);
+    expect(userOp.verificationGasLimit).toBe(0x888n);
+    expect(b.counts()).toEqual({ estimates: 2, sends: 1 });
+  });
+
+  it('a bundler error at send time is thrown, never replaced by the pre-checked estimate', async () => {
+    const b = burstBundler(REAL, new Error('RPC error -32500: AA23 reverted (eth_estimateUserOperationGas)'));
+    const pre = await prePrompt(b.bundler);
+    const { client: c, signed } = client(b.bundler);
+    await expect(c.sendCalls(ownerAccount(), CALLS, FEES, { preCheckedEstimate: pre, nowMs: () => NOW })).rejects.toThrow(/AA23 reverted/);
+    expect(signed()).toBe(0);
+    expect(b.counts()).toEqual({ estimates: 2, sends: 0 });
+  });
+
+  const refusedCases: Array<[string, (pre: PreCheckedGasEstimate) => PreCheckedGasEstimate, Record<string, unknown>?]> = [
+    ['a changed nonce', (p) => ({ ...p, op: stubOp({ nonce: 6n }) })],
+    ['changed callData', (p) => ({ ...p, op: stubOp({ callData: spec.encodeCalls([{ to: TO, value: 2n, data: new Uint8Array(0) }]) }) })],
+    ['another deployment state (a factory)', (p) => ({ ...p, op: stubOp({ factory: FACTORY, factoryData: utf8ToBytes('init') }) })],
+    ['other fees', (p) => ({ ...p, op: stubOp({ maxFeePerGas: FEES.maxFeePerGas + 1n }) })],
+    ['another sender', (p) => ({ ...p, op: stubOp({ sender: '0x' + '77'.repeat(20) }) })],
+    ['another chain', (p) => ({ ...p, chainId: 2n })],
+    ['another EntryPoint', (p) => ({ ...p, entryPoint: '0x' + '88'.repeat(20) })],
+    ['a stale estimate (one millisecond past the bound)', (p) => ({ ...p, checkedAtMs: NOW - PRE_CHECKED_ESTIMATE_MAX_AGE_MS - 1 })],
+    ['an estimate from the future', (p) => ({ ...p, checkedAtMs: NOW + 1 })],
+    ['an impossible pre-checked estimate', (p) => ({ ...p, estimate: { ...p.estimate, verificationGasLimit: 0n } })],
+  ];
+  for (const [what, alter] of refusedCases) {
+    it(`no reuse with ${what}: the old retries run and the old refusal stands`, async () => {
+      const b = burstBundler(REAL, ZERO);
+      const pre = alter(await prePrompt(b.bundler));
+      const { client: c, signed } = client(b.bundler);
+      const err = await c.sendCalls(ownerAccount(), CALLS, FEES, { preCheckedEstimate: pre, nowMs: () => NOW }).catch((e) => e);
+      expect(err).toBeInstanceOf(ImpossibleGasEstimateError);
+      expect(err.attempts).toBe(NO_WAIT.attempts);
+      expect(b.counts()).toEqual({ estimates: 1 + NO_WAIT.attempts, sends: 0 });
+      expect(signed()).toBe(0);
+    });
+  }
+
+  it('the bound itself is inclusive: exactly 90 s old is still used', async () => {
+    const b = burstBundler(REAL, ZERO);
+    const pre = await prePrompt(b.bundler, stubOp(), NOW - PRE_CHECKED_ESTIMATE_MAX_AGE_MS);
+    const { client: c } = client(b.bundler);
+    const { userOp } = await c.sendCalls(ownerAccount(), CALLS, FEES, { preCheckedEstimate: pre, nowMs: () => NOW });
+    expect(userOp.verificationGasLimit).toBe(0x222n);
+  });
+
+  it('never with a paymaster: the client with a paymaster retries and refuses as before', async () => {
+    const b = burstBundler({ ...REAL, paymasterVerificationGasLimit: '0x444' }, { ...ZERO, paymasterVerificationGasLimit: '0x0' });
+    const pre = await prePrompt(b.bundler);
+    const { paymaster } = makeTransports({ deployed: true, sponsored: true });
+    const { client: c, signed } = client(b.bundler, { paymaster: { transport: paymaster } });
+    const err = await c.sendCalls(ownerAccount(), CALLS, FEES, { preCheckedEstimate: pre, nowMs: () => NOW }).catch((e) => e);
+    expect(err).toBeInstanceOf(ImpossibleGasEstimateError);
+    expect(err.attempts).toBe(NO_WAIT.attempts);
+    expect(signed()).toBe(0);
+    expect(preCheckedEstimateMismatch(pre, stubOp(), { chainId: 1n, entryPoint: ENTRYPOINT_V07, nowMs: NOW, clientHasPaymaster: true })).toMatch(/paymaster/);
+    expect(preCheckedEstimateMismatch({ ...pre, op: stubOp({ paymaster: '0x' + '66'.repeat(20) }) }, stubOp(), { chainId: 1n, entryPoint: ENTRYPOINT_V07, nowMs: NOW, clientHasPaymaster: false })).toMatch(/paymaster/);
+  });
+
+  it('never with an EIP-7702 authorization', () => {
+    const auth = { chainId: 1n, address: '0x' + '99'.repeat(20), nonce: 0n, yParity: 0, r: 1n, s: 1n };
+    const op = stubOp({ eip7702Auth: auth } as Partial<UserOperation>);
+    const pre: PreCheckedGasEstimate = { op, estimate: { callGasLimit: 1n, verificationGasLimit: 1n, preVerificationGas: 1n }, checkedAtMs: NOW, chainId: 1n, entryPoint: ENTRYPOINT_V07 };
+    expect(preCheckedEstimateMismatch(pre, op, { chainId: 1n, entryPoint: ENTRYPOINT_V07, nowMs: NOW, clientHasPaymaster: false })).toMatch(/EIP-7702/);
+  });
+
+  it('a matching estimate gives null; the EntryPoint is compared without regard to case', () => {
+    const pre: PreCheckedGasEstimate = { op: stubOp(), estimate: { callGasLimit: 1n, verificationGasLimit: 1n, preVerificationGas: 1n }, checkedAtMs: NOW, chainId: 1n, entryPoint: ENTRYPOINT_V07.toUpperCase().replace('0X', '0x') };
+    expect(preCheckedEstimateMismatch(pre, stubOp(), { chainId: 1n, entryPoint: ENTRYPOINT_V07, nowMs: NOW, clientHasPaymaster: false })).toBeNull();
+  });
+
+  it('without the option: the same requests and the same refusal as before', async () => {
+    const a = burstBundler(ZERO, ZERO);
+    const errA = await client(a.bundler).client.sendCalls(ownerAccount(), CALLS, FEES).catch((e) => e);
+    const b = burstBundler(ZERO, ZERO);
+    const errB = await client(b.bundler).client.sendCalls(ownerAccount(), CALLS, FEES, { nowMs: () => NOW }).catch((e) => e);
+    expect(errA).toBeInstanceOf(ImpossibleGasEstimateError);
+    expect(errA.message).toBe(errB.message);
+    expect(a.counts()).toEqual({ estimates: NO_WAIT.attempts, sends: 0 });
+    expect(b.counts()).toEqual(a.counts());
+    expect(b.seen).toEqual(a.seen);
+    // And a clean answer gives the same signed operation with or without an unused option.
+    const c1 = burstBundler(REAL, REAL);
+    const c2 = burstBundler(REAL, REAL);
+    const r1 = await client(c1.bundler).client.sendCalls(ownerAccount(), CALLS, FEES);
+    const r2 = await client(c2.bundler).client.sendCalls(ownerAccount(), CALLS, FEES, {
+      preCheckedEstimate: { op: stubOp({ nonce: 99n }), estimate: { callGasLimit: 7n, verificationGasLimit: 7n, preVerificationGas: 7n }, checkedAtMs: NOW, chainId: 1n, entryPoint: ENTRYPOINT_V07 },
+      nowMs: () => NOW,
+    });
+    expect(r2.userOp).toEqual(r1.userOp);
   });
 });

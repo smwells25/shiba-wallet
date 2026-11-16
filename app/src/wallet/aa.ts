@@ -45,6 +45,7 @@ import {
   type MultisigApproval,
   type MultisigConfig,
   type PermitRequest,
+  type PreCheckedGasEstimate,
   type SignedEip7702Authorization,
   type SmartAccountSignature,
   type SmartAccountSpec,
@@ -3875,6 +3876,9 @@ export async function prepareAaCalls(
   // device prompt.
   const finalCalls = currentCalls;
   prePromptEstimates.set(quote, async () => {
+    // A pre-checked estimate is kept only from a check that passed (pass
+    // p27-emu2 finding 1); a later check that fails leaves none behind.
+    prePromptPassed.delete(quote);
     const [nonceNow, deployedNow] = await Promise.all([
       bundle.client.getNonce(owner),
       eip7702 ? Promise.resolve(deployed) : bundle.client.isDeployed(owner),
@@ -3887,10 +3891,21 @@ export async function prepareAaCalls(
             BigInt((await bundle.node('eth_getTransactionCount', [sender, 'pending'])) as string),
           )
         : undefined;
-    await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGasChecked(
-      stubOpFor(finalCalls, nonceNow, deployedNow ? undefined : factoryArgs, authNow),
+    const stubNow = stubOpFor(finalCalls, nonceNow, deployedNow ? undefined : factoryArgs, authNow);
+    const estimate = await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGasChecked(
+      stubNow,
       bundle.estimateRetries ?? aaEstimateRetriesFor(bundle.chainId),
     );
+    // Kept for sendAa (pass p27-emu2 finding 1): the engine uses it only if
+    // the send-time estimate of the very same stub operation comes back
+    // impossible, and only within PRE_CHECKED_ESTIMATE_MAX_AGE_MS.
+    prePromptPassed.set(quote, {
+      op: stubNow,
+      estimate,
+      checkedAtMs: Date.now(),
+      chainId: bundle.chainId,
+      entryPoint: ENTRYPOINT_V07,
+    });
   });
   return quote;
 }
@@ -4652,6 +4667,35 @@ const submittedQuotes = new WeakSet<object>();
 const prePromptEstimates = new WeakMap<object, () => Promise<void>>();
 
 /**
+ * The estimate of each quote's LAST pre-prompt check that passed (pass
+ * p27-emu2 finding 1, what was left of F-97): on Arbitrum Sepolia the
+ * send-time estimate inside SmartAccountClient.sendCalls answered zeros on
+ * all 8 attempts about 15 s after the pre-prompt estimate had passed, so
+ * the person had approved on the device for nothing. sendAa hands it to
+ * sendCalls as `preCheckedEstimate` (aaPreCheckedEstimateFor): the engine
+ * still asks the bundler at send time, once, and uses this one only when
+ * that answer is impossible and the operation is the very same stub
+ * operation within 90 s (preCheckedEstimateMismatch). Nothing above the
+ * displayed fee can be signed through it: signedFeeGuard still runs on the
+ * final operation.
+ */
+const prePromptPassed = new WeakMap<object, PreCheckedGasEstimate>();
+
+/**
+ * The pre-checked estimate sendAa passes for `quote`, or undefined: only
+ * for a quote prepareAaCalls made whose pre-prompt check passed, and never
+ * for a sponsored or USDC-fee quote (a paymaster changes the operation the
+ * bundler estimates; the engine refuses those as well). Exported for
+ * scripts/check-aa.mjs.
+ */
+export function aaPreCheckedEstimateFor(
+  quote: Pick<AaSendQuote, 'sponsored' | 'tokenGas' | 'passkey'>,
+): PreCheckedGasEstimate | undefined {
+  if (quote.sponsored || quote.tokenGas || quote.passkey) return undefined;
+  return prePromptPassed.get(quote);
+}
+
+/**
  * True when checkAaQuoteBeforeApproval will also run the bundler estimate
  * for `quote` (a quote prepareAaCalls made), false when it reads only the
  * bundler's fee floor (the passkey, guardian-recovery and USDC-fee
@@ -4699,7 +4743,12 @@ export function claimQuoteForSubmission(quote: object): void {
  * describeAaError shows AA_IMPOSSIBLE_ESTIMATE_TITLE ("…The operation was
  * not signed or sent."). Any other bundler refusal of the estimate is also
  * thrown here, before the prompt, instead of after it. The estimate at send
- * time stays: this check cannot promise the next answer.
+ * time stays: this check cannot promise the next answer. Since pass
+ * p27-emu2 finding 1 an estimate that passed here is kept
+ * (prePromptPassed) and, for the very same operation within 90 s, stands in
+ * for a send-time answer that is impossible (sendAa → sendCalls'
+ * preCheckedEstimate), so a zero burst that starts after this check no
+ * longer wastes the device prompt.
  *
  * `quote` needs only the quoted fees; `bundler` is the transport the quote
  * was priced against (AaClientBundle.bundler, or the guardian submit's).
@@ -4819,6 +4868,9 @@ export async function sendAa(
         client.sendCalls(owner, quote.calls, fees, {
           beforeSign: signedFeeGuard(fees, quote.sponsored ? 0n : quote.fee),
           beforeSend,
+          // Pass p27-emu2 finding 1: the estimate the pre-prompt check
+          // passed stands in only for an impossible send-time answer.
+          ...(aaPreCheckedEstimateFor(quote) ? { preCheckedEstimate: aaPreCheckedEstimateFor(quote) } : {}),
         }),
       // Counted before the broadcast as aaSentRecorder counts it on acceptance.
       { chain: eip155Caip2(bundle.chainId), owner: owner.address, ...aaQuoteSpendInput(quote) },

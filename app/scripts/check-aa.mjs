@@ -61,6 +61,7 @@ import {
   AA_SELF_PAID_FEE_SENTENCE,
   aaSelfPaidFeeSentence,
   aaQuoteHasPrePromptEstimate,
+  aaPreCheckedEstimateFor,
   checkAaQuoteBeforeApproval,
   AA_FEE_FLOOR_HEADROOM_PERCENT,
   AA_QUOTE_ALREADY_USED,
@@ -2622,9 +2623,17 @@ await (async () => {
   // A bundle whose bundler answers `script` in turn (the last answer
   // repeats); script() can be replaced between the quote and the send.
   const scripted = (initial, options = {}, aaModule = null) => {
-    const node = fakeNode({});
+    const state = { answers: initial, next: 0, estimates: 0, sends: 0, nonce: null, sentOp: null };
+    // The account's EntryPoint nonce can be changed between the check and the
+    // send (state.nonce; pass p27-emu2 finding 1); otherwise fakeNode's 0x07.
+    const node0 = fakeNode({});
+    const node = async (method, params) => {
+      if (state.nonce !== null && method === 'eth_call' && same(params[0].to, ENTRYPOINT_V07) && params[0].data.startsWith(sel('getNonce(address,uint192)'))) {
+        return state.nonce;
+      }
+      return node0(method, params);
+    };
     const base = fakeBundler({});
-    const state = { answers: initial, next: 0, estimates: 0, sends: 0 };
     const bundler = async (method, params) => {
       if (method === 'eth_estimateUserOperationGas') {
         state.estimates += 1;
@@ -2632,7 +2641,10 @@ await (async () => {
         state.next += 1;
         return answer;
       }
-      if (method === 'eth_sendUserOperation') state.sends += 1;
+      if (method === 'eth_sendUserOperation') {
+        state.sends += 1;
+        state.sentOp = params[0];
+      }
       // A bundler fee floor when a check sets one (pass p26-emu2 finding 1: the floor check runs before the pre-prompt estimate).
       if (method === 'pimlico_getUserOperationGasPrice' && state.floor) return { slow: state.floor, standard: state.floor, fast: state.floor };
       return base(method, params);
@@ -2859,8 +2871,9 @@ await (async () => {
   {
     // M-P2: the pre-prompt estimate unchecked.
     const m = await mutant(
-      '    await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGasChecked(\n      stubOpFor(finalCalls, nonceNow, deployedNow ? undefined : factoryArgs, authNow),\n      bundle.estimateRetries ?? aaEstimateRetriesFor(bundle.chainId),\n    );',
-      '    await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGas(\n      stubOpFor(finalCalls, nonceNow, deployedNow ? undefined : factoryArgs, authNow),\n    );',
+      // Pass p27-emu2 finding 1: the stub is named and the answer kept (the anchor follows; the mutant is unchanged).
+      '    const estimate = await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGasChecked(\n      stubNow,\n      bundle.estimateRetries ?? aaEstimateRetriesFor(bundle.chainId),\n    );',
+      '    const estimate = await new BundlerClient(bundle.bundler, ENTRYPOINT_V07).estimateUserOperationGas(\n      stubNow,\n    );',
     );
     const b = scripted([REAL], { estimateRetries: NO_WAIT }, m);
     const q = await m.prepareAaSend(b.bundle, owner.address, RECIPIENT, AMOUNT);
@@ -2886,6 +2899,162 @@ await (async () => {
     b.state.floor = { maxFeePerGas: '0x' + (q.maxFeePerGas * 10n).toString(16), maxPriorityFeePerGas: '0x' + (q.maxPriorityFeePerGas * 10n).toString(16) };
     await m.checkAaQuoteBeforeApproval(b.bundle.bundler, q).then(() => null, (x) => x);
     check('M-P4 caught: an estimate before the floor check asks the bundler although the floor refuses (the order check above would fail)', b.state.estimates > at);
+  }
+
+  // ---------------------------------------------------------------------
+  // Pass p27-emu2 finding 1 (what was left of F-97): the pre-prompt estimate
+  // passed, the device prompt was answered, and then the send-time estimate
+  // inside sendCalls answered zeros on all 8 attempts. sendAa now hands the
+  // engine the estimate the pre-prompt check passed (aaPreCheckedEstimateFor
+  // → sendCalls' preCheckedEstimate); the engine asks once at send time and
+  // uses it only when that answer is impossible, for the very same stub
+  // operation, within 90 s.
+  console.log('\ncheck-aa: the pre-checked estimate stands in for an impossible send-time estimate (pass p27-emu2 finding 1)');
+  const BIG = { callGasLimit: '0x111111', verificationGasLimit: '0x222222', preVerificationGas: '0x333333' };
+  {
+    // Good once at the pre-prompt check, zeros forever after.
+    const b = scripted([REAL], { estimateRetries: NO_WAIT });
+    const q = await prepareAaSend(b.bundle, owner.address, RECIPIENT, AMOUNT);
+    check('pass p27-emu2: no pre-checked estimate before the pre-prompt check runs', aaPreCheckedEstimateFor(q) === undefined);
+    await checkAaQuoteBeforeApproval(b.bundle.bundler, q);
+    const kept = aaPreCheckedEstimateFor(q);
+    check('pass p27-emu2: …one after it passes, for the stub operation it asked about, with the bundle\'s chain and EntryPoint v0.7',
+      kept !== undefined && kept.estimate.verificationGasLimit === 0x222n && kept.chainId === b.bundle.chainId && kept.entryPoint === ENTRYPOINT_V07 &&
+        kept.op.nonce === 7n && Math.abs(Date.now() - kept.checkedAtMs) < 60_000);
+    const at = b.state.estimates;
+    b.answer([ZERO]);
+    signatures = 0;
+    const r = await sendAa(b.bundle, countingOwner, q).then((x) => x, (x) => x);
+    check('pass p27-emu2: good at the pre-prompt check, zeros forever after → sent once, signed once, the bundler asked ONCE at send time (no retries)',
+      r?.userOpHash === USEROP_HASH && signatures === 1 && b.state.sends === 1 && b.state.estimates === at + 1,
+      `${r?.message ?? ''} signatures=${signatures} sends=${b.state.sends} estimates=${b.state.estimates - at}`);
+    const op = b.state.sentOp;
+    check('…with the limits of the pre-prompt estimate (equal to the quote\'s) and exactly the quoted fees',
+      op !== null && BigInt(op.callGasLimit) === q.callGasLimit && BigInt(op.verificationGasLimit) === q.verificationGasLimit &&
+        BigInt(op.preVerificationGas) === q.preVerificationGas && BigInt(op.maxFeePerGas) === q.maxFeePerGas &&
+        BigInt(op.maxPriorityFeePerGas) === q.maxPriorityFeePerGas,
+      JSON.stringify(op));
+    check('…and never above the displayed fee (the signed worst case ≤ quote.fee)',
+      op !== null && (BigInt(op.callGasLimit) + BigInt(op.verificationGasLimit) + BigInt(op.preVerificationGas)) * BigInt(op.maxFeePerGas) <= q.fee);
+  }
+  {
+    // A pre-prompt estimate ABOVE the quote, then zeros: the stand-in would sign more than was shown, so signedFeeGuard refuses.
+    const b = scripted([REAL], { estimateRetries: NO_WAIT });
+    const q = await prepareAaSend(b.bundle, owner.address, RECIPIENT, AMOUNT);
+    b.answer([BIG]);
+    await checkAaQuoteBeforeApproval(b.bundle.bundler, q);
+    b.answer([ZERO]);
+    signatures = 0;
+    const e = await sendAa(b.bundle, countingOwner, q).then(() => null, (x) => x);
+    check('pass p27-emu2: a pre-checked estimate above the reviewed fee is refused by signedFeeGuard (reason gas); nothing signed or sent',
+      e instanceof AaFeeRoseError && e.reason === 'gas' && signatures === 0 && b.state.sends === 0, e?.message);
+  }
+  {
+    // The account's nonce changed after the check: another operation, no stand-in, the old refusal.
+    const b = scripted([REAL], { estimateRetries: NO_WAIT });
+    const q = await prepareAaSend(b.bundle, owner.address, RECIPIENT, AMOUNT);
+    await checkAaQuoteBeforeApproval(b.bundle.bundler, q);
+    const at = b.state.estimates;
+    b.state.nonce = '0x08';
+    b.answer([ZERO]);
+    signatures = 0;
+    const e = await sendAa(b.bundle, countingOwner, q).then(() => null, (x) => x);
+    check('pass p27-emu2: a changed nonce → no stand-in; the bundle\'s 3 asks and the engine\'s ImpossibleGasEstimateError, nothing signed or sent',
+      isImpossibleGasEstimateError(e) && e.attempts === 3 && b.state.estimates === at + 3 && signatures === 0 && b.state.sends === 0, e?.message);
+  }
+  {
+    // The quote's calls changed after the check (another callData): no stand-in.
+    const b = scripted([REAL], { estimateRetries: NO_WAIT });
+    const q = await prepareAaSend(b.bundle, owner.address, RECIPIENT, AMOUNT);
+    await checkAaQuoteBeforeApproval(b.bundle.bundler, q);
+    q.calls = [{ ...q.calls[0], value: q.calls[0].value + 1n }];
+    b.answer([ZERO]);
+    signatures = 0;
+    const e = await sendAa(b.bundle, countingOwner, q).then(() => null, (x) => x);
+    check('pass p27-emu2: changed callData → no stand-in; the old refusal, nothing signed or sent',
+      isImpossibleGasEstimateError(e) && e.attempts === 3 && signatures === 0 && b.state.sends === 0, e?.message);
+  }
+  {
+    // A stale pre-checked estimate (91 s later): no stand-in.
+    const b = scripted([REAL], { estimateRetries: NO_WAIT });
+    const q = await prepareAaSend(b.bundle, owner.address, RECIPIENT, AMOUNT);
+    await checkAaQuoteBeforeApproval(b.bundle.bundler, q);
+    b.answer([ZERO]);
+    signatures = 0;
+    const realNow = Date.now;
+    const shifted = realNow() + 91_000;
+    Date.now = () => shifted;
+    let e;
+    try {
+      e = await sendAa(b.bundle, countingOwner, q).then(() => null, (x) => x);
+    } finally {
+      Date.now = realNow;
+    }
+    check('pass p27-emu2: a pre-checked estimate 91 s old → no stand-in; the old refusal, nothing signed or sent',
+      isImpossibleGasEstimateError(e) && e.attempts === 3 && signatures === 0 && b.state.sends === 0, e?.message);
+  }
+  {
+    // A failing check leaves no estimate behind; sponsored, USDC-fee and passkey quotes never get one.
+    const b = scripted([REAL], { estimateRetries: NO_WAIT });
+    const q = await prepareAaSend(b.bundle, owner.address, RECIPIENT, AMOUNT);
+    await checkAaQuoteBeforeApproval(b.bundle.bundler, q);
+    const had = aaPreCheckedEstimateFor(q) !== undefined;
+    b.answer([ZERO]);
+    await checkAaQuoteBeforeApproval(b.bundle.bundler, q).then(() => null, (x) => x);
+    check('pass p27-emu2: a later pre-prompt check that fails leaves no pre-checked estimate behind', had && aaPreCheckedEstimateFor(q) === undefined);
+    b.answer([REAL]);
+    await checkAaQuoteBeforeApproval(b.bundle.bundler, q);
+    const kinds = [];
+    for (const [key, value] of [['sponsored', true], ['tokenGas', { source: 'circle' }], ['passkey', true]]) {
+      const before = q[key];
+      q[key] = value;
+      kinds.push(aaPreCheckedEstimateFor(q) === undefined);
+      if (before === undefined) delete q[key];
+      else q[key] = before;
+    }
+    check('pass p27-emu2: never for a sponsored, USDC-fee or passkey quote (a paymaster changes the operation the bundler estimates)',
+      kinds.every(Boolean) && aaPreCheckedEstimateFor(q) !== undefined);
+  }
+  {
+    // Without the pre-prompt check sendAa passes nothing: the behaviour before this fix (pinned above at "zero at send time on every attempt").
+    const b = scripted([REAL], { estimateRetries: NO_WAIT });
+    const q = await prepareAaSend(b.bundle, owner.address, RECIPIENT, AMOUNT);
+    const at = b.state.estimates;
+    b.answer([ZERO]);
+    const e = await sendAa(b.bundle, owner, q).then(() => null, (x) => x);
+    check('pass p27-emu2: no pre-prompt check → no stand-in; the bundle\'s 3 asks and the old refusal', isImpossibleGasEstimateError(e) && b.state.estimates === at + 3 && b.state.sends === 0);
+  }
+  {
+    // M-P5: sendAa does not hand the pre-checked estimate to the engine (the code before this fix).
+    const m = await mutant(
+      '          ...(aaPreCheckedEstimateFor(quote) ? { preCheckedEstimate: aaPreCheckedEstimateFor(quote) } : {}),\n',
+      '',
+    );
+    const b = scripted([REAL], { estimateRetries: NO_WAIT }, m);
+    const q = await m.prepareAaSend(b.bundle, owner.address, RECIPIENT, AMOUNT);
+    await m.checkAaQuoteBeforeApproval(b.bundle.bundler, q);
+    b.answer([ZERO]);
+    const r = await m.sendAa(b.bundle, owner, q).then(() => 'sent', (x) => x);
+    check('M-P5 caught: without the hand-over the send-time zero burst wastes the prompt again (the check above would fail)', isImpossibleGasEstimateError(r) && b.state.sends === 0);
+  }
+  {
+    // M-P6: a failing check keeps the estimate of an earlier passing one.
+    const m = await mutant('    prePromptPassed.delete(quote);\n', '');
+    const b = scripted([REAL], { estimateRetries: NO_WAIT }, m);
+    const q = await m.prepareAaSend(b.bundle, owner.address, RECIPIENT, AMOUNT);
+    await m.checkAaQuoteBeforeApproval(b.bundle.bundler, q);
+    b.answer([ZERO]);
+    await m.checkAaQuoteBeforeApproval(b.bundle.bundler, q).then(() => null, (x) => x);
+    check('M-P6 caught: without the delete a failed check leaves an estimate behind (the check above would fail)', m.aaPreCheckedEstimateFor(q) !== undefined);
+  }
+  {
+    // M-P7: a sponsored quote gets one.
+    const m = await mutant('  if (quote.sponsored || quote.tokenGas || quote.passkey) return undefined;\n', '  if (quote.tokenGas || quote.passkey) return undefined;\n');
+    const b = scripted([REAL], { estimateRetries: NO_WAIT }, m);
+    const q = await m.prepareAaSend(b.bundle, owner.address, RECIPIENT, AMOUNT);
+    await m.checkAaQuoteBeforeApproval(b.bundle.bundler, q);
+    q.sponsored = true;
+    check('M-P7 caught: a sponsored quote would get a pre-checked estimate (the check above would fail)', m.aaPreCheckedEstimateFor(q) !== undefined);
   }
 })();
 

@@ -1277,5 +1277,27 @@ console.log('check-handle: renewing a name (phase 26 item 1, the app half)');
   }
 }
 
+// Pass p27-emu2 finding 5: a cancelled device prompt on the Wallet handle
+// screen showed an alert titled "Back" ("Authentication cancelled.") where
+// Send, Staking, Swap, Bridge and Lend title it "Not sent". The screen now
+// uses the same title through the existing table entry sessions.notSent
+// (tx('Not sent')), and no alert on the screen is titled "Back" any more.
+{
+  const screen = source('src/screens/HandleScreen.tsx');
+  const cancelTitled = (src) =>
+    src.includes("const auth = await requireLocalAuth(j.title);") &&
+    /const auth = await requireLocalAuth\(j\.title\);\s*(?:\/\/[^\n]*\n\s*)?if \(!auth\.ok\) Alert\.alert\(tx\('Not sent'\), auth\.message\);/.test(src) &&
+    !src.includes("Alert.alert(t('send.back')") &&
+    src.includes('const { t, tx } = useI18n();');
+  check('finding 5 (pass p27-emu2): a cancelled device prompt is titled "Not sent" like Send, Staking, Swap, Bridge and Lend, and no alert on the screen is titled "Back"',
+    cancelTitled(screen));
+  check('finding 5 (pass p27-emu2): the title is the existing table entry ("Not sent" / Spanish "No se envió"), no new string id',
+    en['sessions.notSent'] === 'Not sent' && es['sessions.notSent'] === 'No se envió');
+  const backAgain = screen.replace("if (!auth.ok) Alert.alert(tx('Not sent'), auth.message);", "if (!auth.ok) Alert.alert(t('send.back'), auth.message);");
+  const wasCaught = backAgain !== screen && !cancelTitled(backAgain);
+  if (wasCaught) mutantsCaught += 1;
+  check('mutant caught: finding 5 — the cancel alert titled "Back" again (source pin)', wasCaught);
+}
+
 console.log(`\ncheck-handle: ${passed} passed, ${failed} failed (${mutantsCaught} mutants)`);
 process.exit(failed === 0 ? 0 : 1);
