@@ -21621,3 +21621,41 @@ guardian-recovery quotes outside the pre-prompt estimate; the Spanish gaps
 on the confirm's preview and risk sections; the Ethereum test banner on the
 Bitcoin mainnet Send form; T-97's "proposed" wording; both ENS names expire
 on 2026-12-22 and cost 0.613701 test USDC each to renew.
+
+## Phase 28 plan (approved 2026-11-16 "everything else approved for phase 28"): the loose ends closed, a Bitcoin test-network switch, the bridging gaps, built rows proven
+
+Proposed by the CTO and approved by the Chairperson with one item struck:
+the Across live leg is SKIPPED ("BUSL license seems high risk, skip for
+now") — no Across code, script or transfer in this phase. Every item needs
+no outside input; the holds and the input-gated items stay as they are.
+
+0. An emulator re-check of f146133 (the estimate stand-in during a real
+   ZeroDev burst on Arbitrum Sepolia, the busy line spoken once, the
+   handle's "Not sent" alert).
+1. The pre-prompt estimate coverage finished: the passkey, USDC-fee and
+   guardian-recovery quotes and the subscription, recurring and DCA Start
+   handlers checked before the device prompt where an honest check exists;
+   a truthful busy line for cold signing (one new string id).
+2. A Bitcoin test-network switch (signet) under Settings → Developer,
+   modelled on "Use Solana devnet": the whole Bitcoin slot (balance, send,
+   history, receive) moves; endpoints verified from the providers' own
+   pages and live; the inscriptions warning stays mainnet-only; the
+   Ethereum test banner no longer shown on the Bitcoin mainnet Send form.
+   The prerequisite for the protect-only slice of docs/BITCOIN_ASSETS.md;
+   the index and the test coins stay the Chairperson's inputs.
+3. Bridging gaps, in-app: a CCTP burn from the smart account and a mint
+   to the smart account, one OP Sepolia CCTP route; the Stargate
+   stranded-transfer retry live only if it can be done without an agent
+   reading the dev wallet (else recorded as still open).
+4. Built rows proven: an EVM spending limit refusing a real send before
+   any prompt and allowing a smaller one (row 19).
+5. The Spanish gaps of passes p27-emu1 and p27-emu2 (drafts; the reviewer
+   stays on hold).
+6. An iOS Simulator third pass (the worktree rebuilt first): the import
+   screen's name-field tag, the Bitcoin warning, the busy line.
+7. Leadership refresh at the end; the shareable page only if a status
+   changes.
+
+Waves: 1 — (A) item 1, (B) item 2, in parallel worktrees (the CTO rebases
+the string-table tails), and one emulator driver for items 0, 3 and 4; 2 —
+item 5, the fixes from the pass, item 6; 7 last. Subagents on Opus.
