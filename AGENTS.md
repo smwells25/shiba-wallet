@@ -21360,3 +21360,47 @@ tails); 2 — the emulator pass; 5 last. Subagents on Opus.
       part; the SFEE transaction was read on one RPC (OnFinality answered
       null); the reth null-receipt behaviour is observed, not documented.
       DOCS for the refresh: THREAT_MODEL F-95, LENDING_VAULTS line 314.
+- [x] Item 2, the rollout — THE PRE-PROMPT GUARD ON EVERY OTHER SMART-ACCOUNT
+      CONFIRM (commit 0ea0e27; 27 modified files, +592 / −58, no new file, no
+      new string id; check-aa 452 (was 444), check-staking 142 (139),
+      check-swap 98 (95), check-sessions 149 (144), check-bridge 433 (430),
+      check-recovery 276 (269), check-inheritance 79 (76), check-passkeys 153
+      (148), check-wc 345 (342), check-multisig 445 (443), check-cold-aa 127
+      (125); offline runner ALL GREEN in the CTO's isolated worktree on HEAD
+      dddf214 with --skip-bundle: checkout 0 / apply 0 with no conflict / 27
+      files, the staged patch id 71417d74663c… equal to the agent's and the
+      verified tree's, engine 1,420, app 12,180 across 68 suites (= 12,136
+      plus this slice's 44), lint 0/0, tsc clean; the pre-commit scan clean;
+      18 hand mutants caught by the agent; not seen on a device). WIRED as
+      Lend is (the handler under guard.run, step('final') after the check
+      and before the gate, the confirm's buttons disabled while not idle,
+      <PrePromptCheckNote> under Approve): Send's smart-account confirm (the
+      owner, USDC-fee and passkey quotes share the one branch), Staking,
+      Swap, Sessions (grant and revoke — the subscription, recurring and DCA
+      Start handlers do not call checkAaQuoteBeforeApproval and are not
+      covered), Bridge, Guardians, Inheritance, Owner rotation, Passkey
+      (install and remove), Approve a recovery, the WalletConnect sheet
+      (smart-account requests only; the step passed to the provider's
+      onApprove as an optional sixth argument; the note hidden once the
+      sheet's own busy spinner shows, so "nothing has been signed" is never
+      drawn during the send), Multisig (BEHAVIOUR CHANGE: the 'sending'
+      spinner is now set only after the device check passes, so the confirm
+      with its line stays on screen during the check; multisig.ts
+      unchanged). Each handler keeps its name and takes the step as a
+      parameter (suites slice the source by handler name); the tap wrapper
+      is on<X>Tap. TWO HONESTY RULES: aa.ts gains
+      aaQuoteHasPrePromptEstimate(quote) — passkey, USDC-fee and
+      guardian-recovery quotes are not made by prepareAaCalls and run no
+      bundler estimate before the prompt, so for them the stage goes
+      straight to "final" and the line never names an estimate that does
+      not run; COLD SIGNING (ColdSignScreen onAaShow / onAaSubmit) gets the
+      guard and disabled buttons but NO line, because no device prompt
+      follows there and "before asking you to approve" would be untrue (a
+      pin forbids the note on that screen; a truthful line needs one new
+      id — a follow-up). Pins changed in place, none loosened: check-aa's
+      handler-start strings and the provider's onApprove string, check-wc's
+      two copies, check-cold-aa's Submit line. UNVERIFIED (the emulator pass
+      p27-emu2, dispatched): every layout, the two spinners on the
+      WalletConnect sheet, the Multisig confirm staying up while the prompt
+      opens, TalkBack on each screen, whether "bundler" ever flashes before
+      "final" where the stage is set synchronously.
