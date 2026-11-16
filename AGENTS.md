@@ -21659,3 +21659,65 @@ no outside input; the holds and the input-gated items stay as they are.
 Waves: 1 — (A) item 1, (B) item 2, in parallel worktrees (the CTO rebases
 the string-table tails), and one emulator driver for items 0, 3 and 4; 2 —
 item 5, the fixes from the pass, item 6; 7 last. Subagents on Opus.
+
+## Phase 28 progress
+- [x] Item 1 — THE PRE-PROMPT ESTIMATE ON THE REMAINING SMART-ACCOUNT PATHS,
+      AND A TRUTHFUL BUSY LINE FOR COLD SIGNING (commit 2af4bc5; 29 files,
+      +1,153 / −118, no new file, no new dependency; engine 1,441 → 1,447
+      (chains-evm 971; smart-account.test 55 → 61), check-aa 479 (was 467),
+      check-passkeys 162 (153), check-token-gas 270 (264), check-recovery 282
+      (276), check-sessions 153 (149), check-recurring 218 (215), check-dca
+      175 (172), check-subscriptions 203 (199), check-cold-aa 131 (127),
+      check-i18n 215; offline runner ALL GREEN in the CTO's isolated worktree
+      on HEAD 924cdfb with --skip-bundle: checkout 0 / apply 0 / 29 files,
+      the staged patch id a57507b35329 equal to the verified worktree's and
+      the agent's, the engine rebuilt, app 12,256 across 68 suites, lint 0/0,
+      tsc clean; the pre-commit scan clean; 17 hand mutants and the new
+      in-suite mutants caught by the agent; the CTO read the sessions.ts
+      hunk; not seen on a device, nothing live). ENGINE: the first half of
+      buildUnsignedOperation extracted unchanged into estimationStub, and
+      SmartAccountClient.estimateBeforeSigning(owner, calls, fees) — refuses
+      an EIP-7702 spec before any request (building its operation signs an
+      authorization), builds the same stub sendCalls builds, runs one checked
+      estimate under the client's retry policy and returns a
+      PreCheckedGasEstimate; signs and sends nothing; works with an
+      address-only owner. (a) PASSKEY: the passkey quote is a copy of a
+      prepareAaCalls quote, so aa.ts carryPrePromptEstimate gives the copy
+      the original's check; sendPasskeyCalls hands the kept estimate to
+      sendCalls; the Passkey screen's test operation runs under the guard
+      with the check before the prompt. (b) USDC FEE: CIRCLE — NOTHING BUILT
+      AND NONE CAN BE HONEST: its estimation stub carries a real EIP-2612
+      permit signed by the owner (token-paymaster.ts
+      createCirclePaymasterTransport), i.e. an owner signature before the
+      device prompt, and a placeholder permit grants no allowance while the
+      paymaster pulls during validation; the stage stays "final" there;
+      ERC-7677 (Pimlico) — built: one estimate of the exact calls with the
+      paymaster's stub data before the prompt, never the final data, and NO
+      stand-in reuse (a paymaster takes part). (c) GUARDIAN RECOVERY: a
+      shared guardianSubmitClient serves the check and the submission, which
+      hands over the kept estimate. (d) SESSIONS: the subscription, recurring
+      and DCA Start handlers run checkAaQuoteBeforeApproval after the
+      re-quote and before the device check; sendSessionCalls (pay now, swap
+      now, session operations) is reordered — chain id, spec, FEES, client,
+      the estimate with the session key's ADDRESS only, THEN the vault read
+      (the key's system prompt), then sendCalls with the stand-in —
+      BEHAVIOUR CHANGE: the fees are read before the key, not after; the
+      session paths still never read the recovery phrase. NOT COVERED: the
+      Sessions screen's manual test operation asks its device check before
+      sendSessionCalls (the estimate still precedes the key read); pay-now
+      and swap-now show no busy line (the in-app dialog precedes them and
+      "before asking you to approve" would be untrue for an unprotected
+      key). (e) COLD SIGNING: coldSign.prePrompt.show "Checking the spending
+      limits, the bundler's minimum fee and its gas estimate before the
+      request for the off-line signer is shown. This can take up to about a
+      minute; nothing has been signed or sent." and coldSign.prePrompt.submit
+      "Checking the signature, the account's nonce and deployment and the
+      bundler's minimum fee, then handing the signed operation to the
+      bundler. This phone signs nothing here." (Spanish drafts; "about a
+      minute" because Show runs two estimates); check-cold-aa requires them
+      and still forbids the confirm's line on that screen. COST: one more
+      bundler estimate per approval on the ERC-7677, guardian and passkey
+      paths and one per session send. UNVERIFIED: every layout and spoken
+      line; ZeroDev's answer to an ERC-7677 stub estimate from an
+      address-only owner; any live run. Slip: one build log written to /tmp
+      and deleted at once.
