@@ -60,6 +60,7 @@ import {
   AA_DEPOSIT_NOTE,
   AA_SELF_PAID_FEE_SENTENCE,
   aaSelfPaidFeeSentence,
+  aaQuoteHasPrePromptEstimate,
   checkAaQuoteBeforeApproval,
   AA_FEE_FLOOR_HEADROOM_PERCENT,
   AA_QUOTE_ALREADY_USED,
@@ -1875,7 +1876,8 @@ await (async () => {
       return i >= 0 && j > i ? src.slice(i, j) : '';
     };
     const send = read('../src/screens/SendScreen.tsx');
-    const onSend = handler(send, 'const onSend = async () => {', '// ------------------------------------------------- ');
+    // Phase 27 item 2: onSend takes the pre-prompt guard's step (form changed in place).
+    const onSend = handler(send, 'const onSend = async (step: PrePromptStep = () => {}) => {', '// ------------------------------------------------- ');
     check('Send: before the spending-limit gate, the passkey path and the biometric prompt; a refusal re-quotes at once',
       before(onSend, 'spendingGateForQuote(') && before(onSend, 'sendPasskeyCalls(') && before(onSend, 'requireLocalAuth(') &&
         /checkAaQuoteBeforeApproval\(preBundle\.bundler, quote\);[\s\S]{0,700}setPhase\('form'\);\s*void onReview\(\);\s*return;/.test(onSend));
@@ -1884,13 +1886,14 @@ await (async () => {
       before(handler(swap, 'const bundleUrl = aaBundleUrl.current;', 'setPhase(\'aa-sending\');'), 'requireLocalAuth(') &&
         before(handler(swap, 'const bundleUrl = aaBundleUrl.current;', 'setPhase(\'aa-sending\');'), 'spendingGateForQuote('));
     for (const [name, file, start, gate] of [
-      ['Guardians', '../src/screens/GuardiansScreen.tsx', 'const onConfirm = async () => {', 'requireLocalAuth(what)'],
-      ['Change owner', '../src/screens/OwnerRotationScreen.tsx', 'const onConfirm = async () => {', "requireLocalAuth('Approve changing the owner key')"],
-      ['Passkey install', '../src/screens/PasskeyScreen.tsx', 'const onInstall = async () => {', "requireLocalAuth('Approve adding this passkey"],
-      ['Passkey remove', '../src/screens/PasskeyScreen.tsx', 'const onRemove = async () => {', "requireLocalAuth('Approve removing the passkey"],
-      ['Session grant', '../src/screens/SessionsScreen.tsx', 'const onInstall = async () => {', "requireLocalAuth('Approve granting this session')"],
-      ['Session / subscription revoke', '../src/screens/SessionsScreen.tsx', 'const onRevoke = async () => {', 'requireLocalAuth(revokeApprovalPrompt('],
-      ['Guardian submit (Approve a recovery)', '../src/screens/ApproveRecoveryScreen.tsx', 'const onSubmit = async () => {', "requireLocalAuth('Approve submitting this recovery"],
+      // Phase 27 item 2: each handler takes the pre-prompt guard's step (form changed in place).
+      ['Guardians', '../src/screens/GuardiansScreen.tsx', 'const onConfirm = async (step: PrePromptStep) => {', 'requireLocalAuth(what)'],
+      ['Change owner', '../src/screens/OwnerRotationScreen.tsx', 'const onConfirm = async (step: PrePromptStep) => {', "requireLocalAuth('Approve changing the owner key')"],
+      ['Passkey install', '../src/screens/PasskeyScreen.tsx', 'const onInstall = async (step: PrePromptStep) => {', "requireLocalAuth('Approve adding this passkey"],
+      ['Passkey remove', '../src/screens/PasskeyScreen.tsx', 'const onRemove = async (step: PrePromptStep) => {', "requireLocalAuth('Approve removing the passkey"],
+      ['Session grant', '../src/screens/SessionsScreen.tsx', 'const onInstall = async (step: PrePromptStep) => {', "requireLocalAuth('Approve granting this session')"],
+      ['Session / subscription revoke', '../src/screens/SessionsScreen.tsx', 'const onRevoke = async (step: PrePromptStep) => {', 'requireLocalAuth(revokeApprovalPrompt('],
+      ['Guardian submit (Approve a recovery)', '../src/screens/ApproveRecoveryScreen.tsx', 'const onSubmit = async (step: PrePromptStep) => {', "requireLocalAuth('Approve submitting this recovery"],
     ]) {
       const src = read(file);
       check(`${name}: before the biometric prompt`, src.includes(start) && before(src.slice(src.indexOf(start)), gate));
@@ -1945,9 +1948,9 @@ await (async () => {
       /setSubmission\(null\);\s*setPhase\('review'\);/.test(read('../src/screens/ApproveRecoveryScreen.tsx')));
     const sheet = read('../src/components/WcApprovalSheet.tsx');
     check('WalletConnect sheet: an attempt that leaves the request on the sheet re-quotes a smart-account request',
-      /await onApprove\(txQuote, overrideSimulation, undefined, messageSigner, identityAck\);\s*\/\/[^\n]*\n\s*if \(smartQuote && currentItemKey\.current === key\) setAaQuoteGeneration\(\(g\) => g \+ 1\);/.test(sheet) &&
+      /await onApprove\(txQuote, overrideSimulation, undefined, messageSigner, identityAck, prePromptStep\);\s*\/\/[^\n]*\n\s*if \(smartQuote && currentItemKey\.current === key\) setAaQuoteGeneration\(\(g\) => g \+ 1\);/.test(sheet) &&
         sheet.includes('quotedInputs.generation !== aaQuoteGeneration') &&
-        read('../src/wallet/WalletConnectContext.tsx').includes('onApprove={(q, o, c, signer, ack) => onApprove(head, q, o, c, signer, ack)}'));
+        read('../src/wallet/WalletConnectContext.tsx').includes('onApprove={(q, o, c, signer, ack, step) => onApprove(head, q, o, c, signer, ack, step)}'));
   }
 
   // Stored endpoint URLs embed API keys; Settings must never render them.
@@ -2789,6 +2792,9 @@ await (async () => {
     await checkAaQuoteBeforeApproval(b.bundle.bundler, q);
     check('pre-prompt: a clean answer → exactly one more eth_estimateUserOperationGas, nothing sent, the quote unchanged',
       b.state.estimates === before.estimates + 1 && b.state.sends === 0 && q.fee === before.fee && q.total === before.total && q.calls === before.calls);
+    // Phase 27 item 2 (rollout): the busy line says "the bundler's gas estimate" only for a quote whose check runs one.
+    check('phase 27 item 2: aaQuoteHasPrePromptEstimate is true for the quote prepareAaCalls made and false for a copy of it (the passkey wrapper\'s shape)',
+      aaQuoteHasPrePromptEstimate(q) === true && aaQuoteHasPrePromptEstimate({ ...q }) === false);
     // A short burst inside the retries passes.
     const b2 = scripted([REAL], { estimateRetries: NO_WAIT });
     const q2 = await prepareAaSend(b2.bundle, owner.address, RECIPIENT, AMOUNT);
@@ -2813,6 +2819,7 @@ await (async () => {
     const plain = { maxFeePerGas: 3n, maxPriorityFeePerGas: 1n };
     const e = await checkAaQuoteBeforeApproval(b.bundle.bundler, plain).then(() => null, (x) => x);
     check('pre-prompt: a quote prepareAaCalls did not make asks no estimate (the behaviour before this fix)', e === null && b.state.estimates === 0);
+    check('phase 27 item 2: …and aaQuoteHasPrePromptEstimate says so (false), so a busy line never claims a gas estimate for it', aaQuoteHasPrePromptEstimate(plain) === false);
   }
   {
     // The per-chain retry policy.
@@ -3124,5 +3131,35 @@ await (async () => {
     m.describeAaError(e403, { accountType: 'kernel-v3.3', deployed: null })?.title !== "The endpoint refused this app's access.");
 })();
 
+// ---------------------------------------------------------------------------
+// Phase 27 item 2 (rollout): the Send and Change-owner confirms run the smart-account approval under the
+// pre-prompt guard (wallet/pre-prompt-guard.ts), as the Lend screen does: the
+// handler runs inside guard.run, "final" comes after the bundler check and
+// before the device prompt, the confirm's buttons are disabled while the guard
+// is not idle, and the busy line (PrePromptCheckNote) is rendered (source pins).
+// ---------------------------------------------------------------------------
+{
+  const { readFileSync: readGuardSrc } = await import('node:fs');
+  const guardOrder = (src, handlerStart, checkCall, gate) => {
+    const h = src.indexOf(handlerStart);
+    const c = src.indexOf(checkCall, h);
+    const f = src.indexOf("step('final');", c);
+    const g = src.indexOf(gate, f);
+    return h > 0 && c > h && f > c && g > f;
+  };
+  const guardScreen0 = readGuardSrc(new URL("../src/screens/SendScreen.tsx", import.meta.url), 'utf8');
+  check("phase 27 item 2: Send (smart account) \u2014 onSend runs under the guard: the bundler check, then \"final\", then the device prompt",
+    guardScreen0.includes('const prePrompt = usePrePromptGuard();') && guardScreen0.includes("const onAaSendTap = () => void prePrompt.guard.run((step) => onSend(step));") &&
+      guardOrder(guardScreen0, "const onSend = async (step: PrePromptStep = () => {}) => {", "await checkAaQuoteBeforeApproval(preBundle.bundler, quote);", "spendingGateForQuote("));
+  check("phase 27 item 2: Send (smart account) \u2014 the line names the gas estimate only when the check runs one (passkey and USDC-fee quotes: \"final\")", guardScreen0.includes("step(preBundle && aaQuoteHasPrePromptEstimate(quote) ? 'bundler' : 'final');"));
+  check("phase 27 item 2: Send (smart account) \u2014 Approve and Back disabled while the guard runs, the busy line between them", guardScreen0.includes("              onPress={onAaSendTap}\n              disabled={prePrompt.stage !== 'idle'}\n            />\n            <PrePromptCheckNote stage={prePrompt.stage} />\n            <Button title=\"Back\" variant=\"secondary\" onPress={() => setPhase('form')} disabled={prePrompt.stage !== 'idle'} />"));
+  const guardScreen1 = readGuardSrc(new URL("../src/screens/OwnerRotationScreen.tsx", import.meta.url), 'utf8');
+  check("phase 27 item 2: Change owner \u2014 onConfirm runs under the guard: the bundler check, then \"final\", then the device prompt",
+    guardScreen1.includes('const prePrompt = usePrePromptGuard();') && guardScreen1.includes("const onConfirmTap = () => void prePrompt.guard.run((step) => onConfirm(step));") &&
+      guardOrder(guardScreen1, "const onConfirm = async (step: PrePromptStep) => {", "await checkAaQuoteBeforeApproval(bundle.bundler, r.quote);", "requireLocalAuth('Approve changing the owner key')"));
+  check("phase 27 item 2: Change owner \u2014 Change owner and Back disabled while the guard runs, the busy line under it", guardScreen1.includes("<Button title=\"Change owner\" variant=\"destructive\" onPress={onConfirmTap} disabled={prePrompt.stage !== 'idle'} />\n            <PrePromptCheckNote stage={prePrompt.stage} />\n            <Button\n              title=\"Back\"\n              variant=\"secondary\"\n              disabled={prePrompt.stage !== 'idle'}\n              onPress={() => {\n                setRotation(null);"));
+  check("phase 27 item 2: Change owner \u2014 no confirm button still calls the handler outside the guard",
+    ["onPress={() => void onConfirm()}"].every((old) => !guardScreen1.includes(old)));
+}
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

@@ -18,6 +18,8 @@ import { RiskWarnings } from '../components/RiskWarnings';
 import { SpendingPolicyNotice, spendingGateForQuote } from '../components/SpendingPolicyViews';
 import { AaDepositNote } from '../components/AaDepositNote';
 import { NOTE_VIEW_SCROLL_PROPS, TransactionNoteField, dismissKeyboardThenClose } from '../components/TransactionNoteField';
+import { PrePromptCheckNote, usePrePromptGuard } from '../components/PrePromptCheckNote';
+import type { PrePromptStep } from '../wallet/pre-prompt-guard';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { requireLocalAuth } from '../wallet/biometric';
@@ -234,6 +236,8 @@ export function StakingScreen({ navigation }: Props) {
   const [reloadTick, setReloadTick] = useState(0);
 
   const [phase, setPhase] = useState<Phase>('form');
+  // Phase 27 item 2: the smart-account confirm's busy state while the checks before the device prompt run.
+  const prePrompt = usePrePromptGuard();
   const [choice, setChoice] = useState<Choice>('lido-steth');
   const [amountText, setAmountText] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
@@ -605,8 +609,15 @@ export function StakingScreen({ navigation }: Props) {
     }
   };
 
-  /** The whole plan as one smart-account operation. */
-  const onAaSend = async () => {
+  /**
+   * The whole plan as one smart-account operation, under the pre-prompt guard (phase 27 item 2, as on the Lend
+   * screen): from the tap until the handler returns Approve and Back are
+   * disabled and a second tap starts nothing; the busy line shows while the
+   * bundler check ('bundler') and then the spending checks ('final') run, before the
+   * device prompt.
+   */
+  const onAaSendTap = () => void prePrompt.guard.run((step) => onAaSend(step));
+  const onAaSend = async (step: PrePromptStep) => {
     const bundle = aa.bundle;
     if (!aaQuote || !plan || !bundle) return;
     const bundleUrl = aa.url;
@@ -624,6 +635,7 @@ export function StakingScreen({ navigation }: Props) {
       backToForm('Please review again.');
       return;
     }
+    step('final');
     const withinLimits = await spendingGateForQuote({
       chain: caip2,
       owner: account.address,
@@ -916,8 +928,9 @@ export function StakingScreen({ navigation }: Props) {
           sendingView(tx('Signing and submitting to the bundler…'))
         ) : (
           <>
-            <Button title={t('staking.aa.button', { action: stakingActionLabel(plan.action, symbol) })} onPress={() => void onAaSend()} />
-            <Button title="Back" variant="secondary" onPress={() => backToForm('')} />
+            <Button title={t('staking.aa.button', { action: stakingActionLabel(plan.action, symbol) })} onPress={onAaSendTap} disabled={prePrompt.stage !== 'idle'} />
+            <PrePromptCheckNote stage={prePrompt.stage} />
+            <Button title="Back" variant="secondary" onPress={() => backToForm('')} disabled={prePrompt.stage !== 'idle'} />
           </>
         )}
       </ScrollView>

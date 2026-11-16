@@ -1309,7 +1309,7 @@ console.log('check-wc: WalletConnect Verify (verifyContext, threat-model N-06)')
   check('provider re-checks the switch before acting (defense in depth)', /if \(!identityApprovalAllowed\(item\.identity, identityAcknowledged\)\) return;/.test(provider));
   // The handler's promise is returned (not voided) so the sheet can re-quote
   // a smart-account request whose attempt left it on the sheet.
-  check('provider passes the switch state through', /onApprove=\{\(q, o, c, signer, ack\) => onApprove\(head, q, o, c, signer, ack\)\}/.test(provider));
+  check('provider passes the switch state through', /onApprove=\{\(q, o, c, signer, ack, step\) => onApprove\(head, q, o, c, signer, ack, step\)\}/.test(provider));
 }
 
 
@@ -1648,7 +1648,7 @@ console.log('check-wc: the sent view after a dApp transaction, batch or browser 
     provider.includes('<WcSentView key={sentShown.key} result={sentShown} onDone={onSentDone} />') &&
       provider.indexOf('<WcSentView') < provider.indexOf('<WcApprovalSheet\n') &&
       provider.includes('const onSentDone = useCallback(() => setSent(null), []);'));
-  check('provider: the browser shares the paths (one onApprove for WalletConnect and in-app browser items)', /onApprove=\{\(q, o, c, signer, ack\) => onApprove\(head, q, o, c, signer, ack\)\}/.test(provider));
+  check('provider: the browser shares the paths (one onApprove for WalletConnect and in-app browser items)', /onApprove=\{\(q, o, c, signer, ack, step\) => onApprove\(head, q, o, c, signer, ack, step\)\}/.test(provider));
   const alertsGone = (src) =>
     !/Alert\.alert\(\s*'Transaction sent/.test(src) &&
     !/Alert\.alert\(\s*'Batch sent/.test(src) &&
@@ -1698,6 +1698,29 @@ console.log('check-wc: the sent view after a dApp transaction, batch or browser 
     a11y.maskedSpokenProps('•••• USDC').accessibilityLabel === '(amount hidden) USDC' && Object.keys(a11y.maskedSpokenProps('1.5 USDC')).length === 0);
 }
 
+// ---------------------------------------------------------------------------
+// Phase 27 item 2 (rollout): the approval sheet runs a smart-account request's
+// approval under the pre-prompt guard (wallet/pre-prompt-guard.ts), as the Lend
+// screen does: the provider moves the stage ('bundler' only when the check runs
+// a gas estimate, 'final' around it), the request body shows its busy state
+// while the guard is not idle, and the busy line is rendered until the
+// provider holds the request after the device prompt (source pins).
+// ---------------------------------------------------------------------------
+{
+  const { readFileSync: readGuardSrc } = await import('node:fs');
+  const guardSheet = readGuardSrc(new URL('../src/components/WcApprovalSheet.tsx', import.meta.url), 'utf8');
+  const guardProvider = readGuardSrc(new URL('../src/wallet/WalletConnectContext.tsx', import.meta.url), 'utf8');
+  check('phase 27 item 2: the sheet holds the guard, runs only smart-account requests under it, and passes its step to the provider',
+    ["  const prePrompt = usePrePromptGuard();\n", "    if (item.type !== 'proposal' && item.smart && (txQuote?.status === 'ready-aa' || txQuote?.status === 'ready-permission')) {\n      void prePrompt.guard.run((step) => approveRequest(step));\n    } else {\n      void approveRequest();\n    }", "    await onApprove(txQuote, overrideSimulation, undefined, messageSigner, identityAck, prePromptStep);\n"].every((s) => guardSheet.includes(s)));
+  check('phase 27 item 2: the request body is busy (Approve gone, a second tap impossible) while the guard is not idle; the busy line is rendered, idle once the provider holds the request',
+    ["              busy={busy || requoting || prePrompt.stage !== 'idle'}\n", "              onApprove={approveRequestTap}\n", "          <PrePromptCheckNote stage={busy ? 'idle' : prePrompt.stage} />\n"].every((s) => guardSheet.includes(s)) && !guardSheet.includes('onApprove={() => void approveRequest()}'));
+  const pc = guardProvider.indexOf("await checkAaQuoteBeforeApproval(txQuote.bundle.bundler, txQuote.quote);");
+  const pBefore = guardProvider.lastIndexOf("prePromptStep?.(aaQuoteHasPrePromptEstimate(txQuote.quote) ? 'bundler' : 'final');", pc);
+  const pFinal = guardProvider.indexOf("prePromptStep?.('final');", pc);
+  const pGate = guardProvider.indexOf('requireLocalAuth(promptTitle)', pc);
+  check('phase 27 item 2: the provider names the gas estimate only when the check runs one, then "final" after the check and before the device prompt',
+    pBefore > 0 && pc - pBefore < 200 && pFinal > pc && pGate > pFinal);
+}
 console.log('');
 console.log(`check-wc: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

@@ -75,6 +75,7 @@ import {
   AA_SELF_PAID_FEE_SENTENCE,
   aaAccountTypeLabel,
   aaMaxAdjustmentSentence,
+  aaQuoteHasPrePromptEstimate,
   checkAaQuoteBeforeApproval,
   aaPreviewNote,
   aaRiskWarningTarget,
@@ -195,6 +196,8 @@ import { fiatLine, formatFiat, nativePriceAssetId, tokenPriceAssetId } from '../
 import { BITCOIN, DOGECOIN } from '@shiba-wallet/chains-utxo';
 import { usePasskeyInfo } from '../wallet/usePasskeyInfo';
 import { NOTE_VIEW_SCROLL_PROPS, TransactionNoteField, dismissKeyboardThenClose } from '../components/TransactionNoteField';
+import { PrePromptCheckNote, usePrePromptGuard } from '../components/PrePromptCheckNote';
+import type { PrePromptStep } from '../wallet/pre-prompt-guard';
 import { OfflineNotice, TechnicalDetail } from '../wallet/connectivity';
 import { PendingTransactionsSection } from '../components/PendingTransactions';
 import { recordPendingUserOperation, userOpResendFor } from '../wallet/pending-transactions';
@@ -319,6 +322,8 @@ export function SendScreen({ route, navigation }: Props) {
     tokenMode ? undefined : null,
   );
   const [phase, setPhase] = useState<Phase>('form');
+  // Phase 27 item 2: the smart-account confirm's busy state while the checks before the device prompt run.
+  const prePrompt = usePrePromptGuard();
   // A payment request that switched this screen between the native coin and
   // a token (navigation.replace) arrives as route.params.request; its values
   // only pre-fill the editable fields.
@@ -1539,7 +1544,16 @@ export function SendScreen({ route, navigation }: Props) {
     });
   };
 
-  const onSend = async () => {
+  /**
+   * The smart-account confirm's Approve (owner, USDC-fee and passkey
+   * quotes alike), under the pre-prompt guard (phase 27 item 2, as on the
+   * Lend screen): from the tap until onSend returns Approve and Back are
+   * disabled and a second tap starts nothing; the busy line says what runs
+   * before the device or passkey prompt. Regular-account confirms call
+   * onSend directly (no bundler check, no guard, no line).
+   */
+  const onAaSendTap = () => void prePrompt.guard.run((step) => onSend(step));
+  const onSend = async (step: PrePromptStep = () => {}) => {
     if (!quote || !quotedFrom || !quotedUrl) return;
     // Quote pinning: the quote is one endpoint's answer. If the wallet would
     // now use a different endpoint (failover elsewhere in the app, or a
@@ -1566,6 +1580,11 @@ export function SendScreen({ route, navigation }: Props) {
       // again at once, without having approved anything. sendAa and
       // sendPasskeyCalls repeat the check at send time.
       const preBundle = aaBundle.current;
+      // The busy line names the bundler's gas estimate only when
+      // checkAaQuoteBeforeApproval really runs one: a quote prepareAaCalls
+      // made. The passkey and USDC-fee quotes are built by their own
+      // wrappers, whose check reads only the fee floor ('final').
+      step(preBundle && aaQuoteHasPrePromptEstimate(quote) ? 'bundler' : 'final');
       if (preBundle) {
         try {
           await checkAaQuoteBeforeApproval(preBundle.bundler, quote);
@@ -1586,6 +1605,7 @@ export function SendScreen({ route, navigation }: Props) {
         }
       }
     }
+    step('final');
     // App-enforced spending limits (phase 12 item 3): after the eth_call or
     // bundler-estimate gate (the button stays disabled until it passed or was
     // overridden) and before the biometric gate. EVM sends only.
@@ -2139,9 +2159,11 @@ export function SendScreen({ route, navigation }: Props) {
                   ? t('send.aa.button.passkey', { symbol: quote.token ? quote.token.symbol : symbol })
                   : t('send.aa.button.send', { symbol: quote.token ? quote.token.symbol : symbol })
               }
-              onPress={() => void onSend()}
+              onPress={onAaSendTap}
+              disabled={prePrompt.stage !== 'idle'}
             />
-            <Button title="Back" variant="secondary" onPress={() => setPhase('form')} />
+            <PrePromptCheckNote stage={prePrompt.stage} />
+            <Button title="Back" variant="secondary" onPress={() => setPhase('form')} disabled={prePrompt.stage !== 'idle'} />
           </>
         )}
       </ScrollView>

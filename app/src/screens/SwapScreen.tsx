@@ -99,6 +99,8 @@ import { PREVIEW_AA_NOTE } from '../wallet/simulation';
 import { Eip7702QuoteNotice } from '../components/DelegationViews';
 import { AaDepositNote } from '../components/AaDepositNote';
 import { NOTE_VIEW_SCROLL_PROPS, TransactionNoteField, dismissKeyboardThenClose } from '../components/TransactionNoteField';
+import { PrePromptCheckNote, usePrePromptGuard } from '../components/PrePromptCheckNote';
+import type { PrePromptStep } from '../wallet/pre-prompt-guard';
 import { usePrices } from '../wallet/usePrices';
 import { fiatLine, formatFiat, nativePriceAssetId, tokenPriceAssetId } from '../wallet/prices';
 
@@ -180,6 +182,8 @@ export function SwapScreen({ navigation }: Props) {
   const [tokens, setTokens] = useState<FungibleAsset[]>([]);
 
   const [phase, setPhase] = useState<Phase>('form');
+  // Phase 27 item 2: the smart-account confirm's busy state while the checks before the device prompt run.
+  const prePrompt = usePrePromptGuard();
   const [sellAsset, setSellAsset] = useState<SwapAsset>('native');
   const [buyAsset, setBuyAsset] = useState<SwapAsset | null>(null);
   const [amountText, setAmountText] = useState('');
@@ -890,7 +894,15 @@ export function SwapScreen({ navigation }: Props) {
    * the owner key signs through signWith (expectAddress = the owner EOA the
    * operation was prepared for).
    */
-  const onAaSwap = async () => {
+  /**
+   * The swap as one smart-account operation, under the pre-prompt guard (phase 27 item 2, as on the Lend
+   * screen): from the tap until the handler returns Approve and Back are
+   * disabled and a second tap starts nothing; the busy line shows while the
+   * bundler check ('bundler') and then the spending checks ('final') run, before the
+   * device prompt.
+   */
+  const onAaSwapTap = () => void prePrompt.guard.run((step) => onAaSwap(step));
+  const onAaSwap = async (step: PrePromptStep) => {
     if (!url || !aaQuote || !quoteView || !quote) return;
     const bundle = aaBundle.current;
     if (!bundle) {
@@ -957,6 +969,7 @@ export function SwapScreen({ navigation }: Props) {
       setPhase('review');
       return;
     }
+    step('final');
     // App-enforced spending limits (phase 12 item 3): the batch's sell side,
     // after the bundler-estimate gate, before the biometric gate.
     const withinLimits = await spendingGateForQuote({
@@ -1212,9 +1225,11 @@ export function SwapScreen({ navigation }: Props) {
           <>
             <Button
               title={`Swap ${sellSymbol} for ${buySymbol} from smart account`}
-              onPress={() => void onAaSwap()}
+              onPress={onAaSwapTap}
+              disabled={prePrompt.stage !== 'idle'}
             />
-            <Button title="Back" variant="secondary" onPress={() => setPhase('review')} />
+            <PrePromptCheckNote stage={prePrompt.stage} />
+            <Button title="Back" variant="secondary" onPress={() => setPhase('review')} disabled={prePrompt.stage !== 'idle'} />
           </>
         )}
       </ScrollView>

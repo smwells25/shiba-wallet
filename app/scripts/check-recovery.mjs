@@ -1552,5 +1552,37 @@ console.log('check-recovery: mainnet readiness gate (phase 9 item 6)');
   check('mainnet guardian removal and veto are NOT refused by the readiness gate', !gated(remove) && !gated(veto), `${remove?.message} / ${veto?.message}`);
 }
 
+// ---------------------------------------------------------------------------
+// Phase 27 item 2 (rollout): the Guardians and Approve-a-recovery confirms run the smart-account approval under the
+// pre-prompt guard (wallet/pre-prompt-guard.ts), as the Lend screen does: the
+// handler runs inside guard.run, "final" comes after the bundler check and
+// before the device prompt, the confirm's buttons are disabled while the guard
+// is not idle, and the busy line (PrePromptCheckNote) is rendered (source pins).
+// ---------------------------------------------------------------------------
+{
+  const { readFileSync: readGuardSrc } = await import('node:fs');
+  const guardOrder = (src, handlerStart, checkCall, gate) => {
+    const h = src.indexOf(handlerStart);
+    const c = src.indexOf(checkCall, h);
+    const f = src.indexOf("step('final');", c);
+    const g = src.indexOf(gate, f);
+    return h > 0 && c > h && f > c && g > f;
+  };
+  const guardScreen0 = readGuardSrc(new URL("../src/screens/GuardiansScreen.tsx", import.meta.url), 'utf8');
+  check("phase 27 item 2: Guardians \u2014 onConfirm runs under the guard: the bundler check, then \"final\", then the device prompt",
+    guardScreen0.includes('const prePrompt = usePrePromptGuard();') && guardScreen0.includes("const onConfirmTap = () => void prePrompt.guard.run((step) => onConfirm(step));") &&
+      guardOrder(guardScreen0, "const onConfirm = async (step: PrePromptStep) => {", "await checkAaQuoteBeforeApproval(bundle.bundler, op.quote);", "requireLocalAuth(what)"));
+  check("phase 27 item 2: Guardians \u2014 the confirm button and Back disabled while the guard runs, the busy line under it", guardScreen0.includes("              onPress={onConfirmTap}\n              disabled={prePrompt.stage !== 'idle'}\n            />\n            <PrePromptCheckNote stage={prePrompt.stage} />\n            <Button\n              title=\"Back\"\n              variant=\"secondary\"\n              disabled={prePrompt.stage !== 'idle'}\n              onPress={() => {\n                const back = operation.kind === 'install' || operation.kind === 'renew' ? 'form' : 'overview';"));
+  check("phase 27 item 2: Guardians \u2014 no confirm button still calls the handler outside the guard",
+    ["onPress={() => void onConfirm()}"].every((old) => !guardScreen0.includes(old)));
+  const guardScreen1 = readGuardSrc(new URL("../src/screens/ApproveRecoveryScreen.tsx", import.meta.url), 'utf8');
+  check("phase 27 item 2: Approve a recovery (guardian submit) \u2014 onSubmit runs under the guard: the bundler check, then \"final\", then the device prompt",
+    guardScreen1.includes('const prePrompt = usePrePromptGuard();') && guardScreen1.includes("const onSubmitTap = () => void prePrompt.guard.run((step) => onSubmit(step));") &&
+      guardOrder(guardScreen1, "const onSubmit = async (step: PrePromptStep) => {", "await checkAaQuoteBeforeApproval(await bundlerFor(), submission);", "requireLocalAuth('Approve submitting this recovery"));
+  check("phase 27 item 2: Approve a recovery (guardian submit) \u2014 the line never claims a gas estimate for a submission whose check reads only the fee floor", guardScreen1.includes("step(aaQuoteHasPrePromptEstimate(submission) ? 'bundler' : 'final');\n"));
+  check("phase 27 item 2: Approve a recovery (guardian submit) \u2014 Submit recovery and Back disabled while the guard runs, the busy line between them", guardScreen1.includes("<Button title=\"Submit recovery\" variant=\"destructive\" onPress={onSubmitTap} disabled={prePrompt.stage !== 'idle'} />\n            <PrePromptCheckNote stage={prePrompt.stage} />\n            <Button title=\"Back\" variant=\"secondary\" onPress={() => setPhase('review')} disabled={prePrompt.stage !== 'idle'} />"));
+  check("phase 27 item 2: Approve a recovery (guardian submit) \u2014 no confirm button still calls the handler outside the guard",
+    ["onPress={() => void onSubmit()}"].every((old) => !guardScreen1.includes(old)));
+}
 console.log(`\ncheck-recovery: ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

@@ -2416,5 +2416,22 @@ console.log('check-multisig: wipe');
   check('resetMultisigRecords empties the list (nothing on-chain changes)', (await listMultisigRecords(undefined, store)).length === 0);
 }
 
+// ---------------------------------------------------------------------------
+// Phase 27 item 2 (rollout): "Approve and submit" runs under the pre-prompt
+// guard (wallet/pre-prompt-guard.ts), as the Lend screen does. The bundler
+// check runs inside submitMultisigWithGate, before requireAuth; the confirm
+// stays on screen meanwhile with its buttons disabled and the busy line, the
+// stage moves to "final" just before the device prompt, and the spinner
+// replaces the confirm only once the prompt is approved (source pins).
+// ---------------------------------------------------------------------------
+{
+  const { readFileSync: readGuardSrc } = await import('node:fs');
+  const guardScreen = readGuardSrc(new URL('../src/screens/MultisigScreen.tsx', import.meta.url), 'utf8');
+  const sub = guardScreen.slice(guardScreen.indexOf('const onSubmit = async (step: PrePromptStep) => {'), guardScreen.indexOf('submitMultisigWithGate({', guardScreen.indexOf('const onSubmit = async (step')));
+  check('phase 27 item 2: onSubmit runs under the guard, "final" just before the device prompt, the spinner only after it is approved',
+    ["  const prePrompt = usePrePromptGuard();\n", "  const onSubmitTap = () => void prePrompt.guard.run((step) => onSubmit(step));\n  const onSubmit = async (step: PrePromptStep) => {\n", "    const requireLocalAuthAfterChecks = async (title: string) => {\n      step('final');\n      const auth = await requireLocalAuth(title);\n      if (auth.ok) setPhase('sending');\n      return auth;\n    };\n", "        requireAuth: requireLocalAuthAfterChecks,\n"].every((s) => guardScreen.includes(s)) && sub.length > 0 && sub.split("setPhase('sending')").length === 2 && sub.includes("if (auth.ok) setPhase('sending');"));
+  check('phase 27 item 2: Approve and submit and Back disabled while the guard runs, the busy line under it; no button calls onSubmit outside the guard',
+    guardScreen.includes("<Button title=\"Approve and submit\" onPress={onSubmitTap} disabled={readiness !== null || prePrompt.stage !== 'idle'} />\n            <PrePromptCheckNote stage={prePrompt.stage} />\n            <Button\n              title=\"Back\"\n              variant=\"secondary\"\n              disabled={prePrompt.stage !== 'idle'}\n") && !guardScreen.includes('onPress={() => void onSubmit()}'));
+}
 console.log(`\ncheck-multisig: ${passed} passed, ${failed} failed (${mutants} mutants)`);
 if (failed > 0) process.exit(1);

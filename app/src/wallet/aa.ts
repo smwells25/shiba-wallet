@@ -4651,6 +4651,17 @@ const submittedQuotes = new WeakSet<object>();
  */
 const prePromptEstimates = new WeakMap<object, () => Promise<void>>();
 
+/**
+ * True when checkAaQuoteBeforeApproval will also run the bundler estimate
+ * for `quote` (a quote prepareAaCalls made), false when it reads only the
+ * bundler's fee floor (the passkey, guardian-recovery and USDC-fee
+ * wrappers). Phase 27 item 2's busy line uses it so that it says "the
+ * bundler's gas estimate" only when one is really asked for.
+ */
+export function aaQuoteHasPrePromptEstimate(quote: object): boolean {
+  return prePromptEstimates.has(quote);
+}
+
 /** Refusal for a quote that was already submitted once. */
 export const AA_QUOTE_ALREADY_USED =
   'This operation was already submitted once with these fees. Nothing was signed; review it again so it is ' +

@@ -107,6 +107,8 @@ import {
   type OwnAccount,
 } from '../wallet/multisig';
 import { BalanceChangePreview } from '../components/BalanceChangePreview';
+import { PrePromptCheckNote, usePrePromptGuard } from '../components/PrePromptCheckNote';
+import type { PrePromptStep } from '../wallet/pre-prompt-guard';
 import { RiskWarnings } from '../components/RiskWarnings';
 import {
   MultisigCallsView,
@@ -193,6 +195,8 @@ export function MultisigScreen() {
   );
 
   const [phase, setPhase] = useState<Phase>('list');
+  // Phase 27 item 2: the submit confirm's busy state while the checks before the device prompt run.
+  const prePrompt = usePrePromptGuard();
   const [records, setRecords] = useState<MultisigRecord[]>([]);
   // Requests this phone approved as a co-signer on this network (History).
   const [cosigned, setCosigned] = useState<MultisigCosignedEntry[]>([]);
@@ -483,17 +487,33 @@ export function MultisigScreen() {
     return multisigSubmitErrorText(e, { record: selected, deploys: op.deploys, symbol: nativeSymbol, lastQuote: last, funds: current });
   };
 
-  const onSubmit = async () => {
+  /**
+   * "Approve and submit", under the pre-prompt guard (phase 27 item 2, as
+   * on the Lend screen). submitMultisigWithGate runs the bundler check
+   * (checkAaQuoteBeforeApproval) and then asks requireAuth; the confirm
+   * stays on screen meanwhile, with its buttons disabled and the busy line
+   * ('bundler', then 'final' just before the prompt), and a second tap
+   * starts nothing. The spinner ('sending') replaces it once the device
+   * prompt is approved (before this item it replaced it at the tap, with no
+   * line, and two taps in one frame could both start).
+   */
+  const onSubmitTap = () => void prePrompt.guard.run((step) => onSubmit(step));
+  const onSubmit = async (step: PrePromptStep) => {
     if (!selected || !op || !submission) return;
     setError(null);
-    setPhase('sending');
+    const requireLocalAuthAfterChecks = async (title: string) => {
+      step('final');
+      const auth = await requireLocalAuth(title);
+      if (auth.ok) setPhase('sending');
+      return auth;
+    };
     try {
       const { userOpHash } = await submitMultisigWithGate({
         record: selected,
         op,
         bundle: submission.bundle,
         quote: submission.quote,
-        requireAuth: requireLocalAuth,
+        requireAuth: requireLocalAuthAfterChecks,
         signWith,
       });
       setProgress({ userOpHash, state: 'pending', success: null, txHash: null });
@@ -1070,10 +1090,12 @@ export function MultisigScreen() {
           <ActivityIndicator color={theme.accent} />
         ) : (
           <>
-            <Button title="Approve and submit" onPress={() => void onSubmit()} disabled={readiness !== null} />
+            <Button title="Approve and submit" onPress={onSubmitTap} disabled={readiness !== null || prePrompt.stage !== 'idle'} />
+            <PrePromptCheckNote stage={prePrompt.stage} />
             <Button
               title="Back"
               variant="secondary"
+              disabled={prePrompt.stage !== 'idle'}
               onPress={() => {
                 setSubmission(null);
                 setPhase('collect');

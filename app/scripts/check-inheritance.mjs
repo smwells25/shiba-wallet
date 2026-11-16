@@ -571,5 +571,29 @@ function INSTALL_SCAN_LAST() {
   return INHERITANCE_SCAN_BLOCKS_PER_CHECK - 1;
 }
 
+// ---------------------------------------------------------------------------
+// Phase 27 item 2 (rollout): the Inheritance confirm run the smart-account approval under the
+// pre-prompt guard (wallet/pre-prompt-guard.ts), as the Lend screen does: the
+// handler runs inside guard.run, "final" comes after the bundler check and
+// before the device prompt, the confirm's buttons are disabled while the guard
+// is not idle, and the busy line (PrePromptCheckNote) is rendered (source pins).
+// ---------------------------------------------------------------------------
+{
+  const { readFileSync: readGuardSrc } = await import('node:fs');
+  const guardOrder = (src, handlerStart, checkCall, gate) => {
+    const h = src.indexOf(handlerStart);
+    const c = src.indexOf(checkCall, h);
+    const f = src.indexOf("step('final');", c);
+    const g = src.indexOf(gate, f);
+    return h > 0 && c > h && f > c && g > f;
+  };
+  const guardScreen0 = readGuardSrc(new URL("../src/screens/InheritanceScreen.tsx", import.meta.url), 'utf8');
+  check("phase 27 item 2: Inheritance \u2014 onConfirm runs under the guard: the bundler check, then \"final\", then the device prompt",
+    guardScreen0.includes('const prePrompt = usePrePromptGuard();') && guardScreen0.includes("const onConfirmTap = () => void prePrompt.guard.run((step) => onConfirm(step));") &&
+      guardOrder(guardScreen0, "const onConfirm = async (step: PrePromptStep) => {", "await checkAaQuoteBeforeApproval(bundle.bundler, op.quote);", "requireLocalAuth(what)"));
+  check("phase 27 item 2: Inheritance \u2014 the confirm button and Back disabled while the guard runs, the busy line under it", guardScreen0.includes("              onPress={onConfirmTap}\n              disabled={prePrompt.stage !== 'idle'}\n            />\n            <PrePromptCheckNote stage={prePrompt.stage} />\n            <Button\n              title=\"Back\"\n              variant=\"secondary\"\n              disabled={prePrompt.stage !== 'idle'}\n              onPress={() => {\n                const back = operation.kind === 'install' ? 'form' : 'overview';"));
+  check("phase 27 item 2: Inheritance \u2014 no confirm button still calls the handler outside the guard",
+    ["onPress={() => void onConfirm()}"].every((old) => !guardScreen0.includes(old)));
+}
 console.log(`\ncheck-inheritance: ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

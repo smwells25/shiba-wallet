@@ -976,5 +976,33 @@ console.log('\ncheck-sessions: endpoint failures and user copy (2026-10-04 emula
   check(`no user-facing string in app/src cites an internal file (${files.length} files scanned)`, hits.length === 0 && files.length > 50, hits.join(' | '));
 }
 
+// ---------------------------------------------------------------------------
+// Phase 27 item 2 (rollout): the session grant and revoke confirms run the smart-account approval under the
+// pre-prompt guard (wallet/pre-prompt-guard.ts), as the Lend screen does: the
+// handler runs inside guard.run, "final" comes after the bundler check and
+// before the device prompt, the confirm's buttons are disabled while the guard
+// is not idle, and the busy line (PrePromptCheckNote) is rendered (source pins).
+// ---------------------------------------------------------------------------
+{
+  const { readFileSync: readGuardSrc } = await import('node:fs');
+  const guardOrder = (src, handlerStart, checkCall, gate) => {
+    const h = src.indexOf(handlerStart);
+    const c = src.indexOf(checkCall, h);
+    const f = src.indexOf("step('final');", c);
+    const g = src.indexOf(gate, f);
+    return h > 0 && c > h && f > c && g > f;
+  };
+  const guardScreen0 = readGuardSrc(new URL("../src/screens/SessionsScreen.tsx", import.meta.url), 'utf8');
+  check("phase 27 item 2: Sessions \u2014 onInstall runs under the guard: the bundler check, then \"final\", then the device prompt",
+    guardScreen0.includes('const prePrompt = usePrePromptGuard();') && guardScreen0.includes("const onInstallTap = () => void prePrompt.guard.run((step) => onInstall(step));") &&
+      guardOrder(guardScreen0, "const onInstall = async (step: PrePromptStep) => {", "await checkAaQuoteBeforeApproval(sendBundle.bundler, p.quote);", "requireLocalAuth('Approve granting this session')"));
+  check("phase 27 item 2: Sessions \u2014 onRevoke runs under the guard: the bundler check, then \"final\", then the device prompt",
+    guardScreen0.includes('const prePrompt = usePrePromptGuard();') && guardScreen0.includes("const onRevokeTap = () => void prePrompt.guard.run((step) => onRevoke(step));") &&
+      guardOrder(guardScreen0, "const onRevoke = async (step: PrePromptStep) => {", "await checkAaQuoteBeforeApproval(sendBundle.bundler, target.quote);", "requireLocalAuth(revokeApprovalPrompt("));
+  check("phase 27 item 2: Sessions \u2014 Grant session and Back disabled while the guard runs, the busy line under it", guardScreen0.includes("<Button title=\"Grant session\" onPress={onInstallTap} disabled={prePrompt.stage !== 'idle'} />\n            <PrePromptCheckNote stage={prePrompt.stage} />\n            <Button\n              title=\"Back\"\n              variant=\"secondary\"\n              disabled={prePrompt.stage !== 'idle'}\n              onPress={() => {\n                discardPending();"));
+  check("phase 27 item 2: Sessions \u2014 Revoke and Back disabled while the guard runs, the busy line under it", guardScreen0.includes("<Button title={revokeCopy.button} variant=\"destructive\" onPress={onRevokeTap} disabled={prePrompt.stage !== 'idle'} />\n            <PrePromptCheckNote stage={prePrompt.stage} />\n            <Button\n              title=\"Back\"\n              variant=\"secondary\"\n              disabled={prePrompt.stage !== 'idle'}\n              onPress={() => {\n                setRevokeTarget(null);"));
+  check("phase 27 item 2: Sessions \u2014 no confirm button still calls the handler outside the guard",
+    ["onPress={() => void onInstall()}", "onPress={() => void onRevoke()}"].every((old) => !guardScreen0.includes(old)));
+}
 console.log(`\ncheck-sessions: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

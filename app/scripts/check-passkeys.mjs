@@ -1039,5 +1039,33 @@ console.log('check-passkeys: mainnet readiness gate (phase 9 item 6)');
   check('mainnet passkey-signed quote and send refused with zero network calls', /only on test networks/.test(e3?.message ?? '') && /only on test networks/.test(e4?.message ?? '') && node.calls.length === 0 && bundler.calls.length === 0);
 }
 
+// ---------------------------------------------------------------------------
+// Phase 27 item 2 (rollout): the passkey add and remove confirms run the smart-account approval under the
+// pre-prompt guard (wallet/pre-prompt-guard.ts), as the Lend screen does: the
+// handler runs inside guard.run, "final" comes after the bundler check and
+// before the device prompt, the confirm's buttons are disabled while the guard
+// is not idle, and the busy line (PrePromptCheckNote) is rendered (source pins).
+// ---------------------------------------------------------------------------
+{
+  const { readFileSync: readGuardSrc } = await import('node:fs');
+  const guardOrder = (src, handlerStart, checkCall, gate) => {
+    const h = src.indexOf(handlerStart);
+    const c = src.indexOf(checkCall, h);
+    const f = src.indexOf("step('final');", c);
+    const g = src.indexOf(gate, f);
+    return h > 0 && c > h && f > c && g > f;
+  };
+  const guardScreen0 = readGuardSrc(new URL("../src/screens/PasskeyScreen.tsx", import.meta.url), 'utf8');
+  check("phase 27 item 2: Passkey \u2014 onInstall runs under the guard: the bundler check, then \"final\", then the device prompt",
+    guardScreen0.includes('const prePrompt = usePrePromptGuard();') && guardScreen0.includes("const onInstallTap = () => void prePrompt.guard.run((step) => onInstall(step));") &&
+      guardOrder(guardScreen0, "const onInstall = async (step: PrePromptStep) => {", "await checkAaQuoteBeforeApproval(bundle.bundler, p.plan.quote);", "requireLocalAuth('Approve adding this passkey"));
+  check("phase 27 item 2: Passkey \u2014 onRemove runs under the guard: the bundler check, then \"final\", then the device prompt",
+    guardScreen0.includes('const prePrompt = usePrePromptGuard();') && guardScreen0.includes("const onRemoveTap = () => void prePrompt.guard.run((step) => onRemove(step));") &&
+      guardOrder(guardScreen0, "const onRemove = async (step: PrePromptStep) => {", "await checkAaQuoteBeforeApproval(bundle.bundler, quote);", "requireLocalAuth('Approve removing the passkey"));
+  check("phase 27 item 2: Passkey \u2014 Add passkey and Cancel disabled while the guard runs, the busy line under it", guardScreen0.includes("<Button title=\"Add passkey\" onPress={onInstallTap} disabled={prePrompt.stage !== 'idle'} />\n            <PrePromptCheckNote stage={prePrompt.stage} />\n            <Button\n              title=\"Cancel\"\n              variant=\"secondary\"\n              disabled={prePrompt.stage !== 'idle'}"));
+  check("phase 27 item 2: Passkey \u2014 Remove passkey and Back disabled while the guard runs, the busy line under it", guardScreen0.includes("<Button title=\"Remove passkey\" variant=\"destructive\" onPress={onRemoveTap} disabled={prePrompt.stage !== 'idle'} />\n            <PrePromptCheckNote stage={prePrompt.stage} />\n            <Button\n              title=\"Back\"\n              variant=\"secondary\"\n              disabled={prePrompt.stage !== 'idle'}"));
+  check("phase 27 item 2: Passkey \u2014 no confirm button still calls the handler outside the guard",
+    ["onPress={() => void onInstall()}", "onPress={() => void onRemove()}"].every((old) => !guardScreen0.includes(old)));
+}
 console.log(`\ncheck-passkeys: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

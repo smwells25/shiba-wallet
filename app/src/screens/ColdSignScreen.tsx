@@ -15,6 +15,7 @@ import { SpendingPolicyNotice, confirmSpendingCheck, spendingGateForQuote } from
 import { PendingTransactionsSection } from '../components/PendingTransactions';
 import { PaymentRequestNotice } from '../components/PaymentRequestViews';
 import { NOTE_VIEW_SCROLL_PROPS, TransactionNoteField, dismissKeyboardThenClose } from '../components/TransactionNoteField';
+import { usePrePromptGuard } from '../components/PrePromptCheckNote';
 import { getEndpoint, withEndpoint } from '../config/networks';
 import { useTheme, type Theme } from '../theme';
 import { useWallet } from '../wallet/WalletContext';
@@ -225,6 +226,13 @@ export function ColdSignScreen({ route, navigation }: Props) {
   const replace = route.params?.replace ?? null;
 
   const [phase, setPhase] = useState<Phase>(replace ? 'quoting' : 'form');
+  // Phase 27 item 2: the smart-account Show and Submit taps run under the
+  // pre-prompt guard, so a second tap starts nothing and both buttons stay
+  // disabled until the handler returns. No busy line here: no device prompt
+  // follows these checks (Show builds the request for the off-line signer;
+  // Submit hands a signed operation to the bundler), so the shared line's
+  // "before asking you to approve" would be untrue.
+  const prePrompt = usePrePromptGuard();
   const [tokens, setTokens] = useState<FungibleAsset[]>([]);
   const [tokenId, setTokenId] = useState<string | null>(route.params?.tokenId ?? null);
   const token = tokenId ? (tokens.find((t) => formatAssetId(t.assetId) === tokenId) ?? null) : null;
@@ -548,6 +556,7 @@ export function ColdSignScreen({ route, navigation }: Props) {
   // engine prepares the operation exactly as it would before a signature,
   // with the Send screen's signedFeeGuard, and builds the request
   // (wallet/cold-aa.ts prepareColdAaRequest). The quote is used up here.
+  const onAaShowTap = () => void prePrompt.guard.run(() => onAaShow());
   const onAaShow = async () => {
     const bundle = aaBundle.current;
     if (!aaQuote || !quotedUrl || !bundle || !from) return;
@@ -590,6 +599,7 @@ export function ColdSignScreen({ route, navigation }: Props) {
   // signedFeeGuard (a floor that rose means a fresh request, never a
   // reprice), and only then eth_sendUserOperation (wallet/cold-aa.ts
   // submitColdAa, which records the operation with kind 'cold-aa').
+  const onAaSubmitTap = () => void prePrompt.guard.run(() => onAaSubmit());
   const onAaSubmit = async () => {
     const bundle = aaBundle.current;
     if (!aaQuote || !aaRequest || !aaSignature || !bundle || !from) return;
@@ -997,9 +1007,9 @@ export function ColdSignScreen({ route, navigation }: Props) {
           <ActivityIndicator color={theme.accent} accessibilityLabel="Submitting the signed operation to the bundler" />
         ) : (
           <>
-            <Button title={COLD_AA_SUBMIT_BUTTON} disabled={!aaSignature} onPress={() => void onAaSubmit()} />
+            <Button title={COLD_AA_SUBMIT_BUTTON} disabled={!aaSignature || prePrompt.stage !== 'idle'} onPress={onAaSubmitTap} />
             {/* The quote was used for this request: going back means a new review. */}
-            <Button title="Back" variant="secondary" onPress={aaBackToForm} />
+            <Button title="Back" variant="secondary" onPress={aaBackToForm} disabled={prePrompt.stage !== 'idle'} />
           </>
         )}
         <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(COLD_AA_REVIEW_AGAIN_NOTE)}</Text>
@@ -1030,8 +1040,8 @@ export function ColdSignScreen({ route, navigation }: Props) {
           <ActivityIndicator color={theme.accent} accessibilityLabel="Preparing the request for the off-line signer" />
         ) : (
           <>
-            <Button title={COLD_SIGN_SHOW_BUTTON} onPress={() => void onAaShow()} />
-            <Button title="Back" variant="secondary" onPress={aaBackToForm} />
+            <Button title={COLD_SIGN_SHOW_BUTTON} onPress={onAaShowTap} disabled={prePrompt.stage !== 'idle'} />
+            <Button title="Back" variant="secondary" onPress={aaBackToForm} disabled={prePrompt.stage !== 'idle'} />
           </>
         )}
       </ScrollView>

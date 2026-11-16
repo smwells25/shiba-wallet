@@ -852,7 +852,8 @@ console.log('check-cold-aa: a checked signature is dropped when its request expi
   const screen = source('src/screens/ColdSignScreen.tsx');
   check('the screen watches the expiry while a checked signature is shown, then clears it (Submit disabled) and shows the engine\'s expired sentence',
     /useEffect\(\(\) => \{\n    if \(phase !== 'aa-show' \|\| !aaRequest \|\| !aaSignature\) return undefined;\n    return watchColdAaExpiry\(aaRequest, \(\) => \{\n      setAaSignature\(null\);\n      setSignatureError\(COLD_USEROP_EXPIRED\);\n    \}\);\n  \}, \[phase, aaRequest, aaSignature\]\);/.test(screen) &&
-      screen.includes('<Button title={COLD_AA_SUBMIT_BUTTON} disabled={!aaSignature} onPress={() => void onAaSubmit()} />'));
+      // Phase 27 item 2: the same button, now also disabled while the pre-prompt guard runs (form changed in place).
+      screen.includes("<Button title={COLD_AA_SUBMIT_BUTTON} disabled={!aaSignature || prePrompt.stage !== 'idle'} onPress={onAaSubmitTap} />"));
   const onAaSubmit = screen.slice(screen.indexOf('const onAaSubmit = async'), screen.indexOf('const onReview = async'));
   check('…and Submit refuses an expired request itself, before the endpoint check and before submitColdAa',
     onAaSubmit.indexOf('if (coldAaRequestExpired(aaRequest, nowSeconds())) {') > 0 &&
@@ -989,5 +990,19 @@ console.log('check-cold-aa: mutation checks (broken copies must fail)');
   }
 }
 
+// ---------------------------------------------------------------------------
+// Phase 27 item 2 (rollout): the cold smart-account Show and Submit taps run
+// under the pre-prompt guard (a second tap starts nothing; Show/Submit and
+// Back disabled until the handler returns) but render NO busy line: no device
+// prompt follows these checks, so the shared line's "before asking you to
+// approve" would be untrue there (source pins).
+// ---------------------------------------------------------------------------
+{
+  const { readFileSync: readGuardSrc } = await import('node:fs');
+  const guardScreen = readGuardSrc(new URL('../src/screens/ColdSignScreen.tsx', import.meta.url), 'utf8');
+  check('phase 27 item 2: Show and Submit run under the guard; their buttons and Back are disabled while it runs',
+    ["  const prePrompt = usePrePromptGuard();\n", "  const onAaShowTap = () => void prePrompt.guard.run(() => onAaShow());\n", "  const onAaSubmitTap = () => void prePrompt.guard.run(() => onAaSubmit());\n", "<Button title={COLD_SIGN_SHOW_BUTTON} onPress={onAaShowTap} disabled={prePrompt.stage !== 'idle'} />\n            <Button title=\"Back\" variant=\"secondary\" onPress={aaBackToForm} disabled={prePrompt.stage !== 'idle'} />", "<Button title={COLD_AA_SUBMIT_BUTTON} disabled={!aaSignature || prePrompt.stage !== 'idle'} onPress={onAaSubmitTap} />\n            {/* The quote was used for this request: going back means a new review. */}\n            <Button title=\"Back\" variant=\"secondary\" onPress={aaBackToForm} disabled={prePrompt.stage !== 'idle'} />"].every((s) => guardScreen.includes(s)) && !guardScreen.includes('onPress={() => void onAaShow()}') && !guardScreen.includes('onPress={() => void onAaSubmit()}'));
+  check('phase 27 item 2: …and no busy line on this screen (its sentence would say an approval prompt follows)', !guardScreen.includes('<PrePromptCheckNote'));
+}
 console.log(`\ncheck-cold-aa: ${passed} passed, ${failed} failed (${mutantCount} mutants loaded)`);
 process.exit(failed === 0 ? 0 : 1);

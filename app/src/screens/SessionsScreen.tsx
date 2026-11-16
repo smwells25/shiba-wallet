@@ -56,6 +56,8 @@ import {
 } from '../wallet/aa';
 import { AaDepositNote } from '../components/AaDepositNote';
 import { NOTE_VIEW_SCROLL_PROPS, TransactionNoteField, dismissKeyboardThenClose } from '../components/TransactionNoteField';
+import { PrePromptCheckNote, usePrePromptGuard } from '../components/PrePromptCheckNote';
+import type { PrePromptStep } from '../wallet/pre-prompt-guard';
 import { findExactContact, listContacts, matchRecipient, type Contact } from '../wallet/contacts';
 import { sessionKeyVault } from '../wallet/storage';
 import { readinessGate, readinessRefusal } from '../config/readiness';
@@ -399,6 +401,8 @@ export function SessionsScreen({ navigation }: Props) {
   const [contactsNetworkId, setContactsNetworkId] = useState<string | null>(null);
 
   const [phase, setPhase] = useState<Phase>('list');
+  // Phase 27 item 2: the smart-account confirm's busy state while the checks before the device prompt run.
+  const prePrompt = usePrePromptGuard();
   const [drafts, setDrafts] = useState<AllowedCallDraft[]>([{ ...EMPTY_DRAFT }]);
   const [expirySeconds, setExpirySeconds] = useState(SESSION_EXPIRY_PRESETS[1]!.seconds);
   const [gasBudgetEth, setGasBudgetEth] = useState('');
@@ -801,7 +805,15 @@ export function SessionsScreen({ navigation }: Props) {
     }
   };
 
-  const onInstall = async () => {
+  /**
+   * Granting a session key, under the pre-prompt guard (phase 27 item 2, as on the Lend
+   * screen): from the tap until the handler returns the confirm's buttons
+   * are disabled and a second tap starts nothing; the busy line shows while
+   * the bundler check ('bundler') and then the checks after it ('final') run, before
+   * the device prompt.
+   */
+  const onInstallTap = () => void prePrompt.guard.run((step) => onInstall(step));
+  const onInstall = async (step: PrePromptStep) => {
     const p = pending.current;
     if (!p || !account || !owner || !resolution?.ok || !activeAccount) return;
     const sendBundle = p.bundle;
@@ -818,6 +830,7 @@ export function SessionsScreen({ navigation }: Props) {
       setPhase('form');
       return;
     }
+    step('final');
     const auth = await requireLocalAuth('Approve granting this session');
     if (!auth.ok) {
       Alert.alert(tx('Not granted'), auth.message);
@@ -1803,7 +1816,15 @@ export function SessionsScreen({ navigation }: Props) {
     }
   };
 
-  const onRevoke = async () => {
+  /**
+   * Revoking a session key or a subscription, under the pre-prompt guard (phase 27 item 2, as on the Lend
+   * screen): from the tap until the handler returns the confirm's buttons
+   * are disabled and a second tap starts nothing; the busy line shows while
+   * the bundler check ('bundler') and then the checks after it ('final') run, before
+   * the device prompt.
+   */
+  const onRevokeTap = () => void prePrompt.guard.run((step) => onRevoke(step));
+  const onRevoke = async (step: PrePromptStep) => {
     if (!revokeTarget || !owner) return;
     const target = revokeTarget;
     const sendBundle = target.bundle;
@@ -1818,6 +1839,7 @@ export function SessionsScreen({ navigation }: Props) {
       setPhase('list');
       return;
     }
+    step('final');
     const auth = await requireLocalAuth(revokeApprovalPrompt(target.record));
     if (!auth.ok) {
       Alert.alert(tx('Not revoked'), auth.message);
@@ -2088,10 +2110,12 @@ export function SessionsScreen({ navigation }: Props) {
           </View>
         ) : (
           <>
-            <Button title="Grant session" onPress={() => void onInstall()} />
+            <Button title="Grant session" onPress={onInstallTap} disabled={prePrompt.stage !== 'idle'} />
+            <PrePromptCheckNote stage={prePrompt.stage} />
             <Button
               title="Back"
               variant="secondary"
+              disabled={prePrompt.stage !== 'idle'}
               onPress={() => {
                 discardPending();
                 setPhase('form');
@@ -2581,10 +2605,12 @@ export function SessionsScreen({ navigation }: Props) {
           <ActivityIndicator size="large" color={theme.accent} />
         ) : (
           <>
-            <Button title={revokeCopy.button} variant="destructive" onPress={() => void onRevoke()} />
+            <Button title={revokeCopy.button} variant="destructive" onPress={onRevokeTap} disabled={prePrompt.stage !== 'idle'} />
+            <PrePromptCheckNote stage={prePrompt.stage} />
             <Button
               title="Back"
               variant="secondary"
+              disabled={prePrompt.stage !== 'idle'}
               onPress={() => {
                 setRevokeTarget(null);
                 setPhase('list');

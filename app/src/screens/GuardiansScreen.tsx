@@ -35,6 +35,8 @@ import {
   type AaClientBundle,
 } from '../wallet/aa';
 import { AaDepositNote } from '../components/AaDepositNote';
+import { PrePromptCheckNote, usePrePromptGuard } from '../components/PrePromptCheckNote';
+import type { PrePromptStep } from '../wallet/pre-prompt-guard';
 import { findExactContact, listContacts, matchRecipient, type Contact } from '../wallet/contacts';
 import {
   DEFAULT_GUARDIAN_DELAY_SECONDS,
@@ -129,6 +131,8 @@ export function GuardiansScreen({ navigation }: Props) {
   const [contactsNetworkId, setContactsNetworkId] = useState<string | null>(null);
 
   const [phase, setPhase] = useState<Phase>('overview');
+  // Phase 27 item 2: the smart-account confirm's busy state while the checks before the device prompt run.
+  const prePrompt = usePrePromptGuard();
   const [renewing, setRenewing] = useState(false);
   const [drafts, setDrafts] = useState<GuardianDraft[]>([{ ...EMPTY_GUARDIAN_DRAFT }, { ...EMPTY_GUARDIAN_DRAFT }]);
   const [threshold, setThreshold] = useState('2');
@@ -319,7 +323,15 @@ export function GuardiansScreen({ navigation }: Props) {
     }
   };
 
-  const onConfirm = async () => {
+  /**
+   * A guardian operation (install, replace, remove, veto), under the pre-prompt guard (phase 27 item 2, as on the Lend
+   * screen): from the tap until the handler returns the confirm's buttons
+   * are disabled and a second tap starts nothing; the busy line shows while
+   * the bundler check ('bundler') and then the checks after it ('final') run, before
+   * the device prompt.
+   */
+  const onConfirmTap = () => void prePrompt.guard.run((step) => onConfirm(step));
+  const onConfirm = async (step: PrePromptStep) => {
     const op = operation;
     if (!op || !bundle || !owner) return;
     const what =
@@ -342,6 +354,7 @@ export function GuardiansScreen({ navigation }: Props) {
       setPhase(op.kind === 'install' || op.kind === 'renew' ? 'form' : 'overview');
       return;
     }
+    step('final');
     const auth = await requireLocalAuth(what);
     if (!auth.ok) {
       Alert.alert('Not sent', auth.message);
@@ -607,11 +620,14 @@ export function GuardiansScreen({ navigation }: Props) {
                       : 'Veto'
               }
               variant={operation.kind === 'remove' || operation.kind === 'veto' ? 'destructive' : 'primary'}
-              onPress={() => void onConfirm()}
+              onPress={onConfirmTap}
+              disabled={prePrompt.stage !== 'idle'}
             />
+            <PrePromptCheckNote stage={prePrompt.stage} />
             <Button
               title="Back"
               variant="secondary"
+              disabled={prePrompt.stage !== 'idle'}
               onPress={() => {
                 const back = operation.kind === 'install' || operation.kind === 'renew' ? 'form' : 'overview';
                 setOperation(null);

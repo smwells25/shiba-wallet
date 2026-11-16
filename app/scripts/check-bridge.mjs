@@ -2885,5 +2885,29 @@ console.log('check-bridge: pass p23-cctp-recheck — usedNonces decides the mint
   resetChains();
 }
 
+// ---------------------------------------------------------------------------
+// Phase 27 item 2 (rollout): the Bridge screen's smart-account confirm run the smart-account approval under the
+// pre-prompt guard (wallet/pre-prompt-guard.ts), as the Lend screen does: the
+// handler runs inside guard.run, "final" comes after the bundler check and
+// before the device prompt, the confirm's buttons are disabled while the guard
+// is not idle, and the busy line (PrePromptCheckNote) is rendered (source pins).
+// ---------------------------------------------------------------------------
+{
+  const { readFileSync: readGuardSrc } = await import('node:fs');
+  const guardOrder = (src, handlerStart, checkCall, gate) => {
+    const h = src.indexOf(handlerStart);
+    const c = src.indexOf(checkCall, h);
+    const f = src.indexOf("step('final');", c);
+    const g = src.indexOf(gate, f);
+    return h > 0 && c > h && f > c && g > f;
+  };
+  const guardScreen0 = readGuardSrc(new URL("../src/screens/BridgeScreen.tsx", import.meta.url), 'utf8');
+  check("phase 27 item 2: Bridge (smart account) \u2014 onAaSend runs under the guard: the bundler check, then \"final\", then the device prompt",
+    guardScreen0.includes('const prePrompt = usePrePromptGuard();') && guardScreen0.includes("const onAaSendTap = () => void prePrompt.guard.run((step) => onAaSend(step));") &&
+      guardOrder(guardScreen0, "const onAaSend = async (step: PrePromptStep) => {", "await checkAaQuoteBeforeApproval(bundle.bundler, aaQuote);", "requireLocalAuth(bridgePromptTitle(plan))"));
+  check("phase 27 item 2: Bridge (smart account) \u2014 Approve and Back disabled while the guard runs, the busy line between them", guardScreen0.includes("<Button title={bridgePromptTitle(plan)} onPress={onAaSendTap} disabled={prePrompt.stage !== 'idle'} />\n            <PrePromptCheckNote stage={prePrompt.stage} />\n            <Button title=\"Back\" variant=\"secondary\" onPress={() => backToForm('')} disabled={prePrompt.stage !== 'idle'} />"));
+  check("phase 27 item 2: Bridge (smart account) \u2014 no confirm button still calls the handler outside the guard",
+    ["onPress={() => void onAaSend()}"].every((old) => !guardScreen0.includes(old)));
+}
 console.log(`\ncheck-bridge: ${passed} passed, ${failed} failed (${mutantCount} mutants)`);
 process.exit(failed === 0 ? 0 : 1);

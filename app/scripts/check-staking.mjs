@@ -1190,5 +1190,29 @@ console.log('\ncheck-staking: pass p20c finding 6 (what TalkBack says on the Sta
   check('MUTANT (two views sharing one key) is caught', new Set(keysOf(duplicate)).size !== keysOf(duplicate).length);
 }
 
+// ---------------------------------------------------------------------------
+// Phase 27 item 2 (rollout): the Staking screen's smart-account confirm run the smart-account approval under the
+// pre-prompt guard (wallet/pre-prompt-guard.ts), as the Lend screen does: the
+// handler runs inside guard.run, "final" comes after the bundler check and
+// before the device prompt, the confirm's buttons are disabled while the guard
+// is not idle, and the busy line (PrePromptCheckNote) is rendered (source pins).
+// ---------------------------------------------------------------------------
+{
+  const { readFileSync: readGuardSrc } = await import('node:fs');
+  const guardOrder = (src, handlerStart, checkCall, gate) => {
+    const h = src.indexOf(handlerStart);
+    const c = src.indexOf(checkCall, h);
+    const f = src.indexOf("step('final');", c);
+    const g = src.indexOf(gate, f);
+    return h > 0 && c > h && f > c && g > f;
+  };
+  const guardScreen0 = readGuardSrc(new URL("../src/screens/StakingScreen.tsx", import.meta.url), 'utf8');
+  check("phase 27 item 2: Staking (smart account) \u2014 onAaSend runs under the guard: the bundler check, then \"final\", then the device prompt",
+    guardScreen0.includes('const prePrompt = usePrePromptGuard();') && guardScreen0.includes("const onAaSendTap = () => void prePrompt.guard.run((step) => onAaSend(step));") &&
+      guardOrder(guardScreen0, "const onAaSend = async (step: PrePromptStep) => {", "await checkAaQuoteBeforeApproval(bundle.bundler, aaQuote);", "requireLocalAuth("));
+  check("phase 27 item 2: Staking (smart account) \u2014 Approve and Back disabled while the guard runs, the busy line between them", guardScreen0.includes("onPress={onAaSendTap} disabled={prePrompt.stage !== 'idle'} />\n            <PrePromptCheckNote stage={prePrompt.stage} />\n            <Button title=\"Back\" variant=\"secondary\" onPress={() => backToForm('')} disabled={prePrompt.stage !== 'idle'} />"));
+  check("phase 27 item 2: Staking (smart account) \u2014 no confirm button still calls the handler outside the guard",
+    ["onPress={() => void onAaSend()}"].every((old) => !guardScreen0.includes(old)));
+}
 console.log(`\ncheck-staking: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

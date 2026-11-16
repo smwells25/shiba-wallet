@@ -10,6 +10,8 @@ import { localDateLabel } from '../config/dates';
 import { ContactPicker, RecipientContactNotice } from '../components/Contacts';
 import { GuardianSetView, InfoRow, PasteOrScan, RecoveryNetworkBadge, recoveryLayout as styles } from '../components/RecoveryViews';
 import { AaDepositNote } from '../components/AaDepositNote';
+import { PrePromptCheckNote, usePrePromptGuard } from '../components/PrePromptCheckNote';
+import type { PrePromptStep } from '../wallet/pre-prompt-guard';
 import { useTheme } from '../theme';
 import { getEndpoint } from '../config/networks';
 import { useWallet } from '../wallet/WalletContext';
@@ -125,6 +127,8 @@ export function InheritanceScreen({ navigation }: Props) {
   const [contactsNetworkId, setContactsNetworkId] = useState<string | null>(null);
 
   const [phase, setPhase] = useState<Phase>('overview');
+  // Phase 27 item 2: the smart-account confirm's busy state while the checks before the device prompt run.
+  const prePrompt = usePrePromptGuard();
   const [drafts, setDrafts] = useState<GuardianDraft[]>([{ ...EMPTY_GUARDIAN_DRAFT }]);
   const [threshold, setThreshold] = useState('1');
   const [delaySeconds, setDelaySeconds] = useState(DEFAULT_INHERITANCE_DELAY_SECONDS);
@@ -310,7 +314,15 @@ export function InheritanceScreen({ navigation }: Props) {
     void runCheck()?.finally(() => setChecking(false));
   };
 
-  const onConfirm = async () => {
+  /**
+   * An heir operation (add, remove, veto), under the pre-prompt guard (phase 27 item 2, as on the Lend
+   * screen): from the tap until the handler returns the confirm's buttons
+   * are disabled and a second tap starts nothing; the busy line shows while
+   * the bundler check ('bundler') and then the checks after it ('final') run, before
+   * the device prompt.
+   */
+  const onConfirmTap = () => void prePrompt.guard.run((step) => onConfirm(step));
+  const onConfirm = async (step: PrePromptStep) => {
     const op = operation;
     if (!op || !bundle || !owner) return;
     const what =
@@ -324,6 +336,7 @@ export function InheritanceScreen({ navigation }: Props) {
       setPhase(op.kind === 'install' ? 'form' : 'overview');
       return;
     }
+    step('final');
     const auth = await requireLocalAuth(what);
     if (!auth.ok) {
       Alert.alert('Not sent', auth.message);
@@ -485,11 +498,14 @@ export function InheritanceScreen({ navigation }: Props) {
             <Button
               title={operation.kind === 'install' ? 'Add heirs' : operation.kind === 'remove' ? 'Remove heirs' : 'Veto'}
               variant={operation.kind === 'install' ? 'primary' : 'destructive'}
-              onPress={() => void onConfirm()}
+              onPress={onConfirmTap}
+              disabled={prePrompt.stage !== 'idle'}
             />
+            <PrePromptCheckNote stage={prePrompt.stage} />
             <Button
               title="Back"
               variant="secondary"
+              disabled={prePrompt.stage !== 'idle'}
               onPress={() => {
                 const back = operation.kind === 'install' ? 'form' : 'overview';
                 setOperation(null);

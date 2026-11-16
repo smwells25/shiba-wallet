@@ -44,6 +44,7 @@ import {
 } from './send';
 import {
   aaAccountTypeSignsMessages,
+  aaQuoteHasPrePromptEstimate,
   checkAaQuoteBeforeApproval,
   createAaClientFromConfig,
   describeAaError,
@@ -56,6 +57,7 @@ import {
   waitForAaReceipt,
   type AaSendMeta,
 } from './aa';
+import type { PrePromptStep } from './pre-prompt-guard';
 import {
   buildErc7715Response,
   finalizeSessionInstall,
@@ -846,6 +848,10 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
       connectAs: ConnectAs = 'eoa',
       messageSigner: MessageSigner = 'owner',
       identityAcknowledged = false,
+      // Phase 27 item 2: the sheet's pre-prompt guard, for smart-account
+      // requests only (WcApprovalSheet approveRequestTap); moved to the
+      // stage that is really running before the device prompt.
+      prePromptStep?: PrePromptStep,
     ) => {
       if (!controller) return;
       if (!controller.canAct(item.key)) return;
@@ -921,6 +927,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
       ) {
         return;
       }
+      prePromptStep?.('final');
       // App-enforced spending limits (phase 12 item 3): after the eth_call /
       // bundler-estimate gate above, before the biometric gate below.
       if (
@@ -942,6 +949,8 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
       // the sheet, which quotes it again (WcApprovalSheet's
       // aaQuoteGeneration), so the next Approve shows the new fee.
       if (item.smart && (txQuote?.status === 'ready-aa' || txQuote?.status === 'ready-permission')) {
+        // The line names the bundler's gas estimate only when the check runs one.
+        prePromptStep?.(aaQuoteHasPrePromptEstimate(txQuote.quote) ? 'bundler' : 'final');
         try {
           await checkAaQuoteBeforeApproval(txQuote.bundle.bundler, txQuote.quote);
         } catch (e) {
@@ -954,6 +963,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
           return;
         }
       }
+      prePromptStep?.('final');
       const dapp = controller.dappName(item.event.topic);
       const promptTitle =
         item.parsed.kind === 'transaction'
@@ -1222,7 +1232,7 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
             importedKey={activeAccount?.imported === true}
             smartOption={smartOption}
             loadAaBundle={loadAaBundle}
-            onApprove={(q, o, c, signer, ack) => onApprove(head, q, o, c, signer, ack)}
+            onApprove={(q, o, c, signer, ack, step) => onApprove(head, q, o, c, signer, ack, step)}
             onReject={() => onReject(head)}
           />
         ) : null}

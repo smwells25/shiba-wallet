@@ -32,6 +32,8 @@ import {
   type AaClientBundle,
 } from '../wallet/aa';
 import { AaDepositNote } from '../components/AaDepositNote';
+import { PrePromptCheckNote, usePrePromptGuard } from '../components/PrePromptCheckNote';
+import type { PrePromptStep } from '../wallet/pre-prompt-guard';
 import {
   OWNER_ROTATION_EXPLANATION,
   OWNER_ROTATION_OLD_KEY_WARNING,
@@ -106,6 +108,8 @@ export function OwnerRotationScreen({ navigation }: Props) {
   const [removeGuardians, setRemoveGuardians] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>('overview');
+  // Phase 27 item 2: the smart-account confirm's busy state while the checks before the device prompt run.
+  const prePrompt = usePrePromptGuard();
   const [rotation, setRotation] = useState<OwnerRotationQuote | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [backupMeta, setBackupMeta] = useState<KernelRecoveryMetadata | null>(null);
@@ -219,7 +223,15 @@ export function OwnerRotationScreen({ navigation }: Props) {
     }
   };
 
-  const onConfirm = async () => {
+  /**
+   * The owner change, under the pre-prompt guard (phase 27 item 2, as on the Lend
+   * screen): from the tap until the handler returns the confirm's buttons
+   * are disabled and a second tap starts nothing; the busy line shows while
+   * the bundler check ('bundler') and then the checks after it ('final') run, before
+   * the device prompt.
+   */
+  const onConfirmTap = () => void prePrompt.guard.run((step) => onConfirm(step));
+  const onConfirm = async (step: PrePromptStep) => {
     const r = rotation;
     if (!r || !bundle || !owner || !config) return;
     // The bundler's fee floor, BEFORE the device check (aa.ts
@@ -234,6 +246,7 @@ export function OwnerRotationScreen({ navigation }: Props) {
       setPhase('overview');
       return;
     }
+    step('final');
     const auth = await requireLocalAuth('Approve changing the owner key');
     if (!auth.ok) {
       Alert.alert('Not sent', auth.message);
@@ -493,10 +506,12 @@ export function OwnerRotationScreen({ navigation }: Props) {
           </View>
         ) : (
           <>
-            <Button title="Change owner" variant="destructive" onPress={() => void onConfirm()} />
+            <Button title="Change owner" variant="destructive" onPress={onConfirmTap} disabled={prePrompt.stage !== 'idle'} />
+            <PrePromptCheckNote stage={prePrompt.stage} />
             <Button
               title="Back"
               variant="secondary"
+              disabled={prePrompt.stage !== 'idle'}
               onPress={() => {
                 setRotation(null);
                 setPhase('overview');

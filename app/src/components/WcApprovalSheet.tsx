@@ -86,6 +86,8 @@ import {
   type WcSentResult,
 } from '../wallet/wc-sent';
 import { passkeyRecordForAccount } from '../wallet/passkeys';
+import type { PrePromptStep } from '../wallet/pre-prompt-guard';
+import { PrePromptCheckNote, usePrePromptGuard } from './PrePromptCheckNote';
 import { passkeyGateNow } from '../wallet/passkey-native';
 
 const mono = Platform.select({ ios: 'Menlo', default: 'monospace' });
@@ -241,6 +243,8 @@ export function WcApprovalSheet({
     signer?: MessageSigner,
     /** The WalletConnect Verify risk switch (required for scam / mismatch). */
     identityAcknowledged?: boolean,
+    /** Smart-account requests: the sheet's pre-prompt guard step (phase 27 item 2). */
+    prePromptStep?: PrePromptStep,
   ) => void | Promise<void>;
   onReject: () => void;
 }) {
@@ -466,13 +470,30 @@ export function WcApprovalSheet({
   // checks all ran against its own endpoint. Nothing is signed in between.
   // The provider re-checks once more after the biometric gate.
   const [requoting, setRequoting] = useState(false);
+  // Phase 27 item 2: smart-account requests' busy state while the checks before the device prompt run.
+  const prePrompt = usePrePromptGuard();
   // The item on screen, for dropping a re-quote that finishes after the
   // sheet moved on to another request.
   const currentItemKey = useRef(item.key);
   useEffect(() => {
     currentItemKey.current = item.key;
   }, [item.key]);
-  const approveRequest = async () => {
+  /**
+   * Approve on a request. A smart-account request (one the provider runs
+   * checkAaQuoteBeforeApproval for) runs under the pre-prompt guard, as on
+   * the Lend screen: from the tap until the attempt returns the request's
+   * buttons give way to the busy indicator, a second tap starts nothing,
+   * and the line says what runs before the device prompt (the provider
+   * moves the stage). Other requests run as before, with no guard or line.
+   */
+  const approveRequestTap = () => {
+    if (item.type !== 'proposal' && item.smart && (txQuote?.status === 'ready-aa' || txQuote?.status === 'ready-permission')) {
+      void prePrompt.guard.run((step) => approveRequest(step));
+    } else {
+      void approveRequest();
+    }
+  };
+  const approveRequest = async (prePromptStep?: PrePromptStep) => {
     if (
       txQuote?.status === 'ready' &&
       item.type === 'request' &&
@@ -505,7 +526,7 @@ export function WcApprovalSheet({
     }
     const key = item.key;
     const smartQuote = txQuote?.status === 'ready-aa' || txQuote?.status === 'ready-permission';
-    await onApprove(txQuote, overrideSimulation, undefined, messageSigner, identityAck);
+    await onApprove(txQuote, overrideSimulation, undefined, messageSigner, identityAck, prePromptStep);
     // Still the same request on the sheet: the attempt did not complete it.
     if (smartQuote && currentItemKey.current === key) setAaQuoteGeneration((g) => g + 1);
   };
@@ -537,7 +558,7 @@ export function WcApprovalSheet({
               dappName={dappName}
               accountLabel={accountLabel}
               theme={theme}
-              busy={busy || requoting}
+              busy={busy || requoting || prePrompt.stage !== 'idle'}
               evmChain={evmChain}
               txQuote={txQuote}
               overrideSimulation={overrideSimulation}
@@ -547,10 +568,12 @@ export function WcApprovalSheet({
               messageSigner={messageSigner}
               setMessageSigner={setMessageSigner}
               approveLocked={approveLocked}
-              onApprove={() => void approveRequest()}
+              onApprove={approveRequestTap}
               onReject={onReject}
             />
           )}
+          {/* Once the device prompt is answered the provider holds the request (busy): the line is gone then. */}
+          <PrePromptCheckNote stage={busy ? 'idle' : prePrompt.stage} />
         </ScrollView>
       </View>
     </View>

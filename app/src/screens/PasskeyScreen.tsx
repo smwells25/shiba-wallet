@@ -24,6 +24,8 @@ import {
   type AaSendQuote,
 } from '../wallet/aa';
 import { AaDepositNote } from '../components/AaDepositNote';
+import { PrePromptCheckNote, usePrePromptGuard } from '../components/PrePromptCheckNote';
+import type { PrePromptStep } from '../wallet/pre-prompt-guard';
 import { loadPasskeyNative } from '../wallet/passkey-native';
 import { readinessGate } from '../config/readiness';
 import {
@@ -124,6 +126,8 @@ export function PasskeyScreen({ navigation }: Props) {
   const [record, setRecord] = useState<PasskeyRecord | null>(null);
   const [status, setStatus] = useState<PasskeyChainStatus | null>(null);
   const [phase, setPhase] = useState<Phase>('main');
+  // Phase 27 item 2: the smart-account confirm's busy state while the checks before the device prompt run.
+  const prePrompt = usePrePromptGuard();
   const [actionError, setActionError] = useState<string | null>(null);
   const [pendingInstall, setPendingInstall] = useState<{ registration: PasskeyRegistration; plan: PasskeyInstallPlan } | null>(null);
   const [pendingTest, setPendingTest] = useState<{ pbundle: PasskeyBundle; quote: AaSendQuote } | null>(null);
@@ -221,7 +225,15 @@ export function PasskeyScreen({ navigation }: Props) {
     }
   };
 
-  const onInstall = async () => {
+  /**
+   * Adding the passkey, under the pre-prompt guard (phase 27 item 2, as on the Lend
+   * screen): from the tap until the handler returns the confirm's buttons
+   * are disabled and a second tap starts nothing; the busy line shows while
+   * the bundler check ('bundler') and then the checks after it ('final') run, before
+   * the device prompt.
+   */
+  const onInstallTap = () => void prePrompt.guard.run((step) => onInstall(step));
+  const onInstall = async (step: PrePromptStep) => {
     const p = pendingInstall;
     if (!p || !bundle || !account || !owner || !activeAccount || !gate?.ok) return;
     // The bundler's fee floor, BEFORE the device check (aa.ts
@@ -243,6 +255,7 @@ export function PasskeyScreen({ navigation }: Props) {
       }
       return;
     }
+    step('final');
     const auth = await requireLocalAuth('Approve adding this passkey to your smart account');
     if (!auth.ok) {
       Alert.alert('Not added', auth.message);
@@ -374,7 +387,15 @@ export function PasskeyScreen({ navigation }: Props) {
     }
   };
 
-  const onRemove = async () => {
+  /**
+   * Removing the passkey, under the pre-prompt guard (phase 27 item 2, as on the Lend
+   * screen): from the tap until the handler returns the confirm's buttons
+   * are disabled and a second tap starts nothing; the busy line shows while
+   * the bundler check ('bundler') and then the checks after it ('final') run, before
+   * the device prompt.
+   */
+  const onRemoveTap = () => void prePrompt.guard.run((step) => onRemove(step));
+  const onRemove = async (step: PrePromptStep) => {
     const quote = pendingRemove;
     if (!quote || !bundle || !account || !owner) return;
     // The bundler's fee floor, BEFORE the device check (see onInstall).
@@ -386,6 +407,7 @@ export function PasskeyScreen({ navigation }: Props) {
       setPhase('main');
       return;
     }
+    step('final');
     const auth = await requireLocalAuth('Approve removing the passkey from your smart account');
     if (!auth.ok) {
       Alert.alert('Not removed', auth.message);
@@ -561,10 +583,12 @@ export function PasskeyScreen({ navigation }: Props) {
           busy
         ) : (
           <>
-            <Button title="Add passkey" onPress={() => void onInstall()} />
+            <Button title="Add passkey" onPress={onInstallTap} disabled={prePrompt.stage !== 'idle'} />
+            <PrePromptCheckNote stage={prePrompt.stage} />
             <Button
               title="Cancel"
               variant="secondary"
+              disabled={prePrompt.stage !== 'idle'}
               onPress={() => {
                 setPendingInstall(null);
                 setActionError(PASSKEY_OS_CLEANUP_NOTE);
@@ -628,10 +652,12 @@ export function PasskeyScreen({ navigation }: Props) {
           busy
         ) : (
           <>
-            <Button title="Remove passkey" variant="destructive" onPress={() => void onRemove()} />
+            <Button title="Remove passkey" variant="destructive" onPress={onRemoveTap} disabled={prePrompt.stage !== 'idle'} />
+            <PrePromptCheckNote stage={prePrompt.stage} />
             <Button
               title="Back"
               variant="secondary"
+              disabled={prePrompt.stage !== 'idle'}
               onPress={() => {
                 setPendingRemove(null);
                 setPhase('main');

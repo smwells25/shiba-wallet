@@ -5,6 +5,8 @@ import { BundlerClient, ENTRYPOINT_V07, httpTransport, toHex, type JsonRpcTransp
 import type { RootStackParamList } from '../navigation';
 import { Button, TestNetworksOnlyCard, WarningBox, screenStyle } from '../components';
 import { RecipientContactNotice } from '../components/Contacts';
+import { PrePromptCheckNote, usePrePromptGuard } from '../components/PrePromptCheckNote';
+import type { PrePromptStep } from '../wallet/pre-prompt-guard';
 import {
   GuardianSetView,
   InfoRow,
@@ -22,7 +24,7 @@ import { usePrefs } from '../wallet/PrefsContext';
 import { requireLocalAuth } from '../wallet/biometric';
 import { formatUnits } from '../wallet/balances';
 import { EVM_CHAIN_ID, describeSendError } from '../wallet/send';
-import { checkAaQuoteBeforeApproval, describeAaError, getAaConfig, summarizeAaReceipt, type AaReceiptSummary } from '../wallet/aa';
+import { aaQuoteHasPrePromptEstimate, checkAaQuoteBeforeApproval, describeAaError, getAaConfig, summarizeAaReceipt, type AaReceiptSummary } from '../wallet/aa';
 import { listContacts, matchRecipient, type Contact } from '../wallet/contacts';
 import { HEIR_SIDE_NOTE, INHERITANCE_RISK_STATEMENT } from '../wallet/inheritance';
 import {
@@ -90,6 +92,8 @@ export function ApproveRecoveryScreen({ navigation, route }: Props) {
   const [local, setLocal] = useState<RecoveryProgress[]>([]);
   const [input, setInput] = useState('');
   const [phase, setPhase] = useState<Phase>('input');
+  // Phase 27 item 2: the smart-account confirm's busy state while the checks before the device prompt run.
+  const prePrompt = usePrePromptGuard();
   const [error, setError] = useState<string | null>(null);
   const [review, setReview] = useState<GuardianRequestReview | null>(null);
   const [signed, setSigned] = useState<{ payload: string; signature: string } | null>(null);
@@ -240,8 +244,19 @@ export function ApproveRecoveryScreen({ navigation, route }: Props) {
     }
   };
 
-  const onSubmit = async () => {
+  /**
+   * The guardian's recovery submission, under the pre-prompt guard (phase
+   * 27 item 2): from the tap until the handler returns the confirm's
+   * buttons are disabled and a second tap starts nothing. This submission
+   * is not made by prepareAaCalls, so checkAaQuoteBeforeApproval reads only
+   * the bundler's fee floor and runs no gas estimate
+   * (aaQuoteHasPrePromptEstimate): the line then says only that the last
+   * checks run ('final'), never that a gas estimate is being checked.
+   */
+  const onSubmitTap = () => void prePrompt.guard.run((step) => onSubmit(step));
+  const onSubmit = async (step: PrePromptStep) => {
     if (!node || !submission) return;
+    step(aaQuoteHasPrePromptEstimate(submission) ? 'bundler' : 'final');
     // The bundler's fee floor, BEFORE the device check (aa.ts
     // checkAaQuoteBeforeApproval): when it rose above the reviewed fees, back
     // to the review, whose "Submit the recovery" quotes again; nothing was
@@ -256,6 +271,7 @@ export function ApproveRecoveryScreen({ navigation, route }: Props) {
       setPhase('review');
       return;
     }
+    step('final');
     const auth = await requireLocalAuth('Approve submitting this recovery as a guardian');
     if (!auth.ok) {
       Alert.alert('Not sent', auth.message);
@@ -367,8 +383,9 @@ export function ApproveRecoveryScreen({ navigation, route }: Props) {
           <ActivityIndicator size="large" color={theme.accent} />
         ) : (
           <>
-            <Button title="Submit recovery" variant="destructive" onPress={() => void onSubmit()} />
-            <Button title="Back" variant="secondary" onPress={() => setPhase('review')} />
+            <Button title="Submit recovery" variant="destructive" onPress={onSubmitTap} disabled={prePrompt.stage !== 'idle'} />
+            <PrePromptCheckNote stage={prePrompt.stage} />
+            <Button title="Back" variant="secondary" onPress={() => setPhase('review')} disabled={prePrompt.stage !== 'idle'} />
           </>
         )}
       </ScrollView>

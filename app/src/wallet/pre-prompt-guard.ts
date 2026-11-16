@@ -34,6 +34,9 @@ import { t } from '../i18n/index.ts';
 
 export type PrePromptStage = 'idle' | 'bundler' | 'final';
 
+/** The `step` an approval handler receives from PrePromptGuard.run. */
+export type PrePromptStep = (stage: Exclude<PrePromptStage, 'idle'>) => void;
+
 export interface PrePromptGuard {
   /** The current stage ('idle' when no approval is running). */
   stage(): PrePromptStage;
