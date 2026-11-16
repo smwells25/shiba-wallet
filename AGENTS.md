@@ -21539,3 +21539,85 @@ tails); 2 — the emulator pass; 5 last. Subagents on Opus.
       eth_sendUserOperation stays the final judge of limits up to 90 s old);
       the speech. Slip: the agent's `git add -N .` marked its worktree's
       .ready file intent-to-add (the patch excludes it).
+- [x] Item 5 — LEADERSHIP REFRESH (docs commit f68db0f; five documents, +42 /
+      −39 — FEATURE_UNIVERSE.md, THREAT_MODEL.md, MAINNET_READINESS.md,
+      LENDING_VAULTS.md, DEMO.md; applied in the clean main checkout with the
+      staged patch id fe765377279c equal to the agent's; check-screen-protection
+      87, check-devmode 476, check-readiness 238, check-handle 223,
+      check-lending 118, check-multisig 445, check-bridge 433, check-insights
+      142 and check-pnl 206 green on the patched tree after an engine
+      rebuild; the pre-commit scan clean; the full runner not run for a
+      docs-only change). NO FEATURE CHANGED STATUS — the tally, recounted by
+      script over all 99 rows, stays 63 proven live / 18 built / 6 designed /
+      12 not started, so the shareable page stays at version 29.
+      FEATURE_UNIVERSE section 15 dated 2026-11-16 (the record runs to pass
+      p27-emu2 and f146133): rows 11, 13, 19, 30, 42, 43, 56, 61, 75, 91, 92,
+      96, 97 and 99 extended from the record; row 19 stays Built (a limit was
+      added and removed live, no send was checked against it). THREAT_MODEL:
+      F-93 still verified offline only; F-95 "Fixed for the case found" (the
+      Home half seen in p27-emu1, the Activity half in p27-emu2; open for a
+      transfer that also creates the recipient's token account, a plain
+      TransferChecked, the sender's row and the CSV); F-97 "Fixed in two
+      steps, the second verified offline only"; NEW T-97 — Bitcoin
+      inscriptions and Runes spent by an ordinary mainnet send, the warning
+      sentence of 7ce4b67 its only mitigation — rated Medium / Medium as the
+      agent proposed and ACCEPTED BY THE CTO (nothing stops such a send; the
+      loss is those assets, not everything the key controls; no "test
+      networks only", the exposure is on mainnet); the file still words the
+      rating as "proposed" — the next refresh strikes that; section 7.4 at
+      f146133 (engine 1,441, 68 suites / 12,203 checks). MAINNET_READINESS:
+      196 pairs from 115 pins, a Bitcoin bullet in section 9. LENDING_VAULTS
+      section 11 and DEMO steps 9, 55, 56 and warning 2 follow the two
+      passes. Noted, not settled: check-i18n's count after f7a9b18 is not in
+      the record (quoted as 212 since 7ce4b67); the engine's per-package
+      figures for core, utxo and prices are carried from phase 26.
+
+## Phase 27 status (2026-11-16)
+
+Items 1 to 5 are landed and pushed, with two emulator passes (p27-emu1
+before the plan, p27-emu2 after the slices) and one fix slice; no feature
+changed status and the shareable page stays at version 29 (63 proven live,
+18 built, 6 designed, 12 not started). SEEN LIVE this phase, through the
+app's own screens on the emulator: the phase 26 fix slices 9d0bb65 and
+e728e4e (pass p27-emu1); the busy line under a disabled Approve on the
+smart-account Send, Staking, Multisig, Wallet-handle and Lend confirms with
+a second tap doing nothing; the Kernel's ENS renewal named in Activity on
+five of five loads; the withheld transfer fee on the recipient's Activity
+row; the Bitcoin inscriptions and Runes warning on the mainnet Bitcoin send
+form; the spoken button names; two more Aave supply-and-withdraw rounds
+from the smart account on Arbitrum Sepolia (pass p27-emu2). Built and
+verified offline: the Aave pins in verify-pins.mjs (eb2683f; its live
+network run was the agent's), the pre-prompt guard on thirteen more
+smart-account confirms (0ea0e27), and the fix slice f146133 — the
+pre-prompt estimate standing in when the send-time estimate is impossible,
+one busy-line announcement, the handle's "Not sent" alert. Engine: 1,441
+tests. App: 68 offline suites, 12,203 checks at f146133.
+
+Findings for the Chairperson this phase: ZeroDev's zero-estimate bursts on
+Arbitrum Sepolia were heavy (5 of 7 Reviews refused in one stretch), and
+one refusal still came after the device prompt before f146133 — nothing was
+signed either way; Activity read a receipt twice and publicnode's reth
+backend answered null on the second read, which is why the Kernel renewal
+row lost its name (fixed); the wallet's mainnet Bitcoin send can spend
+outputs holding inscriptions or Runes and the warning sentence is its only
+mitigation (T-97, Medium / Medium); the withheld-fee row does not appear
+when the same transaction also creates the recipient's token account (the
+conservative rule); the cause of TalkBack's double announcement was not
+established from code.
+
+Decisions and inputs still open: unchanged from the phase 26 status (the
+Bitcoin protect-only slice's three inputs; Tropic Square section 12.1 and
+Stage 3; the release signing key, audit firm, budget, C1 scope and git
+tag; address screening section 9; DURESS_WALLET section 8.5; whether Lend
+accepts an EIP-7702 owner; stash@{0}; Homebrew's rust and ruby; a glance at
+the emulator window). On hold by the Chairperson: a native Spanish
+reviewer, the fiat off-ramp provider, the disclosure decision.
+
+Follow-ups (no inputs): an emulator re-check of f146133 (the stand-in
+during a real burst, the single announcement, the "Not sent" alert); a
+truthful busy line for cold signing (one new string id); the subscription,
+recurring and DCA Start handlers and the passkey, USDC-fee and
+guardian-recovery quotes outside the pre-prompt estimate; the Spanish gaps
+on the confirm's preview and risk sections; the Ethereum test banner on the
+Bitcoin mainnet Send form; T-97's "proposed" wording; both ENS names expire
+on 2026-12-22 and cost 0.613701 test USDC each to renew.
