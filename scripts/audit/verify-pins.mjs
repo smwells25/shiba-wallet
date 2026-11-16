@@ -852,6 +852,131 @@ pin({
   ],
 });
 
+// --- Aave v3 lending (phase 26 item 2; phase 27 item 4) ----------------------------
+// lending.ts pins one reserve per network in LENDING_DEPLOYMENTS (today only
+// Arbitrum Sepolia). Every address in each entry is collected: the
+// PoolAddressesProvider, the Pool proxy, the Pool implementation the wallet's
+// checks were made against, the data provider, the price oracle, the asset
+// (Circle's USDC: merged into the token row below) and the reserve's aToken.
+// The facts are the ones the engine's readReserveState compares, read here with
+// eth_call one by one against the same LENDING_DEPLOYMENTS constants, so each
+// is printed on its own; readReserveState itself sends only eth_blockNumber,
+// eth_getCode, eth_getStorageAt and eth_call (all in this script's allow-list)
+// and runs as an engine check too. The provider's owner, the reserve's
+// active / frozen / paused flags and its supply cap are reported, not judged:
+// no engine constant pins them (the engine refuses a quote on a paused or
+// inactive reserve, and a supply on a frozen one, at quote time).
+const LENDING_FILE = 'packages/chains-evm/src/lending.ts';
+const AAVE_A_TOKEN_IMPL_DOC = '0xc0Bac16A64FbAa7EE6483bD12a759e28cD13dcBe'; // written only in a lending.ts comment ([A])
+for (const d of Object.values(evm.LENDING_DEPLOYMENTS)) {
+  const ch = Number(d.chain.split(':')[1]);
+  const group = `Aave v3 lending (${d.networkName})`;
+  const asset = d.asset.address;
+  // A literal argument: addrArg() is declared further down (used only inside checks).
+  const assetArg = [{ kind: 'address', value: asset }];
+  pin({
+    group,
+    label: 'Aave v3 PoolAddressesProvider',
+    address: d.addressesProvider,
+    chains: [ch],
+    source: cite(LENDING_FILE, d.addressesProvider),
+    checks: [
+      async (c) => addressCheck(c, d.addressesProvider, 'getPool()', [], d.pool, 'getPool() = the pinned Pool'),
+      async (c) => addressCheck(c, d.addressesProvider, 'getPoolDataProvider()', [], d.dataProvider, 'getPoolDataProvider() = the pinned data provider'),
+      async (c) => addressCheck(c, d.addressesProvider, 'getPriceOracle()', [], d.oracle, 'getPriceOracle() = the pinned oracle'),
+      async (c) => stringCheck(c, d.addressesProvider, 'getMarketId()', d.marketId, 'getMarketId() = the pinned marketId'),
+      async (c) => reportAddressWithCode(c, d.addressesProvider, 'owner()', 'owner() (report only)'),
+    ],
+  });
+  pin({
+    group,
+    label: 'Aave v3 Pool (proxy)',
+    address: d.pool,
+    chains: [ch],
+    source: cite(LENDING_FILE, d.pool),
+    checks: [
+      async (c) => slotAddressCheck(c, d.pool, d.poolImplementation, `ERC-1967 slot = the pinned poolImplementation (${cite(LENDING_FILE, d.poolImplementation)})`),
+      async (c) => addressCheck(c, d.pool, 'ADDRESSES_PROVIDER()', [], d.addressesProvider, 'ADDRESSES_PROVIDER() = the pinned provider'),
+      async (c) => uintCheck(c, d.pool, 'POOL_REVISION()', d.poolRevision, `POOL_REVISION() = the pinned poolRevision (${cite(LENDING_FILE, 'poolRevision: ')})`),
+      async (c) => engineCheck(c, 'readReserveState (engine; every pinned fact at one block)', async () => {
+        const s = await evm.readReserveState(c.node, d);
+        return `block ${s.block}: active ${s.active}, frozen ${s.frozen}, paused ${s.paused}, supply cap ${s.supplyCap} ${d.asset.symbol}, supplied for the cap ${s.suppliedForCap} base units, available liquidity ${s.availableLiquidity} base units`;
+      }),
+    ],
+  });
+  pin({ group, label: 'Aave v3 Pool implementation (the one the wallet was checked against)', address: d.poolImplementation, chains: [ch], source: cite(LENDING_FILE, d.poolImplementation) });
+  pin({
+    group,
+    label: 'Aave v3 AaveProtocolDataProvider',
+    address: d.dataProvider,
+    chains: [ch],
+    source: cite(LENDING_FILE, d.dataProvider),
+    checks: [
+      async (c) => {
+        const name = `getReserveTokensAddresses(${d.asset.symbol}).aToken = the pinned aToken`;
+        try {
+          const got = asAddress(await call(c, d.dataProvider, 'getReserveTokensAddresses(address)', assetArg), 0);
+          return { name, ok: same(got, d.aToken.address), detail: same(got, d.aToken.address) ? got : `${got} (expected ${checksum(d.aToken.address)})` };
+        } catch (e) {
+          return { name, ok: null, detail: `could not read: ${short(e)}` };
+        }
+      },
+      async (c) => {
+        const name = `getReserveConfigurationData(${d.asset.symbol}).decimals = the pinned asset decimals ${d.asset.decimals}`;
+        try {
+          const got = asUint(await call(c, d.dataProvider, 'getReserveConfigurationData(address)', assetArg), 0);
+          return { name, ok: got === BigInt(d.asset.decimals), detail: String(got) };
+        } catch (e) {
+          return { name, ok: null, detail: `could not read: ${short(e)}` };
+        }
+      },
+      async (c) => {
+        const name = `reserve flags (report only): getReserveConfigurationData isActive / isFrozen, getPaused`;
+        try {
+          const cfg = await call(c, d.dataProvider, 'getReserveConfigurationData(address)', assetArg);
+          const paused = asUint(await call(c, d.dataProvider, 'getPaused(address)', assetArg), 0);
+          const bool = (w) => (w === 1n ? 'true' : w === 0n ? 'false' : `non-boolean ${w}`);
+          return { name, ok: true, detail: `active ${bool(asUint(cfg, 8))}, frozen ${bool(asUint(cfg, 9))}, paused ${bool(paused)}` };
+        } catch (e) {
+          return { name, ok: null, detail: `could not read: ${short(e)}` };
+        }
+      },
+      async (c) => {
+        const name = `getReserveCaps(${d.asset.symbol}) (report only; whole tokens)`;
+        try {
+          const out = await call(c, d.dataProvider, 'getReserveCaps(address)', assetArg);
+          return { name, ok: true, detail: `borrow cap ${asUint(out, 0)}, supply cap ${asUint(out, 1)}` };
+        } catch (e) {
+          return { name, ok: null, detail: `could not read: ${short(e)}` };
+        }
+      },
+    ],
+  });
+  pin({ group, label: 'Aave v3 price oracle (AaveOracle)', address: d.oracle, chains: [ch], source: cite(LENDING_FILE, d.oracle) });
+  pin({
+    group,
+    label: `Aave v3 aToken ${d.aToken.symbol} (proxy)`,
+    address: d.aToken.address,
+    chains: [ch],
+    source: cite(LENDING_FILE, d.aToken.address),
+    checks: [
+      async (c) => addressCheck(c, d.aToken.address, 'UNDERLYING_ASSET_ADDRESS()', [], asset, `UNDERLYING_ASSET_ADDRESS() = the pinned asset ${d.asset.symbol}`),
+      async (c) => addressCheck(c, d.aToken.address, 'POOL()', [], d.pool, 'POOL() = the pinned Pool'),
+      async (c) => stringCheck(c, d.aToken.address, 'symbol()', d.aToken.symbol, 'symbol() = the pinned aToken symbol'),
+      async (c) => uintCheck(c, d.aToken.address, 'decimals()', BigInt(d.aToken.decimals), 'decimals() = the pinned aToken decimals'),
+      async (c) => {
+        // The implementation is written only in a comment of lending.ts, so the
+        // comparison is reported, not judged (the row's Sourcify column judges
+        // the implementation actually found in the slot).
+        const docSource = cite(LENDING_FILE, AAVE_A_TOKEN_IMPL_DOC);
+        const name = `ERC-1967 slot vs the documented AToken implementation (report only; ${docSource})`;
+        const r = await slotAddressCheck(c, d.aToken.address, AAVE_A_TOKEN_IMPL_DOC, name);
+        return r.ok === null ? r : { name, ok: true, detail: r.ok ? `${r.detail} = documented` : `${r.detail.replace(/ \(expected .*\)$/, '')} DIFFERS from documented ${AAVE_A_TOKEN_IMPL_DOC}` };
+      },
+    ],
+  });
+}
+
 // --- Tokens and fixed addresses ---------------------------------------------------
 const tokenRows = new Map(); // chainId:address -> { symbol, decimals, sources: [] }
 function addToken(chainId, address, symbol, decimals, source) {
@@ -874,6 +999,9 @@ for (const [id, t] of Object.entries(PM.tokens)) addToken(Number(id), t, 'USDC',
 {
   const t = evm.ENS_V2_SEPOLIA_USDC;
   addToken(Number(evm.ENS_V2_SEPOLIA.chainId), t.address, t.symbol, t.decimals, `${cite(ENS_REG_FILE, t.address)} (ENS registration payment token)`);
+}
+for (const d of Object.values(evm.LENDING_DEPLOYMENTS)) {
+  addToken(Number(d.chain.split(':')[1]), d.asset.address, d.asset.symbol, d.asset.decimals, `${cite(LENDING_FILE, d.asset.address)} (Aave v3 lending asset)`);
 }
 for (const row of tokenRows.values()) {
   pin({
