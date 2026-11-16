@@ -998,5 +998,29 @@ console.log('check-spending-policy: the Solana limit card under TalkBack (pass p
   }
 }
 
+// Phase 27 item 2: the Ethereum-network limit card's Remove button read a bare
+// "Remove. Button" too; it now names its limit as the Solana card does.
+console.log('check-spending-policy: the Ethereum-network limit card\'s Remove label (phase 27 item 2)');
+{
+  const { readFileSync } = await import('node:fs');
+  const { dirname, join } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const SP = await import('../src/wallet/spending-policy.ts');
+  const { setActiveLanguage } = await import('../src/i18n/index.ts');
+  check('Remove on an Ethereum-network card is spoken "Remove the test ETH limit on Ethereum Sepolia" (the Solana card\'s sentence, reused)',
+    SP.evmLimitRemoveLabel('test ETH', 'Ethereum Sepolia') === 'Remove the test ETH limit on Ethereum Sepolia' &&
+      SP.evmLimitRemoveLabel('USDC', 'Ethereum') === 'Remove the USDC limit on Ethereum');
+  setActiveLanguage('es');
+  const esLabel = SP.evmLimitRemoveLabel('USDC', 'Ethereum Sepolia');
+  setActiveLanguage('en');
+  check('…and in Spanish from the same table entry', esLabel === 'Quitar el límite de USDC en Ethereum Sepolia');
+  const screen = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'screens', 'SpendingLimitsScreen.tsx'), 'utf8');
+  const evmCardOk = (src) =>
+    /<Button\s+title="Remove"\s+accessibilityLabel=\{evmLimitRemoveLabel\(r\.policy\.symbol, evmChain\.label\)\}\s+variant="secondary"\s+onPress=\{\(\) => onRemove\(r\.policy\)\}/.test(src) &&
+    /<Button\s+title="Remove"\s+variant=/.test(src) === false;
+  check('the Ethereum-network card (source): Remove keeps its visible title and names the limit and the network', evmCardOk(screen));
+  check('…mutant caught: Remove without its label', !evmCardOk(screen.replace('              accessibilityLabel={evmLimitRemoveLabel(r.policy.symbol, evmChain.label)}\n', '')));
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

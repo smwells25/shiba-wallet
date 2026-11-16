@@ -39,6 +39,7 @@ import {
   spendingReadouts,
   solanaSpendingTokenOptions,
   solanaLimitMintSpoken,
+  evmLimitRemoveLabel,
   solanaLimitRemoveLabel,
   spendingTokenOptions,
   spentReadoutText,
@@ -388,6 +389,7 @@ export function SpendingLimitsScreen({ navigation }: Props) {
             <Button title="Edit" variant="secondary" onPress={() => onEdit(r.policy)} style={styles.choiceButton} />
             <Button
               title="Remove"
+              accessibilityLabel={evmLimitRemoveLabel(r.policy.symbol, evmChain.label)}
               variant="secondary"
               onPress={() => onRemove(r.policy)}
               style={styles.choiceButton}

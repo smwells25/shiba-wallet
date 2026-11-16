@@ -16,6 +16,7 @@ import { RiskWarnings } from '../components/RiskWarnings';
 import { SpendingPolicyNotice, spendingGateForQuote } from '../components/SpendingPolicyViews';
 import { AaDepositNote } from '../components/AaDepositNote';
 import { NOTE_VIEW_SCROLL_PROPS, TransactionNoteField, dismissKeyboardThenClose } from '../components/TransactionNoteField';
+import { PrePromptCheckNote, usePrePromptGuard } from '../components/PrePromptCheckNote';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { requireLocalAuth } from '../wallet/biometric';
@@ -66,7 +67,10 @@ import {
   handleCardLiveText,
   handleExpiryLine,
   handleOfferFor,
+  handleAccountRowParts,
+  handleAccountRowSpoken,
   handleOwnerAccountLabel,
+  handleRenewButtonLabel,
   handleOwnerRowSpoken,
   handlePromptTitle,
   loadPendingHandles,
@@ -240,6 +244,8 @@ export function HandleScreen({ navigation }: Props) {
   const [pending, setPending] = useState<PendingHandles | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
   const [phase, setPhase] = useState<Phase>('main');
+  // Phase 27 item 2: the smart-account confirm's busy state while the checks before the device prompt run.
+  const prePrompt = usePrePromptGuard();
   const [labelText, setLabelText] = useState('');
   const [ownerKind, setOwnerKind] = useState<HandleOwnerKind>('regular');
   const [formError, setFormError] = useState<string | null>(null);
@@ -830,7 +836,15 @@ export function HandleScreen({ navigation }: Props) {
     }
   };
 
-  const onAaApprove = async () => {
+  /**
+   * A smart-account step (prepare, register, renew, reverse record), under
+   * the pre-prompt guard (phase 27 item 2): from the tap until the handler
+   * returns the Approve button is disabled and a second tap starts nothing;
+   * the busy line shows while the bundler check ('bundler') and then the
+   * pre-flight and spending checks ('final') run, before the device prompt.
+   */
+  const onAaApprove = () => void prePrompt.guard.run((step) => aaApproveGuarded(step));
+  const aaApproveGuarded = async (step: (stage: 'bundler' | 'final') => void) => {
     if (!job || !aaQuote || !bundle || !url) return;
     try {
       await checkAaQuoteBeforeApproval(bundle.bundler, aaQuote);
@@ -840,6 +854,7 @@ export function HandleScreen({ navigation }: Props) {
       backToMain(null);
       return;
     }
+    step('final');
     if (!(await authorizeJob(job, aaQuote, url))) return;
     setPhase('aa-sending');
     try {
@@ -1145,7 +1160,8 @@ export function HandleScreen({ navigation }: Props) {
       <ScrollView key="handle-aa-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <NetworkBadge label={evmChain.label} testnet={evmChain.testnet} theme={theme} />
         <Text accessibilityRole="header" style={[styles.stepTitle, { color: theme.text }]}>{stepTitle(job)}</Text>
-        <Row label={t('handle.row.owner')} value={aaQuote.sender} mono spoken={`${t('handle.row.owner')}: ${spokenShortAddress(aaQuote.sender)}`} theme={theme} />
+        {/* Phase 27 item 2 (pass p27-emu1 finding 4): the smart account's label with its short address, one spoken stop. */}
+        <Row label={t('handle.row.owner')} {...handleAccountRowParts('smart', activeAccount?.name, aaQuote.sender)} spoken={handleOwnerRowSpoken('smart', activeAccount?.name, aaQuote.sender)} theme={theme} />
         <ImportedKeyNotice show={activeAccount?.imported === true} />
         {job.kind === 'prepare' ? <Note text={t('handle.prepare.smartNote', { count: job.calls.length })} theme={theme} /> : null}
         {/* Pass p26-emu2 finding 3: the renewal batch's one-operation heading, as the Lend confirm has. */}
@@ -1183,8 +1199,9 @@ export function HandleScreen({ navigation }: Props) {
           busy(t('handle.tx.waiting'))
         ) : (
           <>
-            <Button title={t('handle.tx.send')} onPress={() => void onAaApprove()} />
-            <Button title={t('send.back')} variant="secondary" onPress={() => backToMain(null)} />
+            <Button title={t('handle.tx.send')} onPress={onAaApprove} disabled={prePrompt.stage !== 'idle'} />
+            <PrePromptCheckNote stage={prePrompt.stage} />
+            <Button title={t('send.back')} variant="secondary" onPress={() => backToMain(null)} disabled={prePrompt.stage !== 'idle'} />
           </>
         )}
       </ScrollView>
@@ -1210,7 +1227,8 @@ export function HandleScreen({ navigation }: Props) {
         {q.inGrace ? <Row label={t('handle.renew.row.graceEnds')} value={formatBlockTime(q.graceEndsAt)} spoken={reviewRowSpoken(t('handle.renew.row.graceEnds'), formatBlockTime(q.graceEndsAt))} theme={theme} /> : null}
         <Row label={t('handle.renew.row.new')} value={formatBlockTime(q.newExpiry)} spoken={reviewRowSpoken(t('handle.renew.row.new'), formatBlockTime(q.newExpiry))} theme={theme} />
         <Note text={t('handle.renew.fromNote', { days: HANDLE_DURATION_DAYS })} theme={theme} />
-        <Row label={t('handle.renew.row.payer')} value={rp.plan.payer} mono spoken={`${t('handle.renew.row.payer')}: ${spokenShortAddress(rp.plan.payer)}`} theme={theme} />
+        {/* Phase 27 item 2 (pass p27-emu1 finding 4): the paying account's label with its short address, one spoken stop. */}
+        <Row label={t('handle.renew.row.payer')} {...handleAccountRowParts(rp.payerKind, activeAccount?.name, rp.plan.payer)} spoken={handleAccountRowSpoken(t('handle.renew.row.payer'), rp.payerKind, activeAccount?.name, rp.plan.payer)} theme={theme} />
         <Note
           text={t('handle.quote.balance', { who: payerText, amount: formatUsdc(rq.usdcBalance) })}
           spoken={spokenWithShortAddresses(t('handle.quote.balance', { who: payerText, amount: formatUsdc(rq.usdcBalance) }))}
@@ -1423,7 +1441,12 @@ export function HandleScreen({ navigation }: Props) {
                   {row.value.ownerKind === 'smart' && !bundle ? (
                     <Note text={t('handle.renew.smartUnavailable', { name: row.value.name })} theme={theme} />
                   ) : (
-                    <Button title={t('handle.renew.button', { days: HANDLE_DURATION_DAYS })} onPress={() => void onRenewReview(row.value!)} disabled={!url} />
+                    <Button
+                      title={t('handle.renew.button', { days: HANDLE_DURATION_DAYS })}
+                      accessibilityLabel={handleRenewButtonLabel(row.value.name)}
+                      onPress={() => void onRenewReview(row.value!)}
+                      disabled={!url}
+                    />
                   )}
                 </>
               ) : (

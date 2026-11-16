@@ -40,6 +40,8 @@ import { parseUnits } from '../wallet/balances';
 import {
   BITCOIN_CHAIN_ID,
   EVM_CHAIN_ID,
+  bitcoinAssetsWarningShown,
+  bitcoinAssetsWarningText,
   MINIMUM_FEE_REHEARSAL_WARNING,
   QUOTE_ENDPOINT_CHANGED_TITLE,
   consumeMinimumFeeRehearsal,
@@ -2436,6 +2438,9 @@ export function SendScreen({ route, navigation }: Props) {
           theme={theme}
         />
         <Row label="Balance" value={`${exact(quote.balance, decimals)} ${symbol}`} theme={theme} />
+        {quote.kind === 'utxo' && bitcoinAssetsWarningShown(route.params.chainId, network.chainId) ? (
+          <WarningBox>{bitcoinAssetsWarningText()}</WarningBox>
+        ) : null}
 
         {quote.kind === 'evm' ? (
           <BalanceChangePreview
@@ -2505,6 +2510,8 @@ export function SendScreen({ route, navigation }: Props) {
       </Text>
 
       <OfflineNotice />
+      {/* Phase 27 item 3: Bitcoin mainnet only (send.ts bitcoinAssetsWarningShown). */}
+      {bitcoinAssetsWarningShown(route.params.chainId, network?.chainId) ? <WarningBox>{bitcoinAssetsWarningText()}</WarningBox> : null}
 
       {!url ? (
         <WarningBox>

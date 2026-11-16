@@ -863,5 +863,51 @@ if (!env?.NOWNODES_KEY) {
   check('paged: zero overlap between pages', p2.entries.every((e) => !ids1.has(e.id)));
 }
 
+// Phase 27 item 3: the Ordinals / Runes warning on Bitcoin MAINNET's send form
+// and confirm only (docs/BITCOIN_ASSETS.md sections 6.3 and 9) — never on
+// Dogecoin, an EVM network, Solana or a Bitcoin test network.
+console.log('check-doge: the Ordinals / Runes warning, Bitcoin mainnet only (phase 27 item 3)');
+{
+  const S = await import('../src/wallet/send.ts');
+  const { setActiveLanguage } = await import('../src/i18n/index.ts');
+  const { dirname, join } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const BTC = S.BITCOIN_CHAIN_ID;
+  const TESTNET4 = 'bip122:' + 'ab'.repeat(16); // a made-up bip122 id standing in for a future Bitcoin test-network slot (any id other than mainnet's)
+  check('Bitcoin mainnet: shown on the route and endpoint of Bitcoin mainnet (bip122:000000000019d6689c085ae165831e93)',
+    BTC === 'bip122:000000000019d6689c085ae165831e93' && S.bitcoinAssetsWarningShown(BTC, BTC) === true);
+  check('never on Dogecoin, Ethereum, Solana, a Bitcoin test network (route or endpoint), or before an endpoint is resolved',
+    !S.bitcoinAssetsWarningShown(S.DOGECOIN_CHAIN_ID, S.DOGECOIN_CHAIN_ID) && !S.bitcoinAssetsWarningShown(S.EVM_CHAIN_ID, S.EVM_CHAIN_ID) &&
+      !S.bitcoinAssetsWarningShown(S.SOLANA_CHAIN_ID, S.SOLANA_CHAIN_ID) && !S.bitcoinAssetsWarningShown(TESTNET4, TESTNET4) &&
+      !S.bitcoinAssetsWarningShown(BTC, TESTNET4) && !S.bitcoinAssetsWarningShown(TESTNET4, BTC) &&
+      !S.bitcoinAssetsWarningShown(BTC, undefined) && !S.bitcoinAssetsWarningShown(BTC, null));
+  check('the sentence, exact', S.bitcoinAssetsWarningText() ===
+    'This wallet does not track Ordinals inscriptions or Runes. An ordinary Bitcoin send, and Max in particular, can spend outputs that hold them, which can give them away to the recipient or to the miner. If this address has ever received an inscription or Runes, do not send from it with this wallet.');
+  setActiveLanguage('es');
+  const esText = S.bitcoinAssetsWarningText();
+  setActiveLanguage('en');
+  check('…and in Spanish from the table', esText.startsWith('Esta billetera no sigue las inscripciones de Ordinals ni las Runes.'));
+  const screen = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'screens', 'SendScreen.tsx'), 'utf8');
+  const FORM_LINE = '{bitcoinAssetsWarningShown(route.params.chainId, network?.chainId) ? <WarningBox>{bitcoinAssetsWarningText()}</WarningBox> : null}';
+  const CONFIRM_LINE = "{quote.kind === 'utxo' && bitcoinAssetsWarningShown(route.params.chainId, network.chainId) ? (\n          <WarningBox>{bitcoinAssetsWarningText()}</WarningBox>";
+  const formStart = screen.indexOf('<ScrollView key="send-form"');
+  const confirmStart = screen.indexOf('<ScrollView key="send-confirm"');
+  const pin = (src) => {
+    const f = src.indexOf('<ScrollView key="send-form"');
+    const c = src.indexOf('<ScrollView key="send-confirm"');
+    const fAt = src.indexOf(FORM_LINE);
+    const cAt = src.indexOf(CONFIRM_LINE);
+    return fAt > f && f > 0 && cAt > c && c > 0 && cAt < src.indexOf('</ScrollView>', c) &&
+      src.split('bitcoinAssetsWarningText()').length - 1 === 2 &&
+      // A plain WarningBox (one TalkBack stop, read once), not the announcing kind.
+      !src.includes('<WarningBox announce>{bitcoinAssetsWarningText()}');
+  };
+  check('the screen (source): one plain WarningBox on the form and one on the native confirm, both keyed by bitcoinAssetsWarningShown, nowhere else',
+    formStart > 0 && confirmStart > 0 && pin(screen));
+  check('…mutant caught: the form without the warning', !pin(screen.replace(FORM_LINE, '')));
+  check('…mutant caught: the warning on every network (the keying removed)',
+    !pin(screen.replace('{bitcoinAssetsWarningShown(route.params.chainId, network?.chainId) ? <WarningBox>', '{true ? <WarningBox>')));
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

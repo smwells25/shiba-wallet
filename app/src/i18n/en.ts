@@ -2324,4 +2324,13 @@ export const en = {
   'handle.renew.ownerSmart': '{name}’s smart account',
   'limits.solana.removeLabel': 'Remove the {symbol} limit on {network}',
   // ---- END pass p26-emu2 fixes ----
+  // ---- BEGIN phase 27 items 2 and 3: the busy line of a smart-account confirm while the checks before the device prompt
+  // run (wallet/pre-prompt-guard.ts prePromptStageText; components/PrePromptCheckNote.tsx), the spoken label of a "Renew for
+  // 28 days" button (wallet/handle.ts handleRenewButtonLabel) and the Ordinals / Runes warning on Bitcoin mainnet's send form
+  // and confirm (wallet/send.ts bitcoinAssetsWarningText).
+  'aa.prePrompt.bundler': 'Checking the bundler’s gas estimate before asking you to approve. This can take up to about half a minute; nothing has been signed.',
+  'aa.prePrompt.final': 'Running the last checks before asking you to approve; nothing has been signed.',
+  'handle.renew.buttonLabel': 'Renew {name} for {days} days',
+  'send.btc.assetsWarning': 'This wallet does not track Ordinals inscriptions or Runes. An ordinary Bitcoin send, and Max in particular, can spend outputs that hold them, which can give them away to the recipient or to the miner. If this address has ever received an inscription or Runes, do not send from it with this wallet.',
+  // ---- END phase 27 items 2 and 3 ----
 } as const;

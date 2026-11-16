@@ -17,6 +17,7 @@ import { RiskWarnings } from '../components/RiskWarnings';
 import { SpendingPolicyNotice, spendingGateForQuote } from '../components/SpendingPolicyViews';
 import { AaDepositNote } from '../components/AaDepositNote';
 import { NOTE_VIEW_SCROLL_PROPS, TransactionNoteField, dismissKeyboardThenClose } from '../components/TransactionNoteField';
+import { PrePromptCheckNote, usePrePromptGuard } from '../components/PrePromptCheckNote';
 import { useWallet } from '../wallet/WalletContext';
 import { usePrefs } from '../wallet/PrefsContext';
 import { requireLocalAuth } from '../wallet/biometric';
@@ -137,6 +138,8 @@ export function LendScreen({ navigation }: Props) {
   const [endpoint, setEndpoint] = useState<NetworkEndpoint | null | undefined>(undefined);
   const [reloadTick, setReloadTick] = useState(0);
   const [phase, setPhase] = useState<Phase>('form');
+  // Phase 27 item 2: the smart-account confirm's busy state while the checks before the device prompt run.
+  const prePrompt = usePrePromptGuard();
   const [choice, setChoice] = useState<Choice>('supply');
   const [amountText, setAmountText] = useState('');
   const [withdrawAll, setWithdrawAll] = useState(false);
@@ -476,8 +479,15 @@ export function LendScreen({ navigation }: Props) {
     }
   };
 
-  /** The whole plan as one smart-account operation. */
-  const onAaSend = async () => {
+  /**
+   * The whole plan as one smart-account operation. Runs under the
+   * pre-prompt guard (phase 27 item 2): from the tap until the handler
+   * returns the Approve button is disabled and a second tap starts nothing;
+   * the busy line shows while the bundler check ('bundler') and the checks
+   * after it ('final') run, before the device prompt.
+   */
+  const onAaSend = () => void prePrompt.guard.run((step) => aaSendGuarded(step));
+  const aaSendGuarded = async (step: (stage: 'bundler' | 'final') => void) => {
     const bundle = aa.bundle;
     if (!aaQuote || !plan || !bundle) return;
     const bundleUrl = aa.url;
@@ -495,6 +505,7 @@ export function LendScreen({ navigation }: Props) {
       backToForm(t('lend.reviewAgain'));
       return;
     }
+    step('final');
     const withinLimits = await spendingGateForQuote({
       chain: caip2,
       owner: account.address,
@@ -756,8 +767,9 @@ export function LendScreen({ navigation }: Props) {
           sendingView(tx('Signing and submitting to the bundler…'))
         ) : (
           <>
-            <Button title={t('staking.aa.button', { action: lendingActionLabel(plan) })} onPress={() => void onAaSend()} />
-            <Button title="Back" variant="secondary" onPress={() => backToForm('')} />
+            <Button title={t('staking.aa.button', { action: lendingActionLabel(plan) })} onPress={onAaSend} disabled={prePrompt.stage !== 'idle'} />
+            <PrePromptCheckNote stage={prePrompt.stage} />
+            <Button title="Back" variant="secondary" onPress={() => backToForm('')} disabled={prePrompt.stage !== 'idle'} />
           </>
         )}
       </ScrollView>

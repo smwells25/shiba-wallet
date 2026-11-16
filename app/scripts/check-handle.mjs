@@ -855,7 +855,8 @@ console.log('check-handle: the fourteen findings of emulator pass p23-handle');
     check('(12) the screen speaks the short forms (call lines, owner rows, card sentences, sub-name notes, Sent body and transaction id) and keeps the visible text',
       views.includes('accessibilityLabel={spokenCallLine(line, resolver)}') &&
         screen.includes("<Row label={t('handle.row.owner')} value={record.owner} mono spoken={`${t('handle.row.owner')}: ${spokenShortAddress(record.owner)}`} theme={theme} />") &&
-        screen.includes('spoken={`${t(\'handle.row.owner\')}: ${spokenShortAddress(aaQuote.sender)}`}') &&
+        // Phase 27 item 2: the smart-account confirm's owner row is spoken through handleOwnerRowSpoken (label + short address).
+        screen.includes("spoken={handleOwnerRowSpoken('smart', activeAccount?.name, aaQuote.sender)}") &&
         screen.includes('<Text accessibilityLabel={spokenWithShortAddresses(result.body)}') && screen.includes('<View accessible accessibilityLabel={spokenTxId(result.txid)}>') &&
         (screen.match(/spoken=\{spokenWithShortAddresses\(t\('handle\.sub\.(intro|reverseNote)'/g) ?? []).length === 2);
     const m = await handleMutant('  if (keepFull.length === 0) return withShortAddresses(text);', '  if (keepFull.length >= 0) return text;');
@@ -1216,6 +1217,63 @@ console.log('check-handle: renewing a name (phase 26 item 1, the app half)');
   {
     const m = await handleMutant('  return `${label}: ${value}`;', '  return value;');
     caught('finding 10: a review row spoken without its label (two stops again)', m.reviewRowSpoken('New expiry', 'x') !== 'New expiry: x');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 27 item 2: the busy state, the account labels on the renewal's rows,
+// the spoken "Renew" buttons (pass p27-emu1 findings 3, 4 and 5)
+// ---------------------------------------------------------------------------
+{
+  console.log('check-handle: phase 27 item 2 (the busy state, the account labels, the spoken Renew buttons)');
+  const ACCOUNT_1 = '0x772eAA1d3BEf14C0BD5cee980b90dB3FC680F44F';
+  const KERNEL = '0xD31c2C54F21684eE2026a6C41e391130BdEeD8FA';
+  const screen = source('src/screens/HandleScreen.tsx');
+  // Finding 3: the smart-account confirm's Approve under the pre-prompt guard.
+  const aaStart = screen.indexOf('const aaApproveGuarded = async');
+  const checkAt = screen.indexOf('await checkAaQuoteBeforeApproval(bundle.bundler, aaQuote);', aaStart);
+  const finalAt = screen.indexOf("step('final');", aaStart);
+  const authAt = screen.indexOf('if (!(await authorizeJob(job, aaQuote, url))) return;', aaStart);
+  check('finding 3: the smart-account step runs under the guard — the bundler check, then "final", then the pre-flight, spending check and prompt (authorizeJob)',
+    screen.includes('const prePrompt = usePrePromptGuard();') &&
+      screen.includes('const onAaApprove = () => void prePrompt.guard.run((step) => aaApproveGuarded(step));') &&
+      aaStart > 0 && checkAt > aaStart && finalAt > checkAt && authAt > finalAt);
+  check('finding 3: the smart-account confirm disables Approve and Back while the guard runs and shows the busy line under Approve',
+    screen.includes("<Button title={t('handle.tx.send')} onPress={onAaApprove} disabled={prePrompt.stage !== 'idle'} />\n            <PrePromptCheckNote stage={prePrompt.stage} />") &&
+      screen.includes("onPress={() => backToMain(null)} disabled={prePrompt.stage !== 'idle'} />") && !screen.includes('onPress={() => void onAaApprove()}'));
+  // Finding 4: the rows that name an account.
+  check('finding 4: an account row shows the label with the short address under it ("Account 1’s smart account" / "0xD31c…D8FA"), or the short address alone without a name',
+    JSON.stringify(H.handleAccountRowParts('smart', 'Account 1', KERNEL)) === JSON.stringify({ value: 'Account 1’s smart account', sub: '0xD31c…D8FA' }) &&
+      JSON.stringify(H.handleAccountRowParts('regular', 'Account 1', ACCOUNT_1)) === JSON.stringify({ value: 'Account 1', sub: '0x772e…F44F' }) &&
+      JSON.stringify(H.handleAccountRowParts('regular', '', ACCOUNT_1)) === JSON.stringify({ value: '0x772e…F44F', sub: null }));
+  check('finding 4: "Paid by" is one spoken stop with the label and the short address; the owner row’s sentence unchanged',
+    H.handleAccountRowSpoken('Paid by', 'smart', 'Account 1', KERNEL) === 'Paid by: Account 1’s smart account, 0xD31c…D8FA' &&
+      H.handleAccountRowSpoken('Paid by', 'regular', 'Account 1', ACCOUNT_1) === 'Paid by: Account 1, 0x772e…F44F' &&
+      H.handleAccountRowSpoken('Paid by', 'regular', null, ACCOUNT_1) === 'Paid by: 0x772e…F44F' &&
+      H.handleOwnerRowSpoken('smart', 'Account 1', KERNEL) === 'Owner of the name: Account 1’s smart account, 0xD31c…D8FA');
+  check('finding 4 (screen): the smart-account confirm’s owner row and the review’s "Paid by" row use the label (no bare full address as their value)',
+    screen.includes("{...handleAccountRowParts('smart', activeAccount?.name, aaQuote.sender)}") &&
+      screen.includes("spoken={handleOwnerRowSpoken('smart', activeAccount?.name, aaQuote.sender)}") &&
+      screen.includes('{...handleAccountRowParts(rp.payerKind, activeAccount?.name, rp.plan.payer)}') &&
+      screen.includes("spoken={handleAccountRowSpoken(t('handle.renew.row.payer'), rp.payerKind, activeAccount?.name, rp.plan.payer)}") &&
+      !screen.includes("<Row label={t('handle.row.owner')} value={aaQuote.sender} mono") &&
+      !screen.includes("<Row label={t('handle.renew.row.payer')} value={rp.plan.payer} mono") &&
+      // The pinned contracts on the review stay in full.
+      screen.includes("<Row label={t('handle.row.registrar')} value={ENS_V2_SEPOLIA.ethRegistrar} mono spoken={reviewRowSpoken(t('handle.row.registrar'), ENS_V2_SEPOLIA.ethRegistrar)} theme={theme} />"));
+  // Finding 5: each "Renew for 28 days" button names its name for screen readers.
+  check('finding 5: the spoken label names the name ("Renew qzv7hk2wmt.eth for 28 days"; visible text unchanged)',
+    H.handleRenewButtonLabel('qzv7hk2wmt.eth') === 'Renew qzv7hk2wmt.eth for 28 days' && H.handleRenewButtonLabel('xk9fdq4rvz.eth') === 'Renew xk9fdq4rvz.eth for 28 days' &&
+      en['handle.renew.button'] === 'Renew for {days} days');
+  check('finding 5 (screen): the "Your names" button keeps its title and gets the per-name spoken label',
+    screen.includes("title={t('handle.renew.button', { days: HANDLE_DURATION_DAYS })}\n                      accessibilityLabel={handleRenewButtonLabel(row.value.name)}"));
+  {
+    const m = await handleMutant("  return t('handle.renew.buttonLabel', { name, days: HANDLE_DURATION_DAYS });", "  return t('handle.renew.button', { days: HANDLE_DURATION_DAYS });");
+    caught('finding 5: the two Renew buttons spoken the same again', m.handleRenewButtonLabel('qzv7hk2wmt.eth') === m.handleRenewButtonLabel('xk9fdq4rvz.eth'));
+  }
+  {
+    const m = await handleMutant("  return label === null ? { value: spokenShortAddress(address), sub: null } : { value: label, sub: spokenShortAddress(address) };",
+      '  return { value: address, sub: null };');
+    caught('finding 4: the row shows the bare full address again', m.handleAccountRowParts('smart', 'Account 1', KERNEL).value === KERNEL);
   }
 }
 

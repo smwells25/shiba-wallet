@@ -133,6 +133,28 @@ export function dogecoinSendLinkShown(chainId: string, state: { status: string }
 export function dogecoinNoEndpointLine(): string {
   return t('home.dogecoin.noEndpoint');
 }
+
+/**
+ * Whether the Send form and its confirm show the Ordinals / Runes warning
+ * (phase 27 item 3; docs/BITCOIN_ASSETS.md sections 6.3 and 9: prepareUtxoSend spends
+ * whatever outputs the backend returns, largest first, and maxUtxoSend
+ * spends every one, while no backend this wallet uses reports which outputs
+ * hold an inscription or Runes — so an ordinary send or Max can give them
+ * away). Keyed on BOTH the route's chain id and the endpoint's network
+ * being Bitcoin MAINNET's genesis id (BITCOIN_CHAIN_ID): a Bitcoin test
+ * network slot added later (another genesis id, as Solana devnet is
+ * another CAIP-2 id than mainnet) does not show it by accident, and it is
+ * never shown for Dogecoin, an EVM network or Solana. Hidden while no
+ * endpoint is resolved (sending is unavailable then).
+ */
+export function bitcoinAssetsWarningShown(routeChainId: string, endpointChainId: string | null | undefined): boolean {
+  return routeChainId === BITCOIN_CHAIN_ID && endpointChainId === BITCOIN_CHAIN_ID;
+}
+
+/** The warning bitcoinAssetsWarningShown governs (docs/BITCOIN_ASSETS.md section 9, the sentence for the mainnet send form). */
+export function bitcoinAssetsWarningText(): string {
+  return t('send.btc.assetsWarning');
+}
 export const SOLANA_CHAIN_ID = 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp';
 
 // ---------------------------------------------------------------------------

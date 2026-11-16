@@ -29,6 +29,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { evmKeyProvider, mnemonicToSeed } from '@shiba-wallet/core';
 import { AAVE_WITHDRAW_ALL, KERNEL_V3_3, LENDING_DEPLOYMENTS, LENDING_REFUSALS, quoteLendingSupply, toHex } from '@shiba-wallet/chains-evm';
 import * as L from '../src/wallet/lending.ts';
+import * as G from '../src/wallet/pre-prompt-guard.ts';
 import { GasEstimateRevertError } from '../src/wallet/send.ts';
 import { addAaOperationSentListener, createAaClientFromConfig, sendAa } from '../src/wallet/aa.ts';
 import { featureReadiness, isFeatureAllowed, readinessRefusal } from '../src/config/readiness.ts';
@@ -71,6 +72,17 @@ let mutantCount = 0;
 let mutantsCaught = 0;
 process.on('exit', () => rmSync(MUTANT_DIR, { recursive: true, force: true }));
 const LENDING_SOURCE = read('src/wallet/lending.ts');
+// Phase 27 item 2: the pre-prompt guard (src/wallet/pre-prompt-guard.ts) shared by the Lend and Wallet-handle confirms.
+const GUARD_SOURCE = read('src/wallet/pre-prompt-guard.ts');
+async function guardMutant(from, to) {
+  if (!GUARD_SOURCE.includes(from)) throw new Error(`mutation anchor not found: ${from}`);
+  const rewritten = GUARD_SOURCE.replace(from, to).replace(/(from\s+)'(\.{1,2}\/[^']+)'/g, (_m, kw, spec) => `${kw}'${pathToFileURL(resolve(join(APP_ROOT, 'src/wallet'), spec)).href}'`);
+  mkdirSync(MUTANT_DIR, { recursive: true });
+  mutantCount += 1;
+  const file = join(MUTANT_DIR, `m${mutantCount}-guard.ts`);
+  writeFileSync(file, rewritten);
+  return import(pathToFileURL(file).href);
+}
 async function lendingMutant(from, to) {
   if (!LENDING_SOURCE.includes(from)) throw new Error(`mutation anchor not found: ${from}`);
   const mutated = LENDING_SOURCE.replace(from, to);
@@ -602,6 +614,85 @@ console.log('check-lending: mutation checks (each mutant must be caught)');
   const m12 = await lendingMutant('  const deployment = isBuiltInEvmChain(caip2) ? lendingDeploymentFor(caip2) : null;', '  const deployment = lendingDeploymentFor(\'eip155:421614\');');
   const o12 = m12.lendingOfferFor('eip155:11155111');
   caught('the offer not keyed on the network (Sepolia offered Arbitrum\'s market)', o12.ok === true);
+
+  // -------------------------------------------------------------------------
+  // Phase 27 item 2: the busy state while the checks before the device prompt
+  // run (the guard with injected tasks, then the screen's source)
+  // -------------------------------------------------------------------------
+  {
+    // Two taps in one frame: both calls are made before any await; only the first runs its task.
+    const exercise = async (mod) => {
+      const guard = mod.createPrePromptGuard();
+      const seen = [];
+      guard.subscribe(() => seen.push(guard.stage()));
+      let release;
+      const gate = new Promise((r) => { release = r; });
+      let starts = 0;
+      const task = async (step) => {
+        starts += 1;
+        await gate;
+        step('final');
+        await Promise.resolve();
+      };
+      const first = guard.run(task);
+      const second = guard.run(task);
+      const duringStage = guard.stage();
+      const duringHeld = guard.held();
+      release();
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+      return { starts, duringStage, duringHeld, secondResult, firstResult, afterStage: guard.stage(), afterHeld: guard.held(), seen };
+    };
+    const r = await exercise(G);
+    check('phase 27 item 2: two taps in one frame start ONE approval (the second run returns false and its task never starts)',
+      r.starts === 1 && r.secondResult === false && r.firstResult === true);
+    check('phase 27 item 2: the guard is held with stage "bundler" from the tap, moves to "final", and is back to "idle" when the handler returns',
+      r.duringHeld === true && r.duringStage === 'bundler' && r.afterHeld === false && r.afterStage === 'idle' && r.seen.join(',') === 'bundler,final,idle');
+    {
+      const guard = G.createPrePromptGuard();
+      let err = null;
+      try {
+        await guard.run(async () => { throw new Error('refused'); });
+      } catch (e) {
+        err = e;
+      }
+      const again = await guard.run(async () => {});
+      check('phase 27 item 2: a handler that throws still releases the guard (stage "idle", a later tap runs) and the error is passed on',
+        err?.message === 'refused' && guard.stage() === 'idle' && again === true);
+    }
+    check('phase 27 item 2: the busy line per stage (none when idle)',
+      G.prePromptStageText('idle') === null &&
+        G.prePromptStageText('bundler') === 'Checking the bundler’s gas estimate before asking you to approve. This can take up to about half a minute; nothing has been signed.' &&
+        G.prePromptStageText('final') === 'Running the last checks before asking you to approve; nothing has been signed.');
+
+    const screen = read('src/screens/LendScreen.tsx');
+    const aaStart = screen.indexOf('const aaSendGuarded = async');
+    const checkAt = screen.indexOf('await checkAaQuoteBeforeApproval(bundle.bundler, aaQuote);', aaStart);
+    const finalAt = screen.indexOf("step('final');", aaStart);
+    const authAt = screen.indexOf('await requireLocalAuth(', aaStart);
+    check('phase 27 item 2: Lend\'s smart-account approval runs under the guard, the bundler check first, then "final", then the device prompt',
+      screen.includes('const prePrompt = usePrePromptGuard();') &&
+        screen.includes('const onAaSend = () => void prePrompt.guard.run((step) => aaSendGuarded(step));') &&
+        aaStart > 0 && checkAt > aaStart && finalAt > checkAt && authAt > finalAt);
+    check('phase 27 item 2: Lend\'s smart-account confirm disables Approve (and Back) while the guard runs and shows the busy line under it',
+      screen.includes("onPress={onAaSend} disabled={prePrompt.stage !== 'idle'} />\n            <PrePromptCheckNote stage={prePrompt.stage} />") &&
+        screen.includes("onPress={() => backToForm('')} disabled={prePrompt.stage !== 'idle'} />") &&
+        !screen.includes('onPress={() => void onAaSend()}'));
+    const note = read('src/components/PrePromptCheckNote.tsx');
+    check('phase 27 item 2: the busy line is an always-mounted polite live region (Android) and an announcement on iOS, one accessible element',
+      note.includes('<View collapsable={false} accessibilityLiveRegion="polite"') && note.includes("Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(text)") &&
+        note.includes('<View accessible accessibilityLabel={text}') && note.includes('useSyncExternalStore(guard.subscribe, guard.stage, guard.stage)'));
+
+    const m1 = await guardMutant('      if (holding) return false;\n', '');
+    const r1 = await exercise(m1);
+    caught('the second-tap test removed: two taps in one frame start two approvals', r1.starts === 2 || r1.secondResult !== false);
+    const m2 = await guardMutant("        holding = false;\n        set('idle');", '        set(\'idle\');');
+    const g2 = m2.createPrePromptGuard();
+    await g2.run(async () => {});
+    caught('the guard never released: a later tap after a refusal starts nothing', (await g2.run(async () => {})) === false);
+    const m3 = await guardMutant("      holding = true;\n      set('bundler');", '      holding = true;');
+    const r3 = await exercise(m3);
+    caught('no busy stage at the tap: the line does not show while the bundler check runs', r3.duringStage !== 'bundler');
+  }
   fetchNode = null;
   check(`${mutantsCaught} of ${mutantCount} in-suite mutants caught`, mutantsCaught === mutantCount && mutantCount >= 8);
 }

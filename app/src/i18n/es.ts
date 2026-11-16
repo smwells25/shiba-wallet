@@ -2321,4 +2321,13 @@ export const es: Readonly<Partial<Record<StringId, string>>> = {
   'handle.renew.ownerSmart': 'Cuenta inteligente de {name}',
   'limits.solana.removeLabel': 'Quitar el límite de {symbol} en {network}',
   // ---- END pass p26-emu2 fixes ----
+  // ---- BEGIN phase 27 items 2 and 3: the busy line of a smart-account confirm while the checks before the device prompt
+  // run (wallet/pre-prompt-guard.ts prePromptStageText; components/PrePromptCheckNote.tsx), the spoken label of a "Renew for
+  // 28 days" button (wallet/handle.ts handleRenewButtonLabel) and the Ordinals / Runes warning on Bitcoin mainnet's send form
+  // and confirm (wallet/send.ts bitcoinAssetsWarningText).
+  'aa.prePrompt.bundler': 'Comprobando la estimación de gas del bundler antes de pedirte la aprobación. Puede tardar hasta medio minuto; no se ha firmado nada.',
+  'aa.prePrompt.final': 'Haciendo las últimas comprobaciones antes de pedirte la aprobación; no se ha firmado nada.',
+  'handle.renew.buttonLabel': 'Renovar {name} por {days} días',
+  'send.btc.assetsWarning': 'Esta billetera no sigue las inscripciones de Ordinals ni las Runes. Un envío normal de Bitcoin, y Máx. en particular, puede gastar salidas que las contengan, lo que puede entregarlas al destinatario o al minero. Si esta dirección ha recibido alguna vez una inscripción o Runes, no envíes desde ella con esta billetera.',
+  // ---- END phase 27 items 2 and 3 ----
 };

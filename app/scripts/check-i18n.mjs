@@ -313,6 +313,13 @@ const EMU1_FIX_NEW = ['pnl.solanaDevnet'];
 // "Your names" (finding 5) (wallet/handle.ts) and the Solana limit's Remove label (finding 9, wallet/spending-policy.ts);
 // one delimited block at the end of en.ts / es.ts.
 const EMU2_FIX_NEW = ['handle.renew.aaBatch', 'handle.renew.ownerSmart', 'limits.solana.removeLabel'];
+// Phase 27 items 2 and 3: the busy line of a smart-account confirm while the checks before the device prompt run
+// (wallet/pre-prompt-guard.ts), the spoken label of a "Renew for 28 days" button (wallet/handle.ts) and the Ordinals / Runes
+// warning on Bitcoin mainnet's send form and confirm (wallet/send.ts); one delimited block at the end of en.ts / es.ts.
+const P27_SCREENS_NEW = ['aa.prePrompt.bundler', 'aa.prePrompt.final', 'handle.renew.buttonLabel', 'send.btc.assetsWarning'];
+// What may follow a delimited block that must sit at the end of a table: only further delimited blocks (a later slice's,
+// appended after it), then the closing brace — never a loose entry.
+const ONLY_BLOCKS_THEN_CLOSE = /^(?:\s*\/\/ ---- BEGIN [^\n]*\n[\s\S]*?\/\/ ---- END [^\n]*----[ \t]*\n)*\s*(\}|\} as const);\s*$/;
 const NFT_ENS_NEW = ['nft.ens.collection', 'nft.ens.is', 'nft.ens.isUnchecked', 'nft.ens.handover', 'nft.ens.resolver', 'nft.ens.expiry',
   'nft.ens.expired', 'nft.ens.stale', 'nft.ens.reading', 'nft.ens.unread'];
 {
@@ -333,7 +340,7 @@ const NFT_ENS_NEW = ['nft.ens.collection', 'nft.ens.is', 'nft.ens.isUnchecked', 
   const BROADCAST_OPEN_NEW = ['broadcast.open.title', 'broadcast.tx.open', 'broadcast.tx.openUnlisted', 'broadcast.userop.open',
     'broadcast.userop.openUnlisted', 'broadcast.open'];
   check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the Solana token-send readiness row, the wallet handle\'s, the six open-outcome broadcast sentences, the co-signer card\'s numbered Scan label, the eight period words of the hygiene slice, the four Bridge lines of pass p23-mint, the five lines of the p23-build fixes, the three Bridge lines of pass p23-bridge-recheck and the three navigation-bar lines of pass p23-navbar and the three iOS-pass lines (two iOS reminder notes, the "an" scanner sentence) and the five lines of the Solana-pass fix slice (the Solana devnet banner, the Solana token-fee line, the Solana devnet readiness line, two Max-lowering sentences) and the two smart-account Max-lowering sentences of the trim slice and the devnet form of the Solana token-fee line (pass p24-recheck) and the nine lines of the p24-unblock fixes (the Solana token Send link and its hint, seven Solana Activity sentences) and the hidden-fee word of an Activity row and the four gains-report lines of phase 25 item 3 and the ten ENS name-token lines of pass p25-emu1 and the three pending-list lines of phase 26 item 4 (account removal) and the Dogecoin no-endpoint line of pass p25-emu2 and the Solana spending-limit lines of phase 26 item 3b and the Lend screen\'s lines with its readiness row (phase 26 item 2) and the profit-and-loss devnet sentence of the p26-emu1 fixes and the three lines of the p26-emu2 fixes',
-    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || SPL_TOKENS_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id) || NAVBAR_FIX_NEW.includes(id) || IOS_FIX_NEW.includes(id) || SOLANA_FIX_NEW.includes(id) || AA_TRIM_NEW.includes(id) || RECHECK_FIX_NEW.includes(id) || UNBLOCK_FIX_NEW.includes(id) || SOLHIST_NEW.includes(id) || GAINS_NEW.includes(id) || NFT_ENS_NEW.includes(id) || PENDING_FORGET_NEW.includes(id) || DOGE_ENDPOINT_NEW.includes(id) || insightsNew(id) || spendingSolNew(id) || lendNew(id) || EMU1_FIX_NEW.includes(id) || EMU2_FIX_NEW.includes(id)) &&
+    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || SPL_TOKENS_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id) || NAVBAR_FIX_NEW.includes(id) || IOS_FIX_NEW.includes(id) || SOLANA_FIX_NEW.includes(id) || AA_TRIM_NEW.includes(id) || RECHECK_FIX_NEW.includes(id) || UNBLOCK_FIX_NEW.includes(id) || SOLHIST_NEW.includes(id) || GAINS_NEW.includes(id) || NFT_ENS_NEW.includes(id) || PENDING_FORGET_NEW.includes(id) || DOGE_ENDPOINT_NEW.includes(id) || insightsNew(id) || spendingSolNew(id) || lendNew(id) || EMU1_FIX_NEW.includes(id) || EMU2_FIX_NEW.includes(id) || P27_SCREENS_NEW.includes(id)) &&
       BUILD_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && BRIDGE_RECHECK_NEW.every((id) => FIXTURE.new.includes(id)) &&
       LOCK_KIND_NEW.every((id) => FIXTURE.new.includes(id)) && COLD_AA_NEW.every((id) => FIXTURE.new.includes(id)) && SPL_TOKENS_NEW.every((id) => FIXTURE.new.includes(id)) &&
       BROADCAST_OPEN_NEW.every((id) => FIXTURE.new.includes(id)) && THIRD_PASS_NEW.every((id) => FIXTURE.new.includes(id)) && PERIOD_NEW.every((id) => FIXTURE.new.includes(id)) &&
@@ -342,7 +349,7 @@ const NFT_ENS_NEW = ['nft.ens.collection', 'nft.ens.is', 'nft.ens.isUnchecked', 
       RECHECK_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && UNBLOCK_FIX_NEW.every((id) => FIXTURE.new.includes(id)) &&
       SOLHIST_NEW.every((id) => FIXTURE.new.includes(id)) && GAINS_NEW.every((id) => FIXTURE.new.includes(id)) &&
       NFT_ENS_NEW.every((id) => FIXTURE.new.includes(id)) && PENDING_FORGET_NEW.every((id) => FIXTURE.new.includes(id)) && DOGE_ENDPOINT_NEW.every((id) => FIXTURE.new.includes(id)) &&
-      EMU1_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && EMU2_FIX_NEW.every((id) => FIXTURE.new.includes(id)) &&
+      EMU1_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && EMU2_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && P27_SCREENS_NEW.every((id) => FIXTURE.new.includes(id)) &&
       Object.keys(en).filter(insightsNew).length > 0 && Object.keys(en).filter(insightsNew).every((id) => FIXTURE.new.includes(id)) &&
       Object.keys(en).filter(spendingSolNew).length > 0 && Object.keys(en).filter(spendingSolNew).every((id) => FIXTURE.new.includes(id)) &&
       Object.keys(en).filter(lendNew).length > 0 && Object.keys(en).filter(lendNew).every((id) => FIXTURE.new.includes(id)));
@@ -368,7 +375,8 @@ const NFT_ENS_NEW = ['nft.ens.collection', 'nft.ens.is', 'nft.ens.isUnchecked', 
     const lastBlock = (src) => {
       const b = src.lastIndexOf('// ---- BEGIN pass p26-emu2 fixes');
       const e = src.lastIndexOf('// ---- END pass p26-emu2 fixes ----');
-      return b > 0 && e > b && EMU2_FIX_NEW.every((id) => { const at = src.indexOf(`'${id}'`); return at > b && at < e; }) && /^\s*(\}|\} as const);\s*$/.test(src.slice(src.indexOf('\n', e) + 1));
+      // At the end: after its END line only later slices' delimited blocks, then the closing brace (ONLY_BLOCKS_THEN_CLOSE).
+      return b > 0 && e > b && EMU2_FIX_NEW.every((id) => { const at = src.indexOf(`'${id}'`); return at > b && at < e; }) && ONLY_BLOCKS_THEN_CLOSE.test(src.slice(src.indexOf('\n', e) + 1));
     };
     const handleSrc = readFileSync(join(APP, 'src/wallet/handle.ts'), 'utf8');
     const spendSrc = readFileSync(join(APP, 'src/wallet/spending-policy.ts'), 'utf8');
@@ -378,6 +386,43 @@ const NFT_ENS_NEW = ['nft.ens.collection', 'nft.ens.is', 'nft.ens.isUnchecked', 
         EMU2_FIX_NEW.every((id) => typeof es[id] === 'string' && es[id] !== en[id] && ph(es[id]) === ph(en[id])) &&
         lastBlock(enSrc) && lastBlock(esSrc) &&
         handleSrc.includes("'handle.renew.aaBatch'") && handleSrc.includes("'handle.renew.ownerSmart'") && spendSrc.includes("'limits.solana.removeLabel'"));
+  }
+  // Phase 27 items 2 and 3: the four new lines, English and Spanish exact, the placeholders matching, the block delimited
+  // at the end of both tables, and each id used by its module.
+  {
+    const enSrc = readFileSync(join(APP, 'src/i18n/en.ts'), 'utf8');
+    const esSrc = readFileSync(join(APP, 'src/i18n/es.ts'), 'utf8');
+    const ph = (x) => (x.match(/\{[a-z]+\}/gi) ?? []).sort().join(',');
+    const lastBlock = (src) => {
+      const b = src.lastIndexOf('// ---- BEGIN phase 27 items 2 and 3');
+      const e = src.lastIndexOf('// ---- END phase 27 items 2 and 3 ----');
+      return b > 0 && e > b && P27_SCREENS_NEW.every((id) => { const at = src.indexOf(`'${id}'`); return at > b && at < e; }) && ONLY_BLOCKS_THEN_CLOSE.test(src.slice(src.indexOf('\n', e) + 1));
+    };
+    const WANT_EN = {
+      'aa.prePrompt.bundler': 'Checking the bundler’s gas estimate before asking you to approve. This can take up to about half a minute; nothing has been signed.',
+      'aa.prePrompt.final': 'Running the last checks before asking you to approve; nothing has been signed.',
+      'handle.renew.buttonLabel': 'Renew {name} for {days} days',
+      'send.btc.assetsWarning': 'This wallet does not track Ordinals inscriptions or Runes. An ordinary Bitcoin send, and Max in particular, can spend outputs that hold them, which can give them away to the recipient or to the miner. If this address has ever received an inscription or Runes, do not send from it with this wallet.',
+    };
+    const WANT_ES = {
+      'aa.prePrompt.bundler': 'Comprobando la estimación de gas del bundler antes de pedirte la aprobación. Puede tardar hasta medio minuto; no se ha firmado nada.',
+      'aa.prePrompt.final': 'Haciendo las últimas comprobaciones antes de pedirte la aprobación; no se ha firmado nada.',
+      'handle.renew.buttonLabel': 'Renovar {name} por {days} días',
+      'send.btc.assetsWarning': 'Esta billetera no sigue las inscripciones de Ordinals ni las Runes. Un envío normal de Bitcoin, y Máx. en particular, puede gastar salidas que las contengan, lo que puede entregarlas al destinatario o al minero. Si esta dirección ha recibido alguna vez una inscripción o Runes, no envíes desde ella con esta billetera.',
+    };
+    const guardSrc = readFileSync(join(APP, 'src/wallet/pre-prompt-guard.ts'), 'utf8');
+    const handleSrc = readFileSync(join(APP, 'src/wallet/handle.ts'), 'utf8');
+    const sendSrc = readFileSync(join(APP, 'src/wallet/send.ts'), 'utf8');
+    check('phase 27 items 2 and 3: the four new ids, English and Spanish exact, the placeholders matching, in one delimited block at the end of each table, each used by its module',
+      P27_SCREENS_NEW.every((id) => en[id] === WANT_EN[id] && es[id] === WANT_ES[id] && es[id] !== en[id] && ph(es[id]) === ph(en[id])) &&
+        lastBlock(enSrc) && lastBlock(esSrc) &&
+        guardSrc.includes("t('aa.prePrompt.bundler')") && guardSrc.includes("t('aa.prePrompt.final')") &&
+        handleSrc.includes("t('handle.renew.buttonLabel'") && sendSrc.includes("t('send.btc.assetsWarning')"));
+    // The p26-emu2 block's "at the end" rule still refuses a loose entry after its END line (only delimited blocks may follow).
+    check('phase 27: a loose entry after a block that must sit at the end is still refused (only later delimited blocks may follow it)',
+      !ONLY_BLOCKS_THEN_CLOSE.test("\n  'x.loose': 'Loose',\n} as const;\n") &&
+        !ONLY_BLOCKS_THEN_CLOSE.test("\n  // ---- BEGIN later\n  'a.b': 'c',\n  // ---- END later ----\n  'x.loose': 'Loose',\n} as const;\n") &&
+        ONLY_BLOCKS_THEN_CLOSE.test("\n  // ---- BEGIN later\n  'a.b': 'c',\n  // ---- END later ----\n} as const;\n") && ONLY_BLOCKS_THEN_CLOSE.test('} as const;\n'));
   }
   // Phase 26 item 4: the three account-removal lines about the pending list, English and Spanish exact, the placeholders
   // matching, and each one used by wallet/pending-transactions.ts.

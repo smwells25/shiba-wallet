@@ -1269,8 +1269,41 @@ export function handleOwnerAccountLabel(kind: HandleOwnerKind, accountName: stri
 
 /** The one spoken stop of an owner row: "Owner of the name: Account 1, 0x772e…F44F" (pass p26-emu2 finding 5). */
 export function handleOwnerRowSpoken(kind: HandleOwnerKind, accountName: string | null | undefined, owner: string): string {
+  return handleAccountRowSpoken(t('handle.row.owner'), kind, accountName, owner);
+}
+
+/**
+ * Any row that names one of this wallet's accounts by its label (phase 27
+ * item 2; pass p27-emu1 finding 4: the smart-account confirm's owner row
+ * and the renewal review's "Paid by" row showed a bare address): the value
+ * is the account's label ("Account 1", "Account 1’s smart account",
+ * handleOwnerAccountLabel) and the sub-line the short address, or the
+ * short address alone when the account has no name — as "Your names"
+ * shows its owner rows since e728e4e. A pinned contract is never shown
+ * through this (its address stays in full).
+ */
+export function handleAccountRowParts(
+  kind: HandleOwnerKind,
+  accountName: string | null | undefined,
+  address: string,
+): { value: string; sub: string | null } {
   const label = handleOwnerAccountLabel(kind, accountName);
-  return label === null ? `${t('handle.row.owner')}: ${spokenShortAddress(owner)}` : `${t('handle.row.owner')}: ${label}, ${spokenShortAddress(owner)}`;
+  return label === null ? { value: spokenShortAddress(address), sub: null } : { value: label, sub: spokenShortAddress(address) };
+}
+
+/** The one spoken stop of such a row: "Paid by: Account 1’s smart account, 0xD31c…D8FA". */
+export function handleAccountRowSpoken(rowLabel: string, kind: HandleOwnerKind, accountName: string | null | undefined, address: string): string {
+  const label = handleOwnerAccountLabel(kind, accountName);
+  return label === null ? `${rowLabel}: ${spokenShortAddress(address)}` : `${rowLabel}: ${label}, ${spokenShortAddress(address)}`;
+}
+
+/**
+ * The spoken label of a "Renew for 28 days" button under "Your names"
+ * (phase 27 item 2; pass p27-emu1 finding 5: the two buttons sounded the
+ * same): "Renew qzv7hk2wmt.eth for 28 days". The visible title is unchanged.
+ */
+export function handleRenewButtonLabel(name: string): string {
+  return t('handle.renew.buttonLabel', { name, days: HANDLE_DURATION_DAYS });
 }
 
 /**

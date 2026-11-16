@@ -13237,7 +13237,11 @@
   "pnl.solanaDevnet",
   "handle.renew.aaBatch",
   "handle.renew.ownerSmart",
-  "limits.solana.removeLabel"
+  "limits.solana.removeLabel",
+  "aa.prePrompt.bundler",
+  "aa.prePrompt.final",
+  "handle.renew.buttonLabel",
+  "send.btc.assetsWarning"
  ],
  "changed": {
   "activity.note.privacy": {

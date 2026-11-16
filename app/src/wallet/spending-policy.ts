@@ -1644,6 +1644,18 @@ export function solanaLimitRemoveLabel(symbol: string, network: string): string 
 }
 
 /**
+ * The spoken label of an Ethereum-network limit card's Remove button (phase
+ * 27 item 2: TalkBack read a bare "Remove. Button" there too), "Remove the
+ * test ETH limit on Ethereum Sepolia". The sentence is the Solana card's
+ * (limits.solana.removeLabel, "Remove the {symbol} limit on {network}"),
+ * reused rather than copied: it names no Solana fact. The visible title
+ * stays "Remove".
+ */
+export function evmLimitRemoveLabel(symbol: string, network: string): string {
+  return t('limits.solana.removeLabel', { symbol, network });
+}
+
+/**
  * The spoken form of a Solana limit card's mint line, "Mint 4zMMC9…ncDU"
  * (pass p26-emu2 finding 9: the 44-character base58 mint was read in full).
  * The first six and last four characters through a11y.ts spokenShortAddress,
