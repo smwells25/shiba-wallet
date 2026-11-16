@@ -21782,3 +21782,81 @@ item 5, the fixes from the pass, item 6; 7 last. Subagents on Opus.
       slips: a first run red on a check-names pin and two lint warnings
       (fixed); a peek script truncated four files, each restored from its
       copy and confirmed byte-identical.
+- [x] EMULATOR PASS p28-emu1 — THE FIRST CCTP BURN FROM A SMART ACCOUNT AND
+      MINT TO ONE, THE FIRST OP SEPOLIA CCTP ROUTE, AN EVM SPENDING LIMIT
+      REFUSING A REAL SEND, THE f146133 FIXES HEARD (2026-11-16 ~17:10–18:35
+      UTC; Expo Go on emulator 37.1.11, Metro moved to wt-app at 924cdfb
+      (node 20303 on 8081) — BEFORE items 1 and 2 landed, so neither was
+      under test; the REAL wallet; 14 prompts, 13 titles read from the prompt
+      window (the first, the C1 burn's, was answered before its title was in
+      the dump — a helper slip, fixed for the rest), 2 cancelled on purpose;
+      no repository file touched; .dev-wallet never read; nothing from the
+      dev EOA; no renewal approved; THE CTO RE-READ all ten receipts on two
+      RPCs per network (identical status, block, gas, log count) and the
+      three changed USDC balances; the report with dumps and the arithmetic
+      in the session scratchpad p28-emu1/REPORT.md; CI green on 71ebda5).
+      (C1) BASE SEPOLIA → ARBITRUM SEPOLIA, 0.3 USDC, the Kernel as sender
+      AND recipient: the confirm's one-operation sentence, "…Paying it in
+      USDC through Circle's paymaster is not offered for bridging in this
+      version.", the pinned TokenMessengerV2 risk line; ONE prompt; burn
+      bundle 0x0df063e9edce08c4c6e32e42c0c3b341980275da466bbcdcd6d5366b72ac5e51,
+      Base block 59643047 (17:34:38 UTC), 227,327 gas, userOp 0x66865c99…2a69
+      nonce 11, DepositForBurn 300,000 with depositor and mintRecipient the
+      Kernel, destination domain 3; Circle's attestation complete 976–997 s
+      after the burn block; "Switch to Arbitrum Sepolia" then the mint FROM
+      ACCOUNT 1'S REGULAR ACCOUNT TO THE KERNEL (prompt "Mint the bridged USDC
+      on Arbitrum Sepolia") — tx
+      0xcda2e049bdc9648f13f35c7070034090173398eb0166e2cdc4be82738af26ab6,
+      block 329850783, 154,152 gas, MintAndWithdraw to the Kernel 300,000,
+      usedNonces 0 → 1, the Kernel's Arbitrum USDC 745,442 → 1,045,442 and
+      its Base USDC 21,466,350 → 21,166,350 (the CTO re-read both),
+      "Delivered on Arbitrum Sepolia". (C2) ARBITRUM SEPOLIA → OP SEPOLIA,
+      0.2 USDC from Account 1: approve 0xf65a6c36…f220 (block 329851895; the
+      approval view's new "Total (worst case)" row and note seen), burn
+      0x3555ba54722bbf0cdd7974de830b3229e6740934c28ba1348f6b1f00657b4244
+      (block 329852244, 18:05:35 UTC, destination domain 2), the attestation
+      complete 1,006–1,026 s after the burn block (THE FIRST MEASUREMENT OF
+      THIS ROUTE), "Switch to OP Sepolia", the mint confirm with a separate
+      "Layer 1 data fee (estimate)" row (first seen live) and "You receive
+      0.2 USDC", mint
+      0x7ececa1eb934e4b9d8bab6c1cead55233727ca39cf3e9129b6a42bf45dad13c3, OP
+      block 51525470, 171,240 gas, l1Fee 902, Account 1's OP USDC 0 →
+      200,000, "Delivered on OP Sepolia". (B) THE EVM SPENDING LIMIT (row
+      19): 0.0001 test ETH per 1 hour, "Send anyway" and fee counting off; a
+      0.0002 send warned at Review and REFUSED with NO prompt ("Over your
+      spending limit" / "…Already spent in this window: 0 test ETH; this
+      send: 0.0002 test ETH…"); 0.00005 sent with one prompt (tx
+      0x0cfb620eacf0ddab47e733bb0f1da2c0a462ac588905dd0ce2aa24f8a80af255,
+      block 12148896, 21,000 gas), the card "Spent in the current window:
+      0.00005 of 0.0001 test ETH"; 0.00006 refused before any prompt; the
+      limit removed behind its prompt. (A) f146133: four Lend sends from the
+      Kernel on Arbitrum Sepolia (two supply-and-withdraw rounds of 0.1 USDC;
+      bundles 0xda13fa0e…3a97, 0xebb50269…87ae, 0x34e7a4b6…d5a9,
+      0x8cc6ca3d…fc02, blocks 329853341 / 329853903 / 329854998 / 329855515),
+      one prompt each and NO refusal after a prompt, three Reviews refused at
+      Review during a burst — but nothing shows whether a send-time estimate
+      answered zero, so THE STAND-IN IS NOT SHOWN TO HAVE BEEN EXERCISED;
+      TalkBack spoke the busy line ONCE and in full, the button's "disabled"
+      queued behind it, then "Running the last checks before asking you to
+      approve; nothing has been signed." once (the first time that stage was
+      heard); the handle's cancel alert reads "Not sent". FINDINGS (fix slice
+      dispatched for 2–5): (1) the Mac's screen was locked for the whole
+      pass, so the emulator window could not be brought forward, qemu sat at
+      PRI 4 for long stretches and dumps took 6–20 s — every timing is
+      coarse; (2) the CCTP confirm's "Circle's USDC fee paymaster cannot pay
+      for the first mint…" sentence shows for an OP Sepolia destination,
+      where that paymaster has no code; (3) a mint sent from the regular
+      account to the Kernel previews "No balance changes for your address…"
+      and never says the USDC arrives at the smart account; (4) the CCTP
+      smart-account burn confirm has no "Total (worst case)" row; (5) the EVM
+      over-limit alert lacks the closing "Nothing was signed." the Solana one
+      has; (6) the USDC renewal confirm shows the test-ETH limit box
+      (harmless); (7) uiautomator drops the measured-time sentence (straight
+      quotes; read from a screenshot). NOTED: the Kernel's Base Sepolia USDC
+      was 21.466350 at the start, 20 more than the record — untraced, most
+      likely a faucet deposit by the Chairperson (not confirmed). SPEND: 0.2
+      USDC through Aave and back, 0.5 USDC bridged, 0.00005 test ETH. END
+      STATE: Home, Ethereum Sepolia, Account 1, devnet OFF, language System,
+      light mode, TalkBack OFF (level 6), protection OFF, IME ADBKeyboard, no
+      limit, no Aave position; Metro node 20303 on 8081 from wt-app at
+      924cdfb; qemu 86708 with caffeinate 86986.
