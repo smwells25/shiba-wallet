@@ -21170,3 +21170,43 @@ of the phase 26 status.
       language System, light mode, protection OFF, TalkBack OFF (level 6),
       IME ADBKeyboard, no Solana limit, Metro node 83265 on 8081 from wt-app
       at fd5c590, qemu 86708 with caffeinate 86986, the window in front.
+
+## Phase 27 plan (approved 2026-11-16 "approved"): the p27-emu1 findings, the engine's Activity follow-ups, the Aave pins checked by script, one true sentence on the mainnet Bitcoin send form
+
+Proposed by the CTO after pass p27-emu1 and approved by the Chairperson
+as proposed. Every item needs no outside input; the holds (a Spanish
+reviewer, the fiat off-ramp provider, the disclosure decision) and the
+input-gated items (the mainnet-readiness track, Tropic Square Stage 3,
+the Bitcoin protect-only slice, address screening) stay as they are.
+
+1. Activity (engine and app): the Kernel smart account's ENS renewal row
+   naming the renewal as the regular account's row does (pass p27-emu1
+   finding 1 — the NameRenewed-log path of e728e4e did not show live;
+   the cause established first, from the live bundle
+   0x874eceae…51af on Sepolia, read-only); "renewed" among the engine's
+   Activity verbs; the pinned lending token labelled in Activity as the
+   preview labels it; the Activity half of F-95 — the recipient's row of
+   a fee-charging Token-2022 transfer saying what was withheld, from an
+   engine change that costs no extra request per row, or the plain reason
+   recorded if that is not possible.
+2. Screens: a busy state on the Lend and Wallet-handle Approve buttons
+   while the pre-prompt bundler check runs (it took 19–26 s live), with a
+   second tap impossible; the account label beside the address on the
+   renewal confirm's owner row and the reviews' "Paid by" row; the two
+   "Renew for 28 days" buttons spoken with their name; the EVM
+   spending-limit card's Remove button naming its limit.
+3. One true sentence on the MAINNET Bitcoin send form (the phase 26
+   finding from docs/BITCOIN_ASSETS.md): this wallet does not track
+   inscriptions or Runes, and an ordinary send or Max can spend outputs
+   that hold them — shown on Bitcoin mainnet's form and confirm only.
+4. The Aave v3 Arbitrum Sepolia pins added to
+   scripts/audit/verify-pins.mjs (read-only; the engine's
+   LENDING_DEPLOYMENTS as the source), with AUDIT_SCOPE.md's tables
+   following.
+5. One emulator pass over items 1–3, fixes, then a short leadership
+   refresh (feature rows, the threat model, DEMO, the shareable page only
+   if a status changes).
+
+Waves: 1 — (A) item 1, (B) items 2 and 3, (C) item 4, in parallel on
+disjoint files (A and B both append string ids; the CTO rebases the
+tails); 2 — the emulator pass; 5 last. Subagents on Opus.
