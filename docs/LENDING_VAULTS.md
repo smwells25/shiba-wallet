@@ -310,7 +310,7 @@ The supply's `Supply` event named Account 1 as the beneficiary with referral 0 a
 
 ### 11.2 Findings of the run
 
-- ZeroDev's bundler on Arbitrum Sepolia again answered impossible (zero) gas estimates (`docs/THREAT_MODEL.md` F-61). The wallet's guard refused every one and nothing was signed or sent, but four refusals came at Review and two at send time after the device prompt, so two prompts were wasted; the smart-account supply succeeded at the third attempt, about 3.75 minutes in (`docs/THREAT_MODEL.md` F-97, a fix in progress).
+- ZeroDev's bundler on Arbitrum Sepolia again answered impossible (zero) gas estimates (`docs/THREAT_MODEL.md` F-61). The wallet's guard refused every one and nothing was signed or sent, but four refusals came at Review and two at send time after the device prompt, so two prompts were wasted; the smart-account supply succeeded at the third attempt, about 3.75 minutes in (`docs/THREAT_MODEL.md` F-97, fixed in commit `e728e4e`, verified offline only).
 - The previews call the pinned aToken "untracked token 0x460b…1216", and the approve step shows no balance-change preview; both are in a fix slice.
 - Arbitrum Sepolia has no history indexer configured on the emulator, so Activity does not list the lending transactions (the screen says so).
 

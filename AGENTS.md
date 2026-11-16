@@ -20899,3 +20899,164 @@ driver at a time, item 1's first; 6 last. Subagents on Opus.
       only if any survives it; (5) the header line's placement after the
       earlier phase 26 line is accepted (the "Row updates" lines are not in
       date order — a housekeeping follow-up, not changed here).
+- [x] Pass p26-emu2 findings FIXED — THE BUNDLER ESTIMATE CHECKED BEFORE
+      THE DEVICE PROMPT (F-97), THE RENEWAL VIEWS, ENS RENEWALS NAMED IN
+      ACTIVITY, THE PINNED LENDING TOKEN (commit e728e4e; 22 files, +985 /
+      −61, no new file, no new dependency, nothing in packages/; check-aa
+      444 (was 429), check-handle 211 (194; in-suite mutants 26 → 31),
+      check-activity 342 (321), check-simulation 106 (97), check-lending 103
+      (101), check-spending-policy 192 (185), check-i18n 210 (209),
+      check-token-gas 264 with one anchor changed in place; offline runner
+      ALL GREEN in the CTO's isolated worktree on HEAD 628e9b7 with
+      --skip-bundle: checkout 0 / apply 0 / 22 files, the staged patch id
+      eb932cac…abeb equal to the verified worktree's and the agent's, engine
+      1,415, app 12,082 across 68 suites, lint 0/0, tsc clean; the pre-commit
+      scan clean; eleven hand mutants on the real files and nine new
+      in-suite mutants caught by the agent; the CTO read the aa.ts hunk; not
+      seen on a device, nothing live). THE RESUME: the agent's hand-back
+      reached the previous session after its context had filled ("Prompt is
+      too long", then the Opus session limit), so the patch sat unverified in
+      the scratchpad until this session read the transcript's tail; CI on
+      628e9b7 had finished green meanwhile. (1) F-97 — CAUSE:
+      checkAaQuoteBeforeApproval ran only the "used" and fee-floor checks,
+      and the only bundler estimate after the quote was inside sendCalls,
+      which sendAa reaches after the screen's device prompt; FIX (aa.ts):
+      prepareAaCalls registers a pre-prompt estimate beside each quote (a
+      module WeakMap; no quote field changes) that re-reads the nonce and the
+      deployment state, rebuilds the stub operation for the final calls and
+      runs ONE estimateUserOperationGasChecked; checkAaQuoteBeforeApproval
+      runs it after the floor check, so a zero burst that outlasts the
+      retries throws ImpossibleGasEstimateError BEFORE the prompt with the
+      existing title and sentence; the send-time estimate stays;
+      aaEstimateRetriesFor(chainId) gives Arbitrum Sepolia (421614) 8
+      attempts 3 s apart (up to 21 s — a judgement from the pass's figures)
+      and every other chain the unchanged 4 × 2 s, used by every client
+      constructor in aa.ts, token-gas.ts, passkeys.ts and recovery.ts; NOT
+      COVERED (behaviour as before): preparePasskeyCalls' copied quote, the
+      guardian-recovery submission and the USDC-fee quotes of token-gas.ts;
+      cost: one more bundler estimate plus two reads per approval. (2, 3, 5,
+      8, 10) THE RENEWAL'S VIEWS (HandleScreen.tsx, helpers in handle.ts):
+      the Kernel renewal's success view shows "UserOperation hash" above the
+      transaction id; the smart-account confirm carries the heading "One
+      operation, all-or-nothing: (1) approve exactly {amount} {symbol} for
+      ENS's registrar, (2) the renewal of {name} for {days} days. If the
+      renewal would fail, the approval is undone with it." and aims the risk
+      card at the renew call, not the batch's first call; the
+      regular-account renewal shows "Approval transaction: 0x…" on step 2 and
+      on the success view; "Your names" owner rows show the account label
+      ("Account 1" / "Account 1's smart account") with the short address
+      below; every renewal-review row is one TalkBack stop. (4) ACTIVITY
+      (activity-sentences.ts): on Sepolia a renew() to the pinned registrar —
+      its calldata accepted only when the engine's encodeEnsRenew rebuilds
+      the identical bytes, or inside a smart-account operation the engine's
+      decoded NameRenewed log — reads "Called ENS's registrar 0xf633…a3d3 to
+      renew qzv7hk2wmt.eth for 28 days: sent 0.613701 USDC" and the approval
+      "Approved USDC for ENS's registrar 0xf633…a3d3 (up to 0.613701 USDC)";
+      one extra read per such row; the verb stays "called" because
+      "renewed" is not in the engine's ACTIVITY_CALL_VERBS (an engine
+      follow-up). (6) simulation.ts labels the lending deployment's aToken
+      "aArbSepUSDC (pinned lending token)" from the engine's table with no
+      eth_call (a tracked token keeps its plain symbol; a look-alike and
+      another chain are not labelled). (7) the Lend approve step has a
+      balance-change preview. (9) the Solana limit's Remove button is spoken
+      "Remove the USDC limit on Solana devnet" and its mint "Mint
+      4zMMC9…ncDU". Three new i18n ids (handle.renew.aaBatch,
+      handle.renew.ownerSmart, limits.solana.removeLabel) with Spanish
+      drafts. DOCS, in this record commit: THREAT_MODEL F-97 → Fixed
+      (verified offline only) with its two cross-references, the same clause
+      in MAINNET_READINESS and LENDING_VAULTS; check-readiness 238,
+      check-screen-protection 87, check-devmode 476 green on the edited tree
+      (the main checkout's engine dist had to be rebuilt first — it predated
+      the lending engine). CTO DECISION: pass p26-emu2's display findings
+      2–10 get no F rows — none survived the slice. FOLLOW-UPS: "renewed" in
+      the engine's verb list; the engine's Activity label for the pinned
+      aToken (it still reads "untracked token" in Activity); a busy state on
+      Lend's and Handle's Approve button while the pre-prompt check runs (a
+      burst can hold it up to about 21 s, and a second tap is possible); the
+      EVM spending-limit card's bare "Remove" label; the three quote kinds
+      the pre-prompt estimate does not cover. UNVERIFIED (the next emulator
+      pass, the agent's nine-step list in its report): a zero-estimate burst
+      refused before any prompt on Arbitrum Sepolia; the renewal views (a
+      renewal costs 0.613701 USDC per name, so only the review and "Your
+      names" can be re-read cheaply); the Activity sentences on the two live
+      renewals; the Lend previews; the Solana limit card under TalkBack; the
+      Spanish drafts.
+
+## Phase 26 status (2026-11-15)
+
+Items 0 to 6 are landed and pushed, with two emulator passes and two fix
+slices; the shareable page is at version 29 (63 proven live, 18 built, 6
+designed, 12 not started). PROVEN LIVE this phase, through the app's own
+screens on the emulator unless marked: the ENS renewal — shibawalletdemo.eth
+by script from the dev EOA, then qzv7hk2wmt.eth from Account 1 (two prompts)
+and xk9fdq4rvz.eth from the Kernel smart account (one batch through
+ZeroDev), both names now expiring on 2026-12-22 (feature 75; pass
+p26-emu2); lending — Aave v3 on Arbitrum Sepolia by script, then the Lend
+screen's supply and withdrawal of 0.1 USDC from the regular account and
+from the smart account, the first lending batch through a bundler (feature
+61, partial: supply and withdraw only, test networks only; pass p26-emu2);
+the Solana token layer completed — a Token-2022 mint with a transfer fee
+created on devnet by script and sent through the app with the fee rows, the
+pending card's waiting and dropped states and the duplicate-send refusal,
+and a Solana spending limit refusing a send before any prompt and counting
+an allowed one (feature 43; passes p26-emu1 and p26-emu2); the item-4
+fixes (a removed account's pending records, the Dogecoin card without an
+endpoint, DEMO steps 51 and 52 followed literally). Built and verified
+offline: the fixes from both passes (9d0bb65: the risk overview's Solana
+labels, no profit and loss over Solana devnet, the withheld fee on Home,
+the fee cap in tokens; e728e4e: the bundler estimate before the device
+prompt, the renewal views, ENS renewals named in Activity, the pinned
+lending token, the Lend approve preview, the Solana limit card's spoken
+labels). Designed: Bitcoin-native assets (docs/BITCOIN_ASSETS.md, a
+protect-only test-network slice conditional on three inputs). Engine: 1,415
+tests. App: 68 offline suites, 12,082 checks at e728e4e.
+
+Findings for the Chairperson this phase: ZeroDev's bundler on Arbitrum
+Sepolia still answers impossible (zero) gas estimates in bursts, and two
+refusals came after the device prompt (F-97, fixed offline by checking the
+estimate before the prompt); with Ethereum on mainnet and Solana devnet on,
+profit and loss would have valued test SOL at the mainnet price — only its
+gap sentences stopped a figure (F-94, Medium, fixed offline); the wallet's
+mainnet Bitcoin send can spend outputs that hold inscriptions or Runes,
+because it does not track them (docs/BITCOIN_ASSETS.md; one true sentence
+on the send form would say so); Aave itself accepts a supply credited to,
+or a withdrawal paid to, another address, which is why the engine fixes
+both to the sending account; the registrar extends a name from its current
+expiry, and a too-short renewal inside the grace period would leave a name
+expired (the engine refuses it); a recipient of a fee-charging Token-2022
+token sees the withheld fee only on Home, not in Activity (F-95, open in
+part); the macOS temp cleaner emptied every scratchpad worktree and pass
+folder during five idle days, and twice a hand-back or an approval reached
+a session whose context was already full and went unacted until the next
+session read the transcript.
+
+Decisions and inputs still open: the three inputs for the Bitcoin
+protect-only slice (the index, a Bitcoin test-network switch, test coins
+with one inscription and one Rune) and whether to add the warning sentence
+to the mainnet Bitcoin send form; whether Lend should accept an
+EIP-7702-upgraded owner (the CTO keeps refusing it until one has run a
+supply live); the fifteen Tropic Square questions in docs/TROPIC_SQUARE.md
+section 12.1 and then Stage 3; phase 24 item 2's inputs (a release signing
+key, the audit firm, budget and C1 scope, the git tag); the
+address-screening questions (docs/ADDRESS_SCREENING.md section 9); whether
+Home should say that a Solana token send needs test SOL when an account
+holds none; explicit "Copy" accessibility actions for the mint and the
+Activity header address; the answers in docs/DURESS_WALLET.md section 8.5;
+dropping stash@{0}; Homebrew's rust and ruby ahead of rustup; one glance at
+the emulator window under -gpu swangle. On hold by the Chairperson: a
+native Spanish reviewer, the fiat off-ramp provider, the disclosure
+decision.
+
+Follow-ups (no inputs): an emulator re-check of 9d0bb65 and e728e4e (the
+agent's lists in both records); the engine follow-ups from e728e4e
+("renewed" as an Activity verb, the pinned aToken's Activity label) and the
+busy state on the Approve buttons; the Activity half of F-95 (the withheld
+fee on the recipient's row needs an engine change); the Aave pins added to
+scripts/audit/verify-pins.mjs; the aToken on Home's token list with a
+rebasing flag; Solana mainnet scopes and SOL itself in the spending limits;
+the EVM limit card's "Remove" label; the iOS "Account name" nickname tag in
+the Simulator (wt-ios2 must be rebuilt first — the cleaner took it); a
+flagged spam NFT and an ERC-1155 name-token send, never seen or sent; the
+gains report with real figures; THREAT_MODEL's "Row updates" lines put in
+date order; both wallet names expire again on 2026-12-22 and cost 0.613701
+test USDC each to renew.
