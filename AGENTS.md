@@ -21860,3 +21860,54 @@ item 5, the fixes from the pass, item 6; 7 last. Subagents on Opus.
       light mode, TalkBack OFF (level 6), protection OFF, IME ADBKeyboard, no
       limit, no Aave position; Metro node 20303 on 8081 from wt-app at
       924cdfb; qemu 86708 with caffeinate 86986.
+- [x] Item 5 and the pass p28-emu1 findings — THE SPANISH GAPS, THE CCTP
+      CONFIRM LINES, THE OVER-LIMIT ALERT (commit 8ea90f5; 36 files, +3,844
+      / −270, one new — the golden fixture
+      app/scripts/fixtures/i18n-sixth-pass-golden.json (83 cases over 22
+      module functions); no packages/ change; check-bridge 446 (was 433),
+      check-i18n 234 (216; mutants 43 → 49), check-spending-policy 202 (196),
+      pins changed in place in check-aa, check-spl-tokens, check-devmode and
+      check-home, none loosened; offline runner ALL GREEN in the CTO's
+      isolated worktree on HEAD df6926b with --skip-bundle: checkout 0 /
+      apply 0 / 36 files, the staged patch id c976165cf5ab equal to the
+      verified worktree's and the agent's, engine 1,452, app 12,375 across 69
+      suites, lint 0/0, tsc clean; the pre-commit scan clean; ten hand
+      mutants caught by the agent (one survived first and its check was
+      tightened); the agent was cut once by the session limit and resumed;
+      not seen on a device). FINDINGS: (2) cctpPaymasterOfferedOn(caip2) =
+      tokenGasPaymasterFor(caip2) !== null — the first-mint paymaster
+      sentence shows only where Circle's paymaster is offered on the
+      RECEIVING network (Base and Arbitrum Sepolia), nothing for an OP or
+      Ethereum Sepolia destination; (3) the mint confirm, when the recipient
+      written into the burn is not the sending account, says
+      (bridge.mint.recipientOther, the one new id) "This mint pays {amount}
+      USDC to {recipient}, the recipient written into the burn, not to the
+      account sending it ({sender}). The balance-change preview below is
+      simulated for the sending account only, so it does not show the USDC
+      arriving.", accounts named by label, short addresses in speech; (4) the
+      CCTP smart-account burn confirm gains Send's "Total {symbol} (worst
+      case)" row (the fee in the network's coin; a burn carries no value);
+      (5) spendingBlockAlertText ends "Nothing was signed." only when no
+      "Send anyway" is offered — every caller runs the gate before the device
+      check (Send, Swap, Staking, Bridge, Lend, Handle, WalletConnect, the
+      pending card, cold signing); (6) NOT BUILT: filtering the limit notice
+      by the sent asset could hide a limit the gate then applies (a test-ETH
+      limit can count fees on a token send). SPANISH: 132 ids in one
+      delimited block — 131 migrated from df6926b (86 literals, 33 templates,
+      12 composites, each checked against the base commit; the golden replay
+      0 differences) and the one new id; covered: both halves of Spending
+      limits with the window chips through period-text.ts
+      spendingWindowText (the mixed "…durante 1 hour…" sentence now "…durante
+      1 hora…"), "Authentication cancelled." and every "Not sent" alert
+      title, the balance-change preview's and the risk card's own headings
+      and notes, the ENS risk lines, Home's Solana devnet card and token
+      lines, the app-built Solana token-send sentences and confirm row
+      labels, the "<coin> address" placeholders, the "Use Solana devnet"
+      switch and notes. STAYS ENGLISH: prompt titles and the prompt's Cancel,
+      header titles registered in App.tsx, engine-built sentences (the SPL
+      quote notes, the preview rows "You send …", risk lines other than the
+      ENS ones), the DCA and recurring over-limit texts, share texts.
+      UNVERIFIED: everything on a device; the Spanish drafts (the reviewer on
+      hold). Agent slips: its baseline run overlapped its edits (the brief's
+      counts used); a mutant restore reverted a lint fix, caught and
+      re-applied before the green run.
