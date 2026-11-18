@@ -426,7 +426,10 @@ function SolanaTokenRow({
   // Hidden at a 0 balance in the associated account too (pass p24-solana
   // finding 7; spl-tokens.ts splSendLinkShown).
   const sendable = splSendLinkShown(state, onSend !== undefined);
-  const subtitle = token.name && token.name !== token.symbol ? `${token.name} · ${networkLabel} token` : `${networkLabel} token`;
+  const subtitle =
+    token.name && token.name !== token.symbol
+      ? t('home.solanaToken.subtitleNamed', { name: token.name, network: networkLabel })
+      : t('home.solanaToken.subtitle', { network: networkLabel });
   return (
     <View>
       <View
@@ -711,7 +714,7 @@ export function HomeScreen({ navigation }: Props) {
     const title = isEvm ? evmChain.label : item.name;
     // The Solana card on devnet (phase 24 item 1) keeps its title and says
     // on its own line which network it shows.
-    const solanaDevnetLine = item.chainId === SOLANA_CHAIN_ID && solanaDevnet ? SOLANA_DEVNET_CARD_LINE : null;
+    const solanaDevnetLine = item.chainId === SOLANA_CHAIN_ID && solanaDevnet ? localize(SOLANA_DEVNET_CARD_LINE) : null;
     // The Bitcoin card on signet (phase 28 item 2) keeps its title and says
     // on its own line which network it shows, as the Solana card does.
     const btcSignetLine = bitcoinSignetNetworkFor(item.chainId, bitcoinSignet) ? bitcoinSignetText.cardLine() : null;
@@ -996,12 +999,12 @@ export function HomeScreen({ navigation }: Props) {
             ) : null}
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Manage Solana tokens"
-              accessibilityHint="Opens the list of tracked Solana tokens"
+              accessibilityLabel={tx('Manage Solana tokens')}
+              accessibilityHint={tx('Opens the list of tracked Solana tokens')}
               onPress={() => navigation.navigate('SolanaTokens')}
               hitSlop={8}
             >
-              <Text style={[styles.manageTokens, { color: theme.accent }]}>Manage Solana tokens</Text>
+              <Text style={[styles.manageTokens, { color: theme.accent }]}><T>Manage Solana tokens</T></Text>
             </Pressable>
           </View>
         </View>

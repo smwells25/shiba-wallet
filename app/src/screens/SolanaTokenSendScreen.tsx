@@ -10,6 +10,8 @@ import { endpointHost } from '../config/endpoint-probe';
 import { describeNetworkError, TechnicalDetail } from '../wallet/connectivity';
 import { requireLocalAuth } from '../wallet/biometric';
 import { useTheme } from '../theme';
+import { useI18n } from '../i18n/useI18n';
+import { T } from '../i18n/T';
 import { useWallet } from '../wallet/WalletContext';
 import { SOLANA_CHAIN_ID, notifySendAccepted } from '../wallet/send';
 import { SolanaDevnetBanner } from '../components/SolanaDevnetBanner';
@@ -55,6 +57,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'SolanaTokenSend'>;
  */
 export function SolanaTokenSendScreen({ navigation, route }: Props) {
   const theme = useTheme();
+  const { t, tx } = useI18n();
   const fieldLabel = useFieldLabels();
   const { accounts, signWith } = useWallet();
   const owner = accounts.find((a) => a.chainId === SOLANA_CHAIN_ID)?.address ?? null;
@@ -113,14 +116,14 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
   if (endpoint === null || endpoint.url === null || token === null || owner === null || refusal !== null || token.assetId.chainId !== network) {
     const message =
       endpoint === null || endpoint.url === null
-        ? 'No Solana endpoint is configured. Set one in Settings first.'
+        ? tx('No Solana endpoint is configured. Set one in Settings first.')
         : owner === null
-          ? 'The active account has no Solana address in this wallet.'
+          ? tx('The active account has no Solana address in this wallet.')
           : refusal !== null
             ? refusal
             : token === null
-              ? 'This token is not on the tracked list of the Solana network in use now. Track it on the Solana tokens screen first.'
-              : `This token belongs to ${solanaNetworkLabel(token.assetId.chainId)}, but the Solana row is on ${solanaNetworkLabel(network ?? '')} now. Switch in Settings → Developer first.`;
+              ? tx('This token is not on the tracked list of the Solana network in use now. Track it on the Solana tokens screen first.')
+              : t('spl.send.otherNetwork', { tokenNetwork: solanaNetworkLabel(token.assetId.chainId), rowNetwork: solanaNetworkLabel(network ?? '') });
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <SolanaDevnetBanner chainId={SOLANA_CHAIN_ID} />
@@ -215,7 +218,7 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
         e instanceof Error &&
         (e.name === 'SplSendStillPendingError' || e.name === 'SplSendAlreadyHandedOverError' || e.name === 'SplSpendingLimitError');
       setError({
-        message: e instanceof Error ? (refusedBeforeSigning ? e.message : `Not sent. ${e.message}`) : 'Not sent.',
+        message: e instanceof Error ? (refusedBeforeSigning ? e.message : t('spl.send.notSentReason', { reason: e.message })) : tx('Not sent.'),
         technical: null,
       });
     }
@@ -225,16 +228,16 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
     return (
       <ScrollView key="spl-send-success" style={screenStyle(theme)} contentContainerStyle={styles.content} {...NOTE_VIEW_SCROLL_PROPS}>
         <SolanaDevnetBanner chainId={SOLANA_CHAIN_ID} />
-        <Text accessibilityRole="header" style={[styles.title, { color: theme.success }]}>Sent ✓</Text>
-        <Text style={[styles.hint, { color: theme.textMuted }]}>Transaction signature</Text>
+        <Text accessibilityRole="header" style={[styles.title, { color: theme.success }]}><T>Sent ✓</T></Text>
+        <Text style={[styles.hint, { color: theme.textMuted }]}><T>Transaction signature</T></Text>
         <Text selectable style={[styles.mono, { color: theme.text }]}>{outcome.signature}</Text>
         {splOutcomeLines(outcome, endpointHost).map((line) => (
           <Text key={line} style={[styles.hint, { color: theme.text }]}>{line}</Text>
         ))}
         <Text style={[styles.hint, { color: theme.textMuted }]}>
           {quote.caip2 === SOLANA_CHAIN_ID
-            ? 'Look the signature up in a Solana block explorer.'
-            : 'No devnet block explorer link has been verified for this wallet; the signature above identifies the transaction.'}
+            ? tx('Look the signature up in a Solana block explorer.')
+            : tx('No devnet block explorer link has been verified for this wallet; the signature above identifies the transaction.')}
         </Text>
         <SolanaPendingTransactionsSection owner={quote.owner} onlySignature={outcome.signature} />
         {sentNetwork ? <TransactionNoteField network={sentNetwork} txid={outcome.signature} userOpHash={null} /> : null}
@@ -248,7 +251,7 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
       <ScrollView key="spl-send-confirm" style={screenStyle(theme)} contentContainerStyle={styles.content}>
         <SolanaDevnetBanner chainId={SOLANA_CHAIN_ID} />
         <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>
-          Send {quote.symbol} on {label}
+          {t('spl.send.confirmTitle', { symbol: quote.symbol, network: label })}
         </Text>
         {splConfirmRows(quote, endpoint.network.symbol).map((row) => (
           <View key={row.label} style={styles.row}>
@@ -273,7 +276,7 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
           <ActivityIndicator color={theme.textMuted} />
         ) : (
           <>
-            <Button title={`Send ${quote.symbol}`} onPress={() => void send()} />
+            <Button title={t('home.token.send', { symbol: quote.symbol })} onPress={() => void send()} />
             <Button
               title="Back"
               variant="secondary"
@@ -295,24 +298,24 @@ export function SolanaTokenSendScreen({ navigation, route }: Props) {
       <Text style={[styles.hint, { color: theme.textMuted }]}>
         {splSendFormIntro(token.symbol, token.assetId.reference, label, endpoint.network.symbol)}
       </Text>
-      <Text {...fieldLabel('spl-recipient', 'Recipient (Solana address)').label} style={[styles.hint, { color: theme.textMuted }]}>
-        {fieldLabel('spl-recipient', 'Recipient (Solana address)').text}
+      <Text {...fieldLabel('spl-recipient', tx('Recipient (Solana address)')).label} style={[styles.hint, { color: theme.textMuted }]}>
+        {fieldLabel('spl-recipient', tx('Recipient (Solana address)')).text}
       </Text>
       <TextInput
-        {...fieldLabel('spl-recipient', 'Recipient (Solana address)').input}
+        {...fieldLabel('spl-recipient', tx('Recipient (Solana address)')).input}
         value={recipient}
         onChangeText={setRecipient}
-        placeholder="Base58 text"
+        placeholder={tx('Base58 text')}
         placeholderTextColor={theme.textMuted}
         autoCapitalize="none"
         autoCorrect={false}
         style={[styles.input, { color: theme.text, borderColor: theme.controlBorder, backgroundColor: theme.card }]}
       />
-      <Text {...fieldLabel('spl-amount', `Amount (${token.symbol})`).label} style={[styles.hint, { color: theme.textMuted }]}>
-        {fieldLabel('spl-amount', `Amount (${token.symbol})`).text}
+      <Text {...fieldLabel('spl-amount', t('send.field.amount', { symbol: token.symbol })).label} style={[styles.hint, { color: theme.textMuted }]}>
+        {fieldLabel('spl-amount', t('send.field.amount', { symbol: token.symbol })).text}
       </Text>
       <TextInput
-        {...fieldLabel('spl-amount', `Amount (${token.symbol})`).input}
+        {...fieldLabel('spl-amount', t('send.field.amount', { symbol: token.symbol })).input}
         value={amountText}
         onChangeText={setAmountText}
         placeholder="0.0"

@@ -14,6 +14,7 @@ import { listSolanaTokens, listTokens } from '../wallet/tokens';
 import { SOLANA_DEVNET_CAIP2 } from '../config/defaults';
 import { solanaNetworkLabel, splNativeSymbol } from '../wallet/spl-tokens';
 import { useI18n } from '../i18n/useI18n';
+import { T } from '../i18n/T';
 import { formatUnits, parseUnits } from '../wallet/balances';
 import { evmProfileByCaip2 } from '../config/evm-chain';
 import {
@@ -62,6 +63,7 @@ const UNITS: WindowUnit[] = ['minutes', 'hours', 'days'];
  */
 export function SpendingLimitsScreen({ navigation }: Props) {
   const theme = useTheme();
+  const { t, tx, localize } = useI18n();
   const fieldLabel = useFieldLabels();
   const { accounts, activeAccount } = useWallet();
   const { evmChain, hideAmounts, solanaDevnet } = usePrefs();
@@ -206,18 +208,18 @@ export function SpendingLimitsScreen({ navigation }: Props) {
     try {
       cap = parseUnits(capText.trim(), chosen.decimals);
     } catch (e) {
-      setFormError(e instanceof Error ? e.message : 'Enter the limit as a number.');
+      setFormError(e instanceof Error ? e.message : tx('Enter the limit as a number.'));
       return;
     }
     if (cap <= 0n) {
-      setFormError('Enter a limit above zero.');
+      setFormError(t('spendingSol.capInvalid'));
       return;
     }
     let windowSeconds: number;
     try {
       windowSeconds = windowChoice === 'custom' ? parseCustomWindow(customText, customUnit) : windowChoice;
     } catch (e) {
-      setFormError(e instanceof Error ? e.message : 'Choose a time window.');
+      setFormError(e instanceof Error ? e.message : tx('Choose a time window.'));
       return;
     }
     // Loosening a saved limit asks for the device check first (finding 10),
@@ -257,7 +259,7 @@ export function SpendingLimitsScreen({ navigation }: Props) {
       resetForm();
       reload();
     } catch (e) {
-      setFormError(`Not saved: ${e instanceof Error ? e.message : String(e)}`);
+      setFormError(t('spendingSol.notSaved', { reason: e instanceof Error ? e.message : String(e) }));
     } finally {
       setBusy(false);
     }
@@ -266,26 +268,25 @@ export function SpendingLimitsScreen({ navigation }: Props) {
   const onRemove = (p: SpendingPolicy) => {
     if (!scope) return;
     Alert.alert(
-      `Remove the ${p.symbol} limit?`,
+      t('spendingSol.remove.title', { symbol: p.symbol }),
       // Masked under Hide amounts like every other readout (finding 10).
-      `${policySummary(p, hideAmounts)}. Sends of ${p.symbol} from this account on ${evmChain.label} will no ` +
-        'longer be checked against it, and its spending record is deleted.',
+      t('limits.remove.body', { summary: policySummary(p, hideAmounts), symbol: p.symbol, network: evmChain.label }),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: tx('Cancel'), style: 'cancel' },
         {
-          text: 'Remove',
+          text: tx('Remove'),
           style: 'destructive',
           onPress: async () => {
             // Removing a limit asks for the device check first, like "Send anyway".
             const auth = await requireLocalAuth(SPENDING_REMOVE_PROMPT);
             if (!auth.ok) {
-              Alert.alert('Not removed', auth.message);
+              Alert.alert(t('accounts.notRemoved'), auth.message);
               return;
             }
             try {
               await removeSpendingPolicy(scope, p.id);
             } catch (e) {
-              Alert.alert('Not removed', e instanceof Error ? e.message : String(e));
+              Alert.alert(t('accounts.notRemoved'), e instanceof Error ? e.message : String(e));
             }
             if (editingId === p.id) resetForm();
             reload();
@@ -297,20 +298,18 @@ export function SpendingLimitsScreen({ navigation }: Props) {
 
   const onReset = () => {
     Alert.alert(
-      'Reset spending limits?',
-      'The saved spending limits or their record could not be read. Resetting deletes every ' +
-        'limit and every recorded send on all accounts and networks. Until then, this app does ' +
-        'not sign sends from accounts it cannot check.',
+      tx('Reset spending limits?'),
+      t('limits.reset.body'),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: tx('Cancel'), style: 'cancel' },
         {
-          text: 'Reset',
+          text: tx('Reset'),
           style: 'destructive',
           onPress: async () => {
             // Resetting deletes every limit: the same device check as removing one.
             const auth = await requireLocalAuth(SPENDING_RESET_PROMPT);
             if (!auth.ok) {
-              Alert.alert('Not reset', auth.message);
+              Alert.alert(t('settings.custom.notReset'), auth.message);
               return;
             }
             await resetSpendingLimits();
@@ -329,7 +328,7 @@ export function SpendingLimitsScreen({ navigation }: Props) {
   if (!scope) {
     return (
       <ScrollView style={screenStyle(theme)} contentContainerStyle={styles.content}>
-        <Text style={[styles.body, { color: theme.text }]}>No Ethereum account is loaded.</Text>
+        <Text style={[styles.body, { color: theme.text }]}><T>No Ethereum account is loaded.</T></Text>
       </ScrollView>
     );
   }
@@ -346,23 +345,20 @@ export function SpendingLimitsScreen({ navigation }: Props) {
       </Text>
 
       <WarningBox>{SPENDING_HONESTY_SENTENCE}</WarningBox>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{SPENDING_SCREEN_EXPLAINER}</Text>
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{SPENDING_NO_ONCHAIN_NOTE}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(SPENDING_SCREEN_EXPLAINER)}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(SPENDING_NO_ONCHAIN_NOTE)}</Text>
 
       {damaged ? (
         <View style={styles.block}>
-          <WarningBox>
-            The saved spending limits or their record could not be read. Until they are reset, this
-            app does not sign sends from an account and network it cannot check.
-          </WarningBox>
+          <WarningBox>{t('limits.damaged')}</WarningBox>
           <Button title="Reset spending limits" variant="destructive" onPress={onReset} />
         </View>
       ) : null}
 
-      <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Limits on {evmChain.label}</Text>
+      <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>{t('limits.section.evm', { network: evmChain.label })}</Text>
       {loaded && readouts.length === 0 && !damaged ? (
         <Text style={[styles.body, { color: theme.textMuted }]}>
-          No spending limits for this account on this network.
+          <T>No spending limits for this account on this network.</T>
         </Text>
       ) : null}
       {readouts.map((r) => (
@@ -373,16 +369,14 @@ export function SpendingLimitsScreen({ navigation }: Props) {
           <Text accessibilityRole="header" {...maskedSpokenProps(policySummary(r.policy, hideAmounts))} style={[styles.cardTitle, { color: theme.text }]}>{policySummary(r.policy, hideAmounts)}</Text>
           <Text {...maskedSpokenProps(spentReadoutText(r, hideAmounts))} style={[styles.body, { color: theme.text }]}>{spentReadoutText(r, hideAmounts)}</Text>
           {r.policy.token !== NATIVE_TOKEN ? (
-            <Text style={[styles.mono, { color: theme.textMuted }]}>Token contract {r.policy.token}</Text>
+            <Text style={[styles.mono, { color: theme.textMuted }]}>{t('limits.tokenContract', { token: r.policy.token })}</Text>
           ) : null}
           <Text style={[styles.hint, { color: theme.textMuted }]}>
             {r.policy.allowOverride
-              ? '“Send anyway” is allowed (after your device check).'
-              : 'No “Send anyway”: sends over the limit are refused.'}
+              ? tx('“Send anyway” is allowed (after your device check).')
+              : tx('No “Send anyway”: sends over the limit are refused.')}
             {r.policy.token === NATIVE_TOKEN
-              ? r.policy.countFees
-                ? ' Network fees are counted.'
-                : ' Network fees are not counted.'
+              ? ` ${r.policy.countFees ? tx('Network fees are counted.') : tx('Network fees are not counted.')}`
               : ''}
           </Text>
           <View style={styles.choiceRow}>
@@ -397,15 +391,15 @@ export function SpendingLimitsScreen({ navigation }: Props) {
           </View>
         </View>
       ))}
-      <Text style={[styles.hint, { color: theme.textMuted }]}>{SPENDING_NOT_COUNTED_BEFORE_NOTE}</Text>
+      <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(SPENDING_NOT_COUNTED_BEFORE_NOTE)}</Text>
 
       {formOpen ? (
         <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
           <Text accessibilityRole="header" style={[styles.cardTitle, { color: theme.text }]}>
-            {editingId ? 'Edit limit' : 'New limit'}
+            {editingId ? tx('Edit limit') : tx('New limit')}
           </Text>
 
-          <Text style={[styles.label, { color: theme.textMuted }]}>Token</Text>
+          <Text style={[styles.label, { color: theme.textMuted }]}><T>Token</T></Text>
           <View style={styles.choiceRow}>
             {options.map((o) => (
               <Button
@@ -423,26 +417,28 @@ export function SpendingLimitsScreen({ navigation }: Props) {
             ))}
           </View>
 
-          <Text {...fieldLabel('limit', `Limit (${chosen.symbol})`).label} style={[styles.label, { color: theme.textMuted }]}>Limit ({chosen.symbol})</Text>
+          <Text {...fieldLabel('limit', t('spendingSol.limitLabel', { symbol: chosen.symbol })).label} style={[styles.label, { color: theme.textMuted }]}>
+            {t('spendingSol.limitLabel', { symbol: chosen.symbol })}
+          </Text>
           <TextInput
-            {...fieldLabel('limit', `Limit (${chosen.symbol})`).input}
+            {...fieldLabel('limit', t('spendingSol.limitLabel', { symbol: chosen.symbol })).input}
             style={inputStyle}
             value={capText}
             onChangeText={(t) => {
               setCapText(t);
               setFormError(null);
             }}
-            placeholder={`Maximum ${chosen.symbol} per window`}
+            placeholder={t('spendingSol.limitPlaceholder', { symbol: chosen.symbol })}
             placeholderTextColor={theme.textMuted}
             keyboardType="decimal-pad"
           />
 
-          <Text style={[styles.label, { color: theme.textMuted }]}>Time window</Text>
+          <Text style={[styles.label, { color: theme.textMuted }]}>{t('spendingSol.window')}</Text>
           <View style={styles.choiceRow}>
             {WINDOW_PRESETS.map((w) => (
               <Button
                 key={w.seconds}
-                title={windowChoice === w.seconds ? `✓ ${w.label}` : w.label}
+                title={windowChoice === w.seconds ? `✓ ${windowLabel(w.seconds)}` : windowLabel(w.seconds)}
                 variant={windowChoice === w.seconds ? 'primary' : 'secondary'}
                 selected={windowChoice === w.seconds}
                 onPress={() => setWindowChoice(w.seconds)}
@@ -459,16 +455,16 @@ export function SpendingLimitsScreen({ navigation }: Props) {
           </View>
           {windowChoice === 'custom' ? (
             <>
-              <Text {...fieldLabel('custom-window', `Custom window length in ${customUnit}`).label} style={[styles.label, { color: theme.textMuted }]}>{fieldLabel('custom-window', `Custom window length in ${customUnit}`).text}</Text>
+              <Text {...fieldLabel('custom-window', t('limits.customLength', { unit: localize(customUnit) })).label} style={[styles.label, { color: theme.textMuted }]}>{fieldLabel('custom-window', t('limits.customLength', { unit: localize(customUnit) })).text}</Text>
               <TextInput
-                {...fieldLabel('custom-window', `Custom window length in ${customUnit}`).input}
+                {...fieldLabel('custom-window', t('limits.customLength', { unit: localize(customUnit) })).input}
                 style={inputStyle}
                 value={customText}
                 onChangeText={(t) => {
                   setCustomText(t);
                   setFormError(null);
                 }}
-                placeholder="Number"
+                placeholder={tx('Number')}
                 placeholderTextColor={theme.textMuted}
                 keyboardType="number-pad"
               />
@@ -485,25 +481,21 @@ export function SpendingLimitsScreen({ navigation }: Props) {
                 ))}
               </View>
               <Text style={[styles.hint, { color: theme.textMuted }]}>
-                Between 1 minute and 366 days. The window rolls: a send counts until this much
-                time has passed since it was sent.
+                <T>Between 1 minute and 366 days. The window rolls: a send counts until this much time has passed since it was sent.</T>
               </Text>
             </>
           ) : (
-            <Text style={[styles.hint, { color: theme.textMuted }]}>
-              The window rolls: a send counts for {windowLabel(windowChoice)} after it was sent.
-            </Text>
+            <Text style={[styles.hint, { color: theme.textMuted }]}>{t('spendingSol.windowHint', { window: windowLabel(windowChoice) })}</Text>
           )}
 
           <View style={styles.switchRow}>
             <Switch {...switchColors(theme)}
               value={allowOverride}
               onValueChange={setAllowOverride}
-              accessibilityLabel="Allow Send anyway when this limit is reached"
+              accessibilityLabel={tx('Allow Send anyway when this limit is reached')}
             />
             <Text style={[styles.switchLabel, { color: theme.text }]}>
-              Allow “Send anyway” when this limit is reached (still asks for your device check).
-              Off: sends over the limit are refused.
+              <T>Allow “Send anyway” when this limit is reached (still asks for your device check). Off: sends over the limit are refused.</T>
             </Text>
           </View>
           {chosen.token === NATIVE_TOKEN ? (
@@ -511,17 +503,16 @@ export function SpendingLimitsScreen({ navigation }: Props) {
               <Switch {...switchColors(theme)}
                 value={countFees}
                 onValueChange={setCountFees}
-                accessibilityLabel="Count network fees in this limit"
+                accessibilityLabel={tx('Count network fees in this limit')}
               />
               <Text style={[styles.switchLabel, { color: theme.text }]}>
-                Count network fees too (the worst-case fee of each send). Off: only amounts sent
-                count.
+                <T>Count network fees too (the worst-case fee of each send). Off: only amounts sent count.</T>
               </Text>
             </View>
           ) : null}
 
           {formError ? <Text style={[styles.error, { color: theme.danger }]}>{formError}</Text> : null}
-          <Text style={[styles.hint, { color: theme.textMuted }]}>{SPENDING_HONESTY_SENTENCE}</Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(SPENDING_HONESTY_SENTENCE)}</Text>
           <Button
             title={busy ? 'Saving…' : editingId ? 'Save changes' : 'Save limit'}
             onPress={() => void onSave()}
@@ -544,16 +535,18 @@ export function SpendingLimitsScreen({ navigation }: Props) {
 
       {elsewhere.length > 0 ? (
         <>
-          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}>Limits elsewhere</Text>
+          <Text accessibilityRole="header" style={[styles.sectionTitle, { color: theme.text }]}><T>Limits elsewhere</T></Text>
           {elsewhere.map((s) => (
             <Text key={`${s.scope.chain}|${s.scope.owner}`} style={[styles.body, { color: theme.text }]}>
-              {s.scope.owner.slice(0, 6)}…{s.scope.owner.slice(-4)} on{' '}
-              {isSolanaScopeChain(s.scope.chain) ? solanaNetworkLabel(s.scope.chain) : (evmProfileByCaip2(s.scope.chain)?.label ?? s.scope.chain)}: {s.count} limit
-              {s.count === 1 ? '' : 's'}
+              {t(s.count === 1 ? 'limits.elsewhere.one' : 'limits.elsewhere.many', {
+                owner: `${s.scope.owner.slice(0, 6)}…${s.scope.owner.slice(-4)}`,
+                network: isSolanaScopeChain(s.scope.chain) ? solanaNetworkLabel(s.scope.chain) : (evmProfileByCaip2(s.scope.chain)?.label ?? s.scope.chain),
+                count: s.count,
+              })}
             </Text>
           ))}
           <Text style={[styles.hint, { color: theme.textMuted }]}>
-            Switch to that account and network to see or change them.
+            <T>Switch to that account and network to see or change them.</T>
           </Text>
         </>
       ) : null}
@@ -583,7 +576,7 @@ function SolanaLimitsSection({
   onChanged: () => void;
 }) {
   const theme = useTheme();
-  const { t, tx } = useI18n();
+  const { t, tx, localize } = useI18n();
   const fieldLabel = useFieldLabels();
   const { hideAmounts } = usePrefs();
   const [tokens, setTokens] = useState<FungibleAsset[]>([]);
@@ -761,7 +754,7 @@ function SolanaLimitsSection({
             {WINDOW_PRESETS.map((w) => (
               <Button
                 key={w.seconds}
-                title={windowSeconds === w.seconds ? `✓ ${w.label}` : w.label}
+                title={windowSeconds === w.seconds ? `✓ ${windowLabel(w.seconds)}` : windowLabel(w.seconds)}
                 variant={windowSeconds === w.seconds ? 'primary' : 'secondary'}
                 selected={windowSeconds === w.seconds}
                 onPress={() => setWindowSeconds(w.seconds)}
@@ -771,7 +764,7 @@ function SolanaLimitsSection({
           </View>
           <Text style={[styles.hint, { color: theme.textMuted }]}>{t('spendingSol.windowHint', { window: windowLabel(windowSeconds) })}</Text>
           {formError ? <Text style={[styles.error, { color: theme.danger }]}>{formError}</Text> : null}
-          <Text style={[styles.hint, { color: theme.textMuted }]}>{SPENDING_HONESTY_SENTENCE}</Text>
+          <Text style={[styles.hint, { color: theme.textMuted }]}>{localize(SPENDING_HONESTY_SENTENCE)}</Text>
           <Button title={busy ? tx('Saving…') : t('spendingSol.save')} onPress={() => void onSave()} disabled={busy || damaged} />
           <Button title={tx('Cancel')} variant="secondary" onPress={() => setFormOpen(false)} />
         </View>

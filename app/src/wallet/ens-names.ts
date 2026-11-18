@@ -11,6 +11,7 @@ import {
 } from '@shiba-wallet/chains-evm';
 import type { EvmChainProfile } from '../config/evm-chain.ts';
 import { endpointHost } from '../config/endpoint-probe.ts';
+import { t } from '../i18n/index.ts';
 
 /**
  * ENS names in the Send recipient field (phase 14 item 2, feature 74): the
@@ -155,7 +156,8 @@ export function nameProblemSentence(problem: EnsNameProblem): string {
  */
 export function sendRecipientPlaceholder(p: { namesOffered: boolean; ethereum: boolean; symbol: string }): string {
   if (p.namesOffered) return '0x… or ENS name';
-  return p.ethereum ? 'Ethereum address' : `${p.symbol} address`;
+  // The coin form ("BTC address") through the table (phase 28 item 5: pass p27-emu2 found it English in Spanish).
+  return p.ethereum ? 'Ethereum address' : t('send.recipient.placeholder.coin', { symbol: p.symbol });
 }
 
 /** The line under the Send recipient row where ENS names are looked up. */

@@ -8,10 +8,12 @@ import {
   SPENDING_HONESTY_SENTENCE,
   SPENDING_REVIEW_CHECKED_NOTE,
   SPENDING_SECTION_TITLE,
+  SPENDING_UNREADABLE_TITLE,
   evaluateBeforeSigning,
   evaluateSolanaTokenSend,
   overLimitPreviewLines,
   policySummary,
+  spendingBlockAlertText,
   spendingInputForQuote,
   spendingReadouts,
   spentReadoutText,
@@ -25,6 +27,8 @@ import type { NftSendQuote } from '../wallet/send-nft';
 import type { AaSendQuote } from '../wallet/aa';
 import { splSpendingFeeNote, splSpendingUncoveredNote } from '../wallet/spl-tokens';
 import { useI18n } from '../i18n/useI18n';
+import { localize, t, tx } from '../i18n/index';
+import { T } from '../i18n/T';
 
 /**
  * Screen side of the app-enforced spending policy (wallet/spending-policy.ts).
@@ -66,10 +70,7 @@ export async function spendingGateForQuote(args: {
       ...(args.quoteOutflows ? { quoteOutflows: args.quoteOutflows } : {}),
     });
   } catch (e) {
-    Alert.alert(
-      'Spending limits could not be checked',
-      `Nothing was signed. ${e instanceof Error ? e.message : String(e)}`,
-    );
+    Alert.alert(localize(SPENDING_UNREADABLE_TITLE), t('limits.checkFailed', { reason: e instanceof Error ? e.message : String(e) }));
     return false;
   }
   return confirmSpendingCheck(check, { authenticateOverride: args.authenticateOverride === true });
@@ -82,16 +83,16 @@ export function confirmSpendingCheck(
 ): Promise<boolean> {
   if (check.status === 'no-policy' || check.status === 'allowed') return Promise.resolve(true);
   if (check.status === 'unreadable') {
-    Alert.alert(check.title, check.message);
+    Alert.alert(localize(check.title), localize(check.message));
     return Promise.resolve(false);
   }
   return new Promise<boolean>((resolve) => {
     const buttons: { text: string; style?: 'cancel' | 'destructive'; onPress: () => void }[] = [
-      { text: check.overrideAllowed ? 'Cancel' : 'OK', style: 'cancel', onPress: () => resolve(false) },
+      { text: check.overrideAllowed ? tx('Cancel') : tx('OK'), style: 'cancel', onPress: () => resolve(false) },
     ];
     if (check.overrideAllowed) {
       buttons.push({
-        text: 'Send anyway',
+        text: tx('Send anyway'),
         style: 'destructive',
         onPress: () => {
           if (!options.authenticateOverride) {
@@ -99,13 +100,15 @@ export function confirmSpendingCheck(
             return;
           }
           void requireLocalAuth('Send over your spending limit').then((auth) => {
-            if (!auth.ok) Alert.alert('Not sent', auth.message);
+            if (!auth.ok) Alert.alert(tx('Not sent'), auth.message);
             resolve(auth.ok);
           });
         },
       });
     }
-    Alert.alert(check.title ?? 'Over your spending limit', check.message ?? '', buttons, {
+    // Pass p28-emu1 finding 5: a hard refusal closes "Nothing was signed." like the Solana one (spending-policy.ts).
+    const alert = spendingBlockAlertText(check);
+    Alert.alert(alert.title, alert.message, buttons, {
       cancelable: true,
       onDismiss: () => resolve(false),
     });
@@ -137,6 +140,7 @@ export function SpendingPolicyNotice({
   quoteOutflows?: Outflow[];
 }) {
   const theme = useTheme();
+  useI18n();
   const { evmChain, hideAmounts } = usePrefs();
   const [readouts, setReadouts] = useState<SpendingReadout[] | null>(null);
   const [damaged, setDamaged] = useState(false);
@@ -197,11 +201,10 @@ export function SpendingPolicyNotice({
   if (!owner || (!damaged && (!readouts || readouts.length === 0))) return null;
   return (
     <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-      <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>{SPENDING_SECTION_TITLE}</Text>
+      <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>{localize(SPENDING_SECTION_TITLE)}</Text>
       {damaged ? (
         <Text style={[styles.line, { color: theme.danger }]}>
-          Your spending limits could not be read; this send will not be signed until they are
-          reset in Settings.
+          <T>Your spending limits could not be read; this send will not be signed until they are reset in Settings.</T>
         </Text>
       ) : (
         readouts!.map((r) => (
@@ -218,7 +221,7 @@ export function SpendingPolicyNotice({
         ? overLimitPreviewLines(lookAhead, hideAmounts).map((line) => (
             <Text
               key={line}
-              accessibilityLabel={spokenMaskedText(`Warning: ${line}`)}
+              accessibilityLabel={spokenMaskedText(t('spoken.warning', { text: line }))}
               style={[styles.warning, { color: theme.warningText, backgroundColor: theme.warningSurface, borderColor: theme.warningBorder }]}
             >
               {line}
@@ -226,7 +229,7 @@ export function SpendingPolicyNotice({
           ))
         : null}
       <Text style={[styles.muted, { color: theme.textMuted }]}>
-        {SPENDING_REVIEW_CHECKED_NOTE} {SPENDING_HONESTY_SENTENCE}
+        {localize(SPENDING_REVIEW_CHECKED_NOTE)} {localize(SPENDING_HONESTY_SENTENCE)}
       </Text>
     </View>
   );
@@ -288,7 +291,7 @@ export function SolanaSpendingPolicyNotice({
   }
   return (
     <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-      <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>{SPENDING_SECTION_TITLE}</Text>
+      <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>{localize(SPENDING_SECTION_TITLE)}</Text>
       {damaged ? (
         <Text style={[styles.line, { color: theme.danger }]}>{t('spendingSol.confirm.unreadable')}</Text>
       ) : (
@@ -306,7 +309,7 @@ export function SolanaSpendingPolicyNotice({
         ? overLimitPreviewLines(lookAhead, hideAmounts).map((line) => (
             <Text
               key={line}
-              accessibilityLabel={spokenMaskedText(`Warning: ${line}`)}
+              accessibilityLabel={spokenMaskedText(t('spoken.warning', { text: line }))}
               style={[styles.warning, { color: theme.warningText, backgroundColor: theme.warningSurface, borderColor: theme.warningBorder }]}
             >
               {line}
@@ -315,7 +318,7 @@ export function SolanaSpendingPolicyNotice({
         : null}
       <Text style={[styles.muted, { color: theme.textMuted }]}>{splSpendingFeeNote(chain)}</Text>
       <Text style={[styles.muted, { color: theme.textMuted }]}>
-        {SPENDING_REVIEW_CHECKED_NOTE} {SPENDING_HONESTY_SENTENCE}
+        {localize(SPENDING_REVIEW_CHECKED_NOTE)} {localize(SPENDING_HONESTY_SENTENCE)}
       </Text>
     </View>
   );

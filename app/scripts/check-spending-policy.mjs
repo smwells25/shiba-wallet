@@ -59,6 +59,7 @@ import {
   removeSpendingPolicy,
   resetSpendingLimits,
   saveSpendingPolicy,
+  spendingBlockAlertText,
   spendingInputForQuote,
   spendingReadouts,
   spendingTokenOptions,
@@ -353,6 +354,24 @@ console.log('override semantics:');
   check('both exceeded limits are named', (both.message.match(/This send would go over/g) ?? []).length === 2);
   const onlyEth = await evaluateBeforeSigning({ scope: SCOPE, spender: OWNER, calls: [{ to: TO, value: 11n }], fee: 0n, store: s, now: NOW });
   check('only the overridable limit exceeded → override offered', onlyEth.overrideAllowed === true);
+  // Pass p28-emu1 finding 5: the over-limit alert closes "Nothing was signed." when it offers no "Send anyway"
+  // (the gate runs before any device check or signature at every caller); with "Send anyway" it is left out.
+  const hard = spendingBlockAlertText(both);
+  const soft = spendingBlockAlertText(onlyEth);
+  check('p28-emu1 finding 5: a hard refusal\'s alert ends with "Nothing was signed." after a blank line; its title is the block title',
+    hard.title === SPENDING_BLOCK_TITLE && hard.message === `${both.message}\n\nNothing was signed.`, hard.message);
+  check('…an alert that offers "Send anyway" keeps the message as it was (the user may still sign)', soft.message === onlyEth.message && !soft.message.endsWith('Nothing was signed.'));
+  {
+    const { readFileSync: rf } = await import('node:fs');
+    const viewsSrc = rf(new globalThis.URL('../src/components/SpendingPolicyViews.tsx', import.meta.url), 'utf8');
+    const alertPin = (src) => /const alert = spendingBlockAlertText\(check\);\s*\n\s*Alert\.alert\(alert\.title, alert\.message, buttons/.test(src);
+    check('…confirmSpendingCheck shows that title and message (source)', alertPin(viewsSrc));
+    check('…mutant caught: the alert built from the raw check again', !alertPin(viewsSrc.replace('Alert.alert(alert.title, alert.message, buttons', 'Alert.alert(check.title, check.message, buttons')));
+    const spSrc = rf(new globalThis.URL('../src/wallet/spending-policy.ts', import.meta.url), 'utf8');
+    const bodyPin = (src) => src.includes("message: check.overrideAllowed ? message : `${message}\\n\\n${t('spendingSol.notSigned')}`.trim(),");
+    check('…the sentence is added only when no override is offered (source)', bodyPin(spSrc));
+    check('…mutant caught: the sentence added under "Send anyway" too', !bodyPin(spSrc.replace('message: check.overrideAllowed ? message : ', 'message: true ? `${message}\\n\\n${t(\'spendingSol.notSigned\')}` : ')));
+  }
 }
 
 console.log('fees excluded by default:');
@@ -664,13 +683,14 @@ console.log('the confirm screen warns before Send (finding 12):');
     /url: null,\s*\n\s*quoteOutflows: extra,\s*\n\s*stage: false/.test(views) && /overLimitPreviewLines\(lookAhead, hideAmounts\)/.test(views));
   // Phase 24: the notice's readout lines and its warning labels speak the mask in words.
   const NOTICE_LINE = '{...maskedSpokenProps(`${policySummary(r.policy, hideAmounts)}. ${spentReadoutText(r, hideAmounts)}.`)}';
-  const NOTICE_WARN = 'accessibilityLabel={spokenMaskedText(`Warning: ${line}`)}';
+  // Phase 28 item 5: the "Warning:" prefix through the string table (spoken.warning, English "Warning: {text}" unchanged).
+  const NOTICE_WARN = "accessibilityLabel={spokenMaskedText(t('spoken.warning', { text: line }))}";
   // Phase 26 item 3b: the Solana confirm card (SolanaSpendingPolicyNotice) renders the same two lines, so each appears twice.
   const count = (src, needle) => src.split(needle).length - 1;
   const viewsPin = (src) => src.includes("import { maskedSpokenProps, spokenMaskedText } from '../a11y';") && count(src, NOTICE_LINE) === 2 && count(src, NOTICE_WARN) === 2;
   check('SpendingPolicyNotice and SolanaSpendingPolicyNotice: each readout line spreads maskedSpokenProps and each warning label goes through spokenMaskedText (source)', viewsPin(views));
   check('…mutant caught: the readout line without the helper', !viewsPin(views.replace(NOTICE_LINE, '')));
-  check('…mutant caught: the warning label without spokenMaskedText', !viewsPin(views.replace(NOTICE_WARN, 'accessibilityLabel={`Warning: ${line}`}')));
+  check('…mutant caught: the warning label without spokenMaskedText', !viewsPin(views.replace(NOTICE_WARN, "accessibilityLabel={t('spoken.warning', { text: line })}")));
   const limits = readFileSync(new globalThis.URL('../src/screens/SpendingLimitsScreen.tsx', import.meta.url), 'utf8');
   const LIM_TITLE = '{...maskedSpokenProps(policySummary(r.policy, hideAmounts))}';
   const LIM_BODY = '{...maskedSpokenProps(spentReadoutText(r, hideAmounts))}';

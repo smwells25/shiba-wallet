@@ -1944,16 +1944,11 @@ function LanguageSection() {
   );
 }
 
-/** Settings → Developer: the Solana devnet switch (phase 24 item 1). */
-const SOLANA_DEVNET_SWITCH_LABEL = 'Use Solana devnet';
-const SOLANA_DEVNET_OFF_NOTE =
-  'Off: the Solana row is on Solana mainnet. On: the Solana row, its sends, its history and its tracked tokens use ' +
-  'Solana devnet, where SOL and tokens have no value. This choice is separate from the Ethereum network above. ' +
-  'Solana token sends are offered only on devnet.';
-const SOLANA_DEVNET_ON_NOTE =
-  'Solana devnet is on: the Solana row shows test SOL and devnet tokens, which have no value. Solana token sends ' +
-  'are offered here (test networks only). Turn it off to return the Solana row to mainnet.';
-
+/**
+ * Settings → Developer: the Solana devnet switch (phase 24 item 1). Its label
+ * and the two notes are table entries since phase 28 item 5
+ * (settings.solanaDevnet.*), English unchanged.
+ */
 export function SettingsScreen({ navigation, route }: Props) {
   const theme = useTheme();
   // Localisation (phase 22 item 6): the screen re-renders when the language
@@ -2988,10 +2983,10 @@ export function SettingsScreen({ navigation, route }: Props) {
             EVM network above, off by default. */}
         <View style={styles.toggleRow}>
           <Text importantForAccessibility="no" accessibilityElementsHidden style={[styles.toggleLabel, { color: theme.text, flexShrink: 1, marginRight: 12 }]}>
-            {SOLANA_DEVNET_SWITCH_LABEL}
+            {t('settings.solanaDevnet.label')}
           </Text>
           <Switch {...switchColors(theme)}
-            accessibilityLabel={SOLANA_DEVNET_SWITCH_LABEL}
+            accessibilityLabel={t('settings.solanaDevnet.label')}
             accessibilityRole="switch"
             accessibilityState={{ checked: solanaDevnet }}
             value={solanaDevnet}
@@ -2999,7 +2994,7 @@ export function SettingsScreen({ navigation, route }: Props) {
           />
         </View>
         <Text style={[styles.hint, { color: solanaDevnet ? theme.testnetFill : theme.textMuted }]}>
-          {solanaDevnet ? SOLANA_DEVNET_ON_NOTE : SOLANA_DEVNET_OFF_NOTE}
+          {solanaDevnet ? t('settings.solanaDevnet.onNote') : t('settings.solanaDevnet.offNote')}
         </Text>
         {/* The Bitcoin slot on signet (phase 28 item 2): separate from the EVM
             network and from Solana devnet, off by default. Turning it on asks

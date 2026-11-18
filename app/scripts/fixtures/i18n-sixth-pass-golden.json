@@ -1,0 +1,1895 @@
+{
+ "base": "df6926b",
+ "about": "Phase 28 item 5: the English each module-built sentence gave at commit df6926b (the module copied from that checkout and called with these arguments in English), replayed by scripts/check-i18n.mjs against the migrated modules. Arguments are JSON as check-i18n goldenArg reads them: {\"$b\": \"…\"} is a bigint, {\"$u\": 1} undefined.",
+ "cases": [
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "windowLabel",
+   "args": [
+    60
+   ],
+   "out": "1 minute"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "windowLabel",
+   "args": [
+    120
+   ],
+   "out": "2 minutes"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "windowLabel",
+   "args": [
+    215940
+   ],
+   "out": "3599 minutes"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "windowLabel",
+   "args": [
+    3600
+   ],
+   "out": "1 hour"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "windowLabel",
+   "args": [
+    7200
+   ],
+   "out": "2 hours"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "windowLabel",
+   "args": [
+    5400
+   ],
+   "out": "90 minutes"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "windowLabel",
+   "args": [
+    86400
+   ],
+   "out": "24 hours"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "windowLabel",
+   "args": [
+    172800
+   ],
+   "out": "2 days"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "windowLabel",
+   "args": [
+    604800
+   ],
+   "out": "7 days"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "windowLabel",
+   "args": [
+    2592000
+   ],
+   "out": "30 days"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "windowLabel",
+   "args": [
+    129600
+   ],
+   "out": "36 hours"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "windowLabel",
+   "args": [
+    31622400
+   ],
+   "out": "366 days"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "windowLabel",
+   "args": [
+    90
+   ],
+   "out": "90 seconds"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "windowLabel",
+   "args": [
+    1
+   ],
+   "out": "1 seconds"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "policySummary",
+   "args": [
+    {
+     "id": "p1",
+     "token": "0x0000000000000000000000000000000000000000",
+     "symbol": "test ETH",
+     "decimals": 18,
+     "cap": {
+      "$b": "100000000000000"
+     },
+     "windowSeconds": 3600,
+     "allowOverride": false,
+     "countFees": false
+    },
+    false
+   ],
+   "out": "0.0001 test ETH per 1 hour"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "policySummary",
+   "args": [
+    {
+     "id": "p1",
+     "token": "0x0000000000000000000000000000000000000000",
+     "symbol": "test ETH",
+     "decimals": 18,
+     "cap": {
+      "$b": "100000000000000"
+     },
+     "windowSeconds": 3600,
+     "allowOverride": false,
+     "countFees": false
+    },
+    true
+   ],
+   "out": "•••• test ETH per 1 hour"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "policySummary",
+   "args": [
+    {
+     "id": "p1",
+     "token": "0x0000000000000000000000000000000000000000",
+     "symbol": "test ETH",
+     "decimals": 18,
+     "cap": {
+      "$b": "100000000000000"
+     },
+     "windowSeconds": 86400,
+     "allowOverride": false,
+     "countFees": true
+    },
+    false
+   ],
+   "out": "0.0001 test ETH per 24 hours"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "policySummary",
+   "args": [
+    {
+     "id": "p1",
+     "token": "0x0000000000000000000000000000000000000000",
+     "symbol": "test ETH",
+     "decimals": 18,
+     "cap": {
+      "$b": "100000000000000"
+     },
+     "windowSeconds": 86400,
+     "allowOverride": false,
+     "countFees": true
+    },
+    true
+   ],
+   "out": "•••• test ETH per 24 hours"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "policySummary",
+   "args": [
+    {
+     "id": "p1",
+     "token": "0x0000000000000000000000000000000000000000",
+     "symbol": "USDC",
+     "decimals": 6,
+     "cap": {
+      "$b": "1234567890"
+     },
+     "windowSeconds": 604800,
+     "allowOverride": true,
+     "countFees": false
+    },
+    false
+   ],
+   "out": "1,234.56789 USDC per 7 days"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "policySummary",
+   "args": [
+    {
+     "id": "p1",
+     "token": "0x0000000000000000000000000000000000000000",
+     "symbol": "USDC",
+     "decimals": 6,
+     "cap": {
+      "$b": "1234567890"
+     },
+     "windowSeconds": 604800,
+     "allowOverride": true,
+     "countFees": false
+    },
+    true
+   ],
+   "out": "•••• USDC per 7 days"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "policySummary",
+   "args": [
+    {
+     "id": "p1",
+     "token": "0x0000000000000000000000000000000000000000",
+     "symbol": "test ETH",
+     "decimals": 18,
+     "cap": {
+      "$b": "1"
+     },
+     "windowSeconds": 5400,
+     "allowOverride": false,
+     "countFees": false
+    },
+    false
+   ],
+   "out": "0.000000000000000001 test ETH per 90 minutes"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "policySummary",
+   "args": [
+    {
+     "id": "p1",
+     "token": "0x0000000000000000000000000000000000000000",
+     "symbol": "test ETH",
+     "decimals": 18,
+     "cap": {
+      "$b": "1"
+     },
+     "windowSeconds": 5400,
+     "allowOverride": false,
+     "countFees": false
+    },
+    true
+   ],
+   "out": "•••• test ETH per 90 minutes"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "spentReadoutText",
+   "args": [
+    {
+     "policy": {
+      "id": "p1",
+      "token": "0x0000000000000000000000000000000000000000",
+      "symbol": "test ETH",
+      "decimals": 18,
+      "cap": {
+       "$b": "100000000000000"
+      },
+      "windowSeconds": 3600,
+      "allowOverride": false,
+      "countFees": false
+     },
+     "spentInWindow": {
+      "$b": "50000000000000"
+     }
+    },
+    false
+   ],
+   "out": "Spent in the current window: 0.00005 of 0.0001 test ETH"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "spentReadoutText",
+   "args": [
+    {
+     "policy": {
+      "id": "p1",
+      "token": "0x0000000000000000000000000000000000000000",
+      "symbol": "test ETH",
+      "decimals": 18,
+      "cap": {
+       "$b": "100000000000000"
+      },
+      "windowSeconds": 3600,
+      "allowOverride": false,
+      "countFees": false
+     },
+     "spentInWindow": {
+      "$b": "0"
+     }
+    },
+    true
+   ],
+   "out": "Spent in the current window: •••• of •••• test ETH"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "spentReadoutText",
+   "args": [
+    {
+     "policy": {
+      "id": "p1",
+      "token": "0x0000000000000000000000000000000000000000",
+      "symbol": "test ETH",
+      "decimals": 18,
+      "cap": {
+       "$b": "100000000000000"
+      },
+      "windowSeconds": 86400,
+      "allowOverride": false,
+      "countFees": true
+     },
+     "spentInWindow": {
+      "$b": "50000000000000"
+     }
+    },
+    false
+   ],
+   "out": "Spent in the current window: 0.00005 of 0.0001 test ETH"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "spentReadoutText",
+   "args": [
+    {
+     "policy": {
+      "id": "p1",
+      "token": "0x0000000000000000000000000000000000000000",
+      "symbol": "test ETH",
+      "decimals": 18,
+      "cap": {
+       "$b": "100000000000000"
+      },
+      "windowSeconds": 86400,
+      "allowOverride": false,
+      "countFees": true
+     },
+     "spentInWindow": {
+      "$b": "0"
+     }
+    },
+    true
+   ],
+   "out": "Spent in the current window: •••• of •••• test ETH"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "spentReadoutText",
+   "args": [
+    {
+     "policy": {
+      "id": "p1",
+      "token": "0x0000000000000000000000000000000000000000",
+      "symbol": "USDC",
+      "decimals": 6,
+      "cap": {
+       "$b": "1234567890"
+      },
+      "windowSeconds": 604800,
+      "allowOverride": true,
+      "countFees": false
+     },
+     "spentInWindow": {
+      "$b": "50000000000000"
+     }
+    },
+    false
+   ],
+   "out": "Spent in the current window: 50,000,000 of 1,234.56789 USDC"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "spentReadoutText",
+   "args": [
+    {
+     "policy": {
+      "id": "p1",
+      "token": "0x0000000000000000000000000000000000000000",
+      "symbol": "USDC",
+      "decimals": 6,
+      "cap": {
+       "$b": "1234567890"
+      },
+      "windowSeconds": 604800,
+      "allowOverride": true,
+      "countFees": false
+     },
+     "spentInWindow": {
+      "$b": "0"
+     }
+    },
+    true
+   ],
+   "out": "Spent in the current window: •••• of •••• USDC"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "spentReadoutText",
+   "args": [
+    {
+     "policy": {
+      "id": "p1",
+      "token": "0x0000000000000000000000000000000000000000",
+      "symbol": "test ETH",
+      "decimals": 18,
+      "cap": {
+       "$b": "1"
+      },
+      "windowSeconds": 5400,
+      "allowOverride": false,
+      "countFees": false
+     },
+     "spentInWindow": {
+      "$b": "50000000000000"
+     }
+    },
+    false
+   ],
+   "out": "Spent in the current window: 0.00005 of 0.000000000000000001 test ETH"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "spentReadoutText",
+   "args": [
+    {
+     "policy": {
+      "id": "p1",
+      "token": "0x0000000000000000000000000000000000000000",
+      "symbol": "test ETH",
+      "decimals": 18,
+      "cap": {
+       "$b": "1"
+      },
+      "windowSeconds": 5400,
+      "allowOverride": false,
+      "countFees": false
+     },
+     "spentInWindow": {
+      "$b": "0"
+     }
+    },
+    true
+   ],
+   "out": "Spent in the current window: •••• of •••• test ETH"
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "overLimitSentence",
+   "args": [
+    {
+     "id": "p1",
+     "token": "0x0000000000000000000000000000000000000000",
+     "symbol": "test ETH",
+     "decimals": 18,
+     "cap": {
+      "$b": "100000000000000"
+     },
+     "windowSeconds": 3600,
+     "allowOverride": false,
+     "countFees": false
+    },
+    {
+     "token": "0x0000000000000000000000000000000000000000",
+     "cap": {
+      "$b": "1"
+     },
+     "spentInWindow": {
+      "$b": "50000000000000"
+     },
+     "proposed": {
+      "$b": "2000000000000000"
+     },
+     "remaining": {
+      "$b": "0"
+     },
+     "exceeds": true
+    }
+   ],
+   "out": "This send would go over your spending limit for test ETH: 0.0001 test ETH per 1 hour. Already spent in this window: 0.00005 test ETH; this send: 0.002 test ETH."
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "overLimitSentence",
+   "args": [
+    {
+     "id": "p1",
+     "token": "0x0000000000000000000000000000000000000000",
+     "symbol": "test ETH",
+     "decimals": 18,
+     "cap": {
+      "$b": "100000000000000"
+     },
+     "windowSeconds": 86400,
+     "allowOverride": false,
+     "countFees": true
+    },
+    {
+     "token": "0x0000000000000000000000000000000000000000",
+     "cap": {
+      "$b": "1"
+     },
+     "spentInWindow": {
+      "$b": "50000000000000"
+     },
+     "proposed": {
+      "$b": "2000000000000000"
+     },
+     "remaining": {
+      "$b": "0"
+     },
+     "exceeds": true
+    }
+   ],
+   "out": "This send would go over your spending limit for test ETH: 0.0001 test ETH per 24 hours. Already spent in this window: 0.00005 test ETH; this send: 0.002 test ETH (network fee included)."
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "overLimitSentence",
+   "args": [
+    {
+     "id": "p1",
+     "token": "0x0000000000000000000000000000000000000000",
+     "symbol": "USDC",
+     "decimals": 6,
+     "cap": {
+      "$b": "1234567890"
+     },
+     "windowSeconds": 604800,
+     "allowOverride": true,
+     "countFees": false
+    },
+    {
+     "token": "0x0000000000000000000000000000000000000000",
+     "cap": {
+      "$b": "1"
+     },
+     "spentInWindow": {
+      "$b": "50000000000000"
+     },
+     "proposed": {
+      "$b": "2000000000000000"
+     },
+     "remaining": {
+      "$b": "0"
+     },
+     "exceeds": true
+    }
+   ],
+   "out": "This send would go over your spending limit for USDC: 1,234.56789 USDC per 7 days. Already spent in this window: 50,000,000 USDC; this send: 2,000,000,000 USDC."
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "overLimitSentence",
+   "args": [
+    {
+     "id": "p1",
+     "token": "0x0000000000000000000000000000000000000000",
+     "symbol": "test ETH",
+     "decimals": 18,
+     "cap": {
+      "$b": "1"
+     },
+     "windowSeconds": 5400,
+     "allowOverride": false,
+     "countFees": false
+    },
+    {
+     "token": "0x0000000000000000000000000000000000000000",
+     "cap": {
+      "$b": "1"
+     },
+     "spentInWindow": {
+      "$b": "50000000000000"
+     },
+     "proposed": {
+      "$b": "2000000000000000"
+     },
+     "remaining": {
+      "$b": "0"
+     },
+     "exceeds": true
+    }
+   ],
+   "out": "This send would go over your spending limit for test ETH: 0.000000000000000001 test ETH per 90 minutes. Already spent in this window: 0.00005 test ETH; this send: 0.002 test ETH."
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "overLimitPreviewLines",
+   "args": [
+    {
+     "status": "blocked",
+     "results": [
+      {
+       "policy": {
+        "id": "p1",
+        "token": "0x0000000000000000000000000000000000000000",
+        "symbol": "test ETH",
+        "decimals": 18,
+        "cap": {
+         "$b": "100000000000000"
+        },
+        "windowSeconds": 3600,
+        "allowOverride": false,
+        "countFees": false
+       },
+       "entry": {
+        "token": "0x0000000000000000000000000000000000000000",
+        "cap": {
+         "$b": "1"
+        },
+        "spentInWindow": {
+         "$b": "50000000000000"
+        },
+        "proposed": {
+         "$b": "60000000000000"
+        },
+        "remaining": {
+         "$b": "0"
+        },
+        "exceeds": true
+       }
+      },
+      {
+       "policy": {
+        "id": "p1",
+        "token": "0x0000000000000000000000000000000000000000",
+        "symbol": "test ETH",
+        "decimals": 18,
+        "cap": {
+         "$b": "100000000000000"
+        },
+        "windowSeconds": 86400,
+        "allowOverride": false,
+        "countFees": true
+       },
+       "entry": {
+        "token": "0x0000000000000000000000000000000000000000",
+        "cap": {
+         "$b": "1"
+        },
+        "spentInWindow": {
+         "$b": "50000000000000"
+        },
+        "proposed": {
+         "$b": "60000000000000"
+        },
+        "remaining": {
+         "$b": "0"
+        },
+        "exceeds": true
+       }
+      },
+      {
+       "policy": {
+        "id": "p1",
+        "token": "0x0000000000000000000000000000000000000000",
+        "symbol": "USDC",
+        "decimals": 6,
+        "cap": {
+         "$b": "1234567890"
+        },
+        "windowSeconds": 604800,
+        "allowOverride": true,
+        "countFees": false
+       },
+       "entry": {
+        "token": "0x0000000000000000000000000000000000000000",
+        "cap": {
+         "$b": "1"
+        },
+        "spentInWindow": {
+         "$b": "50000000000000"
+        },
+        "proposed": {
+         "$b": "60000000000000"
+        },
+        "remaining": {
+         "$b": "0"
+        },
+        "exceeds": true
+       }
+      },
+      {
+       "policy": {
+        "id": "p1",
+        "token": "0x0000000000000000000000000000000000000000",
+        "symbol": "test ETH",
+        "decimals": 18,
+        "cap": {
+         "$b": "1"
+        },
+        "windowSeconds": 5400,
+        "allowOverride": false,
+        "countFees": false
+       },
+       "entry": {
+        "token": "0x0000000000000000000000000000000000000000",
+        "cap": {
+         "$b": "1"
+        },
+        "spentInWindow": {
+         "$b": "50000000000000"
+        },
+        "proposed": {
+         "$b": "60000000000000"
+        },
+        "remaining": {
+         "$b": "0"
+        },
+        "exceeds": true
+       }
+      }
+     ],
+     "decision": {
+      "allowed": false,
+      "enforcement": "client-side",
+      "entries": [
+       {
+        "token": "0x0000000000000000000000000000000000000000",
+        "cap": {
+         "$b": "1"
+        },
+        "spentInWindow": {
+         "$b": "50000000000000"
+        },
+        "proposed": {
+         "$b": "60000000000000"
+        },
+        "remaining": {
+         "$b": "0"
+        },
+        "exceeds": true
+       },
+       {
+        "token": "0x0000000000000000000000000000000000000000",
+        "cap": {
+         "$b": "1"
+        },
+        "spentInWindow": {
+         "$b": "50000000000000"
+        },
+        "proposed": {
+         "$b": "60000000000000"
+        },
+        "remaining": {
+         "$b": "0"
+        },
+        "exceeds": true
+       },
+       {
+        "token": "0x0000000000000000000000000000000000000000",
+        "cap": {
+         "$b": "1"
+        },
+        "spentInWindow": {
+         "$b": "50000000000000"
+        },
+        "proposed": {
+         "$b": "60000000000000"
+        },
+        "remaining": {
+         "$b": "0"
+        },
+        "exceeds": true
+       },
+       {
+        "token": "0x0000000000000000000000000000000000000000",
+        "cap": {
+         "$b": "1"
+        },
+        "spentInWindow": {
+         "$b": "50000000000000"
+        },
+        "proposed": {
+         "$b": "60000000000000"
+        },
+        "remaining": {
+         "$b": "0"
+        },
+        "exceeds": true
+       }
+      ]
+     },
+     "basis": "quote",
+     "outflows": [],
+     "overrideAllowed": false,
+     "title": "x",
+     "message": "y",
+     "note": null
+    },
+    false
+   ],
+   "out": [
+    "This send would go over the limit for test ETH (0.0001 test ETH per 1 hour): already spent 0.00005 test ETH, this send 0.00006 test ETH. Tapping Send will stop it; raise or remove the limit first.",
+    "This send would go over the limit for test ETH (0.0001 test ETH per 24 hours): already spent 0.00005 test ETH, this send 0.00006 test ETH with the network fee. Tapping Send will stop it; raise or remove the limit first.",
+    "This send would go over the limit for USDC (1,234.56789 USDC per 7 days): already spent 50,000,000 USDC, this send 60,000,000 USDC. Tapping Send will ask whether to send anyway.",
+    "This send would go over the limit for test ETH (0.000000000000000001 test ETH per 90 minutes): already spent 0.00005 test ETH, this send 0.00006 test ETH. Tapping Send will stop it; raise or remove the limit first."
+   ]
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "overLimitPreviewLines",
+   "args": [
+    {
+     "status": "blocked",
+     "results": [
+      {
+       "policy": {
+        "id": "p1",
+        "token": "0x0000000000000000000000000000000000000000",
+        "symbol": "test ETH",
+        "decimals": 18,
+        "cap": {
+         "$b": "100000000000000"
+        },
+        "windowSeconds": 3600,
+        "allowOverride": false,
+        "countFees": false
+       },
+       "entry": {
+        "token": "0x0000000000000000000000000000000000000000",
+        "cap": {
+         "$b": "1"
+        },
+        "spentInWindow": {
+         "$b": "50000000000000"
+        },
+        "proposed": {
+         "$b": "60000000000000"
+        },
+        "remaining": {
+         "$b": "0"
+        },
+        "exceeds": true
+       }
+      },
+      {
+       "policy": {
+        "id": "p1",
+        "token": "0x0000000000000000000000000000000000000000",
+        "symbol": "test ETH",
+        "decimals": 18,
+        "cap": {
+         "$b": "100000000000000"
+        },
+        "windowSeconds": 86400,
+        "allowOverride": false,
+        "countFees": true
+       },
+       "entry": {
+        "token": "0x0000000000000000000000000000000000000000",
+        "cap": {
+         "$b": "1"
+        },
+        "spentInWindow": {
+         "$b": "50000000000000"
+        },
+        "proposed": {
+         "$b": "60000000000000"
+        },
+        "remaining": {
+         "$b": "0"
+        },
+        "exceeds": true
+       }
+      },
+      {
+       "policy": {
+        "id": "p1",
+        "token": "0x0000000000000000000000000000000000000000",
+        "symbol": "USDC",
+        "decimals": 6,
+        "cap": {
+         "$b": "1234567890"
+        },
+        "windowSeconds": 604800,
+        "allowOverride": true,
+        "countFees": false
+       },
+       "entry": {
+        "token": "0x0000000000000000000000000000000000000000",
+        "cap": {
+         "$b": "1"
+        },
+        "spentInWindow": {
+         "$b": "50000000000000"
+        },
+        "proposed": {
+         "$b": "60000000000000"
+        },
+        "remaining": {
+         "$b": "0"
+        },
+        "exceeds": true
+       }
+      },
+      {
+       "policy": {
+        "id": "p1",
+        "token": "0x0000000000000000000000000000000000000000",
+        "symbol": "test ETH",
+        "decimals": 18,
+        "cap": {
+         "$b": "1"
+        },
+        "windowSeconds": 5400,
+        "allowOverride": false,
+        "countFees": false
+       },
+       "entry": {
+        "token": "0x0000000000000000000000000000000000000000",
+        "cap": {
+         "$b": "1"
+        },
+        "spentInWindow": {
+         "$b": "50000000000000"
+        },
+        "proposed": {
+         "$b": "60000000000000"
+        },
+        "remaining": {
+         "$b": "0"
+        },
+        "exceeds": true
+       }
+      }
+     ],
+     "decision": {
+      "allowed": false,
+      "enforcement": "client-side",
+      "entries": [
+       {
+        "token": "0x0000000000000000000000000000000000000000",
+        "cap": {
+         "$b": "1"
+        },
+        "spentInWindow": {
+         "$b": "50000000000000"
+        },
+        "proposed": {
+         "$b": "60000000000000"
+        },
+        "remaining": {
+         "$b": "0"
+        },
+        "exceeds": true
+       },
+       {
+        "token": "0x0000000000000000000000000000000000000000",
+        "cap": {
+         "$b": "1"
+        },
+        "spentInWindow": {
+         "$b": "50000000000000"
+        },
+        "proposed": {
+         "$b": "60000000000000"
+        },
+        "remaining": {
+         "$b": "0"
+        },
+        "exceeds": true
+       },
+       {
+        "token": "0x0000000000000000000000000000000000000000",
+        "cap": {
+         "$b": "1"
+        },
+        "spentInWindow": {
+         "$b": "50000000000000"
+        },
+        "proposed": {
+         "$b": "60000000000000"
+        },
+        "remaining": {
+         "$b": "0"
+        },
+        "exceeds": true
+       },
+       {
+        "token": "0x0000000000000000000000000000000000000000",
+        "cap": {
+         "$b": "1"
+        },
+        "spentInWindow": {
+         "$b": "50000000000000"
+        },
+        "proposed": {
+         "$b": "60000000000000"
+        },
+        "remaining": {
+         "$b": "0"
+        },
+        "exceeds": true
+       }
+      ]
+     },
+     "basis": "quote",
+     "outflows": [],
+     "overrideAllowed": false,
+     "title": "x",
+     "message": "y",
+     "note": null
+    },
+    true
+   ],
+   "out": [
+    "This send would go over the limit for test ETH (•••• test ETH per 1 hour): already spent •••• test ETH, this send •••• test ETH. Tapping Send will stop it; raise or remove the limit first.",
+    "This send would go over the limit for test ETH (•••• test ETH per 24 hours): already spent •••• test ETH, this send •••• test ETH with the network fee. Tapping Send will stop it; raise or remove the limit first.",
+    "This send would go over the limit for USDC (•••• USDC per 7 days): already spent •••• USDC, this send •••• USDC. Tapping Send will ask whether to send anyway.",
+    "This send would go over the limit for test ETH (•••• test ETH per 90 minutes): already spent •••• test ETH, this send •••• test ETH. Tapping Send will stop it; raise or remove the limit first."
+   ]
+  },
+  {
+   "module": "wallet/spending-policy.ts",
+   "fn": "overLimitPreviewLines",
+   "args": [
+    {
+     "status": "blocked",
+     "results": [
+      {
+       "policy": {
+        "id": "p1",
+        "token": "0x0000000000000000000000000000000000000000",
+        "symbol": "test ETH",
+        "decimals": 18,
+        "cap": {
+         "$b": "100000000000000"
+        },
+        "windowSeconds": 86400,
+        "allowOverride": false,
+        "countFees": true
+       },
+       "entry": {
+        "token": "0x0000000000000000000000000000000000000000",
+        "cap": {
+         "$b": "1"
+        },
+        "spentInWindow": {
+         "$b": "50000000000000"
+        },
+        "proposed": {
+         "$b": "60000000000000"
+        },
+        "remaining": {
+         "$b": "0"
+        },
+        "exceeds": false
+       }
+      },
+      {
+       "policy": {
+        "id": "p1",
+        "token": "0x0000000000000000000000000000000000000000",
+        "symbol": "test ETH",
+        "decimals": 18,
+        "cap": {
+         "$b": "100000000000000"
+        },
+        "windowSeconds": 3600,
+        "allowOverride": false,
+        "countFees": false
+       },
+       "entry": {
+        "token": "0x0000000000000000000000000000000000000000",
+        "cap": {
+         "$b": "1"
+        },
+        "spentInWindow": {
+         "$b": "50000000000000"
+        },
+        "proposed": {
+         "$b": "60000000000000"
+        },
+        "remaining": {
+         "$b": "0"
+        },
+        "exceeds": true
+       }
+      }
+     ],
+     "decision": {
+      "allowed": false,
+      "enforcement": "client-side",
+      "entries": [
+       {
+        "token": "0x0000000000000000000000000000000000000000",
+        "cap": {
+         "$b": "1"
+        },
+        "spentInWindow": {
+         "$b": "50000000000000"
+        },
+        "proposed": {
+         "$b": "60000000000000"
+        },
+        "remaining": {
+         "$b": "0"
+        },
+        "exceeds": false
+       },
+       {
+        "token": "0x0000000000000000000000000000000000000000",
+        "cap": {
+         "$b": "1"
+        },
+        "spentInWindow": {
+         "$b": "50000000000000"
+        },
+        "proposed": {
+         "$b": "60000000000000"
+        },
+        "remaining": {
+         "$b": "0"
+        },
+        "exceeds": true
+       }
+      ]
+     },
+     "basis": "quote",
+     "outflows": [],
+     "overrideAllowed": false,
+     "title": "x",
+     "message": "y",
+     "note": null
+    },
+    false
+   ],
+   "out": [
+    "This send would go over the limit for test ETH (0.0001 test ETH per 1 hour): already spent 0.00005 test ETH, this send 0.00006 test ETH. Tapping Send will stop it; raise or remove the limit first."
+   ]
+  },
+  {
+   "module": "wallet/simulation.ts",
+   "fn": "skippedLogsNote",
+   "args": [
+    1
+   ],
+   "out": "1 token event used a non-standard format and is not shown, so this preview may be incomplete."
+  },
+  {
+   "module": "wallet/simulation.ts",
+   "fn": "skippedLogsNote",
+   "args": [
+    2
+   ],
+   "out": "2 token events used a non-standard format and are not shown, so this preview may be incomplete."
+  },
+  {
+   "module": "wallet/simulation.ts",
+   "fn": "skippedLogsNote",
+   "args": [
+    17
+   ],
+   "out": "17 token events used a non-standard format and are not shown, so this preview may be incomplete."
+  },
+  {
+   "module": "wallet/simulation.ts",
+   "fn": "revertedNote",
+   "args": [
+    "execution reverted: ZERO_DEPOSIT"
+   ],
+   "out": "The simulation reverts (execution reverted: ZERO_DEPOSIT). If sent anyway, no balances would change apart from the network fee."
+  },
+  {
+   "module": "wallet/simulation.ts",
+   "fn": "revertedNote",
+   "args": [
+    "0x08c379a0"
+   ],
+   "out": "The simulation reverts (0x08c379a0). If sent anyway, no balances would change apart from the network fee."
+  },
+  {
+   "module": "wallet/simulation.ts",
+   "fn": "errorNote",
+   "args": [
+    "RPC error -32000: header not found"
+   ],
+   "out": "Balance-change preview failed: RPC error -32000: header not found"
+  },
+  {
+   "module": "wallet/simulation.ts",
+   "fn": "errorNote",
+   "args": [
+    ""
+   ],
+   "out": "Balance-change preview failed: "
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splTokensFeeSentence",
+   "args": [
+    "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"
+   ],
+   "out": "Network fees for a token send are paid in test SOL."
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splTokensFeeSentence",
+   "args": [
+    "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"
+   ],
+   "out": "Network fees for a token send are paid in SOL."
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splTokensFeeSentence",
+   "args": [
+    null
+   ],
+   "out": "Network fees for a token send are paid in SOL."
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splSendFormIntro",
+   "args": [
+    "USDC",
+    "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+    "Solana devnet",
+    "test SOL"
+   ],
+   "out": "Sends USDC (mint 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU) on Solana devnet from your associated token account. The network fee is paid in test SOL; if the recipient does not hold this token yet, this transaction also creates their token account and you pay its rent. Review shows every figure before anything is signed."
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splSendFormIntro",
+   "args": [
+    "SFEE",
+    "7iJCvReXQqTqj7grTPzo3ggibPrSp5jcfghnmADjnoEn",
+    "Solana",
+    "SOL"
+   ],
+   "out": "Sends SFEE (mint 7iJCvReXQqTqj7grTPzo3ggibPrSp5jcfghnmADjnoEn) on Solana from your associated token account. The network fee is paid in SOL; if the recipient does not hold this token yet, this transaction also creates their token account and you pay its rent. Review shows every figure before anything is signed."
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splManageBalanceLine",
+   "args": [
+    {
+     "$u": 1
+    },
+    "USDC",
+    false
+   ],
+   "out": null
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splManageBalanceLine",
+   "args": [
+    {
+     "status": "error",
+     "message": "x"
+    },
+    "USDC",
+    false
+   ],
+   "out": "Balance: could not be read just now."
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splManageBalanceLine",
+   "args": [
+    {
+     "status": "ok",
+     "associated": {
+      "$b": "19000000"
+     },
+     "outside": {
+      "$b": "0"
+     },
+     "outsideAccounts": 0,
+     "decimals": 6,
+     "withheld": {
+      "$b": "0"
+     },
+     "sendRefusal": null,
+     "decimalsChanged": false,
+     "networkChainId": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"
+    },
+    "USDC",
+    false
+   ],
+   "out": "Balance: 19 USDC"
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splManageBalanceLine",
+   "args": [
+    {
+     "status": "ok",
+     "associated": {
+      "$b": "19000000"
+     },
+     "outside": {
+      "$b": "0"
+     },
+     "outsideAccounts": 0,
+     "decimals": 6,
+     "withheld": {
+      "$b": "0"
+     },
+     "sendRefusal": null,
+     "decimalsChanged": false,
+     "networkChainId": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"
+    },
+    "USDC",
+    true
+   ],
+   "out": "Balance: •••• USDC"
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splManageBalanceLine",
+   "args": [
+    {
+     "status": "ok",
+     "associated": {
+      "$b": "1"
+     },
+     "outside": {
+      "$b": "0"
+     },
+     "outsideAccounts": 0,
+     "decimals": 6,
+     "withheld": {
+      "$b": "0"
+     },
+     "sendRefusal": null,
+     "decimalsChanged": false,
+     "networkChainId": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"
+    },
+    "SFEE",
+    false
+   ],
+   "out": "Balance: 0.000001 SFEE"
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splTransferFeeLine",
+   "args": [
+    {
+     "transferFeeConfigAuthority": null,
+     "withdrawWithheldAuthority": null,
+     "withheldAmount": {
+      "$b": "0"
+     },
+     "olderTransferFee": {
+      "epoch": {
+       "$b": "0"
+      },
+      "maximumFee": {
+       "$b": "1000000"
+      },
+      "basisPoints": 100
+     },
+     "newerTransferFee": {
+      "epoch": {
+       "$b": "644"
+      },
+      "maximumFee": {
+       "$b": "1000000"
+      },
+      "basisPoints": 100
+     }
+    },
+    6,
+    "SFEE"
+   ],
+   "out": "Transfer fee: 100 basis points (1 SFEE max) — shown again on every send."
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splTransferFeeLine",
+   "args": [
+    {
+     "transferFeeConfigAuthority": null,
+     "withdrawWithheldAuthority": null,
+     "withheldAmount": {
+      "$b": "0"
+     },
+     "olderTransferFee": {
+      "epoch": {
+       "$b": "0"
+      },
+      "maximumFee": {
+       "$b": "0"
+      },
+      "basisPoints": 0
+     },
+     "newerTransferFee": {
+      "epoch": {
+       "$b": "644"
+      },
+      "maximumFee": {
+       "$b": "0"
+      },
+      "basisPoints": 0
+     }
+    },
+    6,
+    "PYUSD"
+   ],
+   "out": "Transfer fee: 0 basis points (0 PYUSD max) — shown again on every send."
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splTransferFeeLine",
+   "args": [
+    {
+     "transferFeeConfigAuthority": null,
+     "withdrawWithheldAuthority": null,
+     "withheldAmount": {
+      "$b": "0"
+     },
+     "olderTransferFee": {
+      "epoch": {
+       "$b": "0"
+      },
+      "maximumFee": {
+       "$b": "2500000"
+      },
+      "basisPoints": 50
+     },
+     "newerTransferFee": {
+      "epoch": {
+       "$b": "1300"
+      },
+      "maximumFee": {
+       "$b": "1000000"
+      },
+      "basisPoints": 25
+     }
+    },
+    6,
+    null
+   ],
+   "out": "Transfer fee: 50 basis points (2.5 max) before epoch 1300, then 25 basis points (1 max) — shown again on every send."
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splMaxUnavailableLine",
+   "args": [
+    {
+     "$u": 1
+    }
+   ],
+   "out": "Max could not read this account’s token balance just now. Type the amount, or try Max again."
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splMaxUnavailableLine",
+   "args": [
+    {
+     "status": "ok",
+     "associated": {
+      "$b": "19000000"
+     },
+     "outside": {
+      "$b": "0"
+     },
+     "outsideAccounts": 0,
+     "decimals": 6,
+     "withheld": {
+      "$b": "0"
+     },
+     "sendRefusal": null,
+     "decimalsChanged": true,
+     "networkChainId": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1"
+    }
+   ],
+   "out": "Max is not available: the mint now reports other decimals than were recorded when this token was tracked. Remove the token and track it again."
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splMaxUnavailableLine",
+   "args": [
+    {
+     "status": "error",
+     "message": "x"
+    }
+   ],
+   "out": "Max could not read this account’s token balance just now. Type the amount, or try Max again."
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splWithheldLine",
+   "args": [
+    "0.02",
+    "SFEE"
+   ],
+   "out": "0.02 SFEE is withheld in this token account as the issuer’s transfer fee; it is not yours to send."
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splWithheldLine",
+   "args": [
+    "••••",
+    "SFEE"
+   ],
+   "out": "•••• SFEE is withheld in this token account as the issuer’s transfer fee; it is not yours to send."
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splOutsideLine",
+   "args": [
+    "0.25",
+    "USDC",
+    1
+   ],
+   "out": "Also 0.25 USDC held outside the associated account (1 other token account), not sendable from here."
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splOutsideLine",
+   "args": [
+    "3",
+    "USDC",
+    2
+   ],
+   "out": "Also 3 USDC held outside the associated account (2 other token accounts), not sendable from here."
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splOutsideLine",
+   "args": [
+    "••••",
+    "EURC",
+    5
+   ],
+   "out": "Also •••• EURC held outside the associated account (5 other token accounts), not sendable from here."
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splCannotSendLine",
+   "args": [
+    "This token is non-transferable: its issuer made it impossible to move to another account, so it cannot be sent."
+   ],
+   "out": "Cannot be sent from this wallet: This token is non-transferable: its issuer made it impossible to move to another account, so it cannot be sent."
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splDecimalsChangedLine",
+   "args": [
+    6,
+    9
+   ],
+   "out": "The mint now reports 9 decimals, not the 6 recorded when this token was tracked. The balance uses the mint’s figure; a send is refused until you remove the token and track it again."
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splDecimalsChangedLine",
+   "args": [
+    9,
+    0
+   ],
+   "out": "The mint now reports 0 decimals, not the 9 recorded when this token was tracked. The balance uses the mint’s figure; a send is refused until you remove the token and track it again."
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splSkippedLine",
+   "args": [
+    1
+   ],
+   "out": "1 token account returned by the network endpoint failed this wallet’s checks and is not shown."
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splSkippedLine",
+   "args": [
+    2
+   ],
+   "out": "2 token accounts returned by the network endpoint failed this wallet’s checks and are not shown."
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splSkippedLine",
+   "args": [
+    11
+   ],
+   "out": "11 token accounts returned by the network endpoint failed this wallet’s checks and are not shown."
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splFeeNoteText",
+   "args": [
+    100,
+    "1 SFEE"
+   ],
+   "out": "The issuer charges a transfer fee of 100 basis points (at most 1 SFEE per transfer), taken out of the amount the recipient receives. The issuer can change the fee; a change takes effect two epochs after it is made."
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splFeeNoteText",
+   "args": [
+    25,
+    "0.5 PYUSD"
+   ],
+   "out": "The issuer charges a transfer fee of 25 basis points (at most 0.5 PYUSD per transfer), taken out of the amount the recipient receives. The issuer can change the fee; a change takes effect two epochs after it is made."
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splConfirmRows",
+   "args": [
+    {
+     "caip2": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+     "url": "https://api.devnet.solana.com",
+     "owner": "EK5jKrBRwvQXXsSERGN6jEoYaofE2PNiZWQoaCLtrYPv",
+     "recipient": "9WMgKdmRJBZy8WQ6Q9T6VjJN4wyT9jQenDvfvLFe471n",
+     "symbol": "SFEE",
+     "quote": {
+      "amount": {
+       "$b": "1000000"
+      },
+      "decimals": 6,
+      "transferFee": {
+       "$b": "10000"
+      },
+      "recipientReceives": {
+       "$b": "990000"
+      },
+      "networkFeeLamports": {
+       "$b": "5000"
+      },
+      "createsDestination": false,
+      "rentLamports": {
+       "$b": "0"
+      },
+      "mint": "7iJCvReXQqTqj7grTPzo3ggibPrSp5jcfghnmADjnoEn",
+      "program": "token-2022",
+      "sourceAccount": "8jZRyqhxw1SHKZWazXgvp8ydSaDN6cEPKv4nmpfSfkwL",
+      "destinationAccount": "AWFgCuNf…yYKJ"
+     }
+    },
+    "test SOL"
+   ],
+   "out": [
+    {
+     "label": "From",
+     "value": "EK5jKrBRwvQXXsSERGN6jEoYaofE2PNiZWQoaCLtrYPv"
+    },
+    {
+     "label": "To",
+     "value": "9WMgKdmRJBZy8WQ6Q9T6VjJN4wyT9jQenDvfvLFe471n"
+    },
+    {
+     "label": "Amount",
+     "value": "1 SFEE"
+    },
+    {
+     "label": "Issuer’s transfer fee (withheld from the amount)",
+     "value": "0.01 SFEE"
+    },
+    {
+     "label": "Recipient receives",
+     "value": "0.99 SFEE"
+    },
+    {
+     "label": "Network fee (paid in test SOL)",
+     "value": "5000 lamports (0.000005 test SOL)"
+    },
+    {
+     "label": "Total test SOL leaving your account",
+     "value": "5000 lamports (0.000005 test SOL)"
+    },
+    {
+     "label": "Mint",
+     "value": "7iJCvReXQqTqj7grTPzo3ggibPrSp5jcfghnmADjnoEn"
+    },
+    {
+     "label": "Token program",
+     "value": "Token-2022 (Token Extensions)"
+    },
+    {
+     "label": "Your token account",
+     "value": "8jZRyqhxw1SHKZWazXgvp8ydSaDN6cEPKv4nmpfSfkwL"
+    },
+    {
+     "label": "Recipient’s token account",
+     "value": "AWFgCuNf…yYKJ"
+    }
+   ]
+  },
+  {
+   "module": "wallet/spl-tokens.ts",
+   "fn": "splConfirmRows",
+   "args": [
+    {
+     "caip2": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+     "url": "https://api.devnet.solana.com",
+     "owner": "EK5jKrBRwvQXXsSERGN6jEoYaofE2PNiZWQoaCLtrYPv",
+     "recipient": "9WMgKdmRJBZy8WQ6Q9T6VjJN4wyT9jQenDvfvLFe471n",
+     "symbol": "SFEE",
+     "quote": {
+      "amount": {
+       "$b": "1000000"
+      },
+      "decimals": 6,
+      "transferFee": {
+       "$b": "0"
+      },
+      "recipientReceives": {
+       "$b": "1000000"
+      },
+      "networkFeeLamports": {
+       "$b": "5000"
+      },
+      "createsDestination": true,
+      "rentLamports": {
+       "$b": "1488440"
+      },
+      "mint": "7iJCvReXQqTqj7grTPzo3ggibPrSp5jcfghnmADjnoEn",
+      "program": "spl-token",
+      "sourceAccount": "8jZRyqhxw1SHKZWazXgvp8ydSaDN6cEPKv4nmpfSfkwL",
+      "destinationAccount": "AWFgCuNf…yYKJ"
+     }
+    },
+    "SOL"
+   ],
+   "out": [
+    {
+     "label": "From",
+     "value": "EK5jKrBRwvQXXsSERGN6jEoYaofE2PNiZWQoaCLtrYPv"
+    },
+    {
+     "label": "To",
+     "value": "9WMgKdmRJBZy8WQ6Q9T6VjJN4wyT9jQenDvfvLFe471n"
+    },
+    {
+     "label": "Amount",
+     "value": "1 SFEE"
+    },
+    {
+     "label": "Network fee (paid in SOL)",
+     "value": "5000 lamports (0.000005 SOL)"
+    },
+    {
+     "label": "Rent for the recipient’s new token account (paid by you)",
+     "value": "1488440 lamports (0.00148844 SOL)"
+    },
+    {
+     "label": "Total SOL leaving your account",
+     "value": "1493440 lamports (0.00149344 SOL)"
+    },
+    {
+     "label": "Mint",
+     "value": "7iJCvReXQqTqj7grTPzo3ggibPrSp5jcfghnmADjnoEn"
+    },
+    {
+     "label": "Token program",
+     "value": "SPL Token"
+    },
+    {
+     "label": "Your token account",
+     "value": "8jZRyqhxw1SHKZWazXgvp8ydSaDN6cEPKv4nmpfSfkwL"
+    },
+    {
+     "label": "Recipient’s token account",
+     "value": "AWFgCuNf…yYKJ (created by this transaction)"
+    }
+   ]
+  },
+  {
+   "module": "wallet/risk.ts",
+   "fn": "ensContractText",
+   "args": [
+    {
+     "chain": "eip155:11155111",
+     "address": "0xf633e7FC17e2bbE0D0965D18ec1821dcB754a3d3",
+     "operator": "ENS",
+     "name": "ETHRegistrar"
+    }
+   ],
+   "out": "This transaction goes to ENS’s ETHRegistrar on Ethereum Sepolia (0xf633e7FC17e2bbE0D0965D18ec1821dcB754a3d3), pinned by this wallet from ENS’s published Sepolia deployments."
+  },
+  {
+   "module": "wallet/risk.ts",
+   "fn": "ensContractText",
+   "args": [
+    {
+     "chain": "eip155:11155111",
+     "address": "0xeB40B4c323A135e80cb0072eB75BB11d980322Ee",
+     "operator": "ENS",
+     "name": "resolver",
+     "resolverOwner": "0x772eAA1d3BEf14C0BD5cee980b90dB3FC680F44F"
+    }
+   ],
+   "out": "This transaction goes to your own ENS resolver on Ethereum Sepolia (0xeB40B4c323A135e80cb0072eB75BB11d980322Ee): the address ENS’s pinned VerifiableFactory derives for the name’s owner 0x772eAA1d3BEf14C0BD5cee980b90dB3FC680F44F."
+  },
+  {
+   "module": "wallet/risk.ts",
+   "fn": "ensContractText",
+   "args": [
+    {
+     "chain": "eip155:99999",
+     "address": "0x0000000000000000000000000000000000000001",
+     "operator": "ENS",
+     "name": ".eth registry"
+    }
+   ],
+   "out": "This transaction goes to ENS’s .eth registry on eip155:99999 (0x0000000000000000000000000000000000000001), pinned by this wallet from ENS’s published Sepolia deployments."
+  },
+  {
+   "module": "wallet/ens-names.ts",
+   "fn": "sendRecipientPlaceholder",
+   "args": [
+    {
+     "namesOffered": true,
+     "ethereum": true,
+     "symbol": "ETH"
+    }
+   ],
+   "out": "0x… or ENS name"
+  },
+  {
+   "module": "wallet/ens-names.ts",
+   "fn": "sendRecipientPlaceholder",
+   "args": [
+    {
+     "namesOffered": false,
+     "ethereum": true,
+     "symbol": "ETH"
+    }
+   ],
+   "out": "Ethereum address"
+  },
+  {
+   "module": "wallet/ens-names.ts",
+   "fn": "sendRecipientPlaceholder",
+   "args": [
+    {
+     "namesOffered": false,
+     "ethereum": false,
+     "symbol": "BTC"
+    }
+   ],
+   "out": "BTC address"
+  },
+  {
+   "module": "wallet/ens-names.ts",
+   "fn": "sendRecipientPlaceholder",
+   "args": [
+    {
+     "namesOffered": false,
+     "ethereum": false,
+     "symbol": "test BTC"
+    }
+   ],
+   "out": "test BTC address"
+  },
+  {
+   "module": "wallet/ens-names.ts",
+   "fn": "sendRecipientPlaceholder",
+   "args": [
+    {
+     "namesOffered": false,
+     "ethereum": false,
+     "symbol": "DOGE"
+    }
+   ],
+   "out": "DOGE address"
+  }
+ ]
+}

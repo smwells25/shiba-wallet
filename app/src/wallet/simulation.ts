@@ -18,6 +18,7 @@ import { fetchErc20Metadata, type Erc20Metadata } from './erc20.ts';
 import { maskAmount } from '../config/prefs.ts';
 import { isEndpointFailure } from '../config/endpoint-probe.ts';
 import { knownStakingTokensForChain, rebasingTokenNote } from './tokens.ts';
+import { t } from '../i18n/index.ts';
 
 /**
  * Balance-change preview (asset-diff simulation) for the EVM confirm
@@ -61,20 +62,15 @@ export const PREVIEW_AA_NOTE =
   'through the EntryPoint is shown separately above and is not part of this list.';
 
 export function skippedLogsNote(count: number): string {
-  return count === 1
-    ? '1 token event used a non-standard format and is not shown, so this preview may be incomplete.'
-    : `${count} token events used a non-standard format and are not shown, so this preview may be incomplete.`;
+  return count === 1 ? t('preview.skippedOne') : t('preview.skippedMany', { count });
 }
 
 export function revertedNote(reason: string): string {
-  return (
-    `The simulation reverts (${reason}). If sent anyway, no balances would change ` +
-    'apart from the network fee.'
-  );
+  return t('preview.reverted', { reason });
 }
 
 export function errorNote(message: string): string {
-  return `Balance-change preview failed: ${message}`;
+  return t('preview.failed', { message });
 }
 
 /**

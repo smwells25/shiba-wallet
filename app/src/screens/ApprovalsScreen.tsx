@@ -70,6 +70,7 @@ import {
   type ApprovalScan,
   type RevokeQuote,
 } from '../wallet/approvals';
+import { tx } from '../i18n/index';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Approvals'>;
 
@@ -441,7 +442,7 @@ export function ApprovalsScreen({ navigation }: Props) {
         : `operator approval on ${revoke.item.title}`;
     const auth = await requireLocalAuth(`Approve revoking the ${what}`);
     if (!auth.ok) {
-      Alert.alert('Not sent', auth.message);
+      Alert.alert(tx('Not sent'), auth.message);
       return;
     }
     setPhase('sending');

@@ -63,6 +63,7 @@ import {
   type RemovableKeyValueStore,
 } from './store-keys.ts';
 import { prepareAaCalls, summarizeAaReceipt, type AaClientBundle, type AaSendQuote } from './aa.ts';
+import { tokenGasPaymasterFor } from './token-gas.ts';
 import { formatUnits } from './balances.ts';
 import { assertFeatureAllowed, isFeatureAllowed } from '../config/readiness.ts';
 import { evmProfileByCaip2, isBuiltInEvmChain, isTestProfileId, type EvmChainProfile, type TestNetworkId } from '../config/evm-chain.ts';
@@ -1780,13 +1781,34 @@ export function cctpMintStepLine(destinationLabel: string): string {
 }
 
 /**
+ * Whether this wallet offers Circle's USDC fee paymaster on a network at all
+ * (pass p28-emu1 finding 2): the one rule the Send screen uses, token-gas.ts
+ * tokenGasPaymasterFor — the chains in the engine's
+ * CIRCLE_TOKEN_PAYMASTER_V07.tokens, Base Sepolia and Arbitrum Sepolia. On
+ * Ethereum Sepolia Circle's address is unusable (its entryPoint() reverts
+ * and its EntryPoint v0.7 deposit is zero; the wallet offers Pimlico's
+ * ERC-7677 USDC fee there instead) and on OP Sepolia Circle's v0.7
+ * paymaster has no code, so a sentence about what Circle's paymaster can or
+ * cannot pay for on those networks describes nothing this wallet does: the
+ * wallet's own mint is sent from the regular account and pays its network
+ * fee in that network's coin.
+ */
+export function cctpPaymasterOfferedOn(caip2: string): boolean {
+  return tokenGasPaymasterFor(caip2) !== null;
+}
+
+/**
  * The CCTP confirm's notes: the adapter's own, without its paymaster note,
- * which comes back only where it applies (cctpFirstMintPaymasterNote), and
+ * which comes back only where it applies (cctpFirstMintPaymasterNote) — and
+ * only for a receiving network where this wallet offers Circle's paymaster
+ * (cctpPaymasterOfferedOn; elsewhere nothing is shown in its place) — and
  * the smart-account fee note on that path.
  */
 function cctpConfirmNotes(plan: BridgePlan): string[] {
   const notes = plan.quote.notes.filter((n) => n !== CCTP_FIRST_MINT_PAYMASTER_NOTE);
-  const paymaster = cctpFirstMintPaymasterNote(plan.recipientDestinationUsdc, plan.destinationLabel);
+  const paymaster = cctpPaymasterOfferedOn(plan.destinationCaip2)
+    ? cctpFirstMintPaymasterNote(plan.recipientDestinationUsdc, plan.destinationLabel)
+    : null;
   if (paymaster) notes.push(paymaster);
   if (plan.senderKind === 'smart-account') notes.push(cctpSmartAccountFeeNote(plan.nativeSymbol));
   return notes;
@@ -2641,6 +2663,31 @@ export function bridgeMintPromptTitle(record: Pick<BridgeTransferRecord, 'destin
 export function bridgeMintCallLine(
   record: Pick<BridgeTransferRecord, 'status' | 'providerId' | 'attested' | 'destinationLabel'>,
 ): string | null {
+  const mint = checkedMintFacts(record);
+  if (!mint) return null;
+  const { decoded, signatures } = mint;
+  const params = {
+    destination: record.destinationLabel,
+    contract: CCTP_V2_TESTNET.messageTransmitterV2,
+    nonce: decoded.nonce,
+    count: String(signatures),
+    amount: exactAsset(mint.amount, 'usdc'),
+    recipient: mint.recipient,
+  };
+  return signatures === 1 ? t('bridge.mint.callOne', params) : t('bridge.mint.call', params);
+}
+
+/**
+ * The checked mint call's own facts (the same decode as the call line): the
+ * attested message's recipient and the amount it releases, from the call
+ * bridgeMintCall accepted. Null whenever the call line is.
+ */
+function checkedMintFacts(record: Pick<BridgeTransferRecord, 'status' | 'providerId' | 'attested'>): {
+  decoded: ReturnType<typeof decodeCctpBurnMessage>;
+  signatures: number;
+  recipient: string;
+  amount: bigint;
+} | null {
   const call = bridgeMintCall(record);
   const attested = record.status?.attestation ?? record.attested;
   if (!call || !attested) return null;
@@ -2652,15 +2699,42 @@ export function bridgeMintCallLine(
   }
   const signatures = (attested.attestation.length - 2) / 130;
   if (!Number.isInteger(signatures) || signatures < 1) return null;
-  const params = {
-    destination: record.destinationLabel,
-    contract: CCTP_V2_TESTNET.messageTransmitterV2,
-    nonce: decoded.nonce,
-    count: String(signatures),
-    amount: exactAsset(decoded.body.amount - decoded.body.feeExecuted, 'usdc'),
+  return {
+    decoded,
+    signatures,
     recipient: checksumAddress('0x' + decoded.body.mintRecipient.slice(-40), 'mint recipient'),
+    amount: decoded.body.amount - decoded.body.feeExecuted,
   };
-  return signatures === 1 ? t('bridge.mint.callOne', params) : t('bridge.mint.call', params);
+}
+
+/**
+ * Pass p28-emu1 finding 3: the mint confirm when the mint pays an account
+ * other than the one sending it (a regular account minting a transfer
+ * whose recipient is its smart account). The balance-change preview is
+ * simulated for the sending account only, so it says "No balance changes
+ * for your address…"; this line says who receives how much, from the
+ * checked mint call's own fields (checkedMintFacts — the attested message's
+ * recipient and amount, the call line's figures). Each address is named by
+ * its label where it is one of this wallet's own addresses (`own`, the
+ * screen's useOwnEvmAddresses), with the address beside it. Null when the
+ * mint pays the sending account itself, or when there is no checked mint.
+ */
+export function bridgeMintRecipientLine(
+  record: Pick<BridgeTransferRecord, 'status' | 'providerId' | 'attested'>,
+  sendingAccount: string,
+  own: readonly { address: string; label: string }[],
+): string | null {
+  const mint = checkedMintFacts(record);
+  if (!mint || mint.recipient.toLowerCase() === sendingAccount.toLowerCase()) return null;
+  const named = (address: string) => {
+    const hit = own.find((o) => o.address.toLowerCase() === address.toLowerCase());
+    return hit ? `${hit.label} (${address})` : address;
+  };
+  return t('bridge.mint.recipientOther', {
+    amount: exactAsset(mint.amount, 'usdc'),
+    recipient: named(mint.recipient),
+    sender: named(sendingAccount),
+  });
 }
 
 /**

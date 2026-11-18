@@ -48,6 +48,7 @@ import {
   type SetCodeQuote, setCodeWorstCaseGasText } from '../wallet/delegation';
 import { useAccountDelegation } from '../wallet/useDelegation';
 import { readinessGate } from '../config/readiness';
+import { tx } from '../i18n/index';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'UpgradeAccount'>;
 
@@ -218,7 +219,7 @@ export function UpgradeAccountScreen({ navigation }: Props) {
       quote.action === 'upgrade' ? 'Approve upgrading this account' : 'Approve undoing the upgrade',
     );
     if (!auth.ok) {
-      Alert.alert('Not sent', auth.message);
+      Alert.alert(tx('Not sent'), auth.message);
       return;
     }
     setPhase('sending');

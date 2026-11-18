@@ -42,7 +42,7 @@ import { formatBalanceDisplay, formatUnits, parseUnits } from './balances.ts';
 import { maskAmount } from '../config/prefs.ts';
 import type { BroadcastRecordState, PendingSolanaRecord, SolanaTransferLike } from './pending-transactions.ts';
 import type { BroadcastSpendState } from './broadcast-spend.ts';
-import { t } from '../i18n/index.ts';
+import { localize, t } from '../i18n/index.ts';
 
 /**
  * The Solana slot's id: the mainnet CAIP-2 id the accounts, routes and
@@ -75,16 +75,12 @@ export function splNativeSymbol(caip2: string | null): string {
 
 /** The Solana tokens screen's fee sentence, in the coin of the network in use. */
 export function splTokensFeeSentence(caip2: string | null): string {
-  return `Network fees for a token send are paid in ${splNativeSymbol(caip2)}.`;
+  return t('spl.manage.feeSentence', { coin: splNativeSymbol(caip2) });
 }
 
 /** The token-send form's opening sentence, in the coin of the network in use. */
 export function splSendFormIntro(symbol: string, mint: string, networkLabel: string, nativeSymbol: string): string {
-  return (
-    `Sends ${symbol} (mint ${mint}) on ${networkLabel} from your associated token account. The network ` +
-    `fee is paid in ${nativeSymbol}; if the recipient does not hold this token yet, this transaction also creates their token ` +
-    'account and you pay its rent. Review shows every figure before anything is signed.'
-  );
+  return t('spl.send.intro', { symbol, mint, network: networkLabel, coin: nativeSymbol });
 }
 
 /** The token-send screen's title: the token and the network (pass p24-unblock finding 5: "Send USDC" also titles the Ethereum token send). */
@@ -100,8 +96,8 @@ export function splSendScreenTitle(symbol: string, caip2: string): string {
  */
 export function splManageBalanceLine(state: SplRowState | undefined, symbol: string, hidden: boolean): string | null {
   if (state === undefined) return null;
-  if (state.status === 'error') return 'Balance: could not be read just now.';
-  return `Balance: ${maskAmount(formatBalanceDisplay(state.associated, state.decimals), hidden)} ${symbol}`;
+  if (state.status === 'error') return t('spl.manage.balanceUnread');
+  return t('spl.manage.balance', { amount: maskAmount(formatBalanceDisplay(state.associated, state.decimals), hidden), symbol });
 }
 
 /**
@@ -145,7 +141,7 @@ export const SPL_DEVNET_HINT = 'Turn on Solana devnet in Settings → Developer 
 
 /** The refusal shown wherever a Solana token send is refused by the switchboard. */
 export function splSendRefusalText(): string {
-  return `${readinessReason('spl-tokens')} ${SPL_DEVNET_HINT}`;
+  return `${readinessReason('spl-tokens')} ${localize(SPL_DEVNET_HINT)}`;
 }
 
 /** Thrown before any network request when the switchboard refuses a Solana token send. */
@@ -212,13 +208,13 @@ export interface MintPreview {
  */
 export function splTransferFeeLine(config: TransferFeeConfig, decimals: number, symbol: string | null): string {
   const amount = (v: bigint) => `${formatBaseUnits(v, decimals)}${symbol ? ` ${symbol}` : ''}`;
-  const rate = (r: TransferFeeConfig['newerTransferFee']) => `${r.basisPoints} basis points (${amount(r.maximumFee)} max)`;
+  const rate = (r: TransferFeeConfig['newerTransferFee']) => t('spl.transferFee.rate', { bp: r.basisPoints, max: amount(r.maximumFee) });
   const older = config.olderTransferFee;
   const newer = config.newerTransferFee;
   const same = older.basisPoints === newer.basisPoints && older.maximumFee === newer.maximumFee;
   return same
-    ? `Transfer fee: ${rate(newer)} — shown again on every send.`
-    : `Transfer fee: ${rate(older)} before epoch ${newer.epoch}, then ${rate(newer)} — shown again on every send.`;
+    ? t('spl.transferFee.same', { rate: rate(newer) })
+    : t('spl.transferFee.changed', { older: rate(older), epoch: String(newer.epoch), newer: rate(newer) });
 }
 
 /** Reference tokens for the look-alike rule on one network: the engine's known tokens and the tracked ones. */
@@ -261,9 +257,9 @@ export async function previewMint(
   try {
     decoded = base58.decode(mint);
   } catch {
-    throw new SplTokenRefusal('bad-mint', SPL_MINT_ADDRESS_INVALID);
+    throw new SplTokenRefusal('bad-mint', localize(SPL_MINT_ADDRESS_INVALID));
   }
-  if (decoded.length !== 32) throw new SplTokenRefusal('bad-mint', SPL_MINT_ADDRESS_INVALID);
+  if (decoded.length !== 32) throw new SplTokenRefusal('bad-mint', localize(SPL_MINT_ADDRESS_INVALID));
   const profile = await readMintProfile(client, mint);
   if (profile.classification.transferClass === 'not-a-mint') {
     throw new SplTokenRefusal('not-a-mint', SPL_SENTENCES.notAMint);
@@ -462,9 +458,9 @@ export function splMaxAmountText(state: SplRowState | undefined): string | null 
 /** The line under the form when Max could not read the balance. */
 export function splMaxUnavailableLine(state: SplRowState | undefined): string {
   if (state !== undefined && state.status === 'ok' && state.decimalsChanged) {
-    return 'Max is not available: the mint now reports other decimals than were recorded when this token was tracked. Remove the token and track it again.';
+    return t('spl.max.decimalsChanged');
   }
-  return 'Max could not read this account’s token balance just now. Type the amount, or try Max again.';
+  return t('spl.max.unread');
 }
 
 /**
@@ -512,33 +508,29 @@ export function splWithheldAmount(extensions: readonly TokenExtension[]): bigint
  * owner cannot send them.
  */
 export function splWithheldLine(amountDisplay: string, symbol: string): string {
-  return `${amountDisplay} ${symbol} is withheld in this token account as the issuer’s transfer fee; it is not yours to send.`;
+  return t('spl.row.withheld', { amount: amountDisplay, symbol });
 }
 
 /** The line under a row whose mint balance sits partly outside the associated account. */
 export function splOutsideLine(amountDisplay: string, symbol: string, accounts: number): string {
-  return (
-    `Also ${amountDisplay} ${symbol} held outside the associated account ` +
-    `(${accounts} other token account${accounts === 1 ? '' : 's'}), not sendable from here.`
-  );
+  return accounts === 1
+    ? t('spl.row.outsideOne', { amount: amountDisplay, symbol, accounts })
+    : t('spl.row.outsideMany', { amount: amountDisplay, symbol, accounts });
 }
 
 /** The line under a row whose token this wallet will not send. */
 export function splCannotSendLine(refusal: string): string {
-  return `Cannot be sent from this wallet: ${refusal}`;
+  return t('spl.row.cannotSend', { refusal });
 }
 
 /** The line under a row whose mint now reports other decimals than were stored. */
 export function splDecimalsChangedLine(stored: number, actual: number): string {
-  return (
-    `The mint now reports ${actual} decimals, not the ${stored} recorded when this token was tracked. ` +
-    'The balance uses the mint’s figure; a send is refused until you remove the token and track it again.'
-  );
+  return t('spl.row.decimalsChanged', { actual, stored });
 }
 
 /** The line under the Solana rows when the listing skipped entries that failed its checks. */
 export function splSkippedLine(skipped: number): string {
-  return `${skipped} token account${skipped === 1 ? '' : 's'} returned by the network endpoint failed this wallet’s checks and ${skipped === 1 ? 'is' : 'are'} not shown.`;
+  return skipped === 1 ? t('spl.row.skippedOne', { count: skipped }) : t('spl.row.skippedMany', { count: skipped });
 }
 
 // ---------------------------------------------------------------------------
@@ -675,10 +667,7 @@ function lamportsText(lamports: bigint, nativeSymbol: string): string {
  * Review showed the engine's "at most 1000000 base units per transfer").
  */
 export function splFeeNoteText(basisPoints: number, maximumText: string): string {
-  return (
-    `The issuer charges a transfer fee of ${basisPoints} basis points (at most ${maximumText} per transfer), taken out of ` +
-    'the amount the recipient receives. The issuer can change the fee; a change takes effect two epochs after it is made.'
-  );
+  return t('spl.send.feeNote', { bp: basisPoints, max: maximumText });
 }
 
 /**
@@ -704,25 +693,25 @@ export function splQuoteNotes(q: Pick<SplSendQuote, 'symbol' | 'quote'>): string
 export function splConfirmRows(q: SplSendQuote, nativeSymbol: string): ConfirmRow[] {
   const { quote } = q;
   const rows: ConfirmRow[] = [
-    { label: 'From', value: q.owner },
-    { label: 'To', value: q.recipient },
-    { label: 'Amount', value: `${formatBaseUnits(quote.amount, quote.decimals)} ${q.symbol}` },
+    { label: t('spl.row.from'), value: q.owner },
+    { label: t('send.row.to'), value: q.recipient },
+    { label: t('send.row.amount'), value: `${formatBaseUnits(quote.amount, quote.decimals)} ${q.symbol}` },
   ];
   if (quote.transferFee > 0n) {
-    rows.push({ label: 'Issuer’s transfer fee (withheld from the amount)', value: `${formatBaseUnits(quote.transferFee, quote.decimals)} ${q.symbol}` });
-    rows.push({ label: 'Recipient receives', value: `${formatBaseUnits(quote.recipientReceives, quote.decimals)} ${q.symbol}` });
+    rows.push({ label: t('spl.row.issuerFee'), value: `${formatBaseUnits(quote.transferFee, quote.decimals)} ${q.symbol}` });
+    rows.push({ label: t('spl.row.recipientReceives'), value: `${formatBaseUnits(quote.recipientReceives, quote.decimals)} ${q.symbol}` });
   }
-  rows.push({ label: `Network fee (paid in ${nativeSymbol})`, value: lamportsText(quote.networkFeeLamports, nativeSymbol) });
+  rows.push({ label: t('tokenGas.feeLabel', { symbol: nativeSymbol }), value: lamportsText(quote.networkFeeLamports, nativeSymbol) });
   if (quote.createsDestination) {
-    rows.push({ label: 'Rent for the recipient’s new token account (paid by you)', value: lamportsText(quote.rentLamports, nativeSymbol) });
+    rows.push({ label: t('spl.row.rent'), value: lamportsText(quote.rentLamports, nativeSymbol) });
   }
-  rows.push({ label: `Total ${nativeSymbol} leaving your account`, value: lamportsText(quote.networkFeeLamports + quote.rentLamports, nativeSymbol) });
-  rows.push({ label: 'Mint', value: quote.mint });
-  rows.push({ label: 'Token program', value: tokenProgramLabel(quote.program) });
-  rows.push({ label: 'Your token account', value: quote.sourceAccount });
+  rows.push({ label: t('spl.row.totalCoin', { coin: nativeSymbol }), value: lamportsText(quote.networkFeeLamports + quote.rentLamports, nativeSymbol) });
+  rows.push({ label: t('spl.row.mint'), value: quote.mint });
+  rows.push({ label: t('spl.row.program'), value: tokenProgramLabel(quote.program) });
+  rows.push({ label: t('spl.row.yourAccount'), value: quote.sourceAccount });
   rows.push({
-    label: 'Recipient’s token account',
-    value: quote.createsDestination ? `${quote.destinationAccount} (created by this transaction)` : quote.destinationAccount,
+    label: t('spl.row.recipientAccount'),
+    value: quote.createsDestination ? t('spl.row.created', { account: quote.destinationAccount }) : quote.destinationAccount,
   });
   return rows;
 }

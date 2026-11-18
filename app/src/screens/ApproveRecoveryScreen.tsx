@@ -44,6 +44,7 @@ import {
   type GuardianSubmissionQuote,
   type RecoveryProgress,
 } from '../wallet/recovery';
+import { tx } from '../i18n/index';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ApproveRecovery'>;
 
@@ -275,7 +276,7 @@ export function ApproveRecoveryScreen({ navigation, route }: Props) {
     step('final');
     const auth = await requireLocalAuth('Approve submitting this recovery as a guardian');
     if (!auth.ok) {
-      Alert.alert('Not sent', auth.message);
+      Alert.alert(tx('Not sent'), auth.message);
       return;
     }
     setPhase('sending');

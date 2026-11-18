@@ -20,6 +20,7 @@ import { NOTE_VIEW_SCROLL_PROPS, TransactionNoteField, dismissKeyboardThenClose 
 import { PrePromptCheckNote, usePrePromptGuard } from '../components/PrePromptCheckNote';
 import type { PrePromptStep } from '../wallet/pre-prompt-guard';
 import { useWallet } from '../wallet/WalletContext';
+import { useOwnEvmAddresses } from '../wallet/useOwnAddresses';
 import { usePrefs } from '../wallet/PrefsContext';
 import { requireLocalAuth } from '../wallet/biometric';
 import { AsyncStorage } from '../wallet/store-keys';
@@ -74,6 +75,8 @@ import {
   bridgeMintCall,
   bridgeMintCallLine,
   bridgeMintCallSpoken,
+  bridgeMintRecipientLine,
+  bridgeSpokenText,
   bridgeMintPromptTitle,
   bridgeNeedsApproval,
   defaultBridgeAsset,
@@ -1032,6 +1035,20 @@ export function BridgeScreen({ navigation }: Props) {
           theme={theme}
         />
         <AaDepositNote fee={aaQuote.fee} deposit={aaQuote.deposit} sponsored={aaQuote.sponsored} symbol={symbol} />
+        {/* Pass p28-emu1 finding 4: the total row the regular path's burn and
+            approval views have, worded as the Send screen's smart-account
+            confirm words it (SendScreen, the self-paid branch): for USDC the
+            amount leaves in USDC (shown above, "Leaving your account for the
+            bridge") and the network fee in the network's coin, so the row is
+            "Total <coin> (worst case)" — the operation's value plus the fee,
+            in that coin, which for a CCTP burn (value 0) is the fee alone;
+            for test ETH both are the same coin and the row is "Total (worst
+            case)". No row adds the two assets together. */}
+        <Row
+          label={plan.asset === 'usdc' ? t('send.aa.row.totalOfWorst', { symbol }) : 'Total (worst case)'}
+          value={`${exact18(aaQuote.total)} ${symbol}`}
+          theme={theme}
+        />
         <BalanceChangePreview
           url={url}
           request={{ from: aaQuote.sender, to: first.to, value: first.value, data: first.data }}
@@ -1379,8 +1396,11 @@ function MintPanel({
       cancelled = true;
     };
   }, [onDestination, fromAddress, balanceUrl]);
+  // The wallet's own addresses on this (the receiving) network, with names, for the recipient line (pass p28-emu1 finding 3).
+  const ownAddresses = useOwnEvmAddresses();
   const blocker = bridgeMintBlocker(activeCaip2, record, balance, symbol);
   const mintCallLine = bridgeMintCallLine(record);
+  const mintRecipientLine = bridgeMintRecipientLine(record, fromAddress, ownAddresses);
   if (blocker) return <BlockerWithSwitch text={blocker} activeCaip2={activeCaip2} record={record} onSwitchNetwork={onSwitchNetwork} />;
   const prepare = async () => {
     setError(null);
@@ -1431,6 +1451,14 @@ function MintPanel({
               style={[styles.hint, { color: theme.text }]}
             >
               {mintCallLine}
+            </Text>
+          ) : null}
+          {/* Pass p28-emu1 finding 3: a mint that pays another account (the
+              smart account) says so; the preview below is the sending
+              account's only. */}
+          {mintRecipientLine ? (
+            <Text accessibilityLabel={bridgeSpokenText(mintRecipientLine)} style={[styles.hint, { color: theme.text }]}>
+              {mintRecipientLine}
             </Text>
           ) : null}
           <Row label={t('bridge.row.maxFeeMint', { symbol })} value={`${exact18(quote.q.fee)} ${symbol}`} theme={theme} />

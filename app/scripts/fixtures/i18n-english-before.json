@@ -1,6 +1,6 @@
 {
  "base": "c5baff6",
- "about": "The English each migrated string-table entry had in the app at commit c5baff6, before the localisation groundwork (phase 22 item 6). Generated from that checkout: \"literal\" entries were found as a string literal, a folded string concatenation or a JSX text (whitespace collapsed as JSX does) at the places listed; \"template\" entries have their static parts (the text between placeholders) found in that order in a template literal, a string concatenation or a JSX element; \"composite\" entries were assembled from several pieces, described with their place; \"new\" entries did not exist (Settings → Language). scripts/check-i18n.mjs compares app/src/i18n/en.ts with this file. \"changed\" entries are migrated entries whose English was reworded on purpose after the migration: \"before\" is the text at c5baff6 (equal to the entry's own record above), \"en\" the text now, \"why\" the reason; the \"new\" list also holds the ids added since (the Settings → Language note on shared texts and the passphrase forms of the app-lock notes, phase 22 polish). Phase 23 item 8 (the second localisation pass): entries carrying \"base\": \"5cb4601\" were located the same way in the checkout of commit 5cb4601, where the screens they come from stood when they were migrated (the base above applies to every entry without one). Phase 23 item 8 (the third localisation pass): entries carrying \"base\": \"6a1d2bb\" were located the same way in the checkout of commit 6a1d2bb (Bridge, Multisig and the rest of Home). Phase 23 item 8 (the fourth localisation pass): entries carrying \"base\": \"a9998cc\" were located the same way in the checkout of commit a9998cc (the sentences built inside the wallet modules). Phase 23 item 8 (the fifth localisation pass): entries carrying \"base\": \"337c60c\" were located the same way in the checkout of commit 337c60c (the Settings endpoint tag and its fallback note, which the fourth pass had left for the log-window fix).",
+ "about": "The English each migrated string-table entry had in the app at commit c5baff6, before the localisation groundwork (phase 22 item 6). Generated from that checkout: \"literal\" entries were found as a string literal, a folded string concatenation or a JSX text (whitespace collapsed as JSX does) at the places listed; \"template\" entries have their static parts (the text between placeholders) found in that order in a template literal, a string concatenation or a JSX element; \"composite\" entries were assembled from several pieces, described with their place; \"new\" entries did not exist (Settings → Language). scripts/check-i18n.mjs compares app/src/i18n/en.ts with this file. \"changed\" entries are migrated entries whose English was reworded on purpose after the migration: \"before\" is the text at c5baff6 (equal to the entry's own record above), \"en\" the text now, \"why\" the reason; the \"new\" list also holds the ids added since (the Settings → Language note on shared texts and the passphrase forms of the app-lock notes, phase 22 polish). Phase 23 item 8 (the second localisation pass): entries carrying \"base\": \"5cb4601\" were located the same way in the checkout of commit 5cb4601, where the screens they come from stood when they were migrated (the base above applies to every entry without one). Phase 23 item 8 (the third localisation pass): entries carrying \"base\": \"6a1d2bb\" were located the same way in the checkout of commit 6a1d2bb (Bridge, Multisig and the rest of Home). Phase 23 item 8 (the fourth localisation pass): entries carrying \"base\": \"a9998cc\" were located the same way in the checkout of commit a9998cc (the sentences built inside the wallet modules). Phase 23 item 8 (the fifth localisation pass): entries carrying \"base\": \"337c60c\" were located the same way in the checkout of commit 337c60c (the Settings endpoint tag and its fallback note, which the fourth pass had left for the log-window fix). Phase 28 item 5 (the Spanish gaps of passes p27-emu1 and p27-emu2): entries carrying \"base\": \"df6926b\" were located the same way in the checkout of commit df6926b (the spending limits, the device check's cancel text, the preview's and the risk card's own lines, the Solana token layer's app-built sentences, Home's Solana lines, the coin form of the Send recipient placeholder and the Solana devnet switch).",
  "literal": {
   "common.cancel": {
    "en": "Cancel",
@@ -8194,6 +8194,617 @@
     "src/screens/SettingsScreen.tsx:253 literal"
    ],
    "base": "337c60c"
+  },
+  "limits.window.wholeNumber": {
+   "en": "Enter the window as a whole number.",
+   "where": [
+    "src/wallet/spending-policy.ts:405 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.window.range": {
+   "en": "The window must be between 1 minute and 366 days.",
+   "where": [
+    "src/wallet/spending-policy.ts:409 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.preview.askAnyway": {
+   "en": "Tapping Send will ask whether to send anyway.",
+   "where": [
+    "src/wallet/spending-policy.ts:1406 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.preview.stopped": {
+   "en": "Tapping Send will stop it; raise or remove the limit first.",
+   "where": [
+    "src/wallet/spending-policy.ts:1407 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.blockTitle": {
+   "en": "Over your spending limit",
+   "where": [
+    "src/wallet/spending-policy.ts:176 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.unreadable.title": {
+   "en": "Spending limits could not be checked",
+   "where": [
+    "src/wallet/spending-policy.ts:177 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.unreadable.message": {
+   "en": "Your spending limits could not be read, so this app did not sign anything. Try again; if it keeps happening, open Settings → Spending limits (this app only) and reset them.",
+   "where": [
+    "src/wallet/spending-policy.ts:179 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.override.allowed": {
+   "en": "This limit was set up to allow “Send anyway”. Choosing it still asks for the same device check (fingerprint, face or passcode) as every send.",
+   "where": [
+    "src/wallet/spending-policy.ts:182 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.override.off": {
+   "en": "To send it, raise or remove the limit in Settings → Spending limits (this app only).",
+   "where": [
+    "src/wallet/spending-policy.ts:185 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.quoteBasis": {
+   "en": "The balance-change preview was not available, so only the amounts this app could read from the transaction itself were counted; tokens a contract call might move were not.",
+   "where": [
+    "src/wallet/spending-policy.ts:187 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.reviewChecked": {
+   "en": "Checked against this send when you confirm.",
+   "where": [
+    "src/wallet/spending-policy.ts:189 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.notCountedBefore": {
+   "en": "Sends made before a limit existed are not counted.",
+   "where": [
+    "src/wallet/spending-policy.ts:190 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.screenExplainer": {
+   "en": "A limit covers what leaves this account on this network: your own address and its smart account. Amounts come from the balance-change preview when the network supports it, otherwise from the transaction itself. Network fees count only if you switch that on for the network’s own coin. Only sends made in this app while a limit exists are counted. Bitcoin and Dogecoin are not covered; Solana tokens have their own section below.",
+   "where": [
+    "src/wallet/spending-policy.ts:165 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.noOnchain": {
+   "en": "Limits enforced by the blockchain are not offered: no audited module that works with this wallet’s smart accounts exists today, and the account’s own key could bypass one anyway.",
+   "where": [
+    "src/wallet/spending-policy.ts:173 literal"
+   ],
+   "base": "df6926b"
+  },
+  "common.ok": {
+   "en": "OK",
+   "where": [
+    "src/components/SpendingPolicyViews.tsx:90 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.sendAnyway": {
+   "en": "Send anyway",
+   "where": [
+    "src/components/SpendingPolicyViews.tsx:94 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.reset.title": {
+   "en": "Reset spending limits?",
+   "where": [
+    "src/screens/SpendingLimitsScreen.tsx:300 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.reset.body": {
+   "en": "The saved spending limits or their record could not be read. Resetting deletes every limit and every recorded send on all accounts and networks. Until then, this app does not sign sends from accounts it cannot check.",
+   "where": [
+    "src/screens/SpendingLimitsScreen.tsx:301 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.noAccount": {
+   "en": "No Ethereum account is loaded.",
+   "where": [
+    "src/screens/SpendingLimitsScreen.tsx:332 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.damaged": {
+   "en": "The saved spending limits or their record could not be read. Until they are reset, this app does not sign sends from an account and network it cannot check.",
+   "where": [
+    "src/screens/SpendingLimitsScreen.tsx:355 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.reset.button": {
+   "en": "Reset spending limits",
+   "where": [
+    "src/screens/SpendingLimitsScreen.tsx:358 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.none": {
+   "en": "No spending limits for this account on this network.",
+   "where": [
+    "src/screens/SpendingLimitsScreen.tsx:365 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.overrideOn": {
+   "en": "“Send anyway” is allowed (after your device check).",
+   "where": [
+    "src/screens/SpendingLimitsScreen.tsx:380 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.overrideOff": {
+   "en": "No “Send anyway”: sends over the limit are refused.",
+   "where": [
+    "src/screens/SpendingLimitsScreen.tsx:381 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.editTitle": {
+   "en": "Edit limit",
+   "where": [
+    "src/screens/SpendingLimitsScreen.tsx:405 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.newTitle": {
+   "en": "New limit",
+   "where": [
+    "src/screens/SpendingLimitsScreen.tsx:405 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.unit.minutes": {
+   "en": "minutes",
+   "where": [
+    "src/screens/SpendingLimitsScreen.tsx:55 literal",
+    "src/screens/SpendingLimitsScreen.tsx:194 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.unit.hours": {
+   "en": "hours",
+   "where": [
+    "src/screens/SpendingLimitsScreen.tsx:55 literal",
+    "src/screens/SpendingLimitsScreen.tsx:95 literal",
+    "src/screens/SpendingLimitsScreen.tsx:169 literal",
+    "src/screens/SpendingLimitsScreen.tsx:191 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.unit.days": {
+   "en": "days",
+   "where": [
+    "src/screens/SpendingLimitsScreen.tsx:55 literal",
+    "src/screens/SpendingLimitsScreen.tsx:188 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.number": {
+   "en": "Number",
+   "where": [
+    "src/screens/SpendingLimitsScreen.tsx:471 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.customHint": {
+   "en": "Between 1 minute and 366 days. The window rolls: a send counts until this much time has passed since it was sent.",
+   "where": [
+    "src/screens/SpendingLimitsScreen.tsx:488 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.overrideSwitch.label": {
+   "en": "Allow Send anyway when this limit is reached",
+   "where": [
+    "src/screens/SpendingLimitsScreen.tsx:502 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.overrideSwitch.text": {
+   "en": "Allow “Send anyway” when this limit is reached (still asks for your device check). Off: sends over the limit are refused.",
+   "where": [
+    "src/screens/SpendingLimitsScreen.tsx:505 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.feesSwitch.label": {
+   "en": "Count network fees in this limit",
+   "where": [
+    "src/screens/SpendingLimitsScreen.tsx:514 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.feesSwitch.text": {
+   "en": "Count network fees too (the worst-case fee of each send). Off: only amounts sent count.",
+   "where": [
+    "src/screens/SpendingLimitsScreen.tsx:517 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.saveChanges": {
+   "en": "Save changes",
+   "where": [
+    "src/screens/SpendingLimitsScreen.tsx:526 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.add": {
+   "en": "Add a spending limit",
+   "where": [
+    "src/screens/SpendingLimitsScreen.tsx:534 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.elsewhere.title": {
+   "en": "Limits elsewhere",
+   "where": [
+    "src/screens/SpendingLimitsScreen.tsx:547 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.elsewhere.hint": {
+   "en": "Switch to that account and network to see or change them.",
+   "where": [
+    "src/screens/SpendingLimitsScreen.tsx:556 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.capNumber": {
+   "en": "Enter the limit as a number.",
+   "where": [
+    "src/screens/SpendingLimitsScreen.tsx:209 literal"
+   ],
+   "base": "df6926b"
+  },
+  "limits.chooseWindow": {
+   "en": "Choose a time window.",
+   "where": [
+    "src/screens/SpendingLimitsScreen.tsx:220 literal"
+   ],
+   "base": "df6926b"
+  },
+  "auth.cancelled": {
+   "en": "Authentication cancelled.",
+   "where": [
+    "src/wallet/biometric.ts:100 literal",
+    "src/wallet/biometric.ts:125 literal"
+   ],
+   "base": "df6926b"
+  },
+  "auth.failed": {
+   "en": "Authentication failed.",
+   "where": [
+    "src/wallet/biometric.ts:131 literal"
+   ],
+   "base": "df6926b"
+  },
+  "send.passkeyExpired": {
+   "en": "Passkey session expired; go back and review again.",
+   "where": [
+    "src/screens/SendScreen.tsx:1653 literal"
+   ],
+   "base": "df6926b"
+  },
+  "preview.title": {
+   "en": "Balance changes (preview)",
+   "where": [
+    "src/wallet/simulation.ts:47 literal"
+   ],
+   "base": "df6926b"
+  },
+  "preview.unsupported": {
+   "en": "Balance-change preview unavailable: this RPC endpoint does not support eth_simulateV1.",
+   "where": [
+    "src/wallet/simulation.ts:49 literal"
+   ],
+   "base": "df6926b"
+  },
+  "preview.malformed": {
+   "en": "Balance-change preview unavailable: this RPC endpoint returned an unrecognized eth_simulateV1 response.",
+   "where": [
+    "src/wallet/simulation.ts:51 literal"
+   ],
+   "base": "df6926b"
+  },
+  "preview.noEndpoint": {
+   "en": "Balance-change preview unavailable: no RPC endpoint is configured for this network.",
+   "where": [
+    "src/wallet/simulation.ts:53 literal"
+   ],
+   "base": "df6926b"
+  },
+  "preview.noChanges": {
+   "en": "No balance changes for your address, apart from the network fee.",
+   "where": [
+    "src/wallet/simulation.ts:54 literal"
+   ],
+   "base": "df6926b"
+  },
+  "preview.footnote": {
+   "en": "Simulated against the latest block with eth_simulateV1. This is a preview, not a guarantee: balances, prices and contract state can change before the transaction is included. The network fee is shown separately and is not part of this list.",
+   "where": [
+    "src/wallet/simulation.ts:56 literal"
+   ],
+   "base": "df6926b"
+  },
+  "preview.aaNote": {
+   "en": "Simulated as a direct call from your smart account. The gas the smart account pays through the EntryPoint is shown separately above and is not part of this list.",
+   "where": [
+    "src/wallet/simulation.ts:60 literal"
+   ],
+   "base": "df6926b"
+  },
+  "preview.unreachable": {
+   "en": "Balance-change preview unavailable: the RPC endpoint this quote came from did not answer. Try again, or go back and review again for a fresh quote.",
+   "where": [
+    "src/wallet/simulation.ts:86 literal"
+   ],
+   "base": "df6926b"
+  },
+  "preview.skippedOne": {
+   "en": "1 token event used a non-standard format and is not shown, so this preview may be incomplete.",
+   "where": [
+    "src/wallet/simulation.ts:65 literal"
+   ],
+   "base": "df6926b"
+  },
+  "preview.simulating": {
+   "en": "Simulating…",
+   "where": [
+    "src/components/BalanceChangePreview.tsx:150 literal"
+   ],
+   "base": "df6926b"
+  },
+  "preview.retryLabel": {
+   "en": "Try the balance-change preview again",
+   "where": [
+    "src/components/BalanceChangePreview.tsx:160 literal"
+   ],
+   "base": "df6926b"
+  },
+  "risk.title": {
+   "en": "Risk checks",
+   "where": [
+    "src/components/RiskWarnings.tsx:13 literal"
+   ],
+   "base": "df6926b"
+  },
+  "risk.footnote": {
+   "en": "Checked with public on-chain data only. No warning here does not mean a transaction is safe.",
+   "where": [
+    "src/components/RiskWarnings.tsx:15 literal"
+   ],
+   "base": "df6926b"
+  },
+  "risk.running": {
+   "en": "Running risk checks…",
+   "where": [
+    "src/components/RiskWarnings.tsx:165 literal"
+   ],
+   "base": "df6926b"
+  },
+  "spl.manage.balanceUnread": {
+   "en": "Balance: could not be read just now.",
+   "where": [
+    "src/wallet/spl-tokens.ts:103 literal"
+   ],
+   "base": "df6926b"
+  },
+  "spl.max.decimalsChanged": {
+   "en": "Max is not available: the mint now reports other decimals than were recorded when this token was tracked. Remove the token and track it again.",
+   "where": [
+    "src/wallet/spl-tokens.ts:465 literal"
+   ],
+   "base": "df6926b"
+  },
+  "spl.max.unread": {
+   "en": "Max could not read this account’s token balance just now. Type the amount, or try Max again.",
+   "where": [
+    "src/wallet/spl-tokens.ts:467 literal"
+   ],
+   "base": "df6926b"
+  },
+  "spl.row.from": {
+   "en": "From",
+   "where": [
+    "src/wallet/spl-tokens.ts:707 literal"
+   ],
+   "base": "df6926b"
+  },
+  "spl.row.issuerFee": {
+   "en": "Issuer’s transfer fee (withheld from the amount)",
+   "where": [
+    "src/wallet/spl-tokens.ts:712 literal"
+   ],
+   "base": "df6926b"
+  },
+  "spl.row.recipientReceives": {
+   "en": "Recipient receives",
+   "where": [
+    "src/wallet/spl-tokens.ts:713 literal"
+   ],
+   "base": "df6926b"
+  },
+  "spl.row.rent": {
+   "en": "Rent for the recipient’s new token account (paid by you)",
+   "where": [
+    "src/wallet/spl-tokens.ts:717 literal"
+   ],
+   "base": "df6926b"
+  },
+  "spl.row.mint": {
+   "en": "Mint",
+   "where": [
+    "src/wallet/spl-tokens.ts:720 literal"
+   ],
+   "base": "df6926b"
+  },
+  "spl.row.program": {
+   "en": "Token program",
+   "where": [
+    "src/wallet/spl-tokens.ts:721 literal"
+   ],
+   "base": "df6926b"
+  },
+  "spl.row.yourAccount": {
+   "en": "Your token account",
+   "where": [
+    "src/wallet/spl-tokens.ts:722 literal"
+   ],
+   "base": "df6926b"
+  },
+  "spl.row.recipientAccount": {
+   "en": "Recipient’s token account",
+   "where": [
+    "src/wallet/spl-tokens.ts:724 literal"
+   ],
+   "base": "df6926b"
+  },
+  "spl.devnetHint": {
+   "en": "Turn on Solana devnet in Settings → Developer to send Solana tokens.",
+   "where": [
+    "src/wallet/spl-tokens.ts:144 literal"
+   ],
+   "base": "df6926b"
+  },
+  "spl.mintInvalid": {
+   "en": "A mint address is a Solana address: base58 text that decodes to 32 bytes. This text is not one.",
+   "where": [
+    "src/wallet/spl-tokens.ts:174 literal"
+   ],
+   "base": "df6926b"
+  },
+  "spl.send.noEndpoint": {
+   "en": "No Solana endpoint is configured. Set one in Settings first.",
+   "where": [
+    "src/screens/SolanaTokenSendScreen.tsx:116 literal"
+   ],
+   "base": "df6926b"
+  },
+  "spl.send.noAddress": {
+   "en": "The active account has no Solana address in this wallet.",
+   "where": [
+    "src/screens/SolanaTokenSendScreen.tsx:118 literal"
+   ],
+   "base": "df6926b"
+  },
+  "spl.send.notTracked": {
+   "en": "This token is not on the tracked list of the Solana network in use now. Track it on the Solana tokens screen first.",
+   "where": [
+    "src/screens/SolanaTokenSendScreen.tsx:122 literal"
+   ],
+   "base": "df6926b"
+  },
+  "spl.send.notSent": {
+   "en": "Not sent.",
+   "where": [
+    "src/screens/SolanaTokenSendScreen.tsx:218 literal"
+   ],
+   "base": "df6926b"
+  },
+  "spl.send.signature": {
+   "en": "Transaction signature",
+   "where": [
+    "src/screens/SolanaTokenSendScreen.tsx:229 literal"
+   ],
+   "base": "df6926b"
+  },
+  "spl.send.explorer": {
+   "en": "Look the signature up in a Solana block explorer.",
+   "where": [
+    "src/screens/SolanaTokenSendScreen.tsx:236 literal"
+   ],
+   "base": "df6926b"
+  },
+  "spl.send.noExplorer": {
+   "en": "No devnet block explorer link has been verified for this wallet; the signature above identifies the transaction.",
+   "where": [
+    "src/screens/SolanaTokenSendScreen.tsx:237 literal"
+   ],
+   "base": "df6926b"
+  },
+  "spl.send.recipientLabel": {
+   "en": "Recipient (Solana address)",
+   "where": [
+    "src/screens/SolanaTokenSendScreen.tsx:298 literal",
+    "src/screens/SolanaTokenSendScreen.tsx:299 literal",
+    "src/screens/SolanaTokenSendScreen.tsx:302 literal"
+   ],
+   "base": "df6926b"
+  },
+  "spl.send.base58": {
+   "en": "Base58 text",
+   "where": [
+    "src/screens/SolanaTokenSendScreen.tsx:305 literal"
+   ],
+   "base": "df6926b"
+  },
+  "home.solanaDevnet.cardLine": {
+   "en": "Solana devnet: test SOL, no value",
+   "where": [
+    "src/screens/HomeScreen.tsx:375 literal"
+   ],
+   "base": "df6926b"
+  },
+  "home.solanaTokens.manage": {
+   "en": "Manage Solana tokens",
+   "where": [
+    "src/screens/HomeScreen.tsx:999 literal",
+    "src/screens/HomeScreen.tsx:1004 literal"
+   ],
+   "base": "df6926b"
+  },
+  "home.solanaTokens.manageHint": {
+   "en": "Opens the list of tracked Solana tokens",
+   "where": [
+    "src/screens/HomeScreen.tsx:1000 literal"
+   ],
+   "base": "df6926b"
+  },
+  "settings.solanaDevnet.label": {
+   "en": "Use Solana devnet",
+   "where": [
+    "src/screens/SettingsScreen.tsx:1948 literal"
+   ],
+   "base": "df6926b"
+  },
+  "settings.solanaDevnet.offNote": {
+   "en": "Off: the Solana row is on Solana mainnet. On: the Solana row, its sends, its history and its tracked tokens use Solana devnet, where SOL and tokens have no value. This choice is separate from the Ethereum network above. Solana token sends are offered only on devnet.",
+   "where": [
+    "src/screens/SettingsScreen.tsx:1950 literal"
+   ],
+   "base": "df6926b"
+  },
+  "settings.solanaDevnet.onNote": {
+   "en": "Solana devnet is on: the Solana row shows test SOL and devnet tokens, which have no value. Solana token sends are offered here (test networks only). Turn it off to return the Solana row to mainnet.",
+   "where": [
+    "src/screens/SettingsScreen.tsx:1954 literal"
+   ],
+   "base": "df6926b"
   }
  },
  "template": {
@@ -12161,6 +12772,326 @@
     ") is unreachable right now, so a fallback default is in use. The primary is tried again on the next app launch or whenever the fallback fails."
    ],
    "base": "337c60c"
+  },
+  "limits.spent": {
+   "en": "Spent in the current window: {spent} of {cap} {symbol}",
+   "where": "src/wallet/spending-policy.ts:1459 expr",
+   "old": [
+    "Spent in the current window: ",
+    " of ",
+    " ",
+    ""
+   ],
+   "base": "df6926b"
+  },
+  "limits.summary": {
+   "en": "{amount} {symbol} per {window}",
+   "where": "src/wallet/spending-policy.ts:1464 expr",
+   "old": [
+    "",
+    " ",
+    " per ",
+    ""
+   ],
+   "base": "df6926b"
+  },
+  "limits.checkFailed": {
+   "en": "Nothing was signed. {reason}",
+   "where": "src/components/SpendingPolicyViews.tsx:71 expr",
+   "old": [
+    "Nothing was signed. ",
+    ""
+   ],
+   "base": "df6926b"
+  },
+  "spoken.warning": {
+   "en": "Warning: {text}",
+   "where": "src/components/SpendingPolicyViews.tsx:221 expr",
+   "old": [
+    "Warning: ",
+    ""
+   ],
+   "base": "df6926b"
+  },
+  "spoken.note": {
+   "en": "Note: {text}",
+   "where": "src/components/RiskWarnings.tsx:209 expr",
+   "old": [
+    "Note: ",
+    ""
+   ],
+   "base": "df6926b"
+  },
+  "limits.remove.body": {
+   "en": "{summary}. Sends of {symbol} from this account on {network} will no longer be checked against it, and its spending record is deleted.",
+   "where": "src/screens/SpendingLimitsScreen.tsx:271 expr",
+   "old": [
+    "",
+    ". Sends of ",
+    " from this account on ",
+    " will no longer be checked against it, and its spending record is deleted."
+   ],
+   "base": "df6926b"
+  },
+  "limits.section.evm": {
+   "en": "Limits on {network}",
+   "where": "src/screens/SpendingLimitsScreen.tsx:362 jsx",
+   "old": [
+    "Limits on ",
+    ""
+   ],
+   "base": "df6926b"
+  },
+  "limits.tokenContract": {
+   "en": "Token contract {token}",
+   "where": "src/screens/SpendingLimitsScreen.tsx:376 jsx",
+   "old": [
+    "Token contract ",
+    ""
+   ],
+   "base": "df6926b"
+  },
+  "limits.customLength": {
+   "en": "Custom window length in {unit}",
+   "where": "src/screens/SpendingLimitsScreen.tsx:462 expr",
+   "old": [
+    "Custom window length in ",
+    ""
+   ],
+   "base": "df6926b"
+  },
+  "auth.failedCode": {
+   "en": "Authentication failed ({code}).",
+   "where": "src/wallet/biometric.ts:126 expr",
+   "old": [
+    "Authentication failed (",
+    ")."
+   ],
+   "base": "df6926b"
+  },
+  "preview.skippedMany": {
+   "en": "{count} token events used a non-standard format and are not shown, so this preview may be incomplete.",
+   "where": "src/wallet/simulation.ts:66 expr",
+   "old": [
+    "",
+    " token events used a non-standard format and are not shown, so this preview may be incomplete."
+   ],
+   "base": "df6926b"
+  },
+  "preview.reverted": {
+   "en": "The simulation reverts ({reason}). If sent anyway, no balances would change apart from the network fee.",
+   "where": "src/wallet/simulation.ts:71 expr",
+   "old": [
+    "The simulation reverts (",
+    "). If sent anyway, no balances would change apart from the network fee."
+   ],
+   "base": "df6926b"
+  },
+  "preview.failed": {
+   "en": "Balance-change preview failed: {message}",
+   "where": "src/wallet/simulation.ts:77 expr",
+   "old": [
+    "Balance-change preview failed: ",
+    ""
+   ],
+   "base": "df6926b"
+  },
+  "risk.ens.ownResolver": {
+   "en": "This transaction goes to your own ENS resolver on {network} ({address}): the address ENS’s pinned VerifiableFactory derives for the name’s owner {owner}.",
+   "where": "src/wallet/risk.ts:734 expr",
+   "old": [
+    "This transaction goes to your own ENS resolver on ",
+    " (",
+    "): the address ENS’s pinned VerifiableFactory derives for the name’s owner ",
+    "."
+   ],
+   "base": "df6926b"
+  },
+  "risk.ens.pinned": {
+   "en": "This transaction goes to ENS’s {name} on {network} ({address}), pinned by this wallet from ENS’s published Sepolia deployments.",
+   "where": "src/wallet/risk.ts:739 expr",
+   "old": [
+    "This transaction goes to ENS’s ",
+    " on ",
+    " (",
+    "), pinned by this wallet from ENS’s published Sepolia deployments."
+   ],
+   "base": "df6926b"
+  },
+  "spl.manage.feeSentence": {
+   "en": "Network fees for a token send are paid in {coin}.",
+   "where": "src/wallet/spl-tokens.ts:78 expr",
+   "old": [
+    "Network fees for a token send are paid in ",
+    "."
+   ],
+   "base": "df6926b"
+  },
+  "spl.send.intro": {
+   "en": "Sends {symbol} (mint {mint}) on {network} from your associated token account. The network fee is paid in {coin}; if the recipient does not hold this token yet, this transaction also creates their token account and you pay its rent. Review shows every figure before anything is signed.",
+   "where": "src/wallet/spl-tokens.ts:84 expr",
+   "old": [
+    "Sends ",
+    " (mint ",
+    ") on ",
+    " from your associated token account. The network fee is paid in ",
+    "; if the recipient does not hold this token yet, this transaction also creates their token account and you pay its rent. Review shows every figure before anything is signed."
+   ],
+   "base": "df6926b"
+  },
+  "spl.manage.balance": {
+   "en": "Balance: {amount} {symbol}",
+   "where": "src/wallet/spl-tokens.ts:104 expr",
+   "old": [
+    "Balance: ",
+    " ",
+    ""
+   ],
+   "base": "df6926b"
+  },
+  "spl.transferFee.rate": {
+   "en": "{bp} basis points ({max} max)",
+   "where": "src/wallet/spl-tokens.ts:215 expr",
+   "old": [
+    "",
+    " basis points (",
+    " max)"
+   ],
+   "base": "df6926b"
+  },
+  "spl.transferFee.same": {
+   "en": "Transfer fee: {rate} — shown again on every send.",
+   "where": "src/wallet/spl-tokens.ts:220 expr",
+   "old": [
+    "Transfer fee: ",
+    " — shown again on every send."
+   ],
+   "base": "df6926b"
+  },
+  "spl.transferFee.changed": {
+   "en": "Transfer fee: {older} before epoch {epoch}, then {newer} — shown again on every send.",
+   "where": "src/wallet/spl-tokens.ts:221 expr",
+   "old": [
+    "Transfer fee: ",
+    " before epoch ",
+    ", then ",
+    " — shown again on every send."
+   ],
+   "base": "df6926b"
+  },
+  "spl.row.withheld": {
+   "en": "{amount} {symbol} is withheld in this token account as the issuer’s transfer fee; it is not yours to send.",
+   "where": "src/wallet/spl-tokens.ts:515 expr",
+   "old": [
+    "",
+    " ",
+    " is withheld in this token account as the issuer’s transfer fee; it is not yours to send."
+   ],
+   "base": "df6926b"
+  },
+  "spl.row.cannotSend": {
+   "en": "Cannot be sent from this wallet: {refusal}",
+   "where": "src/wallet/spl-tokens.ts:528 expr",
+   "old": [
+    "Cannot be sent from this wallet: ",
+    ""
+   ],
+   "base": "df6926b"
+  },
+  "spl.row.decimalsChanged": {
+   "en": "The mint now reports {actual} decimals, not the {stored} recorded when this token was tracked. The balance uses the mint’s figure; a send is refused until you remove the token and track it again.",
+   "where": "src/wallet/spl-tokens.ts:534 expr",
+   "old": [
+    "The mint now reports ",
+    " decimals, not the ",
+    " recorded when this token was tracked. The balance uses the mint’s figure; a send is refused until you remove the token and track it again."
+   ],
+   "base": "df6926b"
+  },
+  "spl.send.feeNote": {
+   "en": "The issuer charges a transfer fee of {bp} basis points (at most {max} per transfer), taken out of the amount the recipient receives. The issuer can change the fee; a change takes effect two epochs after it is made.",
+   "where": "src/wallet/spl-tokens.ts:679 expr",
+   "old": [
+    "The issuer charges a transfer fee of ",
+    " basis points (at most ",
+    " per transfer), taken out of the amount the recipient receives. The issuer can change the fee; a change takes effect two epochs after it is made."
+   ],
+   "base": "df6926b"
+  },
+  "spl.row.totalCoin": {
+   "en": "Total {coin} leaving your account",
+   "where": "src/wallet/spl-tokens.ts:719 expr",
+   "old": [
+    "Total ",
+    " leaving your account"
+   ],
+   "base": "df6926b"
+  },
+  "spl.row.created": {
+   "en": "{account} (created by this transaction)",
+   "where": "src/wallet/spl-tokens.ts:725 expr",
+   "old": [
+    "",
+    " (created by this transaction)"
+   ],
+   "base": "df6926b"
+  },
+  "spl.send.otherNetwork": {
+   "en": "This token belongs to {tokenNetwork}, but the Solana row is on {rowNetwork} now. Switch in Settings → Developer first.",
+   "where": "src/screens/SolanaTokenSendScreen.tsx:123 expr",
+   "old": [
+    "This token belongs to ",
+    ", but the Solana row is on ",
+    " now. Switch in Settings → Developer first."
+   ],
+   "base": "df6926b"
+  },
+  "spl.send.notSentReason": {
+   "en": "Not sent. {reason}",
+   "where": "src/screens/SolanaTokenSendScreen.tsx:218 expr",
+   "old": [
+    "Not sent. ",
+    ""
+   ],
+   "base": "df6926b"
+  },
+  "spl.send.confirmTitle": {
+   "en": "Send {symbol} on {network}",
+   "where": "src/screens/SolanaTokenSendScreen.tsx:250 jsx",
+   "old": [
+    " Send ",
+    " on ",
+    " "
+   ],
+   "base": "df6926b"
+  },
+  "home.solanaToken.subtitle": {
+   "en": "{network} token",
+   "where": "src/screens/HomeScreen.tsx:429 expr",
+   "old": [
+    "",
+    " token"
+   ],
+   "base": "df6926b"
+  },
+  "home.solanaToken.subtitleNamed": {
+   "en": "{name} · {network} token",
+   "where": "src/screens/HomeScreen.tsx:429 expr",
+   "old": [
+    "",
+    " · ",
+    " token"
+   ],
+   "base": "df6926b"
+  },
+  "send.recipient.placeholder.coin": {
+   "en": "{symbol} address",
+   "where": "src/wallet/ens-names.ts:158 expr",
+   "old": [
+    "",
+    " address"
+   ],
+   "base": "df6926b"
   }
  },
  "composite": {
@@ -12771,6 +13702,78 @@
    "where": "src/config/endpoint-probe.ts:661 expr",
    "old": "`default (${choice.index + 1} of ${choice.total}: ${endpointHost(choice.url)}${behind})` with behind = ', behind the chain' (choice.stale === true)",
    "base": "337c60c"
+  },
+  "limits.over": {
+   "en": "This send would go over your spending limit for {symbol}: {cap} {symbol} per {window}. Already spent in this window: {spent} {symbol}; this send: {amount} {symbol}.",
+   "where": "src/wallet/spending-policy.ts composite",
+   "old": "overLimitSentence: `This send would go over your spending limit for ${s}: ${fmt(policy.cap)} ${s} per ` + `${windowLabel(policy.windowSeconds)}. Already spent in this window: ${fmt(entry.spentInWindow)} ${s}; ` + `this send: ${fmt(entry.proposed)} ${s}${policy.countFees ? ' (network fee included)' : ''}.` with policy.countFees false",
+   "base": "df6926b"
+  },
+  "limits.overWithFee": {
+   "en": "This send would go over your spending limit for {symbol}: {cap} {symbol} per {window}. Already spent in this window: {spent} {symbol}; this send: {amount} {symbol} (network fee included).",
+   "where": "src/wallet/spending-policy.ts composite",
+   "old": "overLimitSentence, the same template with policy.countFees true",
+   "base": "df6926b"
+  },
+  "limits.preview.over": {
+   "en": "This send would go over the limit for {symbol} ({cap} {symbol} per {window}): already spent {spent} {symbol}, this send {amount} {symbol}.",
+   "where": "src/wallet/spending-policy.ts composite",
+   "old": "overLimitPreviewLines: `This send would go over the limit for ${s} (${fmt(r.policy.cap)} ${s} per ` + `${windowLabel(r.policy.windowSeconds)}): already spent ${fmt(r.entry.spentInWindow)} ${s}, this send ` + `${fmt(r.entry.proposed)} ${s}${r.policy.countFees ? ' with the network fee' : ''}. ` + (allowOverride ? … : …), the part before the final space with countFees false",
+   "base": "df6926b"
+  },
+  "limits.preview.overWithFee": {
+   "en": "This send would go over the limit for {symbol} ({cap} {symbol} per {window}): already spent {spent} {symbol}, this send {amount} {symbol} with the network fee.",
+   "where": "src/wallet/spending-policy.ts composite",
+   "old": "overLimitPreviewLines, the same part with countFees true",
+   "base": "df6926b"
+  },
+  "limits.feesCounted": {
+   "en": "Network fees are counted.",
+   "where": "src/screens/SpendingLimitsScreen.tsx composite",
+   "old": "SpendingLimitsScreen: ' Network fees are counted.' (a literal with a leading space, appended after the override sentence); the screen now adds the space itself",
+   "base": "df6926b"
+  },
+  "limits.feesNotCounted": {
+   "en": "Network fees are not counted.",
+   "where": "src/screens/SpendingLimitsScreen.tsx composite",
+   "old": "SpendingLimitsScreen: ' Network fees are not counted.' (a literal with a leading space); the screen now adds the space itself",
+   "base": "df6926b"
+  },
+  "limits.elsewhere.one": {
+   "en": "{owner} on {network}: {count} limit",
+   "where": "src/screens/SpendingLimitsScreen.tsx composite",
+   "old": "SpendingLimitsScreen, Limits elsewhere: {owner.slice(0, 6)}…{owner.slice(-4)} on{' '}{network}: {s.count} limit{s.count === 1 ? '' : 's'} with s.count === 1",
+   "base": "df6926b"
+  },
+  "limits.elsewhere.many": {
+   "en": "{owner} on {network}: {count} limits",
+   "where": "src/screens/SpendingLimitsScreen.tsx composite",
+   "old": "SpendingLimitsScreen, Limits elsewhere: the same line with s.count !== 1",
+   "base": "df6926b"
+  },
+  "spl.row.outsideOne": {
+   "en": "Also {amount} {symbol} held outside the associated account ({accounts} other token account), not sendable from here.",
+   "where": "src/wallet/spl-tokens.ts composite",
+   "old": "splOutsideLine: `Also ${amountDisplay} ${symbol} held outside the associated account ` + `(${accounts} other token account${accounts === 1 ? '' : 's'}), not sendable from here.` with accounts === 1",
+   "base": "df6926b"
+  },
+  "spl.row.outsideMany": {
+   "en": "Also {amount} {symbol} held outside the associated account ({accounts} other token accounts), not sendable from here.",
+   "where": "src/wallet/spl-tokens.ts composite",
+   "old": "splOutsideLine, the same template with accounts !== 1",
+   "base": "df6926b"
+  },
+  "spl.row.skippedOne": {
+   "en": "{count} token account returned by the network endpoint failed this wallet’s checks and is not shown.",
+   "where": "src/wallet/spl-tokens.ts composite",
+   "old": "splSkippedLine: `${skipped} token account${skipped === 1 ? '' : 's'} returned by the network endpoint failed this wallet’s checks and ${skipped === 1 ? 'is' : 'are'} not shown.` with skipped === 1",
+   "base": "df6926b"
+  },
+  "spl.row.skippedMany": {
+   "en": "{count} token accounts returned by the network endpoint failed this wallet’s checks and are not shown.",
+   "where": "src/wallet/spl-tokens.ts composite",
+   "old": "splSkippedLine, the same template with skipped !== 1",
+   "base": "df6926b"
   }
  },
  "new": [
@@ -13257,7 +14260,8 @@
   "receive.btcSignet.pending",
   "send.btc.mainnetNote",
   "pnl.btcSignet",
-  "insights.network.btcSignet"
+  "insights.network.btcSignet",
+  "bridge.mint.recipientOther"
  ],
  "changed": {
   "activity.note.privacy": {

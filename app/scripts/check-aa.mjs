@@ -1910,7 +1910,8 @@ await (async () => {
         /await assertQuoteFeesMeetBundlerFloor\(bundle\.bundler, fees\);/.test(read('../src/wallet/passkeys.ts')) &&
         /await assertQuoteFeesMeetBundlerFloor\(args\.bundler, fees\);/.test(read('../src/wallet/recovery.ts')));
     // Mutation: the same predicate on a copy with the check moved after the gate must fail.
-    const gateEnd = "if (!auth.ok) {\n      Alert.alert('Not sent', auth.message);\n      return;\n    }";
+    // Phase 28 item 5: the "Not sent" title goes through the table (tx('Not sent'), English unchanged).
+    const gateEnd = "if (!auth.ok) {\n      Alert.alert(tx('Not sent'), auth.message);\n      return;\n    }";
     const moved = onSend
       .replace('await checkAaQuoteBeforeApproval(preBundle.bundler, quote);', '')
       .replace(gateEnd, `${gateEnd}\n    await checkAaQuoteBeforeApproval(preBundle.bundler, quote);`);

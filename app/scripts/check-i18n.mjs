@@ -104,6 +104,14 @@ import * as PCOST from '../src/wallet/pin-cost.ts';
 import * as PNS from '../src/wallet/pin-native-scrypt.ts';
 import * as EVMC from '../src/config/evm-chain.ts';
 import { PHRASE_UNREADABLE_MESSAGE } from '../src/wallet/storage.ts';
+// Phase 28 item 5 (the Spanish gaps of passes p27-emu1 and p27-emu2) and the p28-emu1 fixes.
+import * as SPP from '../src/wallet/spending-policy.ts';
+import * as SPLT from '../src/wallet/spl-tokens.ts';
+import * as SIMM from '../src/wallet/simulation.ts';
+import * as RISKM from '../src/wallet/risk.ts';
+import * as ENSN from '../src/wallet/ens-names.ts';
+import * as PTX from '../src/wallet/period-text.ts';
+import * as BRM from '../src/wallet/bridge.ts';
 
 // The golden cases below replay dates through config/dates.ts
 // localDateLabel, which labels a timestamp in the LOCAL calendar by design, so
@@ -333,6 +341,9 @@ const P28_PROMPT_NEW = ['coldSign.prePrompt.show', 'coldSign.prePrompt.submit'];
 const BTC_SIGNET_NEW = ['settings.btcSignet.label', 'settings.btcSignet.offNote', 'settings.btcSignet.onNote', 'banner.btcSignet',
   'home.btcSignet.cardLine', 'home.btcSignet.pending', 'home.btcSignet.derive', 'home.btcSignet.deriveFailed', 'receive.btcSignet.pending',
   'send.btc.mainnetNote', 'pnl.btcSignet', 'insights.network.btcSignet'];
+// Pass p28-emu1 finding 3: the CCTP mint confirm's line when the mint pays another account than the one sending it
+// (wallet/bridge.ts bridgeMintRecipientLine); in the phase 28 item 5 block at the end of en.ts / es.ts.
+const P28_FIX_NEW = ['bridge.mint.recipientOther'];
 const NFT_ENS_NEW = ['nft.ens.collection', 'nft.ens.is', 'nft.ens.isUnchecked', 'nft.ens.handover', 'nft.ens.resolver', 'nft.ens.expiry',
   'nft.ens.expired', 'nft.ens.stale', 'nft.ens.reading', 'nft.ens.unread'];
 {
@@ -352,8 +363,8 @@ const NFT_ENS_NEW = ['nft.ens.collection', 'nft.ens.is', 'nft.ens.isUnchecked', 
   // broadcast sentences (an HTTP 5xx or a dropped connection, not a timeout).
   const BROADCAST_OPEN_NEW = ['broadcast.open.title', 'broadcast.tx.open', 'broadcast.tx.openUnlisted', 'broadcast.userop.open',
     'broadcast.userop.openUnlisted', 'broadcast.open'];
-  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the Solana token-send readiness row, the wallet handle\'s, the six open-outcome broadcast sentences, the co-signer card\'s numbered Scan label, the eight period words of the hygiene slice, the four Bridge lines of pass p23-mint, the five lines of the p23-build fixes, the three Bridge lines of pass p23-bridge-recheck and the three navigation-bar lines of pass p23-navbar and the three iOS-pass lines (two iOS reminder notes, the "an" scanner sentence) and the five lines of the Solana-pass fix slice (the Solana devnet banner, the Solana token-fee line, the Solana devnet readiness line, two Max-lowering sentences) and the two smart-account Max-lowering sentences of the trim slice and the devnet form of the Solana token-fee line (pass p24-recheck) and the nine lines of the p24-unblock fixes (the Solana token Send link and its hint, seven Solana Activity sentences) and the hidden-fee word of an Activity row and the four gains-report lines of phase 25 item 3 and the ten ENS name-token lines of pass p25-emu1 and the three pending-list lines of phase 26 item 4 (account removal) and the Dogecoin no-endpoint line of pass p25-emu2 and the Solana spending-limit lines of phase 26 item 3b and the Lend screen\'s lines with its readiness row (phase 26 item 2) and the profit-and-loss devnet sentence of the p26-emu1 fixes and the three lines of the p26-emu2 fixes and the two withheld-fee lines of phase 27 item 1 and the two cold-signing busy lines of phase 28 item 1 and the twelve Bitcoin signet lines of phase 28 item 2',
-    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || SPL_TOKENS_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id) || NAVBAR_FIX_NEW.includes(id) || IOS_FIX_NEW.includes(id) || SOLANA_FIX_NEW.includes(id) || AA_TRIM_NEW.includes(id) || RECHECK_FIX_NEW.includes(id) || UNBLOCK_FIX_NEW.includes(id) || SOLHIST_NEW.includes(id) || GAINS_NEW.includes(id) || NFT_ENS_NEW.includes(id) || PENDING_FORGET_NEW.includes(id) || DOGE_ENDPOINT_NEW.includes(id) || insightsNew(id) || spendingSolNew(id) || lendNew(id) || EMU1_FIX_NEW.includes(id) || EMU2_FIX_NEW.includes(id) || P27_SCREENS_NEW.includes(id) || P27_ACTIVITY_NEW.includes(id) || P28_PROMPT_NEW.includes(id) || BTC_SIGNET_NEW.includes(id)) &&
+  check('the new entries are exactly the Settings → Language ones, the five passphrase forms of the app-lock notes, the cold-aa readiness row, the Solana token-send readiness row, the wallet handle\'s, the six open-outcome broadcast sentences, the co-signer card\'s numbered Scan label, the eight period words of the hygiene slice, the four Bridge lines of pass p23-mint, the five lines of the p23-build fixes, the three Bridge lines of pass p23-bridge-recheck and the three navigation-bar lines of pass p23-navbar and the three iOS-pass lines (two iOS reminder notes, the "an" scanner sentence) and the five lines of the Solana-pass fix slice (the Solana devnet banner, the Solana token-fee line, the Solana devnet readiness line, two Max-lowering sentences) and the two smart-account Max-lowering sentences of the trim slice and the devnet form of the Solana token-fee line (pass p24-recheck) and the nine lines of the p24-unblock fixes (the Solana token Send link and its hint, seven Solana Activity sentences) and the hidden-fee word of an Activity row and the four gains-report lines of phase 25 item 3 and the ten ENS name-token lines of pass p25-emu1 and the three pending-list lines of phase 26 item 4 (account removal) and the Dogecoin no-endpoint line of pass p25-emu2 and the Solana spending-limit lines of phase 26 item 3b and the Lend screen\'s lines with its readiness row (phase 26 item 2) and the profit-and-loss devnet sentence of the p26-emu1 fixes and the three lines of the p26-emu2 fixes and the two withheld-fee lines of phase 27 item 1 and the two cold-signing busy lines of phase 28 item 1 and the twelve Bitcoin signet lines of phase 28 item 2 and the mint confirm\'s other-recipient line of pass p28-emu1',
+    FIXTURE.new.every((id) => id.startsWith('settings.language.') || LOCK_KIND_NEW.includes(id) || COLD_AA_NEW.includes(id) || SPL_TOKENS_NEW.includes(id) || handleNew(id) || BROADCAST_OPEN_NEW.includes(id) || THIRD_PASS_NEW.includes(id) || PERIOD_NEW.includes(id) || BRIDGE_MINT_NEW.includes(id) || BUILD_FIX_NEW.includes(id) || BRIDGE_RECHECK_NEW.includes(id) || NAVBAR_FIX_NEW.includes(id) || IOS_FIX_NEW.includes(id) || SOLANA_FIX_NEW.includes(id) || AA_TRIM_NEW.includes(id) || RECHECK_FIX_NEW.includes(id) || UNBLOCK_FIX_NEW.includes(id) || SOLHIST_NEW.includes(id) || GAINS_NEW.includes(id) || NFT_ENS_NEW.includes(id) || PENDING_FORGET_NEW.includes(id) || DOGE_ENDPOINT_NEW.includes(id) || insightsNew(id) || spendingSolNew(id) || lendNew(id) || EMU1_FIX_NEW.includes(id) || EMU2_FIX_NEW.includes(id) || P27_SCREENS_NEW.includes(id) || P27_ACTIVITY_NEW.includes(id) || P28_PROMPT_NEW.includes(id) || BTC_SIGNET_NEW.includes(id) || P28_FIX_NEW.includes(id)) &&
       BUILD_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && BRIDGE_RECHECK_NEW.every((id) => FIXTURE.new.includes(id)) &&
       LOCK_KIND_NEW.every((id) => FIXTURE.new.includes(id)) && COLD_AA_NEW.every((id) => FIXTURE.new.includes(id)) && SPL_TOKENS_NEW.every((id) => FIXTURE.new.includes(id)) &&
       BROADCAST_OPEN_NEW.every((id) => FIXTURE.new.includes(id)) && THIRD_PASS_NEW.every((id) => FIXTURE.new.includes(id)) && PERIOD_NEW.every((id) => FIXTURE.new.includes(id)) &&
@@ -363,7 +374,7 @@ const NFT_ENS_NEW = ['nft.ens.collection', 'nft.ens.is', 'nft.ens.isUnchecked', 
       SOLHIST_NEW.every((id) => FIXTURE.new.includes(id)) && GAINS_NEW.every((id) => FIXTURE.new.includes(id)) &&
       NFT_ENS_NEW.every((id) => FIXTURE.new.includes(id)) && PENDING_FORGET_NEW.every((id) => FIXTURE.new.includes(id)) && DOGE_ENDPOINT_NEW.every((id) => FIXTURE.new.includes(id)) &&
       EMU1_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && EMU2_FIX_NEW.every((id) => FIXTURE.new.includes(id)) && P27_SCREENS_NEW.every((id) => FIXTURE.new.includes(id)) &&
-      P27_ACTIVITY_NEW.every((id) => FIXTURE.new.includes(id)) && P28_PROMPT_NEW.every((id) => FIXTURE.new.includes(id)) && BTC_SIGNET_NEW.every((id) => FIXTURE.new.includes(id)) &&
+      P27_ACTIVITY_NEW.every((id) => FIXTURE.new.includes(id)) && P28_PROMPT_NEW.every((id) => FIXTURE.new.includes(id)) && BTC_SIGNET_NEW.every((id) => FIXTURE.new.includes(id)) && P28_FIX_NEW.every((id) => FIXTURE.new.includes(id)) &&
       Object.keys(en).filter(insightsNew).length > 0 && Object.keys(en).filter(insightsNew).every((id) => FIXTURE.new.includes(id)) &&
       Object.keys(en).filter(spendingSolNew).length > 0 && Object.keys(en).filter(spendingSolNew).every((id) => FIXTURE.new.includes(id)) &&
       Object.keys(en).filter(lendNew).length > 0 && Object.keys(en).filter(lendNew).every((id) => FIXTURE.new.includes(id)));
@@ -824,6 +835,37 @@ function oldSpoken(visible) {
       EP.describeDefaultChoice({ url: 'https://eth-sepolia-testnet.api.pocket.network/', index: 1, total: 4, healthy: true, primaryUnreachable: true })],
     'settings.endpoint.tag.choiceBehind': [`default (${2 + 1} of ${4}: ${'0xrpc.io'}${true ? ', behind the chain' : ''})`,
       EP.describeDefaultChoice({ url: 'https://0xrpc.io/sep', index: 2, total: 4, healthy: false, primaryUnreachable: true, stale: true })],
+    // Phase 28 item 5 (base df6926b): the over-limit sentences, the outside / skipped lines and the Limits-elsewhere line,
+    // each assembled exactly as the df6926b code built it, beside the migrated function's answer (English).
+    ...(() => {
+      const s = 'USDC';
+      const cap = '1,234.56789';
+      const w = '7 days';
+      const spent = '0.5';
+      const amt = '2';
+      const pol = (countFees, allowOverride) => ({ id: 'p', token: '0x' + '1'.repeat(40), symbol: s, decimals: 6, cap: 1234567890n, windowSeconds: 604800, allowOverride, countFees });
+      const entry = { token: '0x' + '1'.repeat(40), cap: 1234567890n, spentInWindow: 500000n, proposed: 2000000n, remaining: 0n, exceeds: true };
+      const blocked = (p) => ({ status: 'blocked', results: [{ policy: p, entry }], decision: { allowed: false, enforcement: 'client-side', entries: [entry] }, basis: 'quote', outflows: [], overrideAllowed: false, title: null, message: null, note: null });
+      const oldOver = (countFees) => `This send would go over your spending limit for ${s}: ${cap} ${s} per ` + `${w}. Already spent in this window: ${spent} ${s}; ` + `this send: ${amt} ${s}${countFees ? ' (network fee included)' : ''}.`;
+      const oldPreview = (countFees) => `This send would go over the limit for ${s} (${cap} ${s} per ` + `${w}): already spent ${spent} ${s}, this send ` + `${amt} ${s}${countFees ? ' with the network fee' : ''}. `;
+      const oldOutside = (accounts) => `Also ${'0.25'} ${'USDC'} held outside the associated account ` + `(${accounts} other token account${accounts === 1 ? '' : 's'}), not sendable from here.`;
+      const oldSkipped = (skipped) => `${skipped} token account${skipped === 1 ? '' : 's'} returned by the network endpoint failed this wallet’s checks and ${skipped === 1 ? 'is' : 'are'} not shown.`;
+      const oldElsewhere = (count) => `${'0x1234'}…${'abcd'} on${' '}${'Base Sepolia'}: ${count} limit${count === 1 ? '' : 's'}`;
+      return {
+        'limits.over': [oldOver(false), SPP.overLimitSentence(pol(false, false), entry)],
+        'limits.overWithFee': [oldOver(true), SPP.overLimitSentence(pol(true, false), entry)],
+        'limits.preview.over': [oldPreview(false) + 'Tapping Send will stop it; raise or remove the limit first.', SPP.overLimitPreviewLines(blocked(pol(false, false)), false)[0]],
+        'limits.preview.overWithFee': [oldPreview(true) + 'Tapping Send will ask whether to send anyway.', SPP.overLimitPreviewLines(blocked(pol(true, true)), false)[0]],
+        'limits.feesCounted': [' Network fees are counted.', ` ${en['limits.feesCounted']}`],
+        'limits.feesNotCounted': [' Network fees are not counted.', ` ${en['limits.feesNotCounted']}`],
+        'limits.elsewhere.one': [oldElsewhere(1), I.t('limits.elsewhere.one', { owner: '0x1234…abcd', network: 'Base Sepolia', count: 1 })],
+        'limits.elsewhere.many': [oldElsewhere(3), I.t('limits.elsewhere.many', { owner: '0x1234…abcd', network: 'Base Sepolia', count: 3 })],
+        'spl.row.outsideOne': [oldOutside(1), SPLT.splOutsideLine('0.25', 'USDC', 1)],
+        'spl.row.outsideMany': [oldOutside(4), SPLT.splOutsideLine('0.25', 'USDC', 4)],
+        'spl.row.skippedOne': [oldSkipped(1), SPLT.splSkippedLine(1)],
+        'spl.row.skippedMany': [oldSkipped(6), SPLT.splSkippedLine(6)],
+      };
+    })(),
   };
   const bad = Object.entries(old).filter(([, [a, b]]) => a !== b).map(([id, [a, b]]) => `${id}: ${a} ≠ ${b}`);
   check(`the ${Object.keys(old).length} composites assemble to exactly the old text`, bad.length === 0, bad.join('; '));
@@ -1023,6 +1065,16 @@ const CONSTANTS = {
   'accounts.backupHint.imported': ikeys.ACCOUNTS_WITH_IMPORTED_HINT, 'sessions.holder.merchant': subsMod.SUBSCRIPTION_KEY_HOLDER_TEXT,
   'sessions.holder.phoneOnly': recMod.RECURRING_KEY_HOLDER_TEXT, 'settings.pinCost.button': PCOST.PIN_COST_BUTTON,
   'settings.pinCost.stop': PCOST.PIN_COST_STOP_BUTTON, 'settings.pinCost.nativeStop': PCOST.PIN_COST_NATIVE_STOP_NOTE,
+  // Phase 28 item 5: the spending-limit, preview and Solana constants the modules export (the screens localize them).
+  'limits.blockTitle': SPP.SPENDING_BLOCK_TITLE, 'limits.unreadable.title': SPP.SPENDING_UNREADABLE_TITLE,
+  'limits.unreadable.message': SPP.SPENDING_UNREADABLE_MESSAGE, 'limits.override.allowed': SPP.SPENDING_OVERRIDE_ALLOWED_SENTENCE,
+  'limits.override.off': SPP.SPENDING_OVERRIDE_OFF_SENTENCE, 'limits.quoteBasis': SPP.SPENDING_QUOTE_BASIS_NOTE,
+  'limits.reviewChecked': SPP.SPENDING_REVIEW_CHECKED_NOTE, 'limits.notCountedBefore': SPP.SPENDING_NOT_COUNTED_BEFORE_NOTE,
+  'limits.screenExplainer': SPP.SPENDING_SCREEN_EXPLAINER, 'limits.noOnchain': SPP.SPENDING_NO_ONCHAIN_NOTE,
+  'preview.title': SIMM.PREVIEW_TITLE, 'preview.unsupported': SIMM.PREVIEW_UNSUPPORTED_NOTE, 'preview.malformed': SIMM.PREVIEW_MALFORMED_NOTE,
+  'preview.noEndpoint': SIMM.PREVIEW_NO_ENDPOINT_NOTE, 'preview.noChanges': SIMM.PREVIEW_NO_CHANGES, 'preview.footnote': SIMM.PREVIEW_FOOTNOTE,
+  'preview.aaNote': SIMM.PREVIEW_AA_NOTE, 'preview.unreachable': SIMM.PREVIEW_UNREACHABLE_NOTE,
+  'spl.devnetHint': SPLT.SPL_DEVNET_HINT, 'spl.mintInvalid': SPLT.SPL_MINT_ADDRESS_INVALID,
 };
 {
   const bad = Object.entries(CONSTANTS).filter(([id, v]) => en[id] !== v).map(([id, v]) => `${id}: ${JSON.stringify(en[id])} ≠ ${JSON.stringify(v)}`);
@@ -1860,6 +1912,112 @@ function caughtP(name, wasCaught) {
 check(`hygiene slice: at least four mutants of its own, all caught (${PERIOD_CAUGHT} of ${PERIOD_MUTANTS})`, PERIOD_MUTANTS >= 4 && PERIOD_CAUGHT === PERIOD_MUTANTS);
 
 // ---------------------------------------------------------------------------
+console.log('check-i18n: phase 28 item 5 — the Spanish gaps of passes p27-emu1 / p27-emu2 and the p28-emu1 fixes');
+// ---------------------------------------------------------------------------
+// The spending limits (both halves, the window chips, the over-limit sentences and alerts), the cancel alert, the
+// balance-change preview's and the risk card's headings, the Solana devnet card and switch, the Solana token send's
+// app-built sentences, the coin-address placeholders and the ENS renewal's risk line: 131 entries recorded from
+// df6926b, their English proven byte for byte by the fixture (literals, template parts, composites assembled the old
+// way above) and by i18n-sixth-pass-golden.json, replayed here against the migrated modules.
+let SIXTH_MUTANTS = 0;
+let SIXTH_CAUGHT = 0;
+function caught6(name, wasCaught) {
+  SIXTH_MUTANTS += 1;
+  if (wasCaught) SIXTH_CAUGHT += 1;
+  check(`mutant caught: ${name}`, wasCaught);
+}
+const GOLDEN6 = JSON.parse(read('scripts/fixtures/i18n-sixth-pass-golden.json'));
+const SIXTH_MODULES = { 'wallet/spending-policy.ts': SPP, 'wallet/simulation.ts': SIMM, 'wallet/spl-tokens.ts': SPLT, 'wallet/risk.ts': RISKM, 'wallet/ens-names.ts': ENSN };
+// One Spanish entry may equal its English: "Mint", the Solana term the Spanish screens keep.
+const SIXTH_SAME_IN_SPANISH = ['spl.row.mint'];
+{
+  const SIXTH = ['literal', 'template', 'composite'].flatMap((s) => Object.entries(FIXTURE[s]).filter(([, f]) => f.base === 'df6926b').map(([id]) => id));
+  const kinds = ['literal', 'template', 'composite'].map((s) => SIXTH.filter((id) => FIXTURE[s][id]).length);
+  const ph = (x) => (x.match(/\{[A-Za-z][A-Za-z0-9]*\}/g) ?? []).sort().join(',');
+  check(`phase 28 item 5: ${SIXTH.length} ids migrated from df6926b (86 literals, 33 templates, 12 composites), each with a Spanish draft keeping the placeholders`,
+    SIXTH.length === 131 && kinds.join() === '86,33,12' &&
+      SIXTH.every((id) => typeof en[id] === 'string' && typeof es[id] === 'string' && ph(es[id]) === ph(en[id]) && (es[id] !== en[id] || SIXTH_SAME_IN_SPANISH.includes(id))),
+    SIXTH.filter((id) => typeof es[id] !== 'string' || ph(es[id]) !== ph(en[id]) || (es[id] === en[id] && !SIXTH_SAME_IN_SPANISH.includes(id))).join(', '));
+  check('…and the one new line (bridge.mint.recipientOther) with a Spanish draft keeping its placeholders, none of these listed as changed',
+    P28_FIX_NEW.every((id) => typeof es[id] === 'string' && es[id] !== en[id] && ph(es[id]) === ph(en[id])) &&
+      !SIXTH.some((id) => FIXTURE.new.includes(id) || id in (FIXTURE.changed ?? {})));
+  const enSrc6 = read('src/i18n/en.ts');
+  const esSrc6 = read('src/i18n/es.ts');
+  const block6 = (src) => {
+    const b = src.lastIndexOf('// ---- BEGIN phase 28 item 5 and the p28-emu1 fixes');
+    const e = src.lastIndexOf('// ---- END phase 28 item 5 and the p28-emu1 fixes ----');
+    return b > 0 && e > b && [...SIXTH, ...P28_FIX_NEW].every((id) => { const at = src.indexOf(`'${id}'`); return at > b && at < e; }) &&
+      ONLY_BLOCKS_THEN_CLOSE.test(src.slice(src.indexOf('\n', e) + 1));
+  };
+  check('…all 132 in one delimited block at the end of each table', block6(enSrc6) && block6(esSrc6));
+  // The golden cases: the df6926b English of every module-built sentence, call by call.
+  const goldenBad = await goldenProblems(GOLDEN6.cases, SIXTH_MODULES);
+  const fns6 = new Set(GOLDEN6.cases.map((c) => `${c.module} ${c.fn}`));
+  check(`the golden cases (${GOLDEN6.cases.length}, recorded from the df6926b modules): 22 functions give exactly the English they gave there`,
+    GOLDEN6.base === 'df6926b' && GOLDEN6.cases.length >= 80 && fns6.size === 22 && goldenBad.length === 0, goldenBad.slice(0, 3).join('; '));
+  // The window words: the limits' window follows the wallet's period words (24 hours stays 24 hours), so a Spanish
+  // screen no longer mixes "1 hour" into a Spanish sentence (pass p27-emu1).
+  const spanish6 = (() => {
+    I.setActiveLanguage('es');
+    try {
+      return {
+        hour: SPP.windowLabel(3600),
+        day: SPP.windowLabel(86400),
+        week: SPP.windowLabel(7 * 86400),
+        hint: I.t('spendingSol.windowHint', { window: SPP.windowLabel(3600) }),
+        alert: SPP.spendingBlockAlertText({ status: 'blocked', overrideAllowed: false, title: null, message: 'x' }),
+        alertOverride: SPP.spendingBlockAlertText({ status: 'blocked', overrideAllowed: true, title: null, message: 'x' }),
+        cancelled: I.t('auth.cancelled'),
+      };
+    } finally {
+      I.setActiveLanguage('en');
+    }
+  })();
+  check('…in Spanish the window is Spanish ("1 hora", "24 horas", "7 días") and the window hint has no English unit left',
+    spanish6.hour === '1 hora' && spanish6.day === '24 horas' && spanish6.week === '7 días' &&
+      spanish6.hint === 'El intervalo es móvil: un envío cuenta durante 1 hora después de enviarse.' && !/\b(hours?|days?|minutes?)\b/.test(spanish6.hint), JSON.stringify(spanish6));
+  check('…in English the window keeps the old words ("1 hour", "24 hours", "7 days", "30 days")',
+    SPP.windowLabel(3600) === '1 hour' && SPP.windowLabel(86400) === '24 hours' && SPP.windowLabel(7 * 86400) === '7 days' && SPP.windowLabel(30 * 86400) === '30 days' &&
+      PTX.spendingWindowText(86400) === '24 hours' && PTX.spendingWindowText(90) === '90 seconds');
+  check('…a hard spending refusal ends "Nothing was signed." (Spanish: "No se firmó nada."), and one that offers Send anyway does not',
+    SPP.spendingBlockAlertText({ status: 'blocked', overrideAllowed: false, title: null, message: 'x' }).message === 'x\n\nNothing was signed.' &&
+      SPP.spendingBlockAlertText({ status: 'blocked', overrideAllowed: true, title: null, message: 'x' }).message === 'x' &&
+      spanish6.alert.message === 'x\n\nNo se firmó nada.' && spanish6.alertOverride.message === 'x' && spanish6.alert.title === es['limits.blockTitle'] &&
+      spanish6.cancelled === es['auth.cancelled'] && en['auth.cancelled'] === 'Authentication cancelled.');
+  // Source: the chips of both halves of Spending limits use windowLabel; the module builds its window with the
+  // wallet's period words; the devnet switch's label is the table's; the alert goes through spendingBlockAlertText.
+  const spSrc = read('src/wallet/spending-policy.ts');
+  const limitsSrc = read('src/screens/SpendingLimitsScreen.tsx');
+  const viewsSrc = read('src/components/SpendingPolicyViews.tsx');
+  const settingsSrc6 = read('src/screens/SettingsScreen.tsx');
+  const windowThroughPeriod = (src) => { const b = fnBodyOf(src, 'windowLabel'); return b.includes('spendingWindowText(') && !/'hour'|'day'|' hours'|' days'/.test(b); };
+  check('spending-policy.ts: windowLabel builds its words with period-text.ts (no English left in its body)', windowThroughPeriod(spSrc));
+  check('SpendingLimitsScreen: the custom-window caption and the window chips go through the table',
+    limitsSrc.includes("t('limits.customLength', { unit: localize(customUnit) })") && !limitsSrc.includes('`Custom window length in ${customUnit}`'));
+  const alertThroughText = (src) => src.includes('spendingBlockAlertText(') && !/Alert\.alert\(check\.title/.test(src);
+  check('SpendingPolicyViews: the blocked alert takes its title and message from spendingBlockAlertText', alertThroughText(viewsSrc));
+  // Both the visible text and the switch's spoken label come from the table; the English is never in the screen.
+  const devnetThroughTable = (src) => src.split("t('settings.solanaDevnet.label')").length - 1 === 2 && !src.includes('Use Solana devnet');
+  check('SettingsScreen: the Solana devnet switch\'s label and notes come from the table', devnetThroughTable(settingsSrc6) &&
+    settingsSrc6.includes("t('settings.solanaDevnet.onNote')") && settingsSrc6.includes("t('settings.solanaDevnet.offNote')"));
+  // Mutants.
+  const esMissing6 = { ...es };
+  delete esMissing6['limits.summary'];
+  caught6('phase 28 item 5: a Spanish line missing for a migrated id', SIXTH.some((id) => typeof esMissing6[id] !== 'string'));
+  caught6('phase 28 item 5: an English entry changed by one character (the over-limit preview with "the" dropped)',
+    fixtureProblems({ ...en, 'limits.preview.askAnyway': 'Tapping Send will ask whether to send anyway' }, FIXTURE).length >= 1);
+  const drifted6 = GOLDEN6.cases.find((c) => c.fn === 'policySummary');
+  caught6('phase 28 item 5: a module whose English drifted from df6926b (a golden case one character off)',
+    (await goldenProblems([{ ...drifted6, out: `${drifted6.out}x` }], SIXTH_MODULES)).length === 1);
+  caught6('phase 28 item 5: the old English-only windowLabel restored',
+    !windowThroughPeriod(spSrc.replace(/export function windowLabel\(seconds: number\): string \{[\s\S]*?\n\}/, "export function windowLabel(seconds: number): string {\n  return `${seconds / 3600} hours`;\n}")));
+  caught6('phase 28 item 5: the blocked alert built from check.title again (no "Nothing was signed.")',
+    !alertThroughText(viewsSrc.replace('spendingBlockAlertText(', 'Alert.alert(check.title ?? X, check.message ?? Y); void (')));
+  caught6('phase 28 item 5: the devnet switch\'s English label restored', !devnetThroughTable(settingsSrc6.replace("t('settings.solanaDevnet.label')", "'Use Solana devnet'")));
+}
+check(`phase 28 item 5: at least five mutants of its own, all caught (${SIXTH_CAUGHT} of ${SIXTH_MUTANTS})`, SIXTH_MUTANTS >= 5 && SIXTH_CAUGHT === SIXTH_MUTANTS);
+
+// ---------------------------------------------------------------------------
 console.log('check-i18n: the stored language choice (device-wide, through the storage seam)');
 // ---------------------------------------------------------------------------
 function memoryStore() {
@@ -2111,7 +2269,8 @@ function caught(name, wasCaught) {
   check('readiness: the spl-tokens row gets the Solana devnet line (exact; it names the “Use Solana devnet” switch), no other row does, and the Settings hint below the list adds it after the shared hint',
     en['readiness.solanaDevnet'] === 'Solana token sends work on Solana devnet, which the “Use Solana devnet” switch under Settings → Developer turns on, separately from the Ethereum test network.' &&
       RT.readinessRowNoteText(spl) === en['readiness.solanaDevnet'] && R.FEATURE_READINESS.filter((f) => RT.readinessRowNoteText(f) !== null).length === 1 &&
-      es['readiness.solanaDevnet'].includes('“Use Solana devnet”') &&
+      // Phase 28 item 5: the switch's label is in the table now, so the Spanish line quotes its Spanish label.
+      es['readiness.solanaDevnet'].includes(`“${es['settings.solanaDevnet.label']}”`) && es['settings.solanaDevnet.label'] === 'Usar Solana devnet' &&
       read('src/screens/SettingsScreen.tsx').includes('{readinessHintText()} {readinessSolanaDevnetText()}') &&
       read('src/screens/SettingsScreen.tsx').includes('{readinessRowNoteText(feature) !== null ? ('));
   const homeSrc = read('src/screens/HomeScreen.tsx');
@@ -2220,5 +2379,5 @@ function caught(name, wasCaught) {
 check(`at least six mutants, all caught (${mutantsCaught} of ${mutants + 5} including the table mutants)`, mutants + 5 >= 6 && mutantsCaught === mutants + 5);
 check(`phase 23 item 8: at least three mutants of its own, all caught (${ITEM8_CAUGHT} of ${ITEM8_MUTANTS})`, ITEM8_MUTANTS >= 3 && ITEM8_CAUGHT === ITEM8_MUTANTS);
 
-console.log(`\ncheck-i18n: ${passed} passed, ${failed} failed (${mutants + 5 + ITEM8_MUTANTS + THIRD_MUTANTS + FOURTH_MUTANTS + FIFTH_MUTANTS + PERIOD_MUTANTS} mutants)`);
+console.log(`\ncheck-i18n: ${passed} passed, ${failed} failed (${mutants + 5 + ITEM8_MUTANTS + THIRD_MUTANTS + FOURTH_MUTANTS + FIFTH_MUTANTS + PERIOD_MUTANTS + SIXTH_MUTANTS} mutants)`);
 if (failed > 0) process.exit(1);

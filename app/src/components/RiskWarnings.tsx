@@ -9,6 +9,9 @@ import { approvalTokensForChain } from '../wallet/approvals';
 import { getIndexerConfig } from '../wallet/indexer';
 import { getAaConfig } from '../wallet/aa';
 import { computeRiskLines, gatherRiskFacts, ownWalletAddresses, type RiskLine } from '../wallet/risk';
+import { localize, t } from '../i18n/index';
+import { T } from '../i18n/T';
+import { useI18n } from '../i18n/useI18n';
 
 export const RISK_TITLE = 'Risk checks';
 export const RISK_FOOTNOTE =
@@ -73,6 +76,7 @@ export function RiskWarnings({
   ensResolverOwner?: string | null;
 }) {
   const theme = useTheme();
+  useI18n();
   const { evmChain } = usePrefs();
   const { accountList } = useWallet();
   // The wallet's own EVM addresses: a recipient among them that is upgraded
@@ -162,7 +166,7 @@ export function RiskWarnings({
     return (
       <View style={styles.loading}>
         <ActivityIndicator size="small" color={theme.accent} />
-        <Text style={[styles.muted, { color: theme.textMuted }]}>Running risk checks…</Text>
+        <Text style={[styles.muted, { color: theme.textMuted }]}><T>Running risk checks…</T></Text>
       </View>
     );
   }
@@ -170,7 +174,7 @@ export function RiskWarnings({
 
   return (
     <View style={styles.block}>
-      <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>{RISK_TITLE}</Text>
+      <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>{localize(RISK_TITLE)}</Text>
       {lines.map((line, i) =>
         line.tone === 'warning' ? (
           // Same visible warning style as BalanceChangePreview's warning lines.
@@ -187,7 +191,7 @@ export function RiskWarnings({
               ⚠
             </Text>
             <Text
-              accessibilityLabel={`Warning: ${line.text}`}
+              accessibilityLabel={t('spoken.warning', { text: line.text })}
               style={[styles.line, styles.bold, styles.lineText, { color: theme.warningText }]}
             >
               {line.text}
@@ -206,7 +210,7 @@ export function RiskWarnings({
               ⓘ
             </Text>
             <Text
-              accessibilityLabel={`Note: ${line.text}`}
+              accessibilityLabel={t('spoken.note', { text: line.text })}
               style={[styles.line, styles.lineText, { color: theme.text }]}
             >
               {line.text}
@@ -214,7 +218,7 @@ export function RiskWarnings({
           </View>
         ),
       )}
-      <Text style={[styles.muted, { color: theme.textMuted }]}>{RISK_FOOTNOTE}</Text>
+      <Text style={[styles.muted, { color: theme.textMuted }]}>{localize(RISK_FOOTNOTE)}</Text>
     </View>
   );
 }

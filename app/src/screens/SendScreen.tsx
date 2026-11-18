@@ -1650,7 +1650,7 @@ export function SendScreen({ route, navigation }: Props) {
       // flag on-chain.
       const bundle = aaBundle.current as PasskeyBundle | null;
       if (!bundle?.passkey) {
-        Alert.alert('Not sent', 'Passkey session expired; go back and review again.');
+        Alert.alert(tx('Not sent'), tx('Passkey session expired; go back and review again.'));
         return;
       }
       setPhase('sending');
@@ -1721,7 +1721,7 @@ export function SendScreen({ route, navigation }: Props) {
           : sendApprovalPromptTitle(quote, symbol, decimals),
     );
     if (!auth.ok) {
-      Alert.alert('Not sent', auth.message);
+      Alert.alert(tx('Not sent'), auth.message);
       return;
     }
     setPhase('sending');

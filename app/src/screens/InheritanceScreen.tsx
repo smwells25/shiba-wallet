@@ -74,6 +74,7 @@ import {
   takeoverStatusText,
   type TakeoverCheckResult,
 } from '../wallet/inheritance';
+import { tx } from '../i18n/index';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Inheritance'>;
 
@@ -339,7 +340,7 @@ export function InheritanceScreen({ navigation }: Props) {
     step('final');
     const auth = await requireLocalAuth(what);
     if (!auth.ok) {
-      Alert.alert('Not sent', auth.message);
+      Alert.alert(tx('Not sent'), auth.message);
       return;
     }
     setPhase('sending');

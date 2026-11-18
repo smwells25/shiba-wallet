@@ -36,6 +36,7 @@ import { WALLET_7702_DELEGATE } from './delegation.ts';
 import { walletAddressesFor, type AaAddressFacts } from './activity-sentences.ts';
 import { ownMultisigAddresses } from './multisig.ts';
 import { evmProfileByCaip2 } from '../config/evm-chain.ts';
+import { t } from '../i18n/index.ts';
 import { knownStakingTokensForChain } from './tokens.ts';
 
 /**
@@ -730,15 +731,9 @@ export function ensContractAt(chainCaip2: string, address: string, resolverOwner
 export function ensContractText(contract: PinnedEnsContract): string {
   const network = evmProfileByCaip2(contract.chain)?.label ?? contract.chain;
   if (contract.name === 'resolver' && contract.resolverOwner) {
-    return (
-      `This transaction goes to your own ENS resolver on ${network} (${contract.address}): the address ENS’s pinned ` +
-      `VerifiableFactory derives for the name’s owner ${contract.resolverOwner}.`
-    );
+    return t('risk.ens.ownResolver', { network, address: contract.address, owner: contract.resolverOwner });
   }
-  return (
-    `This transaction goes to ENS’s ${contract.name} on ${network} (${contract.address}), ` +
-    'pinned by this wallet from ENS’s published Sepolia deployments.'
-  );
+  return t('risk.ens.pinned', { name: contract.name, network, address: contract.address });
 }
 
 /**

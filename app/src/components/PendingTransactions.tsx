@@ -82,6 +82,7 @@ import {
   type SolanaTransferStatus,
 } from '../wallet/pending-transactions';
 import { SOLANA_SLOT_CHAIN_ID, solanaClient } from '../wallet/spl-tokens';
+import { tx } from '../i18n/index';
 
 /**
  * Pending transactions on this phone (feature 95, wallet/pending-transactions.ts):
@@ -304,7 +305,7 @@ export function PendingTransactionsSection({
     if (!allowed) return;
     const auth = await requireLocalAuth(replacementPromptTitle(action));
     if (!auth.ok) {
-      Alert.alert('Not sent', auth.message);
+      Alert.alert(tx('Not sent'), auth.message);
       return;
     }
     setDraft((prev) => (prev ? { ...prev, state: { kind: 'sending', quote, url } } : prev));

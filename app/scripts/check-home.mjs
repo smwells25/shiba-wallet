@@ -558,7 +558,7 @@ console.log('Home: one spoken element per token row, the Hide amounts switch, li
   const { SOLANA_DEVNET_NETWORK } = await import('../src/config/defaults.ts');
   const devnetHintOk = (src) =>
     src.includes('sendLinkHint(isEvm ? evmChain.displaySymbol : solanaDevnetLine ? SOLANA_DEVNET_NETWORK.symbol : item.symbol),') &&
-    src.includes("const solanaDevnetLine = item.chainId === SOLANA_CHAIN_ID && solanaDevnet ? SOLANA_DEVNET_CARD_LINE : null;") &&
+    src.includes("const solanaDevnetLine = item.chainId === SOLANA_CHAIN_ID && solanaDevnet ? localize(SOLANA_DEVNET_CARD_LINE) : null;") &&
     SOLANA_DEVNET_NETWORK.symbol === 'test SOL' && sendLinkHint(SOLANA_DEVNET_NETWORK.symbol) === 'Sends test SOL';
   check('p24-solfix2 finding D: the Solana card\'s Send hint is "Sends test SOL" while Solana devnet is on (the devnet network\'s own symbol), "Sends SOL" otherwise (source and exact)', devnetHintOk(home));
   check('…mutant caught: the card hint back to the slot\'s symbol ("Sends SOL" on devnet)',

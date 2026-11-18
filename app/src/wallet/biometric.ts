@@ -1,5 +1,6 @@
 import * as LocalAuthentication from 'expo-local-authentication';
 import { openPhraseForApproval, type ApprovalTarget } from './storage';
+import { t } from '../i18n/index';
 
 /**
  * Local-authentication gate for the two sensitive actions in the app: the
@@ -97,7 +98,7 @@ export async function requireLocalAuth(promptMessage: string, target?: ApprovalT
   try {
     const vault = await openPhraseForApproval(promptMessage, target);
     if (vault.kind === 'authenticated') return { ok: true, gated: true };
-    if (vault.kind === 'cancelled') return { ok: false, message: 'Authentication cancelled.' };
+    if (vault.kind === 'cancelled') return { ok: false, message: t('auth.cancelled') };
   } catch {
     // Fall through to the ordinary prompt.
   }
@@ -122,13 +123,13 @@ export async function requireLocalAuth(promptMessage: string, target?: ApprovalT
       ok: false,
       message:
         result.error === 'user_cancel' || result.error === 'app_cancel'
-          ? 'Authentication cancelled.'
-          : `Authentication failed (${result.error}).`,
+          ? t('auth.cancelled')
+          : t('auth.failedCode', { code: result.error }),
     };
   } catch (e) {
     return {
       ok: false,
-      message: e instanceof Error ? e.message : 'Authentication failed.',
+      message: e instanceof Error ? e.message : t('auth.failed'),
     };
   }
 }

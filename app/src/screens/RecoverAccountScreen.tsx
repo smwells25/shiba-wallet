@@ -60,6 +60,7 @@ import {
   RECOVERY_IMPORTED_OWNER_REFUSAL,
 } from '../wallet/recovery';
 import { HEIR_NEW_OWNER_NOTE, HEIR_SIDE_NOTE, INHERITANCE_RISK_STATEMENT } from '../wallet/inheritance';
+import { tx } from '../i18n/index';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'RecoverAccount'>;
 
@@ -341,7 +342,7 @@ export function RecoverAccountScreen({ navigation, route }: Props) {
     if (!node || !approveQuote || !progress) return;
     const auth = await requireLocalAuth('Approve sending the guardians’ approvals');
     if (!auth.ok) {
-      Alert.alert('Not sent', auth.message);
+      Alert.alert(tx('Not sent'), auth.message);
       return;
     }
     setPhase('sending');

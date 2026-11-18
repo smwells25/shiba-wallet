@@ -635,7 +635,7 @@ console.log('check-spl-tokens: the fixes of pass p24-solana (transfer fee, Send 
   const homeSrc = readFileSync(resolve(HERE, '../src/screens/HomeScreen.tsx'), 'utf8');
   check('Home: the row asks splSendLinkShown; "Manage Solana tokens" has a hint like its neighbours',
     homeSrc.includes('const sendable = splSendLinkShown(state, onSend !== undefined);') &&
-      homeSrc.includes('accessibilityHint="Opens the list of tracked Solana tokens"'));
+      homeSrc.includes("accessibilityHint={tx('Opens the list of tracked Solana tokens')}"));
 
   check('the Solana devnet banner: only on the Solana slot and only with the switch on, whatever the Ethereum choice',
     SPL.solanaDevnetBannerShown(SOLANA_MAINNET_CAIP2, true) && !SPL.solanaDevnetBannerShown(SOLANA_MAINNET_CAIP2, false) &&
@@ -1397,7 +1397,7 @@ let caught = 0;
 }
 {
   // M13 (finding 4): the Review's fee row says "SOL" while its values say "test SOL".
-  const M = await mutant("  rows.push({ label: `Network fee (paid in ${nativeSymbol})`,", "  rows.push({ label: 'Network fee (paid in SOL)',");
+  const M = await mutant("  rows.push({ label: t('tokenGas.feeLabel', { symbol: nativeSymbol }),", "  rows.push({ label: 'Network fee (paid in SOL)',");
   const q = await quoteOn(fakeChain());
   const ok = M.splConfirmRows(q, 'test SOL').some((r) => r.label === 'Network fee (paid in SOL)');
   caught += ok ? 1 : 0;
@@ -1405,7 +1405,7 @@ let caught = 0;
 }
 {
   // M14 (finding 8): the Manage balance shown under Hide amounts.
-  const M = await mutant('  return `Balance: ${maskAmount(formatBalanceDisplay(state.associated, state.decimals), hidden)} ${symbol}`;', '  return `Balance: ${formatBalanceDisplay(state.associated, state.decimals)} ${symbol}`;');
+  const M = await mutant("  return t('spl.manage.balance', { amount: maskAmount(formatBalanceDisplay(state.associated, state.decimals), hidden), symbol });", "  return t('spl.manage.balance', { amount: formatBalanceDisplay(state.associated, state.decimals), symbol });");
   const ok = M.splManageBalanceLine({ status: 'ok', associated: 19_000_000n, outside: 0n, outsideAccounts: 0, decimals: 6, sendRefusal: null, decimalsChanged: false, networkChainId: DEVNET }, 'USDC', true) === 'Balance: 19 USDC';
   caught += ok ? 1 : 0;
   check('mutant caught: a Manage Solana tokens balance visible under Hide amounts', ok);

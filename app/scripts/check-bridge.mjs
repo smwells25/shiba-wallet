@@ -76,6 +76,7 @@ import {
   bridgeSwitchSentence,
   bridgeSwitchTarget,
   cctpFirstMintPaymasterNote,
+  cctpPaymasterOfferedOn,
   BRIDGE_CHOICE_NOTE,
   BRIDGE_FEATURE,
   BRIDGE_SINGLE_PROVIDER_NOTE,
@@ -122,6 +123,7 @@ import {
   bridgeMintBlocker,
   bridgeMintCall,
   bridgeMintCallLine,
+  bridgeMintRecipientLine,
   bridgeMintCallSpoken,
   bridgeMintPromptTitle,
   bridgeRecordDestinationLines,
@@ -181,6 +183,7 @@ import {
   updateBridgeTransfer,
   upgradedAccountRecipientNote,
 } from '../src/wallet/bridge.ts';
+import { tokenGasPaymasterFor } from '../src/wallet/token-gas.ts';
 import { prepareEvmSend, sendEvm } from '../src/wallet/send.ts';
 import { createAaClientFromConfig, sendAa } from '../src/wallet/aa.ts';
 import { featureReadiness, isFeatureAllowed } from '../src/config/readiness.ts';
@@ -2391,10 +2394,35 @@ console.log('check-bridge: the emulator pass p23-cctp findings (the Home link, t
       cctpFirstMintPaymasterNote(undefined, 'Arbitrum Sepolia') === paymasterNotes(planUnknown)[0]);
   check('…test ETH: nothing read, no paymaster sentence', planA.recipientDestinationUsdc === null && paymasterNotes(planA).length === 0);
   const mPay = await bridgeMutant(
-    '  const paymaster = cctpFirstMintPaymasterNote(plan.recipientDestinationUsdc, plan.destinationLabel);',
-    '  const paymaster = CCTP_FIRST_MINT_PAYMASTER_NOTE;',
+    '    ? cctpFirstMintPaymasterNote(plan.recipientDestinationUsdc, plan.destinationLabel)\n    : null;',
+    '    ? CCTP_FIRST_MINT_PAYMASTER_NOTE\n    : null;',
   );
   check('MUTANT (the sentence shown unconditionally, as before) is caught', mPay.bridgeConfirmModel(planHeld).notes.includes(CCTP_FIRST_MINT_PAYMASTER_NOTE));
+
+  // Pass p28-emu1 finding 2: the paymaster sentence only for a receiving network where this wallet offers Circle's
+  // paymaster at all (token-gas.ts tokenGasPaymasterFor: Base Sepolia and Arbitrum Sepolia); OP Sepolia (no code) and
+  // Ethereum Sepolia (unusable; Pimlico's ERC-7677 fee is offered there instead) get nothing in its place.
+  check('p28-emu1 finding 2: Circle\'s paymaster is offered on Base and Arbitrum Sepolia only, by the Send screen\'s own rule',
+    cctpPaymasterOfferedOn(caip(BASE)) && cctpPaymasterOfferedOn(caip(ARB)) && !cctpPaymasterOfferedOn(caip(OP)) && !cctpPaymasterOfferedOn(caip(SEPOLIA)) &&
+      !cctpPaymasterOfferedOn('eip155:1') && [BASE, ARB, OP, SEPOLIA].every((id) => cctpPaymasterOfferedOn(caip(id)) === (tokenGasPaymasterFor(caip(id)) !== null)));
+  const planOp = await quoteBridge(cctpRequest({ destinationChainId: OP }));
+  check('…a transfer to OP Sepolia with no USDC there (the pass\'s case): no paymaster sentence and none in its place',
+    planOp.recipientDestinationUsdc === 'zero' && paymasterNotes(planOp).length === 0 &&
+      bridgeConfirmModel(planOp).notes.every((n) => !/paymaster/i.test(n) || n === cctpSmartAccountFeeNote('test ETH')), JSON.stringify(bridgeConfirmModel(planOp).notes));
+  const planSep = await quoteBridge(cctpRequest({ destinationChainId: SEPOLIA }));
+  check('…to Ethereum Sepolia with no USDC there: no paymaster sentence either',
+    planSep.recipientDestinationUsdc === 'zero' && paymasterNotes(planSep).length === 0, JSON.stringify(bridgeConfirmModel(planSep).notes));
+  fundUsdc(ARB, EOA, 5_000_000n);
+  const planArbBack = await quoteBridge(cctpRequest({ caip2: caip(ARB), readers: readersFor(ARB), destinationChainId: BASE, recipient: '0x' + '7'.repeat(40) }));
+  check('…to Base Sepolia (Circle offered) with no USDC there: the sentence, as before',
+    planArbBack.recipientDestinationUsdc === 'zero' && paymasterNotes(planArbBack).length === 1);
+  const mOffer = await bridgeMutant(
+    '  const paymaster = cctpPaymasterOfferedOn(plan.destinationCaip2)\n',
+    '  const paymaster = true\n',
+  );
+  check('MUTANT (the network rule dropped: OP Sepolia shows the sentence again) is caught', mOffer.bridgeConfirmModel(planOp).notes.includes(CCTP_FIRST_MINT_PAYMASTER_NOTE));
+  const mOfferOp = await bridgeMutant('  return tokenGasPaymasterFor(caip2) !== null;', "  return tokenGasPaymasterFor(caip2) !== null || caip2 === 'eip155:11155420';");
+  check('MUTANT (OP Sepolia counted as a Circle network) is caught', mOfferOp.cctpPaymasterOfferedOn(caip(OP)) && !cctpPaymasterOfferedOn(caip(OP)));
 
   // (5) The live region and the short addresses.
   const liveRegionOk = (src) =>
@@ -2414,7 +2442,7 @@ console.log('check-bridge: the emulator pass p23-cctp findings (the Home link, t
       screen.includes('accessibilityLabel={withShortAddresses(upgradedAccountRecipientNote(account.address, destinationLabel))}') &&
       screen.includes('<Text accessibilityLabel={withShortAddresses(text)} style={[styles.hint, { color: theme.textMuted }]}>{text}</Text>'));
   check('the transfer record’s line is spoken with the short address', views.includes('<Text accessibilityLabel={withShortAddresses(through)} style={[styles.body, { color: theme.textMuted }]}>'));
-  for (const mod of [mLink, mPay]) await mod.resetBridgeTransfers();
+  for (const mod of [mLink, mPay, mOffer, mOfferOp]) await mod.resetBridgeTransfers();
 }
 
 // ---------------------------------------------------------------------------
@@ -2796,6 +2824,38 @@ console.log('check-bridge: pass p23-cctp-recheck — usedNonces decides the mint
   check('…no line when there is no checked mint call (no status; a LayerZero record)',
     bridgeMintCallLine({ ...attestedRec, status: null }) === null && bridgeMintCallLine({ ...attestedRec, providerId: LAYERZERO_OFT_PROVIDER_ID }) === null);
   check('…the prompt title is unchanged (exact)', bridgeMintPromptTitle(attestedRec) === 'Mint the bridged USDC on Base Sepolia');
+  // Pass p28-emu1 finding 3: when the mint is sent from another account than the recipient written into the burn, the
+  // confirm says so (the preview is simulated for the sender only); nothing when they are the same account.
+  const KERNEL_SENDER = '0xD31c2C54F21684eE2026a6C41e391130BdEeD8FA';
+  const OWN = [{ address: A1, label: 'Account 1' }, { address: KERNEL_SENDER, label: 'Account 1’s smart account' }];
+  const RECIPIENT_LINE = `This mint pays 1 USDC to Account 1 (${A1}), the recipient written into the burn, not to the account sending it (Account 1’s smart account (${KERNEL_SENDER})). The balance-change preview below is simulated for the sending account only, so it does not show the USDC arriving.`;
+  check('p28-emu1 finding 3: no recipient line when the mint is sent from the recipient itself (case ignored)',
+    bridgeMintRecipientLine(attestedRec, A1, OWN) === null && bridgeMintRecipientLine(attestedRec, A1.toLowerCase(), OWN) === null);
+  check('…a mint sent from another account names both, with this wallet\'s labels (exact)', bridgeMintRecipientLine(attestedRec, KERNEL_SENDER, OWN) === RECIPIENT_LINE,
+    bridgeMintRecipientLine(attestedRec, KERNEL_SENDER, OWN));
+  check('…an address not in this wallet is shown bare; no line without a checked mint call; spoken with both addresses short',
+    bridgeMintRecipientLine(attestedRec, KERNEL_SENDER, []).includes(`pays 1 USDC to ${A1}, the recipient`) &&
+      bridgeMintRecipientLine({ ...attestedRec, status: null }, KERNEL_SENDER, OWN) === null &&
+      bridgeSpokenText(RECIPIENT_LINE).includes(spokenShortAddress(A1)) && bridgeSpokenText(RECIPIENT_LINE).includes(spokenShortAddress(KERNEL_SENDER)) &&
+      !/0x[0-9a-fA-F]{40}/.test(bridgeSpokenText(RECIPIENT_LINE)));
+  const screenSrc28 = source('src/screens/BridgeScreen.tsx');
+  check('…the mint panel shows it under the call line, spoken through bridgeSpokenText, with this wallet\'s own addresses (source)',
+    screenSrc28.includes('const mintRecipientLine = bridgeMintRecipientLine(record, fromAddress, ownAddresses);') &&
+      screenSrc28.includes('<Text accessibilityLabel={bridgeSpokenText(mintRecipientLine)}') && screenSrc28.includes('const ownAddresses = useOwnEvmAddresses();'));
+  const mRecip = await bridgeMutant('  if (!mint || mint.recipient.toLowerCase() === sendingAccount.toLowerCase()) return null;', '  if (!mint) return null;');
+  check('MUTANT (the same-account rule dropped: the line shows on every mint) is caught', mRecip.bridgeMintRecipientLine(attestedRec, A1, OWN) !== null);
+  // Pass p28-emu1 finding 4: the CCTP smart-account burn confirm has a "Total (worst case)" row, in Send's wording.
+  const AA_TOTAL_ROW = "label={plan.asset === 'usdc' ? t('send.aa.row.totalOfWorst', { symbol }) : 'Total (worst case)'}";
+  const aaTotal = (src) => {
+    const dep = src.indexOf('<AaDepositNote fee={aaQuote.fee}');
+    const row = src.indexOf(AA_TOTAL_ROW);
+    const prev = src.indexOf('<BalanceChangePreview', row);
+    return dep > 0 && row > dep && prev > row && src.slice(row, prev).includes('value={`${exact18(aaQuote.total)} ${symbol}`}');
+  };
+  check('p28-emu1 finding 4: the smart-account bridge confirm shows "Total USDC (worst case)" / "Total (worst case)" after the deposit note, valued aaQuote.total in the network\'s coin (source)',
+    aaTotal(screenSrc28) && EN_TABLE['send.aa.row.totalOfWorst'] === 'Total {symbol} (worst case)');
+  check('MUTANT (the smart-account total row removed) is caught', !aaTotal(screenSrc28.replace(AA_TOTAL_ROW, "label=\"Spare\"")));
+  mutantCount += 1;
   const mintQuote = await prepareBridgeMint(ACTIVE_URL(BASE), A1, attestedRec);
   const mintFees = bridgeSourceFeeLines(mintQuote, 'test ETH');
   check('…on Base Sepolia (an OP-stack network, l1DataFee) the mint quote carries the layer 1 data fee and the confirm gets the separate "Layer 1 data fee (estimate)" row',

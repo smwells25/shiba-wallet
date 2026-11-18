@@ -3,6 +3,9 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 import { toHex } from '@shiba-wallet/chains-evm';
 import { useTheme, type Theme } from '../theme';
 import { maskedSpokenProps } from '../a11y';
+import { localize, tx } from '../i18n/index';
+import { T } from '../i18n/T';
+import { useI18n } from '../i18n/useI18n';
 import { usePrefs } from '../wallet/PrefsContext';
 import { listTokens } from '../wallet/tokens';
 import { reportEndpointFailure } from '../config/networks';
@@ -70,6 +73,7 @@ export function BalanceChangePreview({
   rowNotes?: boolean;
 }) {
   const theme = useTheme();
+  useI18n();
   const { hideAmounts, evmChain } = usePrefs();
   const [state, setState] = useState<PreviewState | null>(null);
   // Bumped by "Try again"; part of the key so the effect runs again.
@@ -138,30 +142,30 @@ export function BalanceChangePreview({
   );
 
   if (state?.status === 'unavailable') {
-    return <Text style={[styles.muted, { color: theme.textMuted }]}>{state.note}</Text>;
+    return <Text style={[styles.muted, { color: theme.textMuted }]}>{localize(state.note)}</Text>;
   }
 
   return (
     <View style={[styles.card, { backgroundColor: theme.card, borderColor: theme.border }]}>
-      <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>{PREVIEW_TITLE}</Text>
+      <Text accessibilityRole="header" style={[styles.title, { color: theme.text }]}>{localize(PREVIEW_TITLE)}</Text>
       {state === null ? (
         <View style={styles.loading}>
           <ActivityIndicator size="small" color={theme.accent} />
-          <Text style={[styles.muted, { color: theme.textMuted }]}>Simulating…</Text>
+          <Text style={[styles.muted, { color: theme.textMuted }]}><T>Simulating…</T></Text>
         </View>
       ) : null}
       {state?.status === 'error' ? (
         <>
           <Text style={[styles.line, { color: state.unreachable ? theme.text : theme.danger }]}>
-            {state.unreachable ? PREVIEW_UNREACHABLE_NOTE : errorNote(state.message)}
+            {state.unreachable ? localize(PREVIEW_UNREACHABLE_NOTE) : errorNote(state.message)}
           </Text>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Try the balance-change preview again"
+            accessibilityLabel={tx('Try the balance-change preview again')}
             onPress={() => setAttempt((n) => n + 1)}
             hitSlop={8}
           >
-            <Text style={[styles.retry, { color: theme.accent }]}>Try again</Text>
+            <Text style={[styles.retry, { color: theme.accent }]}><T>Try again</T></Text>
           </Pressable>
         </>
       ) : null}
@@ -169,7 +173,7 @@ export function BalanceChangePreview({
         <Text style={[styles.line, { color: theme.danger }]}>{revertedNote(state.reason)}</Text>
       ) : null}
       {state?.status === 'ok' && lines.length === 0 ? (
-        <Text style={[styles.line, { color: theme.text }]}>{PREVIEW_NO_CHANGES}</Text>
+        <Text style={[styles.line, { color: theme.text }]}>{localize(PREVIEW_NO_CHANGES)}</Text>
       ) : null}
       {lines.map((line, i) => (
         <React.Fragment key={`${i}-${line.text}`}>
@@ -180,8 +184,8 @@ export function BalanceChangePreview({
       {state?.status === 'ok' && state.skippedLogs > 0 ? (
         <Text style={[styles.muted, { color: theme.textMuted }]}>{skippedLogsNote(state.skippedLogs)}</Text>
       ) : null}
-      {note ? <Text style={[styles.muted, { color: theme.textMuted }]}>{note}</Text> : null}
-      <Text style={[styles.muted, { color: theme.textMuted }]}>{PREVIEW_FOOTNOTE}</Text>
+      {note ? <Text style={[styles.muted, { color: theme.textMuted }]}>{localize(note)}</Text> : null}
+      <Text style={[styles.muted, { color: theme.textMuted }]}>{localize(PREVIEW_FOOTNOTE)}</Text>
     </View>
   );
 }

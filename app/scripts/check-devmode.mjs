@@ -1955,7 +1955,8 @@ console.log('\n# pass p20c: app-wide accessibility and dark-mode patterns');
       // Phase 23 item 8 (third pass): the caption through the string table (its English "Amount in {symbol}" unchanged).
       ['screens/MultisigScreen.tsx', "fieldLabel('op-amount', t('multisig.field.amountIn', { symbol: symbolFor(asset) }))"],
       ['screens/SwapScreen.tsx', "fieldLabel('custom-slippage', 'Custom maximum slippage in basis points')"],
-      ['screens/SpendingLimitsScreen.tsx', 'fieldLabel(\'custom-window\', `Custom window length in ${customUnit}`)'],
+      // Phase 28 item 5: the caption through the string table (its English "Custom window length in {unit}" unchanged).
+      ['screens/SpendingLimitsScreen.tsx', "fieldLabel('custom-window', t('limits.customLength', { unit: localize(customUnit) }))"],
       ['screens/DcaViews.tsx', "field('custom-period', 'Custom period length')"],
       ['screens/SessionsScreen.tsx', "fieldLabel('custom-period', 'Custom period length')"],
       ...pasteBoxes.map(([f, e]) => [f, e]),

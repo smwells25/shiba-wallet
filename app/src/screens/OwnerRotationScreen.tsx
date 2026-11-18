@@ -56,6 +56,7 @@ import {
   type PendingOwnerRotation,
   type WalletOwnerAccount,
 } from '../wallet/recovery';
+import { tx } from '../i18n/index';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'OwnerRotation'>;
 
@@ -249,7 +250,7 @@ export function OwnerRotationScreen({ navigation }: Props) {
     step('final');
     const auth = await requireLocalAuth('Approve changing the owner key');
     if (!auth.ok) {
-      Alert.alert('Not sent', auth.message);
+      Alert.alert(tx('Not sent'), auth.message);
       return;
     }
     setPhase('sending');

@@ -23,6 +23,7 @@ import type {
   SpendingRecord,
 } from '@shiba-wallet/chains-evm';
 import { SOLANA_DEVNET_CAIP2, SOLANA_MAINNET_CAIP2 } from '@shiba-wallet/chains-solana';
+import { spendingWindowText } from './period-text.ts';
 // Explicit .ts extensions: this module is imported by
 // scripts/check-spending-policy.mjs under Node's type stripping, which
 // resolves relative specifiers literally.
@@ -42,7 +43,7 @@ import { knownTokensForChain } from './tokens.ts';
 import { formatUnits, groupThousands } from './balances.ts';
 import { simulationTransport } from './simulation.ts';
 import { maskAmount } from '../config/prefs.ts';
-import { t } from '../i18n/index.ts';
+import { localize, t } from '../i18n/index.ts';
 import { spokenShortAddress } from '../a11y.ts';
 
 /**
@@ -372,21 +373,14 @@ export function formatSpendAmount(amount: bigint, decimals: number): string {
   return groupThousands(formatUnits(amount, decimals, decimals));
 }
 
-/** "1 hour", "24 hours", "7 days", "30 days", "90 minutes", "36 hours"… */
+/**
+ * "1 hour", "24 hours", "7 days", "30 days", "90 minutes", "36 hours"… in the
+ * chosen language (phase 28 item 5): the wallet-side period describer
+ * (period-text.ts spendingWindowText) with this function's own rule, which
+ * keeps one day as "24 hours"; in English byte-identical to before.
+ */
 export function windowLabel(seconds: number): string {
-  if (seconds % 86400 === 0 && seconds !== 86400) {
-    const days = seconds / 86400;
-    return `${days} day${days === 1 ? '' : 's'}`;
-  }
-  if (seconds % 3600 === 0) {
-    const hours = seconds / 3600;
-    return `${hours} hour${hours === 1 ? '' : 's'}`;
-  }
-  if (seconds % 60 === 0) {
-    const minutes = seconds / 60;
-    return `${minutes} minute${minutes === 1 ? '' : 's'}`;
-  }
-  return `${seconds} seconds`;
+  return spendingWindowText(seconds);
 }
 
 /** The window picker's presets (1 h / 24 h / 7 d / 30 d); "Custom" is separate. */
@@ -402,11 +396,11 @@ export type WindowUnit = 'minutes' | 'hours' | 'days';
 /** A custom window from "N" + unit, within the engine's bounds (60 s to 366 days). */
 export function parseCustomWindow(text: string, unit: WindowUnit): number {
   const trimmed = text.trim();
-  if (!/^[0-9]{1,6}$/.test(trimmed)) throw new Error('Enter the window as a whole number.');
+  if (!/^[0-9]{1,6}$/.test(trimmed)) throw new Error(t('limits.window.wholeNumber'));
   const n = Number(trimmed);
   const seconds = n * (unit === 'minutes' ? 60 : unit === 'hours' ? 3600 : 86400);
   if (seconds < SPENDING_POLICY_MIN_WINDOW_SECONDS || seconds > SPENDING_POLICY_MAX_WINDOW_SECONDS) {
-    throw new Error('The window must be between 1 minute and 366 days.');
+    throw new Error(t('limits.window.range'));
   }
   return seconds;
 }
@@ -1293,11 +1287,14 @@ async function simulateOutflows(
 export function overLimitSentence(policy: SpendingPolicy, entry: SpendingPolicyEntry): string {
   const s = policy.symbol;
   const fmt = (n: bigint) => formatSpendAmount(n, policy.decimals);
-  return (
-    `This send would go over your spending limit for ${s}: ${fmt(policy.cap)} ${s} per ` +
-    `${windowLabel(policy.windowSeconds)}. Already spent in this window: ${fmt(entry.spentInWindow)} ${s}; ` +
-    `this send: ${fmt(entry.proposed)} ${s}${policy.countFees ? ' (network fee included)' : ''}.`
-  );
+  const params = {
+    symbol: s,
+    cap: fmt(policy.cap),
+    window: windowLabel(policy.windowSeconds),
+    spent: fmt(entry.spentInWindow),
+    amount: fmt(entry.proposed),
+  };
+  return policy.countFees ? t('limits.overWithFee', params) : t('limits.over', params);
 }
 
 /**
@@ -1366,9 +1363,9 @@ export async function evaluateBeforeSigning(input: SpendingCheckInput): Promise<
   const overrideAllowed = exceeding.every((r) => r.policy.allowOverride);
   const message = [
     ...exceeding.map((r) => overLimitSentence(r.policy, r.entry)),
-    SPENDING_HONESTY_SENTENCE,
-    ...(note ? [note] : []),
-    overrideAllowed ? SPENDING_OVERRIDE_ALLOWED_SENTENCE : SPENDING_OVERRIDE_OFF_SENTENCE,
+    localize(SPENDING_HONESTY_SENTENCE),
+    ...(note ? [localize(note)] : []),
+    localize(overrideAllowed ? SPENDING_OVERRIDE_ALLOWED_SENTENCE : SPENDING_OVERRIDE_OFF_SENTENCE),
   ].join('\n\n');
   return {
     status: 'blocked',
@@ -1398,15 +1395,42 @@ export function overLimitPreviewLines(check: SpendingCheck, hidden: boolean): st
     .map((r) => {
       const s = r.policy.symbol;
       const fmt = (n: bigint) => maskAmount(formatSpendAmount(n, r.policy.decimals), hidden);
+      const params = {
+        symbol: s,
+        cap: fmt(r.policy.cap),
+        window: windowLabel(r.policy.windowSeconds),
+        spent: fmt(r.entry.spentInWindow),
+        amount: fmt(r.entry.proposed),
+      };
       return (
-        `This send would go over the limit for ${s} (${fmt(r.policy.cap)} ${s} per ` +
-        `${windowLabel(r.policy.windowSeconds)}): already spent ${fmt(r.entry.spentInWindow)} ${s}, this send ` +
-        `${fmt(r.entry.proposed)} ${s}${r.policy.countFees ? ' with the network fee' : ''}. ` +
-        (r.policy.allowOverride
-          ? 'Tapping Send will ask whether to send anyway.'
-          : 'Tapping Send will stop it; raise or remove the limit first.')
+        (r.policy.countFees ? t('limits.preview.overWithFee', params) : t('limits.preview.over', params)) +
+        ' ' +
+        (r.policy.allowOverride ? t('limits.preview.askAnyway') : t('limits.preview.stopped'))
       );
     });
+}
+
+/**
+ * The over-limit alert's title and text (SpendingPolicyViews
+ * confirmSpendingCheck; pass p28-emu1 finding 5): the check's own text, in
+ * the chosen language, and — for a hard refusal (no "Send anyway") —
+ * closing with "Nothing was signed.", as the Solana refusal does
+ * (spl-tokens.ts runSplSend, the same id). True at every caller: the gate
+ * runs before the device prompt and before any signature of the step it
+ * guards (SendScreen, Swap, Staking, Bridge, Lend, Wallet handle, the
+ * WalletConnect sheet, Activity's speed-up / cancel and the off-line
+ * signing screen, where nothing is prepared either). With "Send anyway"
+ * offered the sentence is left out: the user may still choose to sign.
+ */
+export function spendingBlockAlertText(check: { title: string | null; message: string | null; overrideAllowed: boolean }): {
+  title: string;
+  message: string;
+} {
+  const message = check.message ?? '';
+  return {
+    title: localize(check.title ?? SPENDING_BLOCK_TITLE),
+    message: check.overrideAllowed ? message : `${message}\n\n${t('spendingSol.notSigned')}`.trim(),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1456,12 +1480,16 @@ export function spentReadoutText(readout: SpendingReadout, hidden: boolean): str
   const { policy } = readout;
   const spent = maskAmount(formatSpendAmount(readout.spentInWindow, policy.decimals), hidden);
   const cap = maskAmount(formatSpendAmount(policy.cap, policy.decimals), hidden);
-  return `Spent in the current window: ${spent} of ${cap} ${policy.symbol}`;
+  return t('limits.spent', { spent, cap, symbol: policy.symbol });
 }
 
 /** "0.1 ETH per 24 hours" — masked under Hide amounts. */
 export function policySummary(policy: SpendingPolicy, hidden: boolean): string {
-  return `${maskAmount(formatSpendAmount(policy.cap, policy.decimals), hidden)} ${policy.symbol} per ${windowLabel(policy.windowSeconds)}`;
+  return t('limits.summary', {
+    amount: maskAmount(formatSpendAmount(policy.cap, policy.decimals), hidden),
+    symbol: policy.symbol,
+    window: windowLabel(policy.windowSeconds),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1533,8 +1561,8 @@ export async function evaluateSolanaTokenSend(
   const exceeding = results.filter((r) => r.entry.exceeds);
   const message = [
     ...exceeding.map((r) => overLimitSentence(r.policy, r.entry)),
-    SPENDING_HONESTY_SENTENCE,
-    SPENDING_OVERRIDE_OFF_SENTENCE,
+    localize(SPENDING_HONESTY_SENTENCE),
+    localize(SPENDING_OVERRIDE_OFF_SENTENCE),
   ].join('\n\n');
   return {
     status: 'blocked',
