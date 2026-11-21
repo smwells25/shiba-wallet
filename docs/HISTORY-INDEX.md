@@ -2,7 +2,9 @@
 
 One bullet per phase, moved verbatim from AGENTS.md on 2026-11-20. Full
 records: docs/HISTORY.md (phases 1 to 12) and docs/HISTORY-phases-13-27.md
-(phases 13 to 27; grep it, never read it whole).
+(phases 13 to 27; grep it, never read it whole). Commit hashes recorded
+there before 2026-11-03 are pre-rewrite: the old-to-new map is the
+git-ignored .local/history-rewrite-2026-11-03-commit-map.tsv.
 
 - Phase 1 (2026-09-27): engine packages with official test vectors,
   FEATURE_UNIVERSE.md and ARCHITECTURE.md, the Expo app shell.
@@ -80,4 +82,5 @@ records: docs/HISTORY.md (phases 1 to 12) and docs/HISTORY-phases-13-27.md
   assets research.
 - Phase 27: the Activity follow-ups, the pre-prompt guard on every
   smart-account confirm, the Bitcoin inscriptions warning, the Aave pins
-  in verify-pins.mjs. Its status section is kept below.
+  in verify-pins.mjs. Its status section is the last section of
+  docs/HISTORY-phases-13-27.md.

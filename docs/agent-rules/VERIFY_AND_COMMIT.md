@@ -5,6 +5,37 @@ worktree, or keeping files that must survive in the scratchpad. Moved
 verbatim from the standing rules of AGENTS.md on 2026-11-20; other tasks
 do not need it.
 
+## Later rules (read first; they supersede the older text below)
+
+Collected on 2026-11-20 from the phase records, each with the date it
+was learned:
+
+- Worktrees are APFS clones made by `.local/helpers/mkwt.sh <name> [ref]`
+  (set SHIBA_SCRATCHPAD to the session's scratchpad folder). The
+  symlink-farm worktree described below is retired (2026-10-20), and in a
+  clone worktree the runner's bundle step passes, so --skip-bundle is
+  only a time saver.
+- "Recorded here" below means AGENTS.md (a summary of at most five
+  lines) and docs/phases/phase-NN.md (the full record).
+- Check CI with `.local/helpers/ci-check.sh <commit> [poll-seconds]`
+  (git-ignored; it reads the public GitHub API). This Mac has no `gh`
+  binary.
+- Touch the scratchpad at the START of every day's work; an idle gap of
+  three days loses everything under /private/tmp (2026-10-25, 2026-11-15).
+- A patch cut against an older base must be re-applied on the current
+  HEAD before its runner result means anything: check the apply exit
+  code and the suite count, not only "ALL GREEN" (2026-11-09).
+- A worktree that takes a patch touching packages/ must rebuild its
+  engine dist (`npm run build`) before running app suites (2026-11-08).
+- Run check-screen-protection, check-devmode and check-readiness on any
+  docs change too: they pin sentences in the docs (2026-10-14).
+- A fixture recorded from zone-dependent output is recorded under
+  TZ=UTC; CI runs in UTC (2026-10-27).
+- When agents share a working tree, stage hunks or a verified patch
+  (`git apply --cached`), never whole files (2026-10-19).
+
+## The original standing rules (verbatim)
+
 - Every slice is verified by the CTO in an isolated worktree with the
   offline runner before it is pushed, then recorded here, then CI is
   checked. When several agents work in the main checkout at once, a

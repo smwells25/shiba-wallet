@@ -53,8 +53,9 @@ Non-negotiable requirements (from the Lead Chairperson):
   scripts/ci/suites.mjs). `npm test` at the root runs everything offline
   (scripts/ci/run.mjs); `npm run test:live` adds the live suites.
 - Mobile shell: Expo SDK 57 / React Native (app/), run in Expo Go on the
-  Android emulator for validation; development builds need an Expo
-  account (docs/DEVICE_BUILDS.md, docs/RELEASE.md).
+  Android emulator for validation; local development and release builds
+  for the emulator need no Expo account, EAS builds do
+  (docs/DEVICE_BUILDS.md, docs/RELEASE.md).
 - Secrets: the git-ignored .dev-wallet/ (mnemonic.txt, env with the API
   keys and the ZeroDev project id) is the only place for keys; the
   pre-commit secret scan (scripts/githooks/secret-scan.mjs, enabled with
@@ -75,7 +76,14 @@ docs/                      Plain-English documents for leadership & engineers
   AUDIT_SCOPE.md           The scope handed to outside security auditors (C1, C2)
   DEMO.md                  Presenter's walkthrough on the emulator
   RELEASE.md / STORE_LISTING.md / PRIVACY.md / DEVICE_BUILDS.md /
-  CONTRIBUTING.md / HISTORY.md (phases 1–12 in full)
+  CONTRIBUTING.md
+  HISTORY-INDEX.md         One bullet per closed phase
+  HISTORY.md / HISTORY-phases-13-27.md
+                           Full records of phases 1–12 and 13–27 (grep the
+                           second; it is about 1.5 MB)
+  phases/phase-NN.md       Full records of the current phase
+  agent-rules/             Rules read only for their task: EMULATOR.md,
+                           VERIFY_AND_COMMIT.md
 packages/
   core/                    @shiba-wallet/core — keyring, HD derivation,
                            chain-adapter interfaces, asset registry
@@ -121,6 +129,13 @@ These apply to every task:
 - Testnets only, with two bounded exceptions recorded in
   docs/THREAT_MODEL.md section 7.5 (the Dogecoin mainnet demonstration
   script; mainnet ETH that may arrive at the dev EOA is never spent).
+- Commit with plain `git commit`; never override the hooks path (the
+  pre-commit secret scan must run).
+- Never link .dev-wallet/ into a worktree (a symlink is not git-ignored);
+  edit a secrets file by key name, never by the shape of a value.
+- Before running any script under scripts/testnet with an endpoint or key
+  set, read its header for the live / dry-run switch: some send live by
+  default (kernel-smoke.mjs with BUNDLER_URL set did, 2026-11-07).
 - Subagents run on Opus (the Chairperson's credit directive); one agent
   drives the emulator at a time.
 - Do not contact ZeroDev / Offchain Labs: the responsible-disclosure
@@ -128,8 +143,9 @@ These apply to every task:
   status, in the git-ignored docs/private/DISCLOSURE_FINDINGS.md) is the
   Chairperson's.
 - Never, whatever the task: wipe the AVD "shiba", add or remove its
-  fingerprint, set an app PIN on its real wallet, or run Gradle while
-  the AVD is being driven.
+  fingerprint, set an app PIN on its real wallet, run Gradle while the
+  AVD is being driven, or send keyguard-clearing input without first
+  reading `adb shell dumpsys window | grep isKeyguardShowing`.
 - Record keeping: a completed slice or pass gets at most five lines here
   (what, commit, counts, what is unverified). Its full record goes in
   docs/phases/phase-NN.md. When a phase closes, its plan and progress move
@@ -137,17 +153,22 @@ These apply to every task:
 
 Read the matching file BEFORE the task, and only then:
 
-| If the task will…                                   | Read first                            |
-|-----------------------------------------------------|---------------------------------------|
-| launch, drive or screenshot the emulator; build or  | docs/agent-rules/EMULATOR.md          |
-| install a development or release build              |                                       |
-| verify a slice, commit, push, or create a worktree  | docs/agent-rules/VERIFY_AND_COMMIT.md |
-| or scratchpad files that must survive               |                                       |
-| look up a past phase, pass, commit or finding       | grep docs/HISTORY-phases-13-27.md     |
-|                                                     | (never read it whole)                 |
+| If the task will… | Read first |
+|---|---|
+| launch, drive or screenshot the emulator; build or install a development or release build | docs/agent-rules/EMULATOR.md |
+| drive the iOS Simulator | docs/agent-rules/EMULATOR.md (the "Current state" block) |
+| verify a slice, commit, push, check CI, create a worktree, or keep scratchpad files that must survive | docs/agent-rules/VERIFY_AND_COMMIT.md |
+| look up the current phase's slices and passes | docs/phases/phase-NN.md |
+| look up what a closed phase delivered | docs/HISTORY-INDEX.md |
+| look up a past pass, commit or finding | grep docs/HISTORY-phases-13-27.md (13 to 27; never read it whole) or docs/HISTORY.md (1 to 12) |
 
-A subagent brief names the rule files its task needs; the subagent reads
-those and nothing else from this list.
+Commit hashes recorded before 2026-11-03 are pre-rewrite and are not on
+main: the old-to-new map is the git-ignored
+.local/history-rewrite-2026-11-03-commit-map.tsv.
+
+A subagent brief names the rule files its task needs. When a brief names
+none, the subagent picks from the table by its task. Nobody reads a rule
+file its task does not need.
 
 ## Known blockers
 
@@ -165,7 +186,8 @@ Waiting on the Chairperson: the Bitcoin protect-only slice's three inputs;
 Tropic Square section 12.1 and Stage 3; the release signing key, audit
 firm, budget, C1 scope and git tag; address screening section 9;
 DURESS_WALLET section 8.5; whether Lend accepts an EIP-7702 owner;
-stash@{0}; Homebrew's rust and ruby; a glance at the emulator window.
+stash@{0}; Homebrew's rust and ruby; a glance at the emulator window;
+signet coins at Account 1's signet address (phase 28 item 2).
 On hold by the Chairperson: a native Spanish reviewer, the fiat off-ramp
 provider, the disclosure decision.
 Both ENS names expire on 2026-12-22 (0.613701 test USDC each to renew).

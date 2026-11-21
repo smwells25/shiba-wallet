@@ -5,6 +5,40 @@ emulator (AVD "shiba"), or building or installing a development or
 release build. Moved verbatim from the standing rules of AGENTS.md on
 2026-11-20; other tasks do not need it.
 
+## Current state (read first; it supersedes the older text below)
+
+Collected on 2026-11-20 from the phase records:
+
+- Launch, from a foreground Terminal tab. A fresh tab does not have the
+  emulator on its PATH, and a command sent to a new tab with osascript
+  can lose its first character, so it starts with " ; ":
+
+  ```
+   ; export PATH=$HOME/Library/Android/sdk/emulator:$PATH; export ANDROID_EMULATOR_WAIT_TIME_BEFORE_KILL=120; emulator -avd shiba -gpu swangle
+  ```
+
+  Then find the qemu process id (for example `pgrep -f qemu`), start
+  `caffeinate -i -w <qemu pid>`, run `adb reverse tcp:8081 tcp:8081`, and
+  keep the window in front.
+- The renderer is pinned to `-gpu swangle` (decided 2026-11-07). The
+  statements below that the ANGLE renderer or `-gpu angle_indirect` is
+  the confirmed-visible configuration are history: 37.1.11 never
+  accepted that flag. The quick boot loads only when the renderer
+  matches the saved snapshot.
+- Before ANY keyguard-clearing input, read
+  `adb shell dumpsys window | grep isKeyguardShowing` and send none when
+  it is false (2026-11-07).
+- An accessibility finding from a uiautomator dump needs a TalkBack read
+  before it counts: the dump drops some visible text (2026-10-20).
+- iOS Simulator: a Simulator reboot drops the Face ID enrolment while
+  the menu still shows it ticked; toggle Features → Face ID → Enrolled
+  off and on after every reboot (2026-11-08). Metro under CI=1 does not
+  watch files: restart it with --clear after an edit (2026-11-08). A
+  pass that unticks the Simulator's "Connect Hardware Keyboard" ticks it
+  again at the end (2026-11-08).
+
+## The original standing rules (verbatim)
+
 - Emulator AVD "shiba": never wipe it and never add or remove its
   fingerprint (its wallet's phrase is in biometric-protected storage and
   written nowhere); never run an engine build in the checkout Metro
