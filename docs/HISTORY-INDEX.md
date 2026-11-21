@@ -2,9 +2,10 @@
 
 One bullet per phase, moved verbatim from AGENTS.md on 2026-11-20. Full
 records: docs/HISTORY.md (phases 1 to 12) and docs/HISTORY-phases-13-27.md
-(phases 13 to 27; grep it, never read it whole). Commit hashes recorded
-there before 2026-11-03 are pre-rewrite: the old-to-new map is the
-git-ignored .local/history-rewrite-2026-11-03-commit-map.tsv.
+(phases 13 to 27; grep it, never read it whole). Many commit hashes
+recorded there are pre-rewrite: look every hash up in the git-ignored
+.local/history-rewrite-2026-11-03-commit-map.tsv before checking
+anything out (the rule is in AGENTS.md, under the read-first table).
 
 - Phase 1 (2026-09-27): engine packages with official test vectors,
   FEATURE_UNIVERSE.md and ARCHITECTURE.md, the Expo app shell.

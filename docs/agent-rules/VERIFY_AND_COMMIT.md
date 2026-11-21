@@ -1,34 +1,66 @@
 # Agent rules — verifying, committing, worktrees and the scratchpad
 
 Read this before verifying a slice, committing, pushing, creating a
-worktree, or keeping files that must survive in the scratchpad. Moved
-verbatim from the standing rules of AGENTS.md on 2026-11-20; other tasks
-do not need it.
+worktree, or keeping files that must survive in the scratchpad. Other
+tasks do not need this file. The "original standing rules" section was
+moved verbatim from AGENTS.md on 2026-11-20.
 
-## Later rules (read first; they supersede the older text below)
+## Later rules (read first)
+
+Where these rules differ from the older text below, these win. Every
+other rule in the older text still applies.
 
 Collected on 2026-11-20 from the phase records, each with the date it
 was learned:
 
 - Worktrees are APFS clones made by `.local/helpers/mkwt.sh <name> [ref]`
-  (set SHIBA_SCRATCHPAD to the session's scratchpad folder). The
-  symlink-farm worktree described below is retired (2026-10-20), and in a
+  (set SHIBA_SCRATCHPAD to the session's scratchpad folder). The script
+  clones both node_modules folders and builds the engine once; never
+  build node_modules symlinks by hand. The symlink-farm worktree
+  described below is retired (2026-10-20), and in a
   clone worktree the runner's bundle step passes, so --skip-bundle is
   only a time saver.
 - "Recorded here" below means AGENTS.md (a summary of at most five
   lines) and docs/phases/phase-NN.md (the full record).
+- The `git reset --hard` and `git clean -fd -e node_modules` in the older
+  text run only inside a reused verify worktree, NEVER in the main
+  checkout, which may hold uncommitted work; a fresh mkwt.sh worktree
+  needs neither.
+- The runner is `npm test` at the root of the worktree (add
+  `-- --skip-bundle` to save time). After mkwt.sh, check that it printed
+  "BUILD OK": it prints READY even when the build failed.
+- Commit in the main checkout, directly on main (this project uses no
+  feature branches or pull requests). For a patch made in a separate
+  worktree, run `git apply --index <patch>`: it updates both the index
+  and the files, so the checkout does not fall behind its own commit. If
+  it refuses because the main checkout has uncommitted edits in those
+  files, stop: a subagent asks the CTO and the CTO asks the Chairperson;
+  never stage whole files. Make the patch so that it holds new files too
+  (in the worktree: `git add -N <each new file>` then
+  `git diff --binary > <patch>`; never `git add -N .`, which also picks
+  up the untracked `.ready` file mkwt.sh leaves at the worktree root); a
+  plain `git diff` leaves untracked files out without saying so. When the changes
+  are already in the main checkout's files (a shared working tree), stage
+  them with `git apply --cached <patch>` instead. Either way confirm that
+  `git diff --cached | git patch-id --stable` equals
+  `git patch-id --stable < <patch>` (compare against the patch file itself, not against a fresh
+  `git diff` in the worktree). Commit with plain
+  `git commit`. Push with `git push origin main` only when the
+  Chairperson's instructions for the session allow pushing.
 - Check CI with `.local/helpers/ci-check.sh <commit> [poll-seconds]`
   (git-ignored; it reads the public GitHub API). This Mac has no `gh`
   binary.
-- Touch the scratchpad at the START of every day's work; an idle gap of
+- Touch the scratchpad (the session's own, and any older session's
+  folder that still holds worktrees) at the START of every day's work; an idle gap of
   three days loses everything under /private/tmp (2026-10-25, 2026-11-15).
 - A patch cut against an older base must be re-applied on the current
   HEAD before its runner result means anything: check the apply exit
   code and the suite count, not only "ALL GREEN" (2026-11-09).
-- A worktree that takes a patch touching packages/ must rebuild its
-  engine dist (`npm run build`) before running app suites (2026-11-08).
-- Run check-screen-protection, check-devmode and check-readiness on any
-  docs change too: they pin sentences in the docs (2026-10-14).
+- mkwt.sh builds the engine when it creates the worktree; after applying
+  a patch that touches packages/, rebuild the engine dist
+  (`npm run build`) before running app suites (2026-11-08).
+- Run the full offline runner on a docs-only change too: several app
+  suites read files under docs/ and pin sentences in them (2026-10-14).
 - A fixture recorded from zone-dependent output is recorded under
   TZ=UTC; CI runs in UTC (2026-10-27).
 - When agents share a working tree, stage hunks or a verified patch

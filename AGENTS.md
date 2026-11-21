@@ -2,7 +2,10 @@
 
 This file is the persistent state for all agents working on this project.
 Read it fully before doing any work, then the rule file your task needs
-(see Standing rules). Update it after every completed task.
+(see Standing rules). "The CTO" in these files is the main session, the
+one that talks to the Chairperson (the user) and dispatches subagents.
+The CTO updates this file after each verified slice or pass (see Record
+keeping); a subagent edits it only when its brief says so.
 The full record of phases 1 to 12 lives in docs/HISTORY.md and of phases
 13 to 27 in docs/HISTORY-phases-13-27.md, with a one-bullet index in
 docs/HISTORY-INDEX.md; this file keeps the rules, the decisions, the open
@@ -83,7 +86,8 @@ docs/                      Plain-English documents for leadership & engineers
                            second; it is about 1.5 MB)
   phases/phase-NN.md       Full records of the current phase
   agent-rules/             Rules read only for their task: EMULATOR.md,
-                           VERIFY_AND_COMMIT.md
+                           VERIFY_AND_COMMIT.md,
+                           SECRETS_AND_LIVE_SCRIPTS.md
 packages/
   core/                    @shiba-wallet/core — keyring, HD derivation,
                            chain-adapter interfaces, asset registry
@@ -124,18 +128,26 @@ These apply to every task:
 
 - The repository is public: never commit API keys, endpoints that embed
   keys, project ids or the dev mnemonic; mask them in every output; the
-  secret scan runs before every commit and in CI. Agents never read
-  .dev-wallet/.
-- Testnets only, with two bounded exceptions recorded in
-  docs/THREAT_MODEL.md section 7.5 (the Dogecoin mainnet demonstration
-  script; mainnet ETH that may arrive at the dev EOA is never spent).
+  secret scan runs before every commit and in CI.
+- No agent opens, prints, copies or lists anything under .dev-wallet/,
+  except in the ways docs/agent-rules/SECRETS_AND_LIVE_SCRIPTS.md allows.
+  Read that file before running a scripts/testnet script or the live
+  suites. In the main checkout run app check suites only through the
+  offline runner (`npm test` or `npm run test:app`), which hides
+  .dev-wallet/: run directly there,
+  check-doge.mjs and check-indexer.mjs read .dev-wallet/env themselves
+  and make keyed live requests. In a worktree any suite can be run
+  directly.
+- Testnets only, with two bounded exceptions: the Dogecoin mainnet
+  demonstration script (docs/THREAT_MODEL.md section 7.5), and mainnet
+  ETH that may arrive at the dev EOA, which is never spent.
 - Commit with plain `git commit`; never override the hooks path (the
   pre-commit secret scan must run).
 - Never link .dev-wallet/ into a worktree (a symlink is not git-ignored);
   edit a secrets file by key name, never by the shape of a value.
-- Before running any script under scripts/testnet with an endpoint or key
-  set, read its header for the live / dry-run switch: some send live by
-  default (kernel-smoke.mjs with BUNDLER_URL set did, 2026-11-07).
+- Before running any script under scripts/testnet, read its header for
+  the live / dry-run switch: some send live by default (kernel-smoke.mjs
+  with BUNDLER_URL set did, 2026-11-07).
 - Subagents run on Opus (the Chairperson's credit directive); one agent
   drives the emulator at a time.
 - Do not contact ZeroDev / Offchain Labs: the responsible-disclosure
@@ -145,26 +157,37 @@ These apply to every task:
 - Never, whatever the task: wipe the AVD "shiba", add or remove its
   fingerprint, set an app PIN on its real wallet, run Gradle while the
   AVD is being driven, or send keyguard-clearing input without first
-  reading `adb shell dumpsys window | grep isKeyguardShowing`.
+  reading `adb shell dumpsys window | grep isKeyguardShowing`
+  (adb is at ~/Library/Android/sdk/platform-tools/adb).
 - Record keeping: a completed slice or pass gets at most five lines here
   (what, commit, counts, what is unverified). Its full record goes in
-  docs/phases/phase-NN.md. When a phase closes, its plan and progress move
-  to the history file and one index bullet stays.
+  docs/phases/phase-NN.md. When a phase closes, its plan and status move
+  out of this file and it gets one bullet in docs/HISTORY-INDEX.md.
 
 Read the matching file BEFORE the task, and only then:
 
 | If the task will… | Read first |
 |---|---|
-| launch, drive or screenshot the emulator; build or install a development or release build | docs/agent-rules/EMULATOR.md |
-| drive the iOS Simulator | docs/agent-rules/EMULATOR.md (the "Current state" block) |
+| launch, drive or screenshot the Android emulator or the iOS Simulator; build or install a development or release build | docs/agent-rules/EMULATOR.md |
 | verify a slice, commit, push, check CI, create a worktree, or keep scratchpad files that must survive | docs/agent-rules/VERIFY_AND_COMMIT.md |
+| run any script under scripts/testnet, or anything else that needs a key | docs/agent-rules/SECRETS_AND_LIVE_SCRIPTS.md |
 | look up the current phase's slices and passes | docs/phases/phase-NN.md |
 | look up what a closed phase delivered | docs/HISTORY-INDEX.md |
 | look up a past pass, commit or finding | grep docs/HISTORY-phases-13-27.md (13 to 27; never read it whole) or docs/HISTORY.md (1 to 12) |
 
-Commit hashes recorded before 2026-11-03 are pre-rewrite and are not on
-main: the old-to-new map is the git-ignored
-.local/history-rewrite-2026-11-03-commit-map.tsv.
+Many commit hashes recorded before 2026-11-03 are pre-rewrite and are
+not on main, and some later records repeat them. Look EVERY recorded hash
+up in the git-ignored .local/history-rewrite-2026-11-03-commit-map.tsv:
+if a line's first column starts with it, use that line's second column;
+if no line matches, use the hash as it is. An old hash may still resolve
+in this checkout but is not part of the rewritten history, so never check
+one out without this lookup. Check a commit out only in a worktree
+(`.local/helpers/mkwt.sh <name> <hash>`, see
+docs/agent-rules/VERIFY_AND_COMMIT.md), never in the main checkout.
+
+app/AGENTS.md (Expo's own guidance, loaded for work under app/) gives
+general advice; where it differs from this file or a rule file, for
+example on where Metro runs or how builds are made, these win.
 
 A subagent brief names the rule files its task needs. When a brief names
 none, the subagent picks from the table by its task. Nobody reads a rule
@@ -180,14 +203,20 @@ Phases 1 to 27 are closed. One bullet per phase: docs/HISTORY-INDEX.md.
 Full records: docs/HISTORY.md (1 to 12), docs/HISTORY-phases-13-27.md
 (13 to 27; grep it, never read it whole).
 
-## Open decisions and holds (from the phase 27 status)
+## Open decisions and holds (carried from the phase 26 to 28 records)
 
-Waiting on the Chairperson: the Bitcoin protect-only slice's three inputs;
-Tropic Square section 12.1 and Stage 3; the release signing key, audit
-firm, budget, C1 scope and git tag; address screening section 9;
-DURESS_WALLET section 8.5; whether Lend accepts an EIP-7702 owner;
+Waiting on the Chairperson: the Bitcoin protect-only slice's two
+remaining inputs, the index and the test coins (docs/BITCOIN_ASSETS.md;
+the third, a test-network switch, was built in phase 28 item 2); Tropic
+Square section 12.1 and Stage 3 (docs/TROPIC_SQUARE.md, whose section
+10.1 lists the forbidden chip operations); the release signing key, audit firm, budget, C1 scope and
+git tag; address screening section 9 (docs/ADDRESS_SCREENING.md);
+docs/DURESS_WALLET.md section 8.5; whether Lend accepts an EIP-7702 owner;
 stash@{0}; Homebrew's rust and ruby; a glance at the emulator window;
-signet coins at Account 1's signet address (phase 28 item 2).
+signet coins at Account 1's signet address (phase 28 item 2); whether
+Home should say that a Solana token send needs test SOL when an account
+holds none; explicit "Copy" accessibility actions for the mint and the
+Activity header address (both carried from the phase 26 status).
 On hold by the Chairperson: a native Spanish reviewer, the fiat off-ramp
 provider, the disclosure decision.
 Both ENS names expire on 2026-12-22 (0.613701 test USDC each to renew).
@@ -256,6 +285,7 @@ Full records: docs/phases/phase-28.md (grep it for the item or pass).
       (commit 8ea90f5; engine 1,452, app 12,375 across 69 suites).
       Unverified: everything on a device; the Spanish drafts.
 
-Still open in the phase 28 plan: item 0's stand-in during a real burst,
-items 1, 2 and 5 on the emulator, item 3's Stargate retry, item 4 beyond
-p28-emu1 (done there), item 6 (the iOS third pass), item 7 (the refresh).
+Still open in the phase 28 plan: item 0 (the estimate stand-in was not
+shown to run during a real burst); items 1, 2 and 5 are built but not
+yet seen on the emulator; item 3's Stargate retry; item 6 (the iOS third
+pass); item 7 (the refresh). Item 4 was done in pass p28-emu1.

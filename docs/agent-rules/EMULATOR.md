@@ -1,11 +1,27 @@
 # Agent rules — the emulator and device builds
 
 Read this before launching, driving or screenshotting the Android
-emulator (AVD "shiba"), or building or installing a development or
-release build. Moved verbatim from the standing rules of AGENTS.md on
-2026-11-20; other tasks do not need it.
+emulator (AVD "shiba") or the iOS Simulator, or building or installing a
+development or release build. A pass that also creates a worktree (for
+Metro or a build) reads docs/agent-rules/VERIFY_AND_COMMIT.md too. Other
+tasks do not need this file. The "original standing rules" section was
+moved verbatim from AGENTS.md on 2026-11-20.
 
-## Current state (read first; it supersedes the older text below)
+## Current state (read first)
+
+Where this block differs from the older text below, this block wins.
+Every other rule in the older text still applies.
+
+Set-up details that are not rules (the device PIN after a cold boot,
+the commands that start Metro) are in docs/DEMO.md under "Preparation".
+Run Metro inside a worktree made by `.local/helpers/mkwt.sh wt-app`,
+never in the main checkout. Build commands: for the Android development
+and release builds the records used, docs/RELEASE.md section 11.3 for
+the prebuild and Gradle commands (make the worktree with mkwt.sh instead
+of that section's own worktree commands, and close the emulator while
+Gradle runs);
+for the iOS Simulator, docs/DEVICE_BUILDS.md, "An iOS Simulator build on
+this Mac".
 
 Collected on 2026-11-20 from the phase records:
 
@@ -17,14 +33,19 @@ Collected on 2026-11-20 from the phase records:
    ; export PATH=$HOME/Library/Android/sdk/emulator:$PATH; export ANDROID_EMULATOR_WAIT_TIME_BEFORE_KILL=120; emulator -avd shiba -gpu swangle
   ```
 
-  Then find the qemu process id (for example `pgrep -f qemu`), start
-  `caffeinate -i -w <qemu pid>`, run `adb reverse tcp:8081 tcp:8081`, and
-  keep the window in front.
+  The emulator keeps that tab, so the rest runs from another shell: find
+  the qemu process id (for example `pgrep -f qemu`; expect one process),
+  start `caffeinate -i -w <qemu pid>` in the background, run
+  `adb reverse tcp:8081 tcp:8081` (adb is at
+  ~/Library/Android/sdk/platform-tools/adb, not on the PATH above), and
+  keep the emulator window in front.
 - The renderer is pinned to `-gpu swangle` (decided 2026-11-07). The
   statements below that the ANGLE renderer or `-gpu angle_indirect` is
   the confirmed-visible configuration are history: 37.1.11 never
   accepted that flag. The quick boot loads only when the renderer
-  matches the saved snapshot.
+  matches the saved snapshot. Still unconfirmed: the Chairperson has not
+  yet looked at the window under swangle; if it is black, the fallback
+  is `-gpu host` with the visibility question reopened.
 - Before ANY keyguard-clearing input, read
   `adb shell dumpsys window | grep isKeyguardShowing` and send none when
   it is false (2026-11-07).
@@ -36,6 +57,25 @@ Collected on 2026-11-20 from the phase records:
   watch files: restart it with --clear after an edit (2026-11-08). A
   pass that unticks the Simulator's "Connect Hardware Keyboard" ticks it
   again at the end (2026-11-08).
+- The env.sh files under .local/helpers/ (p16c, p20c, p22b) define dump,
+  tap and redact helpers whose redact step reads .dev-wallet/env: do not
+  source one or call its functions unless your brief says so
+  (docs/agent-rules/SECRETS_AND_LIVE_SCRIPTS.md). This replaces "env.sh
+  sets JAVA_HOME" in the text below: for a build, export JAVA_HOME to
+  .local/jdk/jdk-17.0.20.1+1/Contents/Home and GRADLE_USER_HOME to
+  .local/gradle-home (both under the main checkout, as absolute paths) by
+  hand.
+- No mask is enough by itself: an API key inside a URL is neither hex nor
+  uuid-shaped (a Settings dump printed one in pass p18e). Never dump or
+  screenshot a screen while an endpoint, indexer or API-key field is open
+  for editing (Edit fills it with the stored value). Never print a dump
+  or screenshot that shows a recovery phrase or its quiz, and never
+  capture one of the emulator's real wallet; a throwaway wallet's backup
+  screen may be captured only into a 0700 folder and deleted after the
+  pass. In anything kept, mask runs of 32 or more
+  hex characters, uuid-shaped strings and the path of every URL.
+- A pass that creates a worktree (for Metro or a build, iOS included)
+  reads docs/agent-rules/VERIFY_AND_COMMIT.md too.
 
 ## The original standing rules (verbatim)
 
